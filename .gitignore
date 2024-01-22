@@ -19,3 +19,11 @@
 
 # Go workspace file
 go.work
+
+
+# Added by cargo
+
+/target
+
+.DS_Store
+.vscode/*
