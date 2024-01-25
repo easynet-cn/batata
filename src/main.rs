@@ -15,10 +15,14 @@ async fn main() -> std::io::Result<()> {
         .get_string("server.address")
         .unwrap_or("0.0.0.0".to_string());
     let server_port = settings.get_int("server.port").unwrap() as u16;
+    let context_path = settings
+        .get_string("server.servlet.contextPath")
+        .unwrap_or("nacos".to_string())
+        .clone();
 
-    HttpServer::new(|| {
+    HttpServer::new(move || {
         App::new().service(
-            web::scope("nacos").service(
+            web::scope(&context_path).service(
                 web::scope("/v1/console/health")
                     .service(liveness)
                     .service(readiness),
