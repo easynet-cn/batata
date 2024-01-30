@@ -1,9 +1,23 @@
-mod console;
-
 use actix_web::{web, App, HttpServer};
 use config::Config;
 
-use console::v1::health::{liveness, readiness};
+pub mod api {
+    pub mod model {
+        pub mod v2 {
+            pub mod error_code;
+            pub mod result;
+        }
+    }
+}
+
+pub mod console {
+    pub mod v1 {
+        pub mod health;
+    }
+    pub mod v2 {
+        pub mod health;
+    }
+}
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -22,11 +36,17 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new().service(
-            web::scope(&context_path).service(
-                web::scope("/v1/console/health")
-                    .service(liveness)
-                    .service(readiness),
-            ),
+            web::scope(&context_path)
+                .service(
+                    web::scope("/v1/console/health")
+                        .service(console::v1::health::liveness)
+                        .service(console::v1::health::readiness),
+                )
+                .service(
+                    web::scope("/v2/console/health")
+                        .service(console::v2::health::liveness)
+                        .service(console::v2::health::readiness),
+                ),
         )
     })
     .bind((address, server_port))?
