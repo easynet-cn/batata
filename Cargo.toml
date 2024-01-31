@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 actix-web = "4.4.1"
 config = "0.13.4"
+sea-orm = "0.12.12"
 serde = "1.0.196"
