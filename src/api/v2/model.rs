@@ -160,3 +160,18 @@ pub const SERVER_ERROR: ErrorCode<'static> = ErrorCode {
     code: 23001,
     message: "server error",
 };
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Result<T> {
+    pub code: i32,
+    pub message: String,
+    pub data: T,
+}
+
+pub fn success<T>(data: T) -> Result<T> {
+    Result::<T> {
+        code: SUCCESS.code,
+        message: SUCCESS.message.to_string(),
+        data,
+    }
+}

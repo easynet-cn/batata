@@ -3,13 +3,10 @@ use config::Config;
 use sea_orm::{Database, DatabaseConnection};
 
 pub mod api {
-    pub mod model {
-        pub mod v2 {
-            pub mod error_code;
-            pub mod result;
-        }
-        pub mod app_state;
+    pub mod v2 {
+        pub mod model;
     }
+    pub mod model;
 }
 
 pub mod console {
@@ -50,7 +47,7 @@ async fn main() -> std::io::Result<()> {
         conns.push(db);
     }
 
-    let app_state = api::model::app_state::AppState { conns };
+    let app_state = api::model::AppState { conns };
 
     HttpServer::new(move || {
         App::new()
