@@ -2,21 +2,8 @@ use actix_web::{web, App, HttpServer};
 use config::Config;
 use sea_orm::{Database, DatabaseConnection};
 
-pub mod api {
-    pub mod v2 {
-        pub mod model;
-    }
-    pub mod model;
-}
-
-pub mod console {
-    pub mod v1 {
-        pub mod health;
-    }
-    pub mod v2 {
-        pub mod health;
-    }
-}
+pub mod api;
+pub mod console;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
