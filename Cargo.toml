@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-actix-web = "4.4.1"
+actix-web = {version = "4.5.1"}
 config = "0.13.4"
-sea-orm = "0.12.12"
+sea-orm = {version = "0.12.12", features = ["sqlx-mysql", "runtime-tokio"]}
 serde = "1.0.196"
+sqlx = {version = "0.7.3", features = ["runtime-tokio"]}
+tokio = {version = "1.36.0", features = ["full"]}
