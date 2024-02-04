@@ -152,12 +152,12 @@ pub const NODE_INFO_ERROR: ErrorCode<'static> = ErrorCode {
 };
 
 pub const NODE_DOWN_FAILURE: ErrorCode<'static> = ErrorCode {
-    code: 23001,
+    code: 23002,
     message: "node down failure",
 };
 
 pub const SERVER_ERROR: ErrorCode<'static> = ErrorCode {
-    code: 23001,
+    code: 30000,
     message: "server error",
 };
 
