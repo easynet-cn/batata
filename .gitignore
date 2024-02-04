@@ -27,3 +27,4 @@ go.work
 
 .DS_Store
 .vscode/*
+Cargo.lock
