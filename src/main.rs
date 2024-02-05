@@ -3,7 +3,9 @@ use config::Config;
 use sea_orm::{Database, DatabaseConnection};
 
 pub mod api;
+pub mod common;
 pub mod console;
+pub mod core;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -50,6 +52,10 @@ async fn main() -> std::io::Result<()> {
                         web::scope("/v2/console/health")
                             .service(console::v2::health::liveness)
                             .service(console::v2::health::readiness),
+                    )
+                    .service(
+                        web::scope("/v1/console/namespaces")
+                            .service(console::v1::namespace::get_namespaces),
                     ),
             )
     })
