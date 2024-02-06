@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 actix-web = {version = "4.5.1"}
 config = "0.13.4"
+log = "0.4.20"
 sea-orm = {version = "0.12.14", features = ["sqlx-mysql", "runtime-tokio"]}
 serde = "1.0.196"
 sqlx = {version = "0.7.3", features = ["runtime-tokio"]}
