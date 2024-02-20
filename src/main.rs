@@ -9,6 +9,7 @@ pub mod common;
 pub mod console;
 pub mod core;
 pub mod entity;
+pub mod service;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
