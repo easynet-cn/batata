@@ -1,5 +1,7 @@
+use crate::middleware::logger::Logger;
 use actix_web::{web, App, HttpServer};
 use config::Config;
+use env_logger::Env;
 use log;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use std::time::Duration;
@@ -9,6 +11,7 @@ pub mod common;
 pub mod console;
 pub mod core;
 pub mod entity;
+pub mod middleware;
 pub mod service;
 
 #[actix_web::main]
@@ -68,8 +71,11 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or("nacos".to_string())
         .clone();
 
+    env_logger::init_from_env(Env::default().default_filter_or("info"));
+
     HttpServer::new(move || {
         App::new()
+            .wrap(Logger::default())
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
