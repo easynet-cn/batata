@@ -1,4 +1,3 @@
-use crate::middleware::logger::SLogLogger;
 use actix_web::{web, App, HttpServer};
 use config::Config;
 use env_logger::Env;
