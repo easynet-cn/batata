@@ -1,4 +1,4 @@
-use crate::middleware::logger::Logger;
+use crate::middleware::logger::SLogLogger;
 use actix_web::{web, App, HttpServer};
 use config::Config;
 use env_logger::Env;
@@ -16,6 +16,8 @@ pub mod service;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    env_logger::init_from_env(Env::default().default_filter_or("info"));
+
     let settings = Config::builder()
         .add_source(config::File::with_name("conf/application.yml"))
         .build()
@@ -71,11 +73,9 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or("nacos".to_string())
         .clone();
 
-    env_logger::init_from_env(Env::default().default_filter_or("info"));
-
     HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default())
+            .wrap(SLogLogger::default())
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
