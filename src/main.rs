@@ -1,3 +1,4 @@
+use crate::middleware::logger::Logger;
 use actix_web::{web, App, HttpServer};
 use config::Config;
 use env_logger::Env;
@@ -74,7 +75,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(move || {
         App::new()
-            .wrap(SLogLogger::default())
+            .wrap(Logger::default())
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
