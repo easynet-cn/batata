@@ -15,7 +15,7 @@ bytes = "1.5.0"
 config = "0.13.4"
 env_logger = "0.11.2"
 futures-core = "0.3.30"
-log = "0.4.20"
+log = "0.4.21"
 pin-project-lite = "0.2.13"
 regex = "1.10.3"
 sea-orm = {version = "0.12.14", features = ["sqlx-mysql", "runtime-tokio"]}
