@@ -13,7 +13,7 @@ actix-utils = "3.0.1"
 actix-web = {version = "4.5.1"}
 bytes = "1.5.0"
 config = "0.13.4"
-env_logger = "0.11.2"
+env_logger = "0.11.3"
 futures-core = "0.3.30"
 log = "0.4.21"
 pin-project-lite = "0.2.13"
