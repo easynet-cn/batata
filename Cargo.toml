@@ -22,6 +22,6 @@ sea-orm = {version = "0.12.14", features = ["sqlx-mysql", "runtime-tokio"]}
 serde = "1.0.197"
 slog = "2.7.0"
 slog-term = "2.9.1"
-sqlx = {version = "0.7.3", features = ["runtime-tokio"]}
+sqlx = {version = "0.7.4", features = ["runtime-tokio"]}
 time = "0.3.34"
 tokio = {version = "1.36.0", features = ["full"]}
