@@ -151,7 +151,7 @@ nacos.core.auth.server.identity.value: nacos.
 nacos.core.auth.plugin.nacos.token.cache.enable: false
 nacos.core.auth.plugin.nacos.token.expire.seconds: 18000
 ### The default token (Base64 String):
-nacos.core.auth.plugin.nacos.token.secret.key: 75b9ae66-1c70-4d60-889e-261a7a305cbf
+nacos.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm
 
 ### worked when nacos.core.auth.system.type=ldap，{0} is Placeholder,replace login username
 #nacos.core.auth.ldap.url=ldap://localhost:389

@@ -79,6 +79,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
+                    .service(web::scope("/v1/auth").service(console::v1::auth::users_login))
                     .service(
                         web::scope("/v1/console/health")
                             .service(console::v1::health::liveness)

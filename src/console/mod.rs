@@ -1,4 +1,5 @@
 pub mod v1 {
+    pub mod auth;
     pub mod health;
     pub mod namespace;
 }
