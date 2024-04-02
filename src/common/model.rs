@@ -2,6 +2,8 @@ use core::str;
 
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 1800;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RestResult<T> {
     pub code: i32,
@@ -41,4 +43,11 @@ pub struct NacosUser {
     pub password: String,
     pub token: String,
     pub global_admin: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NacosJwtPayload {
+    pub sub: String,
+    pub exp: i64,
 }

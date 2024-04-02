@@ -18,31 +18,35 @@ pub mod service;
 async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(Env::default().default_filter_or("info"));
 
-    let settings = Config::builder()
+    let app_config = Config::builder()
         .add_source(config::File::with_name("conf/application.yml"))
         .build()
         .unwrap();
 
-    let db_num = settings.get_int("db.num").unwrap();
+    let db_num = app_config.get_int("db.num").unwrap();
     let mut conns: Vec<DatabaseConnection> = Vec::new();
 
-    let max_connections = settings
+    let max_connections = app_config
         .get_int("db.pool.config.maximumPoolSize")
         .unwrap_or(100) as u32;
-    let min_connections = settings
+    let min_connections = app_config
         .get_int("db.pool.config.minimumPoolSize")
         .unwrap_or(1) as u32;
-    let connect_timeout = settings
+    let connect_timeout = app_config
         .get_int("db.pool.config.connectionTimeout")
         .unwrap_or(30) as u64;
-    let acquire_timeout = settings
+    let acquire_timeout = app_config
         .get_int("db.pool.config.initializationFailTimeout")
         .unwrap_or(1) as u64;
-    let idle_timeout = settings.get_int("db.pool.config.idleTimeout").unwrap_or(10) as u64;
-    let max_lifetime = settings.get_int("db.pool.config.maxLifetime").unwrap_or(30) as u64;
+    let idle_timeout = app_config
+        .get_int("db.pool.config.idleTimeout")
+        .unwrap_or(10) as u64;
+    let max_lifetime = app_config
+        .get_int("db.pool.config.maxLifetime")
+        .unwrap_or(30) as u64;
 
     for i in 0..db_num {
-        let url = &settings
+        let url = &app_config
             .get_string(format!("db.url.{}", i).as_str())
             .unwrap();
 
@@ -62,16 +66,16 @@ async fn main() -> std::io::Result<()> {
         conns.push(db);
     }
 
-    let app_state = api::model::AppState { conns };
-
-    let address = settings
+    let address = app_config
         .get_string("server.address")
         .unwrap_or("0.0.0.0".to_string());
-    let server_port = settings.get_int("server.port").unwrap_or(8848) as u16;
-    let context_path = settings
+    let server_port = app_config.get_int("server.port").unwrap_or(8848) as u16;
+    let context_path = app_config
         .get_string("server.servlet.contextPath")
         .unwrap_or("nacos".to_string())
         .clone();
+
+    let app_state = api::model::AppState { app_config, conns };
 
     HttpServer::new(move || {
         App::new()
