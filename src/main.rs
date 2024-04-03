@@ -97,6 +97,12 @@ async fn main() -> std::io::Result<()> {
                     .service(
                         web::scope("/v1/console/namespaces")
                             .service(console::v1::namespace::get_namespaces),
+                    )
+                    .service(
+                        web::scope("/v1/console/server")
+                            .service(console::v1::server_state::state)
+                            .service(console::v1::server_state::announcement)
+                            .service(console::v1::server_state::guide),
                     ),
             )
     })

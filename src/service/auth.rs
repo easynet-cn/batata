@@ -5,8 +5,8 @@ use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, 
 pub fn decode_jwt_token(
     token: &str,
     secret_key: &str,
-) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<crate::service::auth::NacosJwtPayload>> {
-    decode::<crate::service::auth::NacosJwtPayload>(
+) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<NacosJwtPayload>> {
+    decode::<NacosJwtPayload>(
         token,
         &DecodingKey::from_base64_secret(secret_key).unwrap(),
         &Validation::default(),

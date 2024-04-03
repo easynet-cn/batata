@@ -33,7 +33,7 @@ server.port: 8849
 #*************** Config Module Related Configurations ***************#
 ### If use MySQL as datasource:
 ### Deprecated configuration property, it is recommended to use `spring.sql.init.platform` replaced.
-spring.datasource.platform: mysql
+# spring.datasource.platform: mysql
 spring.sql.init.platform: mysql
 
 ### Count of DB:
