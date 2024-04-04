@@ -8,6 +8,26 @@ use actix_web::{get, web};
 pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, String>> {
     let mut state_map: HashMap<String, String> = HashMap::new();
 
+    // Auth state
+    state_map.insert(
+        "auth_enabled".to_string(),
+        data.app_config
+            .get_string("nacos.core.auth.enabled")
+            .unwrap_or("false".to_string()),
+    );
+    state_map.insert(
+        "login_page_enabled".to_string(),
+        data.app_config
+            .get_string("nacos.core.auth.enabled")
+            .unwrap_or("false".to_string()),
+    );
+    state_map.insert(
+        "auth_system_type".to_string(),
+        data.app_config
+            .get_string("nacos.core.auth.system.type")
+            .unwrap_or_default(),
+    );
+
     // Config state
     state_map.insert(
         "datasource_platform".to_string(),
@@ -93,7 +113,31 @@ pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Strin
         "console_ui_enabled".to_string(),
         data.app_config
             .get_string("nacos.console.ui.enabled")
-            .unwrap_or((10 * 1024 * 1024).to_string()),
+            .unwrap_or("true".to_string()),
+    );
+
+    // Env state
+    state_map.insert(
+        "startup_mode".to_string(),
+        data.app_config
+            .get_string("nacos.standalone")
+            .unwrap_or("standalone".to_string()),
+    );
+    state_map.insert(
+        "function_mode".to_string(),
+        data.app_config
+            .get_string("nacos.functionMode")
+            .unwrap_or_default(),
+    );
+    state_map.insert(
+        "version".to_string(),
+        (env!("CARGO_PKG_VERSION")).to_string(),
+    );
+    state_map.insert(
+        "server_port".to_string(),
+        data.app_config
+            .get_string("server.port")
+            .unwrap_or("8848".to_string()),
     );
 
     web::Json(state_map)
