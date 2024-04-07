@@ -1,7 +1,7 @@
 use crate::api::model::AppState;
 use crate::common::model::{NacosUser, DEFAULT_TOKEN_EXPIRE_SECONDS};
 use crate::service::auth::encode_jwt_token;
-use actix_web::{post, web, HttpResponse, Responder};
+use actix_web::{post, web, HttpResponse, Responder, Scope};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -71,4 +71,8 @@ pub async fn users_login(
     }
 
     return HttpResponse::Forbidden().json("user not found!");
+}
+
+pub fn routes() -> Scope {
+    return web::scope("/auth").service(users_login);
 }

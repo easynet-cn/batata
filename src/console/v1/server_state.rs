@@ -2,7 +2,7 @@ use crate::api::model::AppState;
 use crate::common::model::RestResult;
 use std::collections::HashMap;
 
-use actix_web::{get, web};
+use actix_web::{get, web, Scope};
 
 #[get("/state")]
 pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {
@@ -198,4 +198,11 @@ pub async fn guide() -> web::Json<RestResult<String>> {
     let rest_result = RestResult::<String>::success("".to_string());
 
     web::Json(rest_result)
+}
+
+pub fn routers() -> Scope {
+    web::scope("/server")
+        .service(state)
+        .service(announcement)
+        .service(guide)
 }

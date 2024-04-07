@@ -1,4 +1,4 @@
-use actix_web::{get, HttpResponse, Responder};
+use actix_web::{get, web, HttpResponse, Responder, Scope};
 
 #[get("/liveness")]
 pub async fn liveness() -> impl Responder {
@@ -8,4 +8,8 @@ pub async fn liveness() -> impl Responder {
 #[get("/readiness")]
 pub async fn readiness() -> impl Responder {
     HttpResponse::Ok().body("OK")
+}
+
+pub fn routes() -> Scope {
+    return web::scope("/health").service(liveness).service(readiness);
 }

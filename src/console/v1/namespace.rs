@@ -2,8 +2,7 @@ use crate::api::model::AppState;
 use crate::common::model::RestResult;
 use crate::core::model::Namespace;
 use crate::service;
-
-use actix_web::{get, web};
+use actix_web::{get, web, Scope};
 
 #[get("")]
 pub async fn get_namespaces(data: web::Data<AppState>) -> web::Json<RestResult<Vec<Namespace>>> {
@@ -11,4 +10,8 @@ pub async fn get_namespaces(data: web::Data<AppState>) -> web::Json<RestResult<V
     let rest_result = RestResult::<Vec<Namespace>>::success(namespaces);
 
     web::Json(rest_result)
+}
+
+pub fn routers() -> Scope {
+    web::scope("/namespaces").service(get_namespaces)
 }
