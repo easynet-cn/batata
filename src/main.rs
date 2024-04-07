@@ -83,26 +83,36 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
-                    .service(web::scope("/v1/auth").service(console::v1::auth::users_login))
                     .service(
-                        web::scope("/v1/console/health")
-                            .service(console::v1::health::liveness)
-                            .service(console::v1::health::readiness),
+                        web::scope("/v1")
+                            .service(web::scope("/auth").service(console::v1::auth::users_login))
+                            .service(
+                                web::scope("/console")
+                                    .service(
+                                        web::scope("/health")
+                                            .service(console::v1::health::liveness)
+                                            .service(console::v1::health::readiness),
+                                    )
+                                    .service(
+                                        web::scope("/namespaces")
+                                            .service(console::v1::namespace::get_namespaces),
+                                    )
+                                    .service(
+                                        web::scope("/server")
+                                            .service(console::v1::server_state::state)
+                                            .service(console::v1::server_state::announcement)
+                                            .service(console::v1::server_state::guide),
+                                    ),
+                            ),
                     )
                     .service(
-                        web::scope("/v2/console/health")
-                            .service(console::v2::health::liveness)
-                            .service(console::v2::health::readiness),
-                    )
-                    .service(
-                        web::scope("/v1/console/namespaces")
-                            .service(console::v1::namespace::get_namespaces),
-                    )
-                    .service(
-                        web::scope("/v1/console/server")
-                            .service(console::v1::server_state::state)
-                            .service(console::v1::server_state::announcement)
-                            .service(console::v1::server_state::guide),
+                        web::scope("/v2").service(
+                            web::scope("/console").service(
+                                web::scope("/health")
+                                    .service(console::v2::health::liveness)
+                                    .service(console::v2::health::readiness),
+                            ),
+                        ),
                     ),
             )
     })

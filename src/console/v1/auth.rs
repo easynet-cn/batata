@@ -59,13 +59,15 @@ pub async fn users_login(
         .unwrap();
 
         let login_result = LoginResult {
-            access_token: access_token,
+            access_token: access_token.clone(),
             token_ttl: token_expire_seconds,
             global_admin: false,
             username: user.username,
         };
 
-        return HttpResponse::Ok().json(login_result);
+        return HttpResponse::Ok()
+            .append_header(("Authorization", format!("Bearer {}", access_token)))
+            .json(login_result);
     }
 
     return HttpResponse::Forbidden().json("user not found!");
