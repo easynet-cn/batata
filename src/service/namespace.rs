@@ -60,6 +60,7 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
         .column_as(config_info::Column::Id.count(), "count")
         .filter(config_info::Column::TenantId.is_in(tenant_ids))
         .filter(config_info::Column::TenantId.is_not_null())
+        .group_by(config_info::Column::TenantId)
         .into_model::<SelectResult>()
         .all(db)
         .await
