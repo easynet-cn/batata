@@ -1,6 +1,7 @@
-use crate::common::model::{NacosJwtPayload, NacosUser};
 use chrono;
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+
+use crate::common::model::{NacosJwtPayload, NacosUser};
 
 pub fn decode_jwt_token(
     token: &str,

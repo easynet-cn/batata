@@ -1,6 +1,7 @@
+use sea_orm::*;
+
 use crate::common::model::User;
 use crate::entity::users;
-use sea_orm::*;
 
 pub async fn find_by_username(db: &DatabaseConnection, username: &str) -> Option<User> {
     let user_entity = users::Entity::find()

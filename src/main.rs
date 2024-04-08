@@ -1,10 +1,12 @@
-use crate::middleware::logger::Logger;
+use std::time::Duration;
+
 use actix_web::{web, App, HttpServer};
 use config::Config;
 use env_logger::Env;
 use log;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
-use std::time::Duration;
+
+use crate::middleware::logger::Logger;
 
 pub mod api;
 pub mod common;

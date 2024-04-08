@@ -42,17 +42,7 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
         })
         .collect();
 
-    namespaces.insert(
-        0,
-        Namespace {
-            namespace: "".to_string(),
-            namespace_show_name: DEFAULT_NAMESPACE.to_string(),
-            namespace_desc: "".to_string(),
-            quota: DEFAULT_NAMESPACE_QUOTA,
-            config_count: 0,
-            type_: 0,
-        },
-    );
+    namespaces.insert(0, Namespace::default());
 
     tenant_ids.push("".to_string());
 
@@ -87,14 +77,7 @@ pub async fn get_by_namespace_id(
     let mut namspace: Namespace;
 
     if namespace_id.is_empty() || namespace_id.eq(DEFAULT_NAMESPACE) {
-        namspace = Namespace {
-            namespace: "".to_string(),
-            namespace_show_name: DEFAULT_NAMESPACE.to_string(),
-            namespace_desc: DEFAULT_NAMESPACE_DESCRIPTION.to_string(),
-            quota: DEFAULT_NAMESPACE_QUOTA,
-            config_count: 0,
-            type_: 0,
-        };
+        namspace = Namespace::default();
     } else {
         let tenant_info_option = tenant_info::Entity::find()
             .filter(tenant_info::Column::TenantId.eq(namespace_id))

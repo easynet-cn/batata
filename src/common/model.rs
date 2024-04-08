@@ -1,5 +1,3 @@
-use core::str;
-
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 1800;
