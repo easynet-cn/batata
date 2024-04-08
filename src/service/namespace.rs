@@ -5,6 +5,12 @@ use sea_orm::*;
 use crate::core::model::Namespace;
 use crate::entity::{config_info, tenant_info};
 
+#[derive(Debug, FromQueryResult)]
+struct SelectResult {
+    tenant_id: Option<String>,
+    count: i32,
+}
+
 const DEFAULT_NAMESPACE: &'static str = "public";
 const DEFAULT_NAMESPACE_SHOW_NAME: &'static str = "Public";
 const DEFAULT_NAMESPACE_DESCRIPTION: &'static str = "Public Namespace";
@@ -39,20 +45,16 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
     namespaces.insert(
         0,
         Namespace {
-            namespace: DEFAULT_NAMESPACE.to_string(),
-            namespace_show_name: DEFAULT_NAMESPACE_SHOW_NAME.to_string(),
-            namespace_desc: DEFAULT_NAMESPACE_DESCRIPTION.to_string(),
+            namespace: "".to_string(),
+            namespace_show_name: DEFAULT_NAMESPACE.to_string(),
+            namespace_desc: "".to_string(),
             quota: DEFAULT_NAMESPACE_QUOTA,
             config_count: 0,
             type_: 0,
         },
     );
 
-    #[derive(Debug, FromQueryResult)]
-    struct SelectResult {
-        tenant_id: Option<String>,
-        count: i32,
-    }
+    tenant_ids.push("".to_string());
 
     let config_infos = config_info::Entity::find()
         .select_only()
@@ -76,4 +78,61 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
     });
 
     namespaces
+}
+
+pub async fn get_by_namespace_id(
+    db: &DatabaseConnection,
+    namespace_id: String,
+) -> Option<Namespace> {
+    let mut namspace: Namespace;
+
+    if namespace_id.is_empty() || namespace_id.eq(DEFAULT_NAMESPACE) {
+        namspace = Namespace {
+            namespace: "".to_string(),
+            namespace_show_name: DEFAULT_NAMESPACE.to_string(),
+            namespace_desc: DEFAULT_NAMESPACE_DESCRIPTION.to_string(),
+            quota: DEFAULT_NAMESPACE_QUOTA,
+            config_count: 0,
+            type_: 0,
+        };
+    } else {
+        let tenant_info_option = tenant_info::Entity::find()
+            .filter(tenant_info::Column::TenantId.eq(namespace_id))
+            .one(db)
+            .await
+            .unwrap();
+
+        if tenant_info_option.is_none() {
+            return None;
+        }
+
+        let tenant_info = tenant_info_option.unwrap();
+
+        namspace = Namespace {
+            namespace: tenant_info.tenant_id.clone().unwrap_or_default(),
+            namespace_show_name: tenant_info.tenant_name.clone().unwrap_or_default(),
+            namespace_desc: tenant_info.tenant_desc.clone().unwrap_or_default(),
+            quota: DEFAULT_NAMESPACE_QUOTA,
+            config_count: 0,
+            type_: 2,
+        };
+    }
+
+    let config_info = config_info::Entity::find()
+        .select_only()
+        .column(config_info::Column::TenantId)
+        .column_as(config_info::Column::Id.count(), "count")
+        .filter(config_info::Column::TenantId.eq(namspace.namespace.clone()))
+        .filter(config_info::Column::TenantId.is_not_null())
+        .group_by(config_info::Column::TenantId)
+        .into_model::<SelectResult>()
+        .one(db)
+        .await
+        .unwrap();
+
+    if config_info.is_some() {
+        namspace.config_count = config_info.unwrap().count;
+    }
+
+    return Some(namspace);
 }
