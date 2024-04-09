@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use regex::Regex;
 use sea_orm::*;
 
 use crate::core::model::Namespace;
@@ -47,7 +48,6 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
     tenant_ids.push("".to_string());
 
     let config_infos = config_info::Entity::find()
-        .select_only()
         .column(config_info::Column::TenantId)
         .column_as(config_info::Column::Id.count(), "count")
         .filter(config_info::Column::TenantId.is_in(tenant_ids))
@@ -102,7 +102,6 @@ pub async fn get_by_namespace_id(
     }
 
     let config_info = config_info::Entity::find()
-        .select_only()
         .column(config_info::Column::TenantId)
         .column_as(config_info::Column::Id.count(), "count")
         .filter(config_info::Column::TenantId.eq(namspace.namespace.clone()))
@@ -146,4 +145,12 @@ pub async fn create(
     }
 
     return true;
+}
+
+pub async fn get_count_by_tenant_id(db: &DatabaseConnection, namespace_id: String) -> u64 {
+    return tenant_info::Entity::find()
+        .filter(tenant_info::Column::TenantId.eq(namespace_id))
+        .count(db)
+        .await
+        .unwrap();
 }

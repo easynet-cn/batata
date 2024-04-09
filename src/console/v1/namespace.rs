@@ -21,6 +21,8 @@ pub struct CreateNamespaceFormData {
     namespace_desc: Option<String>,
 }
 
+const NAMESPACE_ID_MAX_LENGTH: usize = 128;
+
 #[get("")]
 pub async fn get_namespaces(
     data: web::Data<AppState>,
@@ -49,8 +51,34 @@ pub async fn create_namespace(
 ) -> impl Responder {
     let namespace_id: String;
 
-    if form.custom_namespace_id.is_some() && form.custom_namespace_id.as_ref().unwrap().len() > 0 {
-        namespace_id = form.custom_namespace_id.as_ref().unwrap().to_string();
+    if form.custom_namespace_id.is_some() && !form.custom_namespace_id.as_ref().unwrap().is_empty()
+    {
+        namespace_id = form
+            .custom_namespace_id
+            .as_ref()
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let regex = regex::Regex::new(r"^[\w-]+").unwrap();
+
+        if !regex.is_match(&namespace_id) {
+            return HttpResponse::Ok().json(false);
+        }
+
+        if namespace_id.len() > NAMESPACE_ID_MAX_LENGTH {
+            return HttpResponse::Ok().json(false);
+        }
+
+        if service::namespace::get_count_by_tenant_id(
+            data.conns.get(0).unwrap(),
+            namespace_id.clone(),
+        )
+        .await
+            > 0
+        {
+            return HttpResponse::Ok().json(false);
+        }
     } else {
         namespace_id = uuid::Uuid::new_v4().to_string();
     }
