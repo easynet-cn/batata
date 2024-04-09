@@ -11,6 +11,7 @@ use crate::service;
 pub struct GetNamespaceParams {
     show: Option<String>,
     namespace_id: Option<String>,
+    check_namespace_id_exist: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,6 +37,16 @@ pub async fn get_namespaces(
         .await;
 
         return HttpResponse::Ok().json(namespace);
+    }
+
+    if params.check_namespace_id_exist.is_some() && params.check_namespace_id_exist.unwrap() {
+        let count = service::namespace::get_count_by_tenant_id(
+            data.conns.get(0).unwrap(),
+            params.namespace_id.as_ref().unwrap().to_string(),
+        )
+        .await;
+
+        return HttpResponse::Ok().json(count > 0);
     }
 
     let namespaces: Vec<Namespace> = service::namespace::find_all(data.conns.get(0).unwrap()).await;
