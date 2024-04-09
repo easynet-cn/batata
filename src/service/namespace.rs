@@ -119,3 +119,31 @@ pub async fn get_by_namespace_id(
 
     return Some(namspace);
 }
+
+pub async fn create(
+    db: &DatabaseConnection,
+    namespace_id: String,
+    namespace_name: String,
+    namespace_desc: String,
+) -> bool {
+    let entity = tenant_info::ActiveModel {
+        tenant_id: Set(Some(namespace_id)),
+        tenant_name: Set(Some(namespace_name)),
+        tenant_desc: Set(Some(namespace_desc)),
+        kp: Set(DEFAULT_KP.to_string()),
+        create_source: Set(Some(DEFAULT_CREATE_SOURCE.to_string())),
+        gmt_create: Set(chrono::Utc::now().timestamp()),
+        gmt_modified: Set(chrono::Utc::now().timestamp()),
+        ..Default::default()
+    };
+
+    let res = tenant_info::Entity::insert(entity).exec(db).await;
+
+    if res.is_err() {
+        println!("{:?}", res.err().unwrap());
+
+        return false;
+    }
+
+    return true;
+}
