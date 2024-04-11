@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, HttpResponse, Responder, Scope};
+use actix_web::{get, post, put, web, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
 use crate::api::model::AppState;
@@ -19,6 +19,14 @@ pub struct GetNamespaceParams {
 pub struct CreateNamespaceFormData {
     custom_namespace_id: Option<String>,
     namespace_name: String,
+    namespace_desc: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateNamespaceFormData {
+    namespace: String,
+    namespace_show_name: String,
     namespace_desc: Option<String>,
 }
 
@@ -94,6 +102,12 @@ pub async fn create_namespace(
         namespace_id = uuid::Uuid::new_v4().to_string();
     }
 
+    let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
+
+    if !regex.is_match(&form.namespace_name) {
+        return HttpResponse::Ok().json(false);
+    }
+
     let namespace_desc: String;
 
     if form.namespace_desc.is_some() {
@@ -113,8 +127,38 @@ pub async fn create_namespace(
     return HttpResponse::Ok().json(res);
 }
 
+#[put("")]
+pub async fn update_namespace(
+    data: web::Data<AppState>,
+    form: web::Form<UpdateNamespaceFormData>,
+) -> impl Responder {
+    let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
+
+    if !regex.is_match(&form.namespace_show_name) {
+        return HttpResponse::Ok().json(false);
+    }
+
+    let namespace_desc: String;
+
+    if form.namespace_desc.is_some() {
+        namespace_desc = form.namespace_desc.as_ref().unwrap().to_string();
+    } else {
+        namespace_desc = "".to_string();
+    }
+
+    let res = service::namespace::update(
+        data.conns.get(0).unwrap(),
+        form.namespace.clone(),
+        form.namespace_show_name.clone(),
+        namespace_desc,
+    )
+    .await;
+
+    return HttpResponse::Ok().json(res);
+}
 pub fn routers() -> Scope {
     web::scope("/namespaces")
         .service(get_namespaces)
         .service(create_namespace)
+        .service(update_namespace)
 }

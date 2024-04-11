@@ -19,6 +19,8 @@ const DEFAULT_NAMESPACE_QUOTA: i32 = 200;
 const DEFAULT_CREATE_SOURCE: &'static str = "nacos";
 const DEFAULT_KP: &'static str = "1";
 
+// Find all namespaces
+
 pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
     let tenant_infos: Vec<tenant_info::Model> = tenant_info::Entity::find()
         .filter(tenant_info::Column::Kp.eq(DEFAULT_KP))
@@ -131,16 +133,14 @@ pub async fn create(
         tenant_desc: Set(Some(namespace_desc)),
         kp: Set(DEFAULT_KP.to_string()),
         create_source: Set(Some(DEFAULT_CREATE_SOURCE.to_string())),
-        gmt_create: Set(chrono::Utc::now().timestamp()),
-        gmt_modified: Set(chrono::Utc::now().timestamp()),
+        gmt_create: Set(chrono::Utc::now().timestamp_millis()),
+        gmt_modified: Set(chrono::Utc::now().timestamp_millis()),
         ..Default::default()
     };
 
     let res = tenant_info::Entity::insert(entity).exec(db).await;
 
     if res.is_err() {
-        println!("{:?}", res.err().unwrap());
-
         return false;
     }
 
@@ -153,4 +153,38 @@ pub async fn get_count_by_tenant_id(db: &DatabaseConnection, namespace_id: Strin
         .count(db)
         .await
         .unwrap();
+}
+
+pub async fn update(
+    db: &DatabaseConnection,
+    namespace: String,
+    namespace_show_name: String,
+    namespace_desc: String,
+) -> bool {
+    let entity_option = tenant_info::Entity::find()
+        .filter(tenant_info::Column::TenantId.eq(namespace))
+        .one(db)
+        .await
+        .unwrap();
+
+    if entity_option.is_none() {
+        return false;
+    }
+
+    let mut entity: tenant_info::ActiveModel = entity_option.unwrap().into();
+
+    entity.tenant_name = Set(Some(namespace_show_name));
+    entity.tenant_desc = Set(Some(namespace_desc));
+
+    if entity.is_changed() {
+        entity.gmt_modified = Set(chrono::Utc::now().timestamp_millis());
+
+        let res = entity.update(db).await;
+
+        if res.is_err() {
+            return false;
+        }
+    }
+
+    return true;
 }
