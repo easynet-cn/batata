@@ -188,3 +188,16 @@ pub async fn update(
 
     return true;
 }
+
+pub async fn delete(db: &DatabaseConnection, namespace_id: String) -> bool {
+    let res = tenant_info::Entity::delete_many()
+        .filter(tenant_info::Column::TenantId.eq(namespace_id))
+        .exec(db)
+        .await;
+
+    if res.is_err() {
+        return false;
+    }
+
+    return true;
+}

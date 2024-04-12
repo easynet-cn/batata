@@ -1,4 +1,4 @@
-use actix_web::{get, post, put, web, HttpResponse, Responder, Scope};
+use actix_web::{delete, get, post, put, web, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
 use crate::api::model::AppState;
@@ -28,6 +28,12 @@ pub struct UpdateNamespaceFormData {
     namespace: String,
     namespace_show_name: String,
     namespace_desc: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteNamespaceParams {
+    namespace_id: String,
 }
 
 const NAMESPACE_ID_MAX_LENGTH: usize = 128;
@@ -156,9 +162,22 @@ pub async fn update_namespace(
 
     return HttpResponse::Ok().json(res);
 }
+
+#[delete("")]
+pub async fn delete_namespace(
+    data: web::Data<AppState>,
+    form: web::Query<DeleteNamespaceParams>,
+) -> impl Responder {
+    let res =
+        service::namespace::delete(data.conns.get(0).unwrap(), form.namespace_id.clone()).await;
+
+    return HttpResponse::Ok().json(res);
+}
+
 pub fn routers() -> Scope {
     web::scope("/namespaces")
         .service(get_namespaces)
         .service(create_namespace)
         .service(update_namespace)
+        .service(delete_namespace)
 }
