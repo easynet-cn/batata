@@ -10,6 +10,6 @@ pub async fn readiness() -> impl Responder {
     HttpResponse::Ok().body("OK")
 }
 
-pub fn routes() -> Scope {
+pub fn routers() -> Scope {
     return web::scope("/health").service(liveness).service(readiness);
 }

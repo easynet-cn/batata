@@ -49,3 +49,28 @@ pub struct NacosJwtPayload {
     pub sub: String,
     pub exp: i64,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigBase {
+    pub id: i64,
+    pub data_id: String,
+    pub group: String,
+    pub content: String,
+    pub md5: String,
+    pub encrypted_data_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigInfo {
+    pub id: i64,
+    pub data_id: String,
+    pub group: String,
+    pub content: String,
+    pub md5: String,
+    pub encrypted_data_key: String,
+    pub tenant: String,
+    pub app_name: String,
+    pub _type: String,
+}

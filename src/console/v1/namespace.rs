@@ -8,7 +8,7 @@ use crate::service;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GetNamespaceParams {
+struct GetNamespaceParams {
     show: Option<String>,
     namespace_id: Option<String>,
     check_namespace_id_exist: Option<bool>,
@@ -16,7 +16,7 @@ pub struct GetNamespaceParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CreateNamespaceFormData {
+struct CreateNamespaceFormData {
     custom_namespace_id: Option<String>,
     namespace_name: String,
     namespace_desc: Option<String>,
@@ -24,7 +24,7 @@ pub struct CreateNamespaceFormData {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct UpdateNamespaceFormData {
+struct UpdateNamespaceFormData {
     namespace: String,
     namespace_show_name: String,
     namespace_desc: Option<String>,
@@ -32,7 +32,7 @@ pub struct UpdateNamespaceFormData {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeleteNamespaceParams {
+struct DeleteNamespaceParams {
     namespace_id: String,
 }
 

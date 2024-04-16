@@ -74,6 +74,6 @@ pub async fn users_login(
     return HttpResponse::Forbidden().json("user not found!");
 }
 
-pub fn routes() -> Scope {
+pub fn routers() -> Scope {
     return web::scope("/auth").service(users_login);
 }

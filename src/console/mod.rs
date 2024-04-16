@@ -1,5 +1,6 @@
 pub mod v1 {
     pub mod auth;
+    pub mod config;
     pub mod health;
     pub mod namespace;
     pub mod router;
