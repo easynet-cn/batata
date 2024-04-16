@@ -22,7 +22,7 @@ impl<T> RestResult<T> {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
-    pub total_count: i32,
+    pub total_count: u64,
     pub page_number: i32,
     pub pages_available: i32,
     pub page_items: Vec<T>,
