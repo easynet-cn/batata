@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use regex::Regex;
 use sea_orm::*;
 
 use crate::core::model::Namespace;
