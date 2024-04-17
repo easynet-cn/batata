@@ -18,11 +18,13 @@ struct SearchConfigParams {
     #[serde(rename = "config_tags")]
     config_tags: Option<String>,
     tenant: Option<String>,
+    #[serde(rename = "config_detail")]
+    config_detail: String,
     page_no: u64,
     page_size: u64,
 }
 
-#[get("")]
+#[get("searchDetail")]
 pub async fn search(
     data: web::Data<AppState>,
     params: web::Query<SearchConfigParams>,
@@ -43,6 +45,13 @@ pub async fn search(
             config_advance_info.insert(
                 "config_tags".to_string(),
                 params.config_tags.as_ref().unwrap().to_string(),
+            );
+        }
+
+        if !params.config_detail.is_empty() {
+            config_advance_info.insert(
+                "content".to_string(),
+                params.config_detail.trim_matches('*').to_string(),
             );
         }
 
@@ -71,5 +80,5 @@ pub async fn search(
 }
 
 pub fn routers() -> Scope {
-    web::scope("/cs/configs").service(search)
+    return web::scope("/cs/config").service(search);
 }

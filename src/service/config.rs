@@ -80,3 +80,7 @@ pub async fn find_config_info_like_4_page(
 
     page_result
 }
+
+fn check_cipher(data_id: String) -> bool {
+    data_id.starts_with("cipher-") && !data_id.eq("cipher-")
+}
