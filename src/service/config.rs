@@ -39,11 +39,11 @@ pub async fn find_config_info_like_4_page(
         config_info_select =
             config_info_select.filter(config_info::Column::AppName.contains(app_name));
     }
-    if let Some(conent) = config_advance_info.get("conent") {
+    if let Some(content) = config_advance_info.get("content") {
         config_info_count_select =
-            config_info_count_select.filter(config_info::Column::Content.contains(conent.clone()));
+            config_info_count_select.filter(config_info::Column::Content.contains(content.clone()));
         config_info_select =
-            config_info_select.filter(config_info::Column::Content.contains(conent));
+            config_info_select.filter(config_info::Column::Content.contains(content));
     }
 
     let total_count = config_info_count_select.count(db).await.unwrap();
@@ -73,8 +73,8 @@ pub async fn find_config_info_like_4_page(
 
     let page_result = Page::<ConfigInfo> {
         total_count: total_count,
-        page_number: 1,
-        pages_available: 1,
+        page_number: page_no,
+        pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
         page_items: page_items,
     };
 

@@ -23,8 +23,8 @@ impl<T> RestResult<T> {
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
     pub total_count: u64,
-    pub page_number: i32,
-    pub pages_available: i32,
+    pub page_number: u64,
+    pub pages_available: u64,
     pub page_items: Vec<T>,
 }
 
