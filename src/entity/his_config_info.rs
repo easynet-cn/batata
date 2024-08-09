@@ -22,7 +22,6 @@ pub struct Model {
     pub src_ip: Option<String>,
     pub op_type: Option<String>,
     pub tenant_id: Option<String>,
-    #[sea_orm(column_type = "Text")]
     pub encrypted_data_key: String,
 }
 

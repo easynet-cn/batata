@@ -26,7 +26,6 @@ pub struct Model {
     pub r#type: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub c_schema: Option<String>,
-    #[sea_orm(column_type = "Text")]
     pub encrypted_data_key: String,
 }
 

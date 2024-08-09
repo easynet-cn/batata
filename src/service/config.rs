@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
+use chrono::NaiveDateTime;
+use crypto::{digest::Digest, md5::Md5};
 use sea_orm::*;
 
 use crate::{
     common::model::{ConfigInfo, Page},
-    entity::config_info,
+    entity::{config_info, his_config_info, tenant_info},
 };
 
 pub async fn find_config_info_like_4_page(
@@ -83,4 +85,48 @@ pub async fn find_config_info_like_4_page(
 
 fn check_cipher(data_id: String) -> bool {
     data_id.starts_with("cipher-") && !data_id.eq("cipher-")
+}
+
+async fn insert_config_history_atomic(
+    db: &DatabaseConnection,
+    id: u64,
+    config_info: ConfigInfo,
+    src_ip: String,
+    src_user: String,
+    time: NaiveDateTime,
+    ops: String,
+) -> anyhow::Result<()> {
+    let content = md5_digest(config_info.content.as_str());
+
+    let his_config_info = his_config_info::ActiveModel {
+        id: Set(id),
+        data_id: Set(config_info.data_id),
+        group_id: Set(config_info.group),
+        app_name: Set(Some(config_info.app_name)),
+        content: Set(content),
+        md5: Set(Some(config_info.md5)),
+        gmt_create: Set(time),
+        gmt_modified: Set(time),
+        src_user: Set(Some(src_user)),
+        src_ip: Set(Some(src_ip)),
+        op_type: Set(Some(ops)),
+        tenant_id: Set(Some(config_info.tenant)),
+        encrypted_data_key: Set(config_info.encrypted_data_key),
+        ..Default::default()
+    };
+
+    his_config_info::Entity::insert(his_config_info)
+        .exec(db)
+        .await
+        .map_err(|e| anyhow::anyhow!("insert config history failed: {:?}", e));
+
+    Ok(())
+}
+
+fn md5_digest(content: &str) -> String {
+    let mut md5 = Md5::new();
+
+    md5.input_str(content);
+
+    md5.result_str()
 }
