@@ -10,7 +10,7 @@ edition = "2021"
 actix-macros = "0.2.4"
 actix-service = "2.0.2"
 actix-utils = "3.0.1"
-actix-web = {version = "4.8.0"}
+actix-web = {version = "4.9.0"}
 anyhow = "1.0.86"
 base64 = "0.22.1"
 bcrypt = "0.15.1"
@@ -25,11 +25,11 @@ pin-project-lite = "0.2.14"
 regex = "1.10.6"
 rust-crypto = "0.2.36"
 sea-orm = {version = "1.0.0", features = ["sqlx-mysql", "runtime-tokio"]}
-serde = "1.0.205"
+serde = "1.0.208"
 slog = "2.7.0"
 slog-term = "2.9.1"
 sqlx = {version = "0.7.4", features = ["runtime-tokio"]}
 thiserror = "1.0.63"
 time = "0.3.34"
-tokio = {version = "1.39.2", features = ["full"]}
+tokio = {version = "1.39.3", features = ["full"]}
 uuid = {version = "1.10.0", features = ["v4", "fast-rng", "macro-diagnostics"]}
