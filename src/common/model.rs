@@ -1,3 +1,4 @@
+use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 1800;
@@ -73,4 +74,23 @@ pub struct ConfigInfo {
     pub tenant: String,
     pub app_name: String,
     pub _type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigHistoryInfo {
+    pub id: i64,
+    pub last_id: i64,
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub app_name: String,
+    pub md5: String,
+    pub content: String,
+    pub src_ip: String,
+    pub src_user: String,
+    pub op_type: String,
+    pub created_time: NaiveDateTime,
+    pub last_modified_time: NaiveDateTime,
+    pub encrypted_data_key: String,
 }

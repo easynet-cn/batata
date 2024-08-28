@@ -18,41 +18,33 @@ pub async fn find_config_info_like_4_page(
     tenant: String,
     config_advance_info: HashMap<String, String>,
 ) -> Page<ConfigInfo> {
-    let mut config_info_count_select =
+    let mut count_select =
         config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant.clone()));
-    let mut config_info_select =
+    let mut query_select =
         config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant));
 
     if !data_id.is_empty() {
-        config_info_count_select =
-            config_info_count_select.filter(config_info::Column::DataId.contains(data_id.clone()));
-        config_info_select =
-            config_info_select.filter(config_info::Column::DataId.contains(data_id));
+        count_select = count_select.filter(config_info::Column::DataId.contains(data_id.clone()));
+        query_select = query_select.filter(config_info::Column::DataId.contains(data_id));
     }
     if !group.is_empty() {
-        config_info_count_select =
-            config_info_count_select.filter(config_info::Column::GroupId.contains(group.clone()));
-        config_info_select =
-            config_info_select.filter(config_info::Column::GroupId.contains(group));
+        count_select = count_select.filter(config_info::Column::GroupId.contains(group.clone()));
+        query_select = query_select.filter(config_info::Column::GroupId.contains(group));
     }
     if let Some(app_name) = config_advance_info.get("app_name") {
-        config_info_count_select = config_info_count_select
-            .filter(config_info::Column::AppName.contains(app_name.clone()));
-        config_info_select =
-            config_info_select.filter(config_info::Column::AppName.contains(app_name));
+        count_select = count_select.filter(config_info::Column::AppName.contains(app_name.clone()));
+        query_select = query_select.filter(config_info::Column::AppName.contains(app_name));
     }
     if let Some(content) = config_advance_info.get("content") {
-        config_info_count_select =
-            config_info_count_select.filter(config_info::Column::Content.contains(content.clone()));
-        config_info_select =
-            config_info_select.filter(config_info::Column::Content.contains(content));
+        count_select = count_select.filter(config_info::Column::Content.contains(content.clone()));
+        query_select = query_select.filter(config_info::Column::Content.contains(content));
     }
 
-    let total_count = config_info_count_select.count(db).await.unwrap();
+    let total_count = count_select.count(db).await.unwrap();
     let mut page_items = Vec::<ConfigInfo>::new();
 
     if total_count > 0 {
-        let config_infos = config_info_select
+        let config_infos = query_select
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
             .await

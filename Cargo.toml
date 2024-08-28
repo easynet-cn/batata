@@ -24,8 +24,8 @@ log = "0.4.21"
 pin-project-lite = "0.2.14"
 regex = "1.10.6"
 rust-crypto = "0.2.36"
-sea-orm = {version = "1.0.0", features = ["sqlx-mysql", "runtime-tokio"]}
-serde = "1.0.208"
+sea-orm = {version = "1.0.1", features = ["sqlx-mysql", "runtime-tokio"]}
+serde = "1.0.209"
 slog = "2.7.0"
 slog-term = "2.9.1"
 sqlx = {version = "0.7.4", features = ["runtime-tokio"]}

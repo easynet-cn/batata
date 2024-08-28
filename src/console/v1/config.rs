@@ -10,7 +10,7 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SearchConfigParams {
+struct ConfigSearchPageParam {
     search: Option<String>,
     data_id: Option<String>,
     group: Option<String>,
@@ -25,7 +25,7 @@ struct SearchConfigParams {
 #[get("")]
 pub async fn search(
     data: web::Data<AppState>,
-    params: web::Query<SearchConfigParams>,
+    params: web::Query<ConfigSearchPageParam>,
 ) -> impl Responder {
     if params.search.is_some() && params.search.as_ref().unwrap() == "blur" {
         let mut config_advance_info = HashMap::<String, String>::new();
