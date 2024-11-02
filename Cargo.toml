@@ -11,7 +11,7 @@ actix-macros = "0.2.4"
 actix-service = "2.0.2"
 actix-utils = "3.0.1"
 actix-web = {version = "4.9.0"}
-anyhow = "1.0.91"
+anyhow = "1.0.92"
 base64 = "0.22.1"
 bcrypt = "0.15.1"
 bytes = "1.8.0"
@@ -22,14 +22,14 @@ futures-core = "0.3.30"
 jsonwebtoken = "9.3.0"
 log = "0.4.21"
 pin-project-lite = "0.2.14"
-regex = "1.11.0"
+regex = "1.11.1"
 rust-crypto = "0.2.36"
 sea-orm = {version = "1.0.1", features = ["sqlx-mysql", "runtime-tokio"]}
-serde = "1.0.213"
+serde = "1.0.214"
 slog = "2.7.0"
 slog-term = "2.9.1"
 sqlx = {version = "0.7.4", features = ["runtime-tokio"]}
-thiserror = "1.0.65"
+thiserror = "1.0.66"
 time = "0.3.34"
 tokio = {version = "1.41.0", features = ["full"]}
 uuid = {version = "1.10.0", features = ["v4", "fast-rng", "macro-diagnostics"]}
