@@ -44,6 +44,14 @@ pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Optio
         ),
     );
     state_map.insert(
+        "config_retention_days".to_string(),
+        Some(
+            data.app_config
+                .get_string("nacos.config.retention.days")
+                .unwrap_or("30".to_string()),
+        ),
+    );
+    state_map.insert(
         "plugin_datasource_log_enabled".to_string(),
         Some(
             data.app_config

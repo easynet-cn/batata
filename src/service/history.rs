@@ -3,7 +3,7 @@ use serde::Deserialize;
 use sea_orm::*;
 
 use crate::{
-    common::model::{ConfigHistoryInfo, Page},
+    common::model::{ConfigHistoryInfo, ConfigInfoWrapper, Page},
     entity::{config_info, his_config_info, tenant_info},
 };
 
@@ -75,4 +75,31 @@ pub async fn search_page(
     };
 
     Ok(page_result)
+}
+
+pub async fn get_config_list_by_namespace(
+    db: &DatabaseConnection,
+    namespace_id: String,
+) -> anyhow::Result<Vec<ConfigInfoWrapper>> {
+    let config_infos = config_info::Entity::find()
+        .filter(config_info::Column::TenantId.eq(namespace_id))
+        .all(db)
+        .await
+        .unwrap()
+        .iter()
+        .map(|config_info| ConfigInfoWrapper {
+            id: 0,
+            data_id: config_info.data_id.clone(),
+            group: config_info.group_id.clone().unwrap_or_default(),
+            content: String::from(""),
+            md5: String::from(""),
+            encrypted_data_key: String::from(""),
+            tenant: config_info.tenant_id.clone().unwrap_or_default(),
+            app_name: config_info.app_name.clone().unwrap_or_default(),
+            _type: config_info.r#type.clone().unwrap_or_default(),
+            last_modified: config_info.gmt_modified.and_utc().timestamp(),
+        })
+        .collect();
+
+    Ok(config_infos)
 }

@@ -78,6 +78,21 @@ pub struct ConfigInfo {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConfigInfoWrapper {
+    pub id: i64,
+    pub data_id: String,
+    pub group: String,
+    pub content: String,
+    pub md5: String,
+    pub encrypted_data_key: String,
+    pub tenant: String,
+    pub app_name: String,
+    pub _type: String,
+    pub last_modified: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryInfo {
     pub id: i64,
     pub last_id: i64,
