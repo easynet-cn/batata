@@ -24,11 +24,11 @@ log = "0.4.21"
 pin-project-lite = "0.2.14"
 regex = "1.11.1"
 rust-crypto = "0.2.36"
-sea-orm = {version = "1.0.1", features = ["sqlx-mysql", "runtime-tokio"]}
+sea-orm = {version = "1.1.1", features = ["sqlx-mysql", "runtime-tokio"]}
 serde = "1.0.214"
 slog = "2.7.0"
 slog-term = "2.9.1"
-sqlx = {version = "0.7.4", features = ["runtime-tokio"]}
+sqlx = {version = "0.8.2", features = ["runtime-tokio"]}
 thiserror = "1.0.67"
 time = "0.3.34"
 tokio = {version = "1.41.0", features = ["full"]}
