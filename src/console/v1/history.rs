@@ -6,8 +6,35 @@ use crate::service;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SearchParams {
+    search: Option<String>,
+    data_id: Option<String>,
+    group: Option<String>,
+    tenant: Option<String>,
+    app_name: Option<String>,
+    page_no: Option<u64>,
+    page_size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GetDataIdsParams {
     tenant: String,
+}
+
+#[get("")]
+pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParams>) -> impl Responder {
+    let result = service::history::search_page(
+        data.conns.get(0).unwrap(),
+        params.data_id.clone().unwrap_or_default().as_str(),
+        params.group.clone().unwrap_or_default().as_str(),
+        params.tenant.clone().unwrap_or_default().as_str(),
+        params.page_no.unwrap_or(1),
+        params.page_size.unwrap_or(100),
+    )
+    .await;
+
+    return HttpResponse::Ok().json(result.ok().unwrap());
 }
 
 #[get("configs")]
@@ -15,14 +42,15 @@ pub async fn get_data_ids(
     data: web::Data<AppState>,
     params: web::Query<GetDataIdsParams>,
 ) -> impl Responder {
-    let tenant = params.tenant.clone();
-
     let config_infos =
-        service::history::get_config_list_by_namespace(data.conns.get(0).unwrap(), tenant).await;
+        service::history::get_config_list_by_namespace(data.conns.get(0).unwrap(), &params.tenant)
+            .await;
 
     return HttpResponse::Ok().json(config_infos.ok().unwrap());
 }
 
 pub fn routers() -> Scope {
-    web::scope("/cs/history").service(get_data_ids)
+    web::scope("/cs/history")
+        .service(get_data_ids)
+        .service(search)
 }

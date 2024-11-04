@@ -1,40 +1,24 @@
-use serde::Deserialize;
-
 use sea_orm::*;
 
 use crate::{
     common::model::{ConfigHistoryInfo, ConfigInfoWrapper, Page},
-    entity::{config_info, his_config_info, tenant_info},
+    entity::{config_info, his_config_info},
 };
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ConfigHistorySearchPageParam {
-    search: Option<String>,
-    data_id: Option<String>,
-    group: Option<String>,
-    tenant: Option<String>,
-    app_name: Option<String>,
-    #[serde(rename = "config_tags")]
-    config_tags: Option<String>,
-    page_no: u64,
-    page_size: u64,
-}
 
 pub async fn search_page(
     db: &DatabaseConnection,
-    data_id: String,
-    group: String,
-    tenant: String,
+    data_id: &str,
+    group: &str,
+    tenant: &str,
     page_no: u64,
     page_size: u64,
 ) -> anyhow::Result<Page<ConfigHistoryInfo>> {
     let count_select = his_config_info::Entity::find()
-        .filter(his_config_info::Column::TenantId.eq(tenant.clone()))
-        .filter(his_config_info::Column::DataId.contains(data_id.clone()))
-        .filter(his_config_info::Column::GroupId.contains(group.clone()));
+        .filter(his_config_info::Column::TenantId.eq(tenant))
+        .filter(his_config_info::Column::DataId.contains(data_id))
+        .filter(his_config_info::Column::GroupId.contains(group));
     let query_select = his_config_info::Entity::find()
-        .filter(his_config_info::Column::TenantId.eq(tenant.clone()))
+        .filter(his_config_info::Column::TenantId.eq(tenant))
         .filter(his_config_info::Column::DataId.contains(data_id))
         .filter(his_config_info::Column::GroupId.contains(group));
 
@@ -79,7 +63,7 @@ pub async fn search_page(
 
 pub async fn get_config_list_by_namespace(
     db: &DatabaseConnection,
-    namespace_id: String,
+    namespace_id: &str,
 ) -> anyhow::Result<Vec<ConfigInfoWrapper>> {
     let config_infos = config_info::Entity::find()
         .filter(config_info::Column::TenantId.eq(namespace_id))
