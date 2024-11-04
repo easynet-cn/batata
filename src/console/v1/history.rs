@@ -12,6 +12,7 @@ struct SearchParams {
     group: Option<String>,
     tenant: Option<String>,
     app_name: Option<String>,
+    nid: Option<u64>,
     page_no: Option<u64>,
     page_size: Option<u64>,
 }
@@ -24,17 +25,24 @@ struct GetDataIdsParams {
 
 #[get("")]
 pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParams>) -> impl Responder {
-    let result = service::history::search_page(
-        data.conns.get(0).unwrap(),
-        params.data_id.clone().unwrap_or_default().as_str(),
-        params.group.clone().unwrap_or_default().as_str(),
-        params.tenant.clone().unwrap_or_default().as_str(),
-        params.page_no.unwrap_or(1),
-        params.page_size.unwrap_or(100),
-    )
-    .await;
+    if params.search.is_some() && params.search.as_ref().unwrap() == "accurate" {
+        let result = service::history::search_page(
+            data.conns.get(0).unwrap(),
+            params.data_id.clone().unwrap_or_default().as_str(),
+            params.group.clone().unwrap_or_default().as_str(),
+            params.tenant.clone().unwrap_or_default().as_str(),
+            params.page_no.unwrap_or(1),
+            params.page_size.unwrap_or(100),
+        )
+        .await;
 
-    return HttpResponse::Ok().json(result.ok().unwrap());
+        return HttpResponse::Ok().json(result.ok().unwrap());
+    } else {
+        let result =
+            service::history::get_by_id(data.conns.get(0).unwrap(), params.nid.unwrap()).await;
+
+        return HttpResponse::Ok().json(result.ok().unwrap());
+    }
 }
 
 #[get("configs")]

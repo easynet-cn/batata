@@ -33,7 +33,7 @@ pub async fn search_page(
 
         for his_config_info in his_config_infos {
             page_items.push(ConfigHistoryInfo {
-                id: his_config_info.nid.clone() as i64,
+                id: his_config_info.nid.clone(),
                 last_id: -1,
                 data_id: his_config_info.data_id.clone(),
                 group: his_config_info.group_id.clone(),
@@ -61,11 +61,62 @@ pub async fn search_page(
     Ok(page_result)
 }
 
+pub async fn get_by_id(db: &DatabaseConnection, id: u64) -> anyhow::Result<ConfigHistoryInfo> {
+    let config_history_info = his_config_info::Entity::find_by_id(id)
+        .select_only()
+        .columns([
+            his_config_info::Column::Id,
+            his_config_info::Column::Nid,
+            his_config_info::Column::DataId,
+            his_config_info::Column::GroupId,
+            his_config_info::Column::TenantId,
+            his_config_info::Column::AppName,
+            his_config_info::Column::Content,
+            his_config_info::Column::Md5,
+            his_config_info::Column::SrcUser,
+            his_config_info::Column::SrcIp,
+            his_config_info::Column::OpType,
+            his_config_info::Column::GmtCreate,
+            his_config_info::Column::GmtModified,
+            his_config_info::Column::EncryptedDataKey,
+        ])
+        .one(db)
+        .await
+        .unwrap()
+        .map(|entity| ConfigHistoryInfo {
+            id: entity.id.clone(),
+            last_id: -1,
+            data_id: entity.data_id,
+            group: entity.group_id,
+            tenant: entity.tenant_id.unwrap_or_default(),
+            app_name: entity.app_name.unwrap_or_default(),
+            md5: entity.md5.unwrap_or_default(),
+            content: entity.content,
+            src_ip: entity.src_ip.unwrap_or_default(),
+            src_user: entity.src_user.unwrap_or_default(),
+            op_type: entity.op_type.unwrap_or_default(),
+            created_time: entity.gmt_create,
+            last_modified_time: entity.gmt_modified,
+            encrypted_data_key: entity.encrypted_data_key,
+        });
+
+    Ok(config_history_info.unwrap())
+}
 pub async fn get_config_list_by_namespace(
     db: &DatabaseConnection,
     namespace_id: &str,
 ) -> anyhow::Result<Vec<ConfigInfoWrapper>> {
     let config_infos = config_info::Entity::find()
+        .select_only()
+        .columns([
+            config_info::Column::Id,
+            config_info::Column::DataId,
+            config_info::Column::GroupId,
+            config_info::Column::TenantId,
+            config_info::Column::AppName,
+            config_info::Column::Type,
+            config_info::Column::GmtModified,
+        ])
         .filter(config_info::Column::TenantId.eq(namespace_id))
         .all(db)
         .await
@@ -81,7 +132,7 @@ pub async fn get_config_list_by_namespace(
             tenant: config_info.tenant_id.clone().unwrap_or_default(),
             app_name: config_info.app_name.clone().unwrap_or_default(),
             _type: config_info.r#type.clone().unwrap_or_default(),
-            last_modified: config_info.gmt_modified.and_utc().timestamp(),
+            last_modified: config_info.gmt_modified.unwrap().and_utc().timestamp(),
         })
         .collect();
 

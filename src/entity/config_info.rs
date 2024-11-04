@@ -11,10 +11,10 @@ pub struct Model {
     pub data_id: String,
     pub group_id: Option<String>,
     #[sea_orm(column_type = "custom(\"LONGTEXT\")")]
-    pub content: String,
+    pub content: Option<String>,
     pub md5: Option<String>,
-    pub gmt_create: DateTime,
-    pub gmt_modified: DateTime,
+    pub gmt_create: Option<DateTime>,
+    pub gmt_modified: Option<DateTime>,
     #[sea_orm(column_type = "Text", nullable)]
     pub src_user: Option<String>,
     pub src_ip: Option<String>,
@@ -26,7 +26,7 @@ pub struct Model {
     pub r#type: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub c_schema: Option<String>,
-    pub encrypted_data_key: String,
+    pub encrypted_data_key: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

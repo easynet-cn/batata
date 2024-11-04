@@ -94,7 +94,7 @@ pub struct ConfigInfoWrapper {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryInfo {
-    pub id: i64,
+    pub id: u64,
     pub last_id: i64,
     pub data_id: String,
     pub group: String,
