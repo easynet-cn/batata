@@ -2,6 +2,7 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 1800;
+pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RestResult<T> {
@@ -132,4 +133,11 @@ impl Default for Namespace {
             type_: 0,
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleInfo {
+    pub role: String,
+    pub username: String,
 }

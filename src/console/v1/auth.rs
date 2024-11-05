@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::model::AppState;
 use crate::common::model::{NacosUser, DEFAULT_TOKEN_EXPIRE_SECONDS};
 use crate::service::auth::encode_jwt_token;
+use crate::{common, service};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,10 +60,18 @@ pub async fn users_login(
         )
         .unwrap();
 
+        let global_admin =
+            service::role::find_by_username(data.conns.get(0).unwrap(), &user.username)
+                .await
+                .ok()
+                .unwrap()
+                .iter()
+                .any(|role| role.role == common::model::GLOBAL_ADMIN_ROLE);
+
         let login_result = LoginResult {
             access_token: access_token.clone(),
             token_ttl: token_expire_seconds,
-            global_admin: false,
+            global_admin: global_admin,
             username: user.username,
         };
 

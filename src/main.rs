@@ -38,7 +38,7 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or(30) as u64;
     let acquire_timeout = app_config
         .get_int("db.pool.config.initializationFailTimeout")
-        .unwrap_or(1) as u64;
+        .unwrap_or(8) as u64;
     let idle_timeout = app_config
         .get_int("db.pool.config.idleTimeout")
         .unwrap_or(10) as u64;
