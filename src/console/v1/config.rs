@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use actix_web::{delete, get, post, put, web, HttpResponse, Responder, Scope};
+use actix_web::{get, web, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
 use crate::{

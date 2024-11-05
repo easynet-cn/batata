@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sea_orm::*;
 
-use crate::core::model::Namespace;
+use crate::common::model::Namespace;
 use crate::entity::{config_info, tenant_info};
 
 #[derive(Debug, FromQueryResult)]
@@ -12,8 +12,6 @@ struct SelectResult {
 }
 
 const DEFAULT_NAMESPACE: &'static str = "public";
-const DEFAULT_NAMESPACE_SHOW_NAME: &'static str = "Public";
-const DEFAULT_NAMESPACE_DESCRIPTION: &'static str = "Public Namespace";
 const DEFAULT_NAMESPACE_QUOTA: i32 = 200;
 const DEFAULT_CREATE_SOURCE: &'static str = "nacos";
 const DEFAULT_KP: &'static str = "1";

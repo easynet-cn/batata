@@ -11,7 +11,6 @@ use crate::middleware::logger::Logger;
 pub mod api;
 pub mod common;
 pub mod console;
-pub mod core;
 pub mod entity;
 pub mod middleware;
 pub mod service;

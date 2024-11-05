@@ -6,7 +6,7 @@ use sea_orm::*;
 
 use crate::{
     common::model::{ConfigInfo, Page},
-    entity::{config_info, his_config_info, tenant_info},
+    entity::{config_info, his_config_info},
 };
 
 pub async fn find_config_info_like_4_page(

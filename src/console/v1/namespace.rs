@@ -2,8 +2,7 @@ use actix_web::{delete, get, post, put, web, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
 use crate::api::model::AppState;
-use crate::common::model::RestResult;
-use crate::core::model::Namespace;
+use crate::common::model::{Namespace, RestResult};
 use crate::service;
 
 #[derive(Debug, Deserialize)]
