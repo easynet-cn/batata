@@ -6,20 +6,22 @@ use serde::Deserialize;
 use crate::{
     api::model::AppState,
     common::model::{ConfigInfo, Page},
+    service,
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfigSearchPageParam {
     search: Option<String>,
+    show: Option<String>,
     data_id: Option<String>,
     group: Option<String>,
     app_name: Option<String>,
     #[serde(rename = "config_tags")]
     config_tags: Option<String>,
     tenant: Option<String>,
-    page_no: u64,
-    page_size: u64,
+    page_no: Option<u64>,
+    page_size: Option<u64>,
 }
 
 #[get("")]
@@ -48,8 +50,8 @@ pub async fn search(
 
         let page_result = crate::service::config::find_config_info_like_4_page(
             &data.database_connection,
-            params.page_no,
-            params.page_size,
+            params.page_no.unwrap_or_default(),
+            params.page_size.unwrap_or_default(),
             params.data_id.clone().unwrap_or("".to_string()),
             params.group.clone().unwrap_or("".to_string()),
             params.tenant.clone().unwrap_or("".to_string()),
@@ -58,6 +60,17 @@ pub async fn search(
         .await;
 
         return HttpResponse::Ok().json(page_result);
+    } else if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
+        let config_all_info = service::config::find_config_all_info(
+            &data.database_connection,
+            params.data_id.clone().unwrap_or_default().as_str(),
+            params.group.clone().unwrap_or_default().as_str(),
+            params.tenant.clone().unwrap_or_default().as_str(),
+        )
+        .await
+        .ok();
+
+        return HttpResponse::Ok().json(config_all_info);
     }
 
     let page_result = Page::<ConfigInfo> {

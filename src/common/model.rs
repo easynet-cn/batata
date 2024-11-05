@@ -94,6 +94,29 @@ pub struct ConfigInfoWrapper {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ConfigAllInfo {
+    pub id: i64,
+    pub data_id: String,
+    pub group: String,
+    pub content: String,
+    pub md5: String,
+    pub encrypted_data_key: String,
+    pub tenant: String,
+    pub app_name: String,
+    pub _type: String,
+    pub create_time: i64,
+    pub modify_time: i64,
+    pub create_user: String,
+    pub create_ip: String,
+    pub desc: String,
+    pub r#use: String,
+    pub effect: String,
+    pub schema: String,
+    pub config_tags: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryInfo {
     pub id: u64,
     pub last_id: i64,
