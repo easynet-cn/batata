@@ -27,7 +27,7 @@ pub async fn users_login(
     form: web::Form<LoginFormData>,
 ) -> impl Responder {
     let user_option =
-        crate::service::user::find_by_username(data.conns.get(0).unwrap(), &form.username).await;
+        crate::service::user::find_by_username(&data.database_connection, &form.username).await;
 
     if user_option.is_none() {
         return HttpResponse::Forbidden().json("user not found!");
@@ -61,7 +61,7 @@ pub async fn users_login(
         .unwrap();
 
         let global_admin =
-            service::role::find_by_username(data.conns.get(0).unwrap(), &user.username)
+            service::role::find_by_username(&data.database_connection, &user.username)
                 .await
                 .ok()
                 .unwrap()

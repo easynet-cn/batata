@@ -4,5 +4,5 @@ use sea_orm::DatabaseConnection;
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub app_config: Config,
-    pub conns: Vec<DatabaseConnection>,
+    pub database_connection: DatabaseConnection,
 }

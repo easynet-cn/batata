@@ -44,7 +44,7 @@ pub async fn get_namespaces(
 ) -> impl Responder {
     if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
         let namespace = service::namespace::get_by_namespace_id(
-            data.conns.get(0).unwrap(),
+            &data.database_connection,
             params.namespace_id.as_ref().unwrap().to_string(),
         )
         .await;
@@ -54,7 +54,7 @@ pub async fn get_namespaces(
 
     if params.check_namespace_id_exist.is_some() && params.check_namespace_id_exist.unwrap() {
         let count = service::namespace::get_count_by_tenant_id(
-            data.conns.get(0).unwrap(),
+            &data.database_connection,
             params.namespace_id.as_ref().unwrap().to_string(),
         )
         .await;
@@ -62,7 +62,7 @@ pub async fn get_namespaces(
         return HttpResponse::Ok().json(count > 0);
     }
 
-    let namespaces: Vec<Namespace> = service::namespace::find_all(data.conns.get(0).unwrap()).await;
+    let namespaces: Vec<Namespace> = service::namespace::find_all(&data.database_connection).await;
     let rest_result = RestResult::<Vec<Namespace>>::success(namespaces);
 
     return HttpResponse::Ok().json(rest_result);
@@ -95,7 +95,7 @@ pub async fn create_namespace(
         }
 
         if service::namespace::get_count_by_tenant_id(
-            data.conns.get(0).unwrap(),
+            &data.database_connection,
             namespace_id.clone(),
         )
         .await
@@ -122,7 +122,7 @@ pub async fn create_namespace(
     }
 
     let res = service::namespace::create(
-        data.conns.get(0).unwrap(),
+        &data.database_connection,
         namespace_id,
         form.namespace_name.clone(),
         namespace_desc,
@@ -152,7 +152,7 @@ pub async fn update_namespace(
     }
 
     let res = service::namespace::update(
-        data.conns.get(0).unwrap(),
+        &data.database_connection,
         form.namespace.clone(),
         form.namespace_show_name.clone(),
         namespace_desc,
@@ -168,7 +168,7 @@ pub async fn delete_namespace(
     form: web::Query<DeleteNamespaceParams>,
 ) -> impl Responder {
     let res =
-        service::namespace::delete(data.conns.get(0).unwrap(), form.namespace_id.clone()).await;
+        service::namespace::delete(&data.database_connection, form.namespace_id.clone()).await;
 
     return HttpResponse::Ok().json(res);
 }

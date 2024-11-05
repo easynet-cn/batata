@@ -27,7 +27,7 @@ struct GetDataIdsParams {
 pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParams>) -> impl Responder {
     if params.search.is_some() && params.search.as_ref().unwrap() == "accurate" {
         let result = service::history::search_page(
-            data.conns.get(0).unwrap(),
+            &data.database_connection,
             params.data_id.clone().unwrap_or_default().as_str(),
             params.group.clone().unwrap_or_default().as_str(),
             params.tenant.clone().unwrap_or_default().as_str(),
@@ -39,7 +39,7 @@ pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParams>)
         return HttpResponse::Ok().json(result.ok().unwrap());
     } else {
         let result =
-            service::history::get_by_id(data.conns.get(0).unwrap(), params.nid.unwrap()).await;
+            service::history::get_by_id(&data.database_connection, params.nid.unwrap()).await;
 
         return HttpResponse::Ok().json(result.ok().unwrap());
     }
@@ -51,7 +51,7 @@ pub async fn get_data_ids(
     params: web::Query<GetDataIdsParams>,
 ) -> impl Responder {
     let config_infos =
-        service::history::get_config_list_by_namespace(data.conns.get(0).unwrap(), &params.tenant)
+        service::history::get_config_list_by_namespace(&data.database_connection, &params.tenant)
             .await;
 
     return HttpResponse::Ok().json(config_infos.ok().unwrap());

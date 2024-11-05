@@ -47,7 +47,7 @@ pub async fn search(
         }
 
         let page_result = crate::service::config::find_config_info_like_4_page(
-            data.conns.get(0).unwrap(),
+            &data.database_connection,
             params.page_no,
             params.page_size,
             params.data_id.clone().unwrap_or("".to_string()),

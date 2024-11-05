@@ -24,9 +24,6 @@ async fn main() -> std::io::Result<()> {
         .build()
         .unwrap();
 
-    let db_num = app_config.get_int("db.num").unwrap();
-    let mut conns: Vec<DatabaseConnection> = Vec::new();
-
     let max_connections = app_config
         .get_int("db.pool.config.maximumPoolSize")
         .unwrap_or(100) as u32;
@@ -46,27 +43,20 @@ async fn main() -> std::io::Result<()> {
         .get_int("db.pool.config.maxLifetime")
         .unwrap_or(30) as u64;
 
-    for i in 0..db_num {
-        let url = &app_config
-            .get_string(format!("db.url.{}", i).as_str())
-            .unwrap();
+    let url = app_config.get_string("db.url").unwrap();
 
-        let mut opt = ConnectOptions::new(url);
+    let mut opt = ConnectOptions::new(url);
 
-        opt.max_connections(max_connections)
-            .min_connections(min_connections)
-            .connect_timeout(Duration::from_secs(connect_timeout))
-            .acquire_timeout(Duration::from_secs(acquire_timeout))
-            .idle_timeout(Duration::from_secs(idle_timeout))
-            .max_lifetime(Duration::from_secs(max_lifetime))
-            .sqlx_logging(true)
-            .sqlx_logging_level(log::LevelFilter::Info);
+    opt.max_connections(max_connections)
+        .min_connections(min_connections)
+        .connect_timeout(Duration::from_secs(connect_timeout))
+        .acquire_timeout(Duration::from_secs(acquire_timeout))
+        .idle_timeout(Duration::from_secs(idle_timeout))
+        .max_lifetime(Duration::from_secs(max_lifetime))
+        .sqlx_logging(true)
+        .sqlx_logging_level(log::LevelFilter::Info);
 
-        let db = Database::connect(opt).await.unwrap();
-
-        conns.push(db);
-    }
-
+    let database_connection: DatabaseConnection = Database::connect(opt).await.unwrap();
     let address = app_config
         .get_string("server.address")
         .unwrap_or("0.0.0.0".to_string());
@@ -76,7 +66,10 @@ async fn main() -> std::io::Result<()> {
         .unwrap_or("nacos".to_string())
         .clone();
 
-    let app_state = api::model::AppState { app_config, conns };
+    let app_state = api::model::AppState {
+        app_config,
+        database_connection,
+    };
 
     HttpServer::new(move || {
         App::new()
