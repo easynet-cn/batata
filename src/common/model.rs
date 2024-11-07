@@ -148,9 +148,9 @@ pub struct Namespace {
 impl Default for Namespace {
     fn default() -> Self {
         Namespace {
-            namespace: "".to_string(),
-            namespace_show_name: "Public".to_string(),
-            namespace_desc: "Public Namespace".to_string(),
+            namespace: String::from(""),
+            namespace_show_name: String::from("public"),
+            namespace_desc: String::from("Public Namespace"),
             quota: 200,
             config_count: 0,
             type_: 0,

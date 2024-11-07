@@ -4,6 +4,7 @@ use actix_web::{web, App, HttpServer};
 use config::Config;
 use env_logger::Env;
 use log;
+use middleware::auth::Authentication;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
 use crate::middleware::logger::Logger;
@@ -63,17 +64,23 @@ async fn main() -> std::io::Result<()> {
     let server_port = app_config.get_int("server.port").unwrap_or(8848) as u16;
     let context_path = app_config
         .get_string("server.servlet.contextPath")
-        .unwrap_or("nacos".to_string())
-        .clone();
+        .unwrap_or("/nacos".to_string());
+
+    let token_secret_key = app_config
+        .get_string("nacos.core.auth.plugin.nacos.token.secret.key")
+        .unwrap();
 
     let app_state = api::model::AppState {
         app_config,
         database_connection,
+        context_path: context_path.clone(),
+        token_secret_key: token_secret_key.clone(),
     };
 
     HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
+            .wrap(Authentication)
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)

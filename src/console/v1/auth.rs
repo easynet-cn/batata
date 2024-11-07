@@ -33,11 +33,7 @@ pub async fn users_login(
         return HttpResponse::Forbidden().json("user not found!");
     }
 
-    let secret_key_string = data
-        .app_config
-        .get_string("nacos.core.auth.plugin.nacos.token.secret.key")
-        .unwrap();
-    let secret_key = secret_key_string.as_str();
+    let token_secret_key = data.token_secret_key.as_str();
 
     let user = user_option.unwrap();
     let bcrypt_result = bcrypt::verify(&form.password, &user.password).unwrap();
@@ -55,7 +51,7 @@ pub async fn users_login(
                 token: "".to_string(),
                 global_admin: false,
             },
-            secret_key,
+            token_secret_key,
             token_expire_seconds,
         )
         .unwrap();
