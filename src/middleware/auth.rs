@@ -9,10 +9,8 @@ use actix_web::HttpMessage;
 use actix_web::HttpResponse;
 use chrono::Utc;
 use futures_core::future::LocalBoxFuture;
-use jsonwebtoken::{DecodingKey, TokenData, Validation};
 
-use crate::api;
-use crate::common::model::NacosJwtPayload;
+use crate::{api, service};
 
 const IGNORE_ROUTES: [&str; 4] = [
     "/v1/auth/users/login",
@@ -83,12 +81,12 @@ where
                         .token_secret_key
                         .clone();
 
-                    let decode_result = decode_token(token.to_string(), secret_key);
+                    let decode_result = service::auth::decode_jwt_token(token, &secret_key);
 
                     match decode_result {
                         Ok(token_data) => {
                             authenticate_pass = true;
-                            req.extensions_mut().insert(token_data);
+                            req.extensions_mut().insert(token_data.claims);
                         }
                         Err(err) => {
                             let err_msg = match err.kind() {
@@ -134,15 +132,4 @@ where
 
         Box::pin(async move { res.await.map(ServiceResponse::map_into_left_body) })
     }
-}
-
-fn decode_token(
-    token: String,
-    secret_key: String,
-) -> jsonwebtoken::errors::Result<TokenData<NacosJwtPayload>> {
-    jsonwebtoken::decode::<NacosJwtPayload>(
-        &token,
-        &DecodingKey::from_base64_secret(&secret_key).unwrap(),
-        &Validation::default(),
-    )
 }

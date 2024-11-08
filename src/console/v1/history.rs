@@ -6,7 +6,7 @@ use crate::service;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SearchParams {
+struct SearchParam {
     search: Option<String>,
     data_id: Option<String>,
     group: Option<String>,
@@ -19,12 +19,12 @@ struct SearchParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GetDataIdsParams {
+struct GetDataIdsParam {
     tenant: String,
 }
 
 #[get("")]
-pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParams>) -> impl Responder {
+pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
     if params.search.is_some() && params.search.as_ref().unwrap() == "accurate" {
         let result = service::history::search_page(
             &data.database_connection,
@@ -48,7 +48,7 @@ pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParams>)
 #[get("configs")]
 pub async fn get_data_ids(
     data: web::Data<AppState>,
-    params: web::Query<GetDataIdsParams>,
+    params: web::Query<GetDataIdsParam>,
 ) -> impl Responder {
     let config_infos =
         service::history::get_config_list_by_namespace(&data.database_connection, &params.tenant)

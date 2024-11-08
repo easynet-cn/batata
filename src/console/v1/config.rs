@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
-use actix_web::{get, web, HttpResponse, Responder, Scope};
+use actix_web::{get, web, HttpRequest, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
+use chrono::Utc;
+
 use crate::{
-    api::model::AppState,
+    api::model::{AppState, ErrorResult},
     common::model::{ConfigInfo, Page},
     service,
 };
@@ -26,6 +28,7 @@ struct ConfigSearchPageParam {
 
 #[get("")]
 pub async fn search(
+    req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<ConfigSearchPageParam>,
 ) -> impl Responder {
@@ -48,7 +51,7 @@ pub async fn search(
             );
         }
 
-        let page_result = crate::service::config::find_config_info_like_4_page(
+        let result = crate::service::config::find_config_info_like_4_page(
             &data.database_connection,
             params.page_no.unwrap_or_default(),
             params.page_size.unwrap_or_default(),
@@ -59,7 +62,16 @@ pub async fn search(
         )
         .await;
 
-        return HttpResponse::Ok().json(page_result);
+        return match result {
+            Ok(page_result) => HttpResponse::Ok().json(page_result),
+            Err(err) => HttpResponse::InternalServerError().json(ErrorResult {
+                timestamp: Utc::now().to_rfc3339(),
+                status: 403,
+                message: err.to_string(),
+                error: String::from("Forbiden"),
+                path: req.path().to_string(),
+            }),
+        };
     } else if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
         let config_all_info = service::config::find_config_all_info(
             &data.database_connection,

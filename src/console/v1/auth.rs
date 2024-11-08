@@ -1,8 +1,8 @@
-use actix_web::{post, web, HttpResponse, Responder, Scope};
+use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder, Scope};
 use serde::{Deserialize, Serialize};
 
 use crate::api::model::AppState;
-use crate::common::model::{NacosUser, DEFAULT_TOKEN_EXPIRE_SECONDS};
+use crate::common::model::{NacosUser, Page, User, DEFAULT_TOKEN_EXPIRE_SECONDS};
 use crate::service::auth::encode_jwt_token;
 use crate::{common, service};
 
@@ -19,6 +19,14 @@ struct LoginResult {
 struct LoginFormData {
     username: String,
     password: String,
+}
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchParam {
+    search: Option<String>,
+    username: Option<String>,
+    page_no: u64,
+    page_size: u64,
 }
 
 #[post("/users/login")]
@@ -79,6 +87,36 @@ pub async fn users_login(
     return HttpResponse::Forbidden().json("user not found!");
 }
 
+#[get("/users")]
+pub async fn search(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<SearchParam>,
+) -> impl Responder {
+    let search = params.search.clone().unwrap();
+    let accurate = search == "accurate";
+    let mut username = params.username.clone().unwrap_or_default();
+
+    if username.starts_with("*") {
+        username = username.strip_prefix("*").unwrap().to_string();
+    }
+    if username.ends_with("*") {
+        username = username.strip_suffix("*").unwrap().to_string();
+    }
+
+    let result = service::user::search_page(
+        &data.database_connection,
+        &username,
+        params.page_no,
+        params.page_size,
+        accurate,
+    )
+    .await
+    .unwrap();
+
+    return HttpResponse::Ok().json(result);
+}
+
 pub fn routers() -> Scope {
-    return web::scope("/auth").service(users_login);
+    return web::scope("/auth").service(users_login).service(search);
 }

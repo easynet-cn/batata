@@ -17,7 +17,7 @@ pub async fn find_config_info_like_4_page(
     group: String,
     tenant: String,
     config_advance_info: HashMap<String, String>,
-) -> Page<ConfigInfo> {
+) -> anyhow::Result<Page<ConfigInfo>> {
     let mut count_select =
         config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant.clone()));
     let mut query_select =
@@ -40,18 +40,16 @@ pub async fn find_config_info_like_4_page(
         query_select = query_select.filter(config_info::Column::Content.contains(content));
     }
 
-    let total_count = count_select.count(db).await.unwrap();
-    let mut page_items = Vec::<ConfigInfo>::new();
+    let total_count = count_select.count(db).await?;
 
     if total_count > 0 {
-        let config_infos = query_select
+        let query_result = query_select
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
-            .await
-            .unwrap();
-
-        for config_info in config_infos {
-            page_items.push(ConfigInfo {
+            .await?;
+        let page_items = query_result
+            .iter()
+            .map(|config_info| ConfigInfo {
                 id: config_info.id.clone(),
                 data_id: config_info.data_id.clone(),
                 group: config_info.group_id.clone().unwrap_or_default(),
@@ -61,18 +59,27 @@ pub async fn find_config_info_like_4_page(
                 tenant: config_info.tenant_id.clone().unwrap_or_default(),
                 app_name: config_info.app_name.clone().unwrap_or_default(),
                 _type: config_info.r#type.clone().unwrap_or_default(),
-            });
-        }
+            })
+            .collect();
+
+        let page_result = Page::<ConfigInfo> {
+            total_count: total_count,
+            page_number: page_no,
+            pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
+            page_items: page_items,
+        };
+
+        return anyhow::Ok(page_result);
     }
 
     let page_result = Page::<ConfigInfo> {
         total_count: total_count,
         page_number: page_no,
         pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
-        page_items: page_items,
+        page_items: Vec::<ConfigInfo>::with_capacity(0),
     };
 
-    page_result
+    return anyhow::Ok(page_result);
 }
 
 pub async fn find_config_all_info(

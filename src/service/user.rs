@@ -1,6 +1,6 @@
 use sea_orm::*;
 
-use crate::common::model::User;
+use crate::common::model::{Page, User};
 use crate::entity::users;
 
 pub async fn find_by_username(db: &DatabaseConnection, username: &str) -> Option<User> {
@@ -19,4 +19,60 @@ pub async fn find_by_username(db: &DatabaseConnection, username: &str) -> Option
     } else {
         None
     }
+}
+
+pub async fn search_page(
+    db: &DatabaseConnection,
+    username: &str,
+    page_no: u64,
+    page_size: u64,
+    accurate: bool,
+) -> anyhow::Result<Page<User>> {
+    let mut count_select = users::Entity::find();
+    let mut query_select =
+        users::Entity::find().columns([users::Column::Username, users::Column::Password]);
+
+    if !username.is_empty() {
+        if accurate {
+            count_select = count_select.filter(users::Column::Username.eq(username));
+            query_select = query_select.filter(users::Column::Username.eq(username));
+        } else {
+            count_select = count_select.filter(users::Column::Username.contains(username));
+            query_select = query_select.filter(users::Column::Username.contains(username));
+        }
+    }
+
+    let total_count = count_select.count(db).await?;
+
+    if total_count > 0 {
+        let query_result = query_select
+            .paginate(db, page_size)
+            .fetch_page(page_no - 1)
+            .await?;
+        let page_items = query_result
+            .iter()
+            .map(|user| User {
+                username: user.username.clone(),
+                password: user.password.clone(),
+            })
+            .collect();
+
+        let page_result = Page::<User> {
+            total_count: total_count,
+            page_number: page_no,
+            pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
+            page_items: page_items,
+        };
+
+        return anyhow::Ok(page_result);
+    }
+
+    let page_result = Page::<User> {
+        total_count: total_count,
+        page_number: page_no,
+        pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
+        page_items: vec![],
+    };
+
+    return anyhow::Ok(page_result);
 }

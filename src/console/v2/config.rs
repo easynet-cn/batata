@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 
-use actix_web::{get, web, HttpResponse, Responder, Scope};
+use actix_web::{get, web, HttpRequest, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
+use chrono::Utc;
+
 use crate::{
-    api::model::AppState,
+    api::model::{AppState, ErrorResult},
     common::model::{ConfigInfo, Page},
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SearchConfigParams {
+struct SearchParam {
     search: Option<String>,
     data_id: Option<String>,
     group: Option<String>,
@@ -26,8 +28,9 @@ struct SearchConfigParams {
 
 #[get("searchDetail")]
 pub async fn search(
+    req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Query<SearchConfigParams>,
+    params: web::Query<SearchParam>,
 ) -> impl Responder {
     if params.search.is_some() && params.search.as_ref().unwrap() == "blur" {
         let mut config_advance_info = HashMap::<String, String>::new();
@@ -55,7 +58,7 @@ pub async fn search(
             );
         }
 
-        let page_result = crate::service::config::find_config_info_like_4_page(
+        let result = crate::service::config::find_config_info_like_4_page(
             &data.database_connection,
             params.page_no,
             params.page_size,
@@ -66,7 +69,16 @@ pub async fn search(
         )
         .await;
 
-        return HttpResponse::Ok().json(page_result);
+        return match result {
+            Ok(page_result) => HttpResponse::Ok().json(page_result),
+            Err(err) => HttpResponse::InternalServerError().json(ErrorResult {
+                timestamp: Utc::now().to_rfc3339(),
+                status: 403,
+                message: err.to_string(),
+                error: String::from("Forbiden"),
+                path: req.path().to_string(),
+            }),
+        };
     }
 
     let page_result = Page::<ConfigInfo> {

@@ -7,7 +7,7 @@ use crate::service;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct GetNamespaceParams {
+struct GetParam {
     show: Option<String>,
     namespace_id: Option<String>,
     check_namespace_id_exist: Option<bool>,
@@ -15,7 +15,7 @@ struct GetNamespaceParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CreateNamespaceFormData {
+struct CreateFormData {
     custom_namespace_id: Option<String>,
     namespace_name: String,
     namespace_desc: Option<String>,
@@ -23,7 +23,7 @@ struct CreateNamespaceFormData {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateNamespaceFormData {
+struct UpdateFormData {
     namespace: String,
     namespace_show_name: String,
     namespace_desc: Option<String>,
@@ -31,7 +31,7 @@ struct UpdateNamespaceFormData {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeleteNamespaceParams {
+struct DeleteParam {
     namespace_id: String,
 }
 
@@ -40,7 +40,7 @@ const NAMESPACE_ID_MAX_LENGTH: usize = 128;
 #[get("")]
 pub async fn get_namespaces(
     data: web::Data<AppState>,
-    params: web::Query<GetNamespaceParams>,
+    params: web::Query<GetParam>,
 ) -> impl Responder {
     if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
         let namespace = service::namespace::get_by_namespace_id(
@@ -71,7 +71,7 @@ pub async fn get_namespaces(
 #[post("")]
 pub async fn create_namespace(
     data: web::Data<AppState>,
-    form: web::Form<CreateNamespaceFormData>,
+    form: web::Form<CreateFormData>,
 ) -> impl Responder {
     let namespace_id: String;
 
@@ -135,7 +135,7 @@ pub async fn create_namespace(
 #[put("")]
 pub async fn update_namespace(
     data: web::Data<AppState>,
-    form: web::Form<UpdateNamespaceFormData>,
+    form: web::Form<UpdateFormData>,
 ) -> impl Responder {
     let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
 
@@ -165,7 +165,7 @@ pub async fn update_namespace(
 #[delete("")]
 pub async fn delete_namespace(
     data: web::Data<AppState>,
-    form: web::Query<DeleteNamespaceParams>,
+    form: web::Query<DeleteParam>,
 ) -> impl Responder {
     let res =
         service::namespace::delete(&data.database_connection, form.namespace_id.clone()).await;
