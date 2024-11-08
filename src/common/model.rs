@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 1800;
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
+pub const DEFAULT_USER: &str = "nacos";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RestResult<T> {

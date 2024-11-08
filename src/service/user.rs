@@ -76,3 +76,15 @@ pub async fn search_page(
 
     return anyhow::Ok(page_result);
 }
+
+pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> anyhow::Result<()> {
+    let entity = users::ActiveModel {
+        username: Set(username.to_string()),
+        password: Set(password.to_string()),
+        enabled: Set(1),
+    };
+
+    users::Entity::insert(entity).exec(db).await?;
+
+    anyhow::Ok(())
+}

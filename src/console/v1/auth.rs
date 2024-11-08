@@ -2,9 +2,11 @@ use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder, Scope};
 use serde::{Deserialize, Serialize};
 
 use crate::api::model::AppState;
-use crate::common::model::{NacosUser, Page, User, DEFAULT_TOKEN_EXPIRE_SECONDS};
+use crate::common::model::{
+    NacosUser, Page, RestResult, User, DEFAULT_TOKEN_EXPIRE_SECONDS, DEFAULT_USER,
+};
 use crate::service::auth::encode_jwt_token;
-use crate::{common, service};
+use crate::{api, common, service};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +22,7 @@ struct LoginFormData {
     username: String,
     password: String,
 }
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchParam {
@@ -27,6 +30,13 @@ struct SearchParam {
     username: Option<String>,
     page_no: u64,
     page_size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateFormData {
+    username: String,
+    password: String,
 }
 
 #[post("/users/login")]
@@ -117,6 +127,49 @@ pub async fn search(
     return HttpResponse::Ok().json(result);
 }
 
+#[post("/users")]
+pub async fn create_user(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Form<CreateFormData>,
+) -> impl Responder {
+    if params.username == DEFAULT_USER {
+        return HttpResponse::Conflict().json(RestResult::<String> {
+            code: 409,
+            message:String::from("User `nacos` is default admin user. Please use `/nacos/v1/auth/users/admin` API to init `nacos` users. Detail see `https://nacos.io/docs/latest/manual/admin/auth/#31-%E8%AE%BE%E7%BD%AE%E7%AE%A1%E7%90%86%E5%91%98%E5%AF%86%E7%A0%81`"),
+            data:String::from("User `nacos` is default admin user. Please use `/nacos/v1/auth/users/admin` API to init `nacos` users. Detail see `https://nacos.io/docs/latest/manual/admin/auth/#31-%E8%AE%BE%E7%BD%AE%E7%AE%A1%E7%90%86%E5%91%98%E5%AF%86%E7%A0%81`")
+        });
+    }
+
+    let user = service::user::find_by_username(&data.database_connection, &params.username).await;
+
+    if user.is_some() {
+        return HttpResponse::BadRequest()
+            .json(format!("user '{}' already exist!", params.username));
+    }
+
+    let password = bcrypt::hash(params.password.clone(), 10u32).ok().unwrap();
+
+    let result =
+        service::user::create(&data.database_connection, &params.username, &password).await;
+
+    return match result {
+        Ok(()) => HttpResponse::Ok().json(RestResult::<String> {
+            code: 409,
+            message: String::from("create user ok!"),
+            data: String::from("create user ok!"),
+        }),
+        Err(err) => HttpResponse::InternalServerError().json(RestResult::<String> {
+            code: 409,
+            message: err.to_string(),
+            data: err.to_string(),
+        }),
+    };
+}
+
 pub fn routers() -> Scope {
-    return web::scope("/auth").service(users_login).service(search);
+    return web::scope("/auth")
+        .service(users_login)
+        .service(search)
+        .service(create_user);
 }
