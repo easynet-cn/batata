@@ -5,6 +5,7 @@ use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
 use actix_web::http::Method;
 use actix_web::web::Data;
 use actix_web::Error;
+use actix_web::HttpMessage;
 use actix_web::HttpResponse;
 use chrono::Utc;
 use futures_core::future::LocalBoxFuture;
@@ -85,7 +86,10 @@ where
                     let decode_result = decode_token(token.to_string(), secret_key);
 
                     match decode_result {
-                        Ok(TokenData) => authenticate_pass = true,
+                        Ok(token_data) => {
+                            authenticate_pass = true;
+                            req.extensions_mut().insert(token_data);
+                        }
                         Err(err) => {
                             let err_msg = match err.kind() {
                                 jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
@@ -98,8 +102,8 @@ where
                                 .json(api::model::ErrorResult {
                                     timestamp: Utc::now().to_rfc3339(),
                                     status: 403,
-                                    message: String::from("Forbiden"),
-                                    error: err_msg.to_string(),
+                                    message: err_msg.to_string(),
+                                    error: String::from("Forbiden"),
                                     path: request.path().to_string(),
                                 })
                                 .map_into_right_body();
@@ -117,8 +121,8 @@ where
                 .json(api::model::ErrorResult {
                     timestamp: Utc::now().to_rfc3339(),
                     status: 403,
-                    message: String::from("Forbiden"),
-                    error: String::from("user not found!"),
+                    message: String::from("user not found!"),
+                    error: String::from("Forbiden"),
                     path: request.path().to_string(),
                 })
                 .map_into_right_body();
