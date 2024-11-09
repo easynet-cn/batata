@@ -1,5 +1,6 @@
 use sea_orm::*;
 
+use crate::common;
 use crate::common::model::{Page, User};
 use crate::entity::users;
 
@@ -12,6 +13,7 @@ pub async fn find_by_username(db: &DatabaseConnection, username: &str) -> Option
 
     if user_entity.is_some() {
         let user_entity = user_entity.unwrap();
+
         Some(User {
             username: user_entity.username,
             password: user_entity.password,
@@ -85,6 +87,31 @@ pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> 
     };
 
     users::Entity::insert(entity).exec(db).await?;
+
+    anyhow::Ok(())
+}
+
+pub async fn update(
+    db: &DatabaseConnection,
+    username: &str,
+    new_password: &str,
+) -> anyhow::Result<()> {
+    let user_option = users::Entity::find_by_id(username).one(db).await?;
+
+    match user_option {
+        Some(entity) => {
+            let mut user: users::ActiveModel = entity.into();
+
+            user.password = Set(bcrypt::hash(new_password, 10u32).ok().unwrap());
+
+            user.update(db).await?;
+        }
+        None => {
+            return Err(anyhow::Error::from(
+                common::model::BusinessError::UserNotExist(username.to_string()),
+            ))
+        }
+    }
 
     anyhow::Ok(())
 }

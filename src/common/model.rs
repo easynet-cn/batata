@@ -1,5 +1,6 @@
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 1800;
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
@@ -29,6 +30,12 @@ pub struct Page<T> {
     pub page_number: u64,
     pub pages_available: u64,
     pub page_items: Vec<T>,
+}
+
+#[derive(Error, Debug)]
+pub enum BusinessError {
+    #[error("user '{0}' not exist!")]
+    UserNotExist(String),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
