@@ -1,3 +1,4 @@
+use sea_orm::entity::ModelTrait;
 use sea_orm::*;
 
 use crate::common;
@@ -105,6 +106,23 @@ pub async fn update(
             user.password = Set(bcrypt::hash(new_password, 10u32).ok().unwrap());
 
             user.update(db).await?;
+        }
+        None => {
+            return Err(anyhow::Error::from(
+                common::model::BusinessError::UserNotExist(username.to_string()),
+            ))
+        }
+    }
+
+    anyhow::Ok(())
+}
+
+pub async fn delete(db: &DatabaseConnection, username: &str) -> anyhow::Result<()> {
+    let user_option = users::Entity::find_by_id(username).one(db).await?;
+
+    match user_option {
+        Some(entity) => {
+            entity.delete(db).await?;
         }
         None => {
             return Err(anyhow::Error::from(

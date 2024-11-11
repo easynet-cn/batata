@@ -2,11 +2,9 @@ use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Responde
 use serde::{Deserialize, Serialize};
 
 use crate::api::model::AppState;
-use crate::common::model::{
-    self, NacosUser, Page, RestResult, User, DEFAULT_TOKEN_EXPIRE_SECONDS, DEFAULT_USER,
-};
+use crate::common::model::{NacosUser, RestResult, DEFAULT_TOKEN_EXPIRE_SECONDS, DEFAULT_USER};
 use crate::service::auth::encode_jwt_token;
-use crate::{api, common, service};
+use crate::{common, service};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +42,12 @@ struct CreateFormData {
 struct UpdateFormData {
     username: String,
     new_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteParam {
+    username: String,
 }
 
 #[post("/users/login")]
@@ -105,11 +109,7 @@ pub async fn users_login(
 }
 
 #[get("/users")]
-pub async fn search(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-    params: web::Query<SearchParam>,
-) -> impl Responder {
+pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
     let search = params.search.clone().unwrap();
     let accurate = search == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
@@ -136,7 +136,6 @@ pub async fn search(
 
 #[post("/users")]
 pub async fn create_user(
-    req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Form<CreateFormData>,
 ) -> impl Responder {
@@ -176,7 +175,6 @@ pub async fn create_user(
 
 #[put("/users")]
 pub async fn update_user(
-    req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Form<UpdateFormData>,
 ) -> impl Responder {
@@ -207,10 +205,55 @@ pub async fn update_user(
         }
     };
 }
+
+#[delete("/users")]
+pub async fn delete_user(
+    data: web::Data<AppState>,
+    params: web::Query<DeleteParam>,
+) -> impl Responder {
+    let global_admin = service::role::find_by_username(&data.database_connection, &params.username)
+        .await
+        .ok()
+        .unwrap()
+        .iter()
+        .any(|role| role.role == common::model::GLOBAL_ADMIN_ROLE);
+
+    if global_admin {
+        return HttpResponse::BadRequest().json(RestResult::<String> {
+            code: 400,
+            message: format!("cannot delete admin: {}", &params.username),
+            data: format!("cannot delete admin: {}", &params.username),
+        });
+    }
+
+    let result = service::user::delete(&data.database_connection, &params.username).await;
+
+    return match result {
+        Ok(()) => HttpResponse::Ok().json(RestResult::<String> {
+            code: 200,
+            message: String::from("delete user ok!"),
+            data: String::from("delete user ok!"),
+        }),
+        Err(err) => {
+            let code = match err.downcast_ref() {
+                Some(common::model::BusinessError::UserNotExist(_)) => 400,
+                _ => 500,
+            };
+
+            return HttpResponse::InternalServerError().json(RestResult::<String> {
+                code: code,
+                message: err.to_string(),
+                data: err.to_string(),
+            });
+        }
+    };
+}
+
 pub fn routers() -> Scope {
     return web::scope("/auth")
         .service(users_login)
         .service(search)
         .service(update_user)
-        .service(create_user);
+        .service(create_user)
+        .service(delete_user);
 }
