@@ -113,3 +113,18 @@ pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyh
 
     anyhow::Ok(())
 }
+
+pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyhow::Result<()> {
+    if username.is_empty() {
+        roles::Entity::delete_many()
+            .filter(roles::Column::Role.eq(role))
+            .exec(db)
+            .await?;
+    } else {
+        roles::Entity::delete_by_id((role.to_string(), username.to_string()))
+            .exec(db)
+            .await?;
+    }
+
+    anyhow::Ok(())
+}

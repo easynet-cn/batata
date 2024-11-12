@@ -89,5 +89,6 @@ pub fn routers() -> Scope {
         .service(console::v1::user::delete)
         .service(console::v1::role::search_page)
         .service(console::v1::role::create)
+        .service(console::v1::role::delete)
         .service(console::v1::role::search);
 }

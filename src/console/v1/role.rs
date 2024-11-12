@@ -1,9 +1,9 @@
-use actix_web::{get, post, web, HttpResponse, Responder};
+use actix_web::{delete, get, post, web, HttpResponse, Responder};
 use serde::Deserialize;
 
 use crate::api::model::AppState;
 use crate::common::model::RestResult;
-use crate::service;
+use crate::{common, service};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +26,13 @@ struct SearchParam {
 struct CreateFormData {
     role: String,
     username: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteParam {
+    role: String,
+    username: Option<String>,
 }
 
 #[get("/roles")]
@@ -94,5 +101,36 @@ pub async fn create(
             message: err.to_string(),
             data: err.to_string(),
         }),
+    };
+}
+
+#[delete("/roles")]
+pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
+    let result = service::role::delete(
+        &data.database_connection,
+        &params.role,
+        &params.username.clone().unwrap_or_default(),
+    )
+    .await;
+
+    return match result {
+        Ok(()) => HttpResponse::Ok().json(RestResult::<String> {
+            code: 200,
+            message: format!(
+                "delete role of user {} ok!",
+                params.username.clone().unwrap_or_default()
+            ),
+            data: format!(
+                "delete role of user {} ok!",
+                params.username.clone().unwrap_or_default()
+            ),
+        }),
+        Err(err) => {
+            return HttpResponse::InternalServerError().json(RestResult::<String> {
+                code: 500,
+                message: err.to_string(),
+                data: err.to_string(),
+            });
+        }
     };
 }
