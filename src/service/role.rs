@@ -91,3 +91,25 @@ pub async fn search_page(
 
     return anyhow::Ok(page_result);
 }
+
+pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<String>> {
+    let entities = roles::Entity::find()
+        .column(roles::Column::Role)
+        .filter(roles::Column::Role.contains(role))
+        .all(db)
+        .await?;
+    let users = entities.iter().map(|role| role.role.clone()).collect();
+
+    return anyhow::Ok(users);
+}
+
+pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyhow::Result<()> {
+    let entity = roles::ActiveModel {
+        role: Set(role.to_string()),
+        username: Set(username.to_string()),
+    };
+
+    roles::Entity::insert(entity).exec(db).await?;
+
+    anyhow::Ok(())
+}

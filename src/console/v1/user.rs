@@ -16,6 +16,12 @@ struct SearchPageParam {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SearchParam {
+    username: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CreateFormData {
     username: String,
     password: String,
@@ -39,8 +45,7 @@ pub async fn search_page(
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
-    let search = params.search.clone().unwrap();
-    let accurate = search == "accurate";
+    let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
 
     if username.starts_with("*") {
@@ -59,6 +64,15 @@ pub async fn search_page(
     )
     .await
     .unwrap();
+
+    return HttpResponse::Ok().json(result);
+}
+
+#[get("/users/search")]
+pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
+    let result = service::user::search(&data.database_connection, &params.username)
+        .await
+        .unwrap();
 
     return HttpResponse::Ok().json(result);
 }

@@ -83,8 +83,11 @@ pub fn routers() -> Scope {
     return web::scope("/auth")
         .service(users_login)
         .service(console::v1::user::search_page)
+        .service(console::v1::user::search)
         .service(console::v1::user::update)
         .service(console::v1::user::create)
         .service(console::v1::user::delete)
-        .service(console::v1::role::search_page);
+        .service(console::v1::role::search_page)
+        .service(console::v1::role::create)
+        .service(console::v1::role::search);
 }

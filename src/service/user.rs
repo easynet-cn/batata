@@ -80,6 +80,17 @@ pub async fn search_page(
     return anyhow::Ok(page_result);
 }
 
+pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<Vec<String>> {
+    let entities = users::Entity::find()
+        .column(users::Column::Username)
+        .filter(users::Column::Username.contains(username))
+        .all(db)
+        .await?;
+    let users = entities.iter().map(|user| user.username.clone()).collect();
+
+    return anyhow::Ok(users);
+}
+
 pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> anyhow::Result<()> {
     let entity = users::ActiveModel {
         username: Set(username.to_string()),
