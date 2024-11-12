@@ -172,3 +172,11 @@ pub struct RoleInfo {
     pub role: String,
     pub username: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionInfo {
+    pub role: String,
+    pub resource: String,
+    pub action: String,
+}

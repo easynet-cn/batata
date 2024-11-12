@@ -4,6 +4,7 @@ pub mod v1 {
     pub mod health;
     pub mod history;
     pub mod namespace;
+    pub mod permission;
     pub mod role;
     pub mod router;
     pub mod server_state;
