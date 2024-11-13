@@ -51,7 +51,7 @@ pub async fn search(
             );
         }
 
-        let result = crate::service::config::find_config_info_like_4_page(
+        let result = crate::service::config::search_page(
             &data.database_connection,
             params.page_no.unwrap_or_default(),
             params.page_size.unwrap_or_default(),
@@ -85,14 +85,7 @@ pub async fn search(
         return HttpResponse::Ok().json(config_all_info);
     }
 
-    let page_result = Page::<ConfigInfo> {
-        total_count: 1,
-        page_number: 1,
-        pages_available: 1,
-        page_items: vec![],
-    };
-
-    return HttpResponse::Ok().json(page_result);
+    return HttpResponse::Ok().json(Page::<ConfigInfo>::default());
 }
 
 pub fn routers() -> Scope {

@@ -70,14 +70,7 @@ pub async fn search_page(
         return anyhow::Ok(page_result);
     }
 
-    let page_result = Page::<User> {
-        total_count: total_count,
-        page_number: page_no,
-        pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
-        page_items: vec![],
-    };
-
-    return anyhow::Ok(page_result);
+    return anyhow::Ok(Page::<User>::default());
 }
 
 pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<Vec<String>> {

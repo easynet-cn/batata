@@ -9,7 +9,7 @@ use crate::{
     entity::{config_info, config_tags_relation, his_config_info},
 };
 
-pub async fn find_config_info_like_4_page(
+pub async fn search_page(
     db: &DatabaseConnection,
     page_no: u64,
     page_size: u64,
@@ -72,14 +72,7 @@ pub async fn find_config_info_like_4_page(
         return anyhow::Ok(page_result);
     }
 
-    let page_result = Page::<ConfigInfo> {
-        total_count: total_count,
-        page_number: page_no,
-        pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
-        page_items: Vec::<ConfigInfo>::with_capacity(0),
-    };
-
-    return anyhow::Ok(page_result);
+    return anyhow::Ok(Page::<ConfigInfo>::default());
 }
 
 pub async fn find_config_all_info(

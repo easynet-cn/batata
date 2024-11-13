@@ -32,6 +32,17 @@ pub struct Page<T> {
     pub page_items: Vec<T>,
 }
 
+impl<T> Default for Page<T> {
+    fn default() -> Self {
+        Self {
+            total_count: 0,
+            page_number: 1,
+            pages_available: 0,
+            page_items: vec![],
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum BusinessError {
     #[error("user '{0}' not exist!")]

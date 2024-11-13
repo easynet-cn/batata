@@ -51,14 +51,7 @@ pub async fn search_page(
         }
     }
 
-    let page_result = Page::<ConfigHistoryInfo> {
-        total_count: total_count,
-        page_number: page_no,
-        pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
-        page_items: page_items,
-    };
-
-    Ok(page_result)
+    anyhow::Ok(Page::<ConfigHistoryInfo>::default())
 }
 
 pub async fn get_by_id(db: &DatabaseConnection, id: u64) -> anyhow::Result<ConfigHistoryInfo> {

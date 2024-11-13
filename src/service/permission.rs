@@ -51,14 +51,7 @@ pub async fn search_page(
         return anyhow::Ok(page_result);
     }
 
-    let page_result = Page::<PermissionInfo> {
-        total_count: total_count,
-        page_number: page_no,
-        pages_available: 0,
-        page_items: vec![],
-    };
-
-    return anyhow::Ok(page_result);
+    return anyhow::Ok(Page::<PermissionInfo>::default());
 }
 
 pub async fn create(
