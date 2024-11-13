@@ -23,32 +23,23 @@ pub async fn search_page(
         .filter(his_config_info::Column::GroupId.contains(group));
 
     let total_count = count_select.count(db).await?;
-    let mut page_items = Vec::<ConfigHistoryInfo>::new();
 
     if total_count > 0 {
         let his_config_infos = query_select
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
             .await?;
+        let page_item = his_config_infos
+            .iter()
+            .map(|entity| ConfigHistoryInfo::from(entity.clone()))
+            .collect();
 
-        for his_config_info in his_config_infos {
-            page_items.push(ConfigHistoryInfo {
-                id: his_config_info.nid.clone(),
-                last_id: -1,
-                data_id: his_config_info.data_id.clone(),
-                group: his_config_info.group_id.clone(),
-                tenant: his_config_info.tenant_id.clone().unwrap_or_default(),
-                app_name: his_config_info.app_name.clone().unwrap_or_default(),
-                md5: his_config_info.md5.clone().unwrap_or_default(),
-                content: his_config_info.content.clone(),
-                src_ip: his_config_info.src_ip.clone().unwrap_or_default(),
-                src_user: his_config_info.src_user.clone().unwrap_or_default(),
-                op_type: his_config_info.op_type.clone().unwrap_or_default(),
-                created_time: his_config_info.gmt_create.clone(),
-                last_modified_time: his_config_info.gmt_modified.clone(),
-                encrypted_data_key: his_config_info.encrypted_data_key.clone(),
-            });
-        }
+        return anyhow::Ok(Page::<ConfigHistoryInfo>::new(
+            total_count,
+            page_no,
+            page_size,
+            page_item,
+        ));
     }
 
     anyhow::Ok(Page::<ConfigHistoryInfo>::default())
@@ -74,24 +65,9 @@ pub async fn get_by_id(db: &DatabaseConnection, id: u64) -> anyhow::Result<Confi
             his_config_info::Column::EncryptedDataKey,
         ])
         .one(db)
-        .await
-        .unwrap()
-        .map(|entity| ConfigHistoryInfo {
-            id: entity.id.clone(),
-            last_id: -1,
-            data_id: entity.data_id,
-            group: entity.group_id,
-            tenant: entity.tenant_id.unwrap_or_default(),
-            app_name: entity.app_name.unwrap_or_default(),
-            md5: entity.md5.unwrap_or_default(),
-            content: entity.content,
-            src_ip: entity.src_ip.unwrap_or_default(),
-            src_user: entity.src_user.unwrap_or_default(),
-            op_type: entity.op_type.unwrap_or_default(),
-            created_time: entity.gmt_create,
-            last_modified_time: entity.gmt_modified,
-            encrypted_data_key: entity.encrypted_data_key,
-        });
+        .await?;
+
+    let config_history_info = config_history_info.map(|entity| ConfigHistoryInfo::from(entity));
 
     Ok(config_history_info.unwrap())
 }

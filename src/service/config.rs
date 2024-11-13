@@ -49,27 +49,15 @@ pub async fn search_page(
             .await?;
         let page_items = query_result
             .iter()
-            .map(|config_info| ConfigInfo {
-                id: config_info.id.clone(),
-                data_id: config_info.data_id.clone(),
-                group: config_info.group_id.clone().unwrap_or_default(),
-                content: config_info.content.clone().unwrap_or_default(),
-                md5: config_info.md5.clone().unwrap_or_default(),
-                encrypted_data_key: config_info.encrypted_data_key.clone().unwrap_or_default(),
-                tenant: config_info.tenant_id.clone().unwrap_or_default(),
-                app_name: config_info.app_name.clone().unwrap_or_default(),
-                _type: config_info.r#type.clone().unwrap_or_default(),
-            })
+            .map(|entity| ConfigInfo::from(entity.clone()))
             .collect();
 
-        let page_result = Page::<ConfigInfo> {
-            total_count: total_count,
-            page_number: page_no,
-            pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
-            page_items: page_items,
-        };
-
-        return anyhow::Ok(page_result);
+        return anyhow::Ok(Page::<ConfigInfo>::new(
+            total_count,
+            page_no,
+            page_size,
+            page_items,
+        ));
     }
 
     return anyhow::Ok(Page::<ConfigInfo>::default());

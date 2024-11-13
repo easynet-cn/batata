@@ -34,21 +34,15 @@ pub async fn search_page(
             .await?;
         let page_items = query_result
             .iter()
-            .map(|permissions| PermissionInfo {
-                role: permissions.role.clone(),
-                resource: permissions.resource.clone(),
-                action: permissions.action.clone(),
-            })
+            .map(|entity| PermissionInfo::from(entity.clone()))
             .collect();
 
-        let page_result = Page::<PermissionInfo> {
-            total_count: total_count,
-            page_number: page_no,
-            pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
-            page_items: page_items,
-        };
-
-        return anyhow::Ok(page_result);
+        return anyhow::Ok(Page::<PermissionInfo>::new(
+            total_count,
+            page_no,
+            page_size,
+            page_items,
+        ));
     }
 
     return anyhow::Ok(Page::<PermissionInfo>::default());

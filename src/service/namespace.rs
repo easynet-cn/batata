@@ -12,7 +12,6 @@ struct SelectResult {
 }
 
 const DEFAULT_NAMESPACE: &'static str = "public";
-const DEFAULT_NAMESPACE_QUOTA: i32 = 200;
 const DEFAULT_CREATE_SOURCE: &'static str = "nacos";
 const DEFAULT_KP: &'static str = "1";
 
@@ -31,14 +30,7 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
         .map(|tenant_info| {
             tenant_ids.push(tenant_info.tenant_id.clone().unwrap_or_default());
 
-            Namespace {
-                namespace: tenant_info.tenant_id.clone().unwrap_or_default(),
-                namespace_show_name: tenant_info.tenant_name.clone().unwrap_or_default(),
-                namespace_desc: tenant_info.tenant_desc.clone().unwrap_or_default(),
-                quota: DEFAULT_NAMESPACE_QUOTA,
-                config_count: 0,
-                type_: 2,
-            }
+            Namespace::from(tenant_info.clone())
         })
         .collect();
 
@@ -90,14 +82,7 @@ pub async fn get_by_namespace_id(
 
         let tenant_info = tenant_info_option.unwrap();
 
-        namspace = Namespace {
-            namespace: tenant_info.tenant_id.clone().unwrap_or_default(),
-            namespace_show_name: tenant_info.tenant_name.clone().unwrap_or_default(),
-            namespace_desc: tenant_info.tenant_desc.clone().unwrap_or_default(),
-            quota: DEFAULT_NAMESPACE_QUOTA,
-            config_count: 0,
-            type_: 2,
-        };
+        namspace = Namespace::from(tenant_info.clone());
     }
 
     let config_info = config_info::Entity::find()

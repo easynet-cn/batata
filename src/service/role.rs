@@ -66,20 +66,15 @@ pub async fn search_page(
             .await?;
         let page_items = query_result
             .iter()
-            .map(|role| RoleInfo {
-                username: role.username.clone(),
-                role: role.role.clone(),
-            })
+            .map(|entity| RoleInfo::from(entity.clone()))
             .collect();
 
-        let page_result = Page::<RoleInfo> {
-            total_count: total_count,
-            page_number: page_no,
-            pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
-            page_items: page_items,
-        };
-
-        return anyhow::Ok(page_result);
+        return anyhow::Ok(Page::<RoleInfo>::new(
+            total_count,
+            page_no,
+            page_size,
+            page_items,
+        ));
     }
 
     return anyhow::Ok(Page::<RoleInfo>::default());

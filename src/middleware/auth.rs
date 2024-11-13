@@ -59,7 +59,7 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let app_state = req.app_data::<Data<api::model::AppState>>().unwrap();
         let context_path = app_state.context_path.as_str();
-        let mut authenticate_pass: bool = false;
+        let mut authenticate_pass: bool;
 
         if Method::OPTIONS == *req.method() {
             authenticate_pass = true;

@@ -2,9 +2,13 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::entity;
+
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 1800;
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
 pub const DEFAULT_USER: &str = "nacos";
+
+const DEFAULT_NAMESPACE_QUOTA: i32 = 200;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RestResult<T> {
@@ -43,6 +47,17 @@ impl<T> Default for Page<T> {
     }
 }
 
+impl<T> Page<T> {
+    pub fn new(total_count: u64, page_number: u64, page_size: u64, page_items: Vec<T>) -> Self {
+        Self {
+            total_count: total_count,
+            page_number: page_number,
+            pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
+            page_items: page_items,
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum BusinessError {
     #[error("user '{0}' not exist!")]
@@ -53,6 +68,15 @@ pub enum BusinessError {
 pub struct User {
     pub username: String,
     pub password: String,
+}
+
+impl From<entity::users::Model> for User {
+    fn from(value: entity::users::Model) -> Self {
+        Self {
+            username: value.username,
+            password: value.password,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -94,6 +118,22 @@ pub struct ConfigInfo {
     pub tenant: String,
     pub app_name: String,
     pub _type: String,
+}
+
+impl From<entity::config_info::Model> for ConfigInfo {
+    fn from(value: entity::config_info::Model) -> Self {
+        Self {
+            id: value.id,
+            data_id: value.data_id,
+            group: value.group_id.unwrap_or_default(),
+            content: value.content.unwrap_or_default(),
+            md5: value.md5.unwrap_or_default(),
+            encrypted_data_key: value.encrypted_data_key.unwrap_or_default(),
+            tenant: value.tenant_id.unwrap_or_default(),
+            app_name: value.app_name.unwrap_or_default(),
+            _type: value.r#type.unwrap_or_default(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,6 +193,27 @@ pub struct ConfigHistoryInfo {
     pub encrypted_data_key: String,
 }
 
+impl From<entity::his_config_info::Model> for ConfigHistoryInfo {
+    fn from(value: entity::his_config_info::Model) -> Self {
+        Self {
+            id: value.nid,
+            last_id: -1,
+            data_id: value.data_id,
+            group: value.group_id,
+            tenant: value.tenant_id.unwrap_or_default(),
+            app_name: value.app_name.unwrap_or_default(),
+            md5: value.md5.unwrap_or_default(),
+            content: value.content,
+            src_ip: value.src_ip.unwrap_or_default(),
+            src_user: value.src_user.unwrap_or_default(),
+            op_type: value.op_type.unwrap_or_default(),
+            created_time: value.gmt_create,
+            last_modified_time: value.gmt_modified,
+            encrypted_data_key: value.encrypted_data_key,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Namespace {
@@ -177,11 +238,33 @@ impl Default for Namespace {
     }
 }
 
+impl From<entity::tenant_info::Model> for Namespace {
+    fn from(value: entity::tenant_info::Model) -> Self {
+        Self {
+            namespace: value.tenant_id.unwrap_or_default(),
+            namespace_show_name: value.tenant_name.unwrap_or_default(),
+            namespace_desc: value.tenant_desc.unwrap_or_default(),
+            quota: DEFAULT_NAMESPACE_QUOTA,
+            config_count: 0,
+            type_: 2,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoleInfo {
     pub role: String,
     pub username: String,
+}
+
+impl From<entity::roles::Model> for RoleInfo {
+    fn from(value: entity::roles::Model) -> Self {
+        Self {
+            username: value.username,
+            role: value.role,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -190,4 +273,14 @@ pub struct PermissionInfo {
     pub role: String,
     pub resource: String,
     pub action: String,
+}
+
+impl From<entity::permissions::Model> for PermissionInfo {
+    fn from(value: entity::permissions::Model) -> Self {
+        Self {
+            role: value.role,
+            resource: value.resource,
+            action: value.action,
+        }
+    }
 }
