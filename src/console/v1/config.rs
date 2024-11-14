@@ -73,7 +73,7 @@ pub async fn search(
             }),
         };
     } else if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
-        let config_all_info = service::config::find_config_all_info(
+        let config_all_info = service::config::find_all(
             &data.database_connection,
             params.data_id.clone().unwrap_or_default().as_str(),
             params.group.clone().unwrap_or_default().as_str(),

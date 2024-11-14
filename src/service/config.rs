@@ -63,50 +63,38 @@ pub async fn search_page(
     return anyhow::Ok(Page::<ConfigInfo>::default());
 }
 
-pub async fn find_config_all_info(
+pub async fn find_all(
     db: &DatabaseConnection,
     data_id: &str,
     group: &str,
     tenant: &str,
 ) -> anyhow::Result<ConfigAllInfo> {
-    let tags: Vec<String> = config_tags_relation::Entity::find()
+    let tags_result = config_tags_relation::Entity::find()
         .select_only()
         .column(config_tags_relation::Column::TagName)
         .filter(config_tags_relation::Column::DataId.eq(data_id))
         .filter(config_tags_relation::Column::GroupId.eq(group))
         .filter(config_tags_relation::Column::TenantId.eq(tenant))
         .all(db)
-        .await
-        .unwrap()
+        .await?;
+    let tags: Vec<String> = tags_result
         .iter()
         .map(|entity| entity.tag_name.clone())
         .collect();
-    let config_all_info = config_info::Entity::find()
+    let config_all_info_result = config_info::Entity::find()
         .filter(config_info::Column::DataId.eq(data_id))
         .filter(config_info::Column::GroupId.eq(group))
         .filter(config_info::Column::TenantId.eq(tenant))
         .one(db)
-        .await
-        .unwrap()
-        .map(|entity| ConfigAllInfo {
-            id: entity.id,
-            data_id: entity.data_id,
-            group: entity.group_id.unwrap_or_default(),
-            content: entity.content.unwrap_or_default(),
-            md5: entity.md5.unwrap_or_default(),
-            encrypted_data_key: entity.encrypted_data_key.unwrap_or_default(),
-            app_name: entity.app_name.unwrap_or_default(),
-            tenant: entity.tenant_id.unwrap_or_default(),
-            _type: entity.r#type.unwrap_or_default(),
-            create_time: entity.gmt_create.unwrap().and_utc().timestamp(),
-            modify_time: entity.gmt_modified.unwrap().and_utc().timestamp(),
-            create_user: entity.src_user.unwrap_or_default(),
-            create_ip: entity.src_ip.unwrap_or_default(),
-            desc: entity.c_desc.unwrap_or_default(),
-            r#use: entity.c_use.unwrap_or_default(),
-            effect: entity.effect.unwrap_or_default(),
-            schema: entity.c_schema.unwrap_or_default(),
-            config_tags: tags.join(","),
+        .await?;
+
+    let config_all_info = config_all_info_result
+        .map(|entity| {
+            let mut m = ConfigAllInfo::from(entity.clone());
+
+            m.config_tags = tags.join(",");
+
+            m
         })
         .unwrap();
 
