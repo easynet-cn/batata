@@ -60,11 +60,10 @@ pub async fn search_page(
     let total_count = count_select.count(db).await?;
 
     if total_count > 0 {
-        let query_result = query_select
+        let page_items = query_select
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
-            .await?;
-        let page_items = query_result
+            .await?
             .iter()
             .map(|entity| RoleInfo::from(entity.clone()))
             .collect();
@@ -81,12 +80,14 @@ pub async fn search_page(
 }
 
 pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<String>> {
-    let entities = roles::Entity::find()
+    let users = roles::Entity::find()
         .column(roles::Column::Role)
         .filter(roles::Column::Role.contains(role))
         .all(db)
-        .await?;
-    let users = entities.iter().map(|role| role.role.clone()).collect();
+        .await?
+        .iter()
+        .map(|role| role.role.clone())
+        .collect();
 
     return anyhow::Ok(users);
 }

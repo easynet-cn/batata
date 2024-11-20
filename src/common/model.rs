@@ -199,6 +199,30 @@ impl From<entity::config_info::Model> for ConfigAllInfo {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigInfoStateWrapper {
+    pub id: i64,
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub last_modified: i64,
+    pub md5: String,
+}
+
+impl From<entity::config_info::Model> for ConfigInfoStateWrapper {
+    fn from(value: entity::config_info::Model) -> Self {
+        Self {
+            id: value.id,
+            data_id: value.data_id,
+            group: value.group_id.unwrap_or_default(),
+            tenant: value.tenant_id.unwrap_or_default(),
+            last_modified: value.gmt_modified.unwrap().and_utc().timestamp(),
+            md5: value.md5.unwrap_or_default(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryInfo {

@@ -25,11 +25,10 @@ pub async fn search_page(
     let total_count = count_select.count(db).await?;
 
     if total_count > 0 {
-        let his_config_infos = query_select
+        let page_item = query_select
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
-            .await?;
-        let page_item = his_config_infos
+            .await?
             .iter()
             .map(|entity| ConfigHistoryInfo::from(entity.clone()))
             .collect();
@@ -65,9 +64,8 @@ pub async fn get_by_id(db: &DatabaseConnection, id: u64) -> anyhow::Result<Confi
             his_config_info::Column::EncryptedDataKey,
         ])
         .one(db)
-        .await?;
-
-    let config_history_info = config_history_info.map(|entity| ConfigHistoryInfo::from(entity));
+        .await?
+        .map(|entity| ConfigHistoryInfo::from(entity));
 
     Ok(config_history_info.unwrap())
 }

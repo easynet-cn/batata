@@ -5,7 +5,7 @@ use crypto::{digest::Digest, md5::Md5};
 use sea_orm::*;
 
 use crate::{
-    common::model::{ConfigAllInfo, ConfigInfo, Page},
+    common::model::{ConfigAllInfo, ConfigInfo, ConfigInfoStateWrapper, Page},
     entity::{config_info, config_tags_relation, his_config_info},
 };
 
@@ -43,11 +43,10 @@ pub async fn search_page(
     let total_count = count_select.count(db).await?;
 
     if total_count > 0 {
-        let query_result = query_select
+        let page_items = query_select
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
-            .await?;
-        let page_items = query_result
+            .await?
             .iter()
             .map(|entity| ConfigInfo::from(entity.clone()))
             .collect();
@@ -99,6 +98,31 @@ pub async fn find_all(
         .unwrap();
 
     Ok(config_all_info)
+}
+
+pub async fn find_state(
+    db: &DatabaseConnection,
+    data_id: &str,
+    group: &str,
+    tenant: &str,
+) -> anyhow::Result<Option<ConfigInfoStateWrapper>> {
+    let result = config_info::Entity::find()
+        .select_only()
+        .columns([
+            config_info::Column::Id,
+            config_info::Column::DataId,
+            config_info::Column::GroupId,
+            config_info::Column::TenantId,
+            config_info::Column::GmtModified,
+        ])
+        .filter(config_info::Column::DataId.eq(data_id))
+        .filter(config_info::Column::GroupId.eq(group))
+        .filter(config_info::Column::TenantId.eq(tenant))
+        .one(db)
+        .await?
+        .map(|entity| ConfigInfoStateWrapper::from(entity.clone()));
+
+    anyhow::Ok(result)
 }
 
 fn check_cipher(data_id: String) -> bool {

@@ -48,11 +48,10 @@ pub async fn search_page(
     let total_count = count_select.count(db).await?;
 
     if total_count > 0 {
-        let query_result = query_select
+        let page_items = query_select
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
-            .await?;
-        let page_items = query_result
+            .await?
             .iter()
             .map(|entity| User::from(entity.clone()))
             .collect();
@@ -69,12 +68,14 @@ pub async fn search_page(
 }
 
 pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<Vec<String>> {
-    let entities = users::Entity::find()
+    let users = users::Entity::find()
         .column(users::Column::Username)
         .filter(users::Column::Username.contains(username))
         .all(db)
-        .await?;
-    let users = entities.iter().map(|user| user.username.clone()).collect();
+        .await?
+        .iter()
+        .map(|user| user.username.clone())
+        .collect();
 
     return anyhow::Ok(users);
 }
