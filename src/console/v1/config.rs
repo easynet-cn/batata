@@ -110,7 +110,7 @@ pub async fn search(
 }
 
 #[post("")]
-pub async fn create(
+pub async fn create_or_update(
     data: web::Data<AppState>,
     req: HttpRequest,
     form: web::Form<CreateFormParam>,
@@ -152,5 +152,7 @@ pub async fn create(
 }
 
 pub fn routers() -> Scope {
-    web::scope("/cs/configs").service(search).service(create)
+    web::scope("/cs/configs")
+        .service(search)
+        .service(create_or_update)
 }

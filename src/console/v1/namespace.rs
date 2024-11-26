@@ -38,10 +38,7 @@ struct DeleteParam {
 const NAMESPACE_ID_MAX_LENGTH: usize = 128;
 
 #[get("")]
-pub async fn get_namespaces(
-    data: web::Data<AppState>,
-    params: web::Query<GetParam>,
-) -> impl Responder {
+pub async fn get_all(data: web::Data<AppState>, params: web::Query<GetParam>) -> impl Responder {
     if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
         let namespace = service::namespace::get_by_namespace_id(
             &data.database_connection,
@@ -166,7 +163,7 @@ pub async fn delete(data: web::Data<AppState>, form: web::Query<DeleteParam>) ->
 
 pub fn routers() -> Scope {
     web::scope("/namespaces")
-        .service(get_namespaces)
+        .service(get_all)
         .service(create)
         .service(update)
         .service(delete)
