@@ -88,7 +88,7 @@ pub struct NacosUser {
     pub global_admin: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NacosJwtPayload {
     pub sub: String,
@@ -136,7 +136,7 @@ impl From<entity::config_info::Model> for ConfigInfo {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigInfoWrapper {
     pub id: i64,
@@ -149,6 +149,23 @@ pub struct ConfigInfoWrapper {
     pub app_name: String,
     pub _type: String,
     pub last_modified: i64,
+}
+
+impl From<entity::config_info::Model> for ConfigInfoWrapper {
+    fn from(value: entity::config_info::Model) -> Self {
+        Self {
+            id: value.id,
+            data_id: value.data_id,
+            group: value.group_id.unwrap_or_default(),
+            content: value.content.unwrap_or_default(),
+            md5: value.md5.unwrap_or_default(),
+            encrypted_data_key: value.encrypted_data_key.unwrap_or_default(),
+            tenant: value.tenant_id.clone().unwrap_or_default(),
+            app_name: value.app_name.clone().unwrap_or_default(),
+            _type: value.r#type.clone().unwrap_or_default(),
+            last_modified: value.gmt_modified.unwrap().and_utc().timestamp(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

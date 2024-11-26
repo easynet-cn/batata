@@ -69,10 +69,7 @@ pub async fn get_namespaces(
 }
 
 #[post("")]
-pub async fn create_namespace(
-    data: web::Data<AppState>,
-    form: web::Form<CreateFormData>,
-) -> impl Responder {
+pub async fn create(data: web::Data<AppState>, form: web::Form<CreateFormData>) -> impl Responder {
     let namespace_id: String;
 
     if form.custom_namespace_id.is_some() && !form.custom_namespace_id.as_ref().unwrap().is_empty()
@@ -133,10 +130,7 @@ pub async fn create_namespace(
 }
 
 #[put("")]
-pub async fn update_namespace(
-    data: web::Data<AppState>,
-    form: web::Form<UpdateFormData>,
-) -> impl Responder {
+pub async fn update(data: web::Data<AppState>, form: web::Form<UpdateFormData>) -> impl Responder {
     let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
 
     if !regex.is_match(&form.namespace_show_name) {
@@ -163,10 +157,7 @@ pub async fn update_namespace(
 }
 
 #[delete("")]
-pub async fn delete_namespace(
-    data: web::Data<AppState>,
-    form: web::Query<DeleteParam>,
-) -> impl Responder {
+pub async fn delete(data: web::Data<AppState>, form: web::Query<DeleteParam>) -> impl Responder {
     let res =
         service::namespace::delete(&data.database_connection, form.namespace_id.clone()).await;
 
@@ -176,7 +167,7 @@ pub async fn delete_namespace(
 pub fn routers() -> Scope {
     web::scope("/namespaces")
         .service(get_namespaces)
-        .service(create_namespace)
-        .service(update_namespace)
-        .service(delete_namespace)
+        .service(create)
+        .service(update)
+        .service(delete)
 }

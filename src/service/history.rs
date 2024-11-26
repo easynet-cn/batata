@@ -13,19 +13,18 @@ pub async fn search_page(
     page_no: u64,
     page_size: u64,
 ) -> anyhow::Result<Page<ConfigHistoryInfo>> {
-    let count_select = his_config_info::Entity::find()
+    let total_count = his_config_info::Entity::find()
         .filter(his_config_info::Column::TenantId.eq(tenant))
         .filter(his_config_info::Column::DataId.contains(data_id))
-        .filter(his_config_info::Column::GroupId.contains(group));
-    let query_select = his_config_info::Entity::find()
-        .filter(his_config_info::Column::TenantId.eq(tenant))
-        .filter(his_config_info::Column::DataId.contains(data_id))
-        .filter(his_config_info::Column::GroupId.contains(group));
-
-    let total_count = count_select.count(db).await?;
+        .filter(his_config_info::Column::GroupId.contains(group))
+        .count(db)
+        .await?;
 
     if total_count > 0 {
-        let page_item = query_select
+        let page_item = his_config_info::Entity::find()
+            .filter(his_config_info::Column::TenantId.eq(tenant))
+            .filter(his_config_info::Column::DataId.contains(data_id))
+            .filter(his_config_info::Column::GroupId.contains(group))
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
             .await?
@@ -44,7 +43,10 @@ pub async fn search_page(
     anyhow::Ok(Page::<ConfigHistoryInfo>::default())
 }
 
-pub async fn get_by_id(db: &DatabaseConnection, id: u64) -> anyhow::Result<ConfigHistoryInfo> {
+pub async fn get_by_id(
+    db: &DatabaseConnection,
+    id: u64,
+) -> anyhow::Result<Option<ConfigHistoryInfo>> {
     let config_history_info = his_config_info::Entity::find_by_id(id)
         .select_only()
         .columns([
@@ -67,7 +69,7 @@ pub async fn get_by_id(db: &DatabaseConnection, id: u64) -> anyhow::Result<Confi
         .await?
         .map(|entity| ConfigHistoryInfo::from(entity));
 
-    Ok(config_history_info.unwrap())
+    Ok(config_history_info)
 }
 pub async fn get_config_list_by_namespace(
     db: &DatabaseConnection,
@@ -89,18 +91,7 @@ pub async fn get_config_list_by_namespace(
         .await
         .unwrap()
         .iter()
-        .map(|config_info| ConfigInfoWrapper {
-            id: 0,
-            data_id: config_info.data_id.clone(),
-            group: config_info.group_id.clone().unwrap_or_default(),
-            content: String::from(""),
-            md5: String::from(""),
-            encrypted_data_key: String::from(""),
-            tenant: config_info.tenant_id.clone().unwrap_or_default(),
-            app_name: config_info.app_name.clone().unwrap_or_default(),
-            _type: config_info.r#type.clone().unwrap_or_default(),
-            last_modified: config_info.gmt_modified.unwrap().and_utc().timestamp(),
-        })
+        .map(|entity| ConfigInfoWrapper::from(entity.clone()))
         .collect();
 
     Ok(config_infos)

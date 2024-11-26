@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
-use chrono::NaiveDateTime;
+use chrono::{Local, NaiveDateTime, Utc};
 use crypto::{digest::Digest, md5::Md5};
 use sea_orm::*;
+use sqlx::any;
 
 use crate::{
     common::model::{ConfigAllInfo, ConfigInfo, ConfigInfoStateWrapper, Page},
@@ -123,6 +124,124 @@ pub async fn find_state(
         .map(|entity| ConfigInfoStateWrapper::from(entity.clone()));
 
     anyhow::Ok(result)
+}
+
+pub async fn create_or_update(
+    db: &DatabaseConnection,
+    data_id: &str,
+    group: &str,
+    tenant: &str,
+    content: &str,
+    tag: &str,
+    app_name: &str,
+    src_user: &str,
+    src_ip: &str,
+    config_tags: &str,
+    desc: &str,
+    r#use: &str,
+    efect: &str,
+    r#type: &str,
+    schema: &str,
+    encrypted_data_key: &str,
+) -> anyhow::Result<bool> {
+    let entity_option = config_info::Entity::find()
+        .filter(config_info::Column::DataId.eq(data_id))
+        .filter(config_info::Column::GroupId.eq(group))
+        .filter(config_info::Column::TenantId.eq(tenant))
+        .one(db)
+        .await?;
+
+    let now = Local::now().naive_local();
+
+    return match entity_option {
+        Some(entity) => {
+            let entity_c = entity.clone();
+            let mut model: config_info::ActiveModel = entity.into();
+
+            model.content = Set(Some(content.to_string()));
+            model.md5 = Set(Some(md5_digest(content)));
+            model.src_user = Set(Some(src_user.to_string()));
+            model.src_ip = Set(Some((src_ip.to_string())));
+            model.app_name = Set(Some(app_name.to_string()));
+            model.c_desc = Set(Some(desc.to_string()));
+            model.c_use = Set(Some(r#use.to_string()));
+            model.effect = Set(Some(efect.to_string()));
+            model.r#type = Set(Some(r#type.to_string()));
+            model.c_schema = Set(Some(schema.to_string()));
+            model.encrypted_data_key = Set(Some(encrypted_data_key.to_string()));
+
+            if model.is_changed() {
+                model.gmt_modified = Set(Some(now));
+
+                model.update(db).await?;
+
+                his_config_info::ActiveModel {
+                    id: Set(entity_c.id as u64),
+                    data_id: Set(entity_c.data_id),
+                    group_id: Set(entity_c.group_id.unwrap_or_default()),
+                    app_name: Set(entity_c.app_name),
+                    content: Set(entity_c.content.unwrap_or_default()),
+                    md5: Set(Some(entity_c.md5.unwrap_or_default())),
+                    gmt_create: Set(now),
+                    gmt_modified: Set(now),
+                    src_user: Set(Some(entity_c.src_user.unwrap_or_default())),
+                    src_ip: Set(Some(entity_c.src_ip.unwrap_or_default())),
+                    op_type: Set(Some(String::from("U"))),
+                    tenant_id: Set(Some(entity_c.tenant_id.unwrap_or_default())),
+                    encrypted_data_key: Set(entity_c.encrypted_data_key.unwrap_or_default()),
+                    ..Default::default()
+                }
+                .insert(db)
+                .await?;
+            }
+
+            anyhow::Ok(true)
+        }
+        None => {
+            let model = config_info::ActiveModel {
+                data_id: Set(data_id.to_string()),
+                group_id: Set(Some(group.to_string())),
+                content: Set(Some(content.to_string())),
+                md5: Set(Some(md5_digest(content))),
+                gmt_create: Set(Some(now)),
+                gmt_modified: Set(Some(now)),
+                src_user: Set(Some(src_user.to_string())),
+                src_ip: Set(Some((src_ip.to_string()))),
+                app_name: Set(Some(app_name.to_string())),
+                tenant_id: Set(Some(tenant.to_string())),
+                c_desc: Set(Some(desc.to_string())),
+                c_use: Set(Some(r#use.to_string())),
+                effect: Set(Some(efect.to_string())),
+                r#type: Set(Some(r#type.to_string())),
+                c_schema: Set(Some(schema.to_string())),
+                encrypted_data_key: Set(Some(encrypted_data_key.to_string())),
+                ..Default::default()
+            };
+
+            let entity_c = model.insert(db).await?;
+
+            his_config_info::ActiveModel {
+                id: Set(entity_c.id as u64),
+                data_id: Set(entity_c.data_id),
+                group_id: Set(entity_c.group_id.unwrap_or_default()),
+                app_name: Set(entity_c.app_name),
+                content: Set(entity_c.content.unwrap_or_default()),
+                md5: Set(Some(entity_c.md5.unwrap_or_default())),
+                gmt_create: Set(now),
+                gmt_modified: Set(now),
+                src_user: Set(Some(entity_c.src_user.unwrap_or_default())),
+                src_ip: Set(Some(entity_c.src_ip.unwrap_or_default())),
+                op_type: Set(Some(String::from("U"))),
+                tenant_id: Set(Some(entity_c.tenant_id.unwrap_or_default())),
+                encrypted_data_key: Set(entity_c.encrypted_data_key.unwrap_or_default()),
+                ..Default::default()
+            }
+            .insert(db)
+            .await?;
+
+            anyhow::Ok(true)
+        }
+    };
 }
 
 fn check_cipher(data_id: String) -> bool {
