@@ -25,6 +25,7 @@ pub async fn search_page(
             .filter(his_config_info::Column::TenantId.eq(tenant))
             .filter(his_config_info::Column::DataId.contains(data_id))
             .filter(his_config_info::Column::GroupId.contains(group))
+            .order_by_desc(his_config_info::Column::Nid)
             .paginate(db, page_size)
             .fetch_page(page_no - 1)
             .await?
