@@ -1,13 +1,14 @@
 use std::time::Duration;
 
-use actix_web::{web, App, HttpServer};
+use actix_web::{middleware::Logger, web, App, HttpServer};
 use config::Config;
-use env_logger::Env;
-use log;
 use middleware::auth::Authentication;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
-use crate::middleware::logger::Logger;
+use tracing::{subscriber::set_global_default, Subscriber};
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_log::LogTracer;
+use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, EnvFilter, Registry};
 
 pub mod api;
 pub mod common;
@@ -18,7 +19,8 @@ pub mod service;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    env_logger::init_from_env(Env::default().default_filter_or("info"));
+    let subscriber = get_subscriber("nacos", "info", std::io::stdout);
+    init_subscriber(subscriber);
 
     let app_config = Config::builder()
         .add_source(config::File::with_name("conf/application.yml"))
@@ -53,9 +55,7 @@ async fn main() -> std::io::Result<()> {
         .connect_timeout(Duration::from_secs(connect_timeout))
         .acquire_timeout(Duration::from_secs(acquire_timeout))
         .idle_timeout(Duration::from_secs(idle_timeout))
-        .max_lifetime(Duration::from_secs(max_lifetime))
-        .sqlx_logging(true)
-        .sqlx_logging_level(log::LevelFilter::Info);
+        .max_lifetime(Duration::from_secs(max_lifetime));
 
     let database_connection: DatabaseConnection = Database::connect(opt).await.unwrap();
     let address = app_config
@@ -91,4 +91,24 @@ async fn main() -> std::io::Result<()> {
     .bind((address, server_port))?
     .run()
     .await
+}
+
+pub fn get_subscriber(
+    name: &str,
+    env_filter: &str,
+    sink: impl for<'a> MakeWriter<'a> + 'static + Send + Sync,
+) -> impl Subscriber + Send + Sync {
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(env_filter));
+    let formatting_layer = BunyanFormattingLayer::new(name.into(), sink);
+
+    Registry::default()
+        .with(env_filter)
+        .with(JsonStorageLayer)
+        .with(formatting_layer)
+}
+
+pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) {
+    LogTracer::init().expect("Failed to set logger");
+    set_global_default(subscriber).expect("Failed to set subscriber");
 }

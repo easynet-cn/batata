@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use chrono::{Local, NaiveDateTime, Utc};
+use chrono::{Local, NaiveDateTime};
 use crypto::{digest::Digest, md5::Md5};
 use sea_orm::*;
-use sqlx::any;
 
 use crate::{
     common::model::{ConfigAllInfo, ConfigInfo, ConfigInfoStateWrapper, Page},
@@ -14,30 +13,33 @@ pub async fn search_page(
     db: &DatabaseConnection,
     page_no: u64,
     page_size: u64,
-    data_id: String,
-    group: String,
-    tenant: String,
-    config_advance_info: HashMap<String, String>,
+    tenant: &str,
+    data_id: &str,
+    group: &str,
+    app_name: &str,
+    config_tags: &str,
+    types: &str,
+    content: &str,
 ) -> anyhow::Result<Page<ConfigInfo>> {
     let mut count_select =
-        config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant.clone()));
+        config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant));
     let mut query_select =
         config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant));
 
     if !data_id.is_empty() {
-        count_select = count_select.filter(config_info::Column::DataId.contains(data_id.clone()));
+        count_select = count_select.filter(config_info::Column::DataId.contains(data_id));
         query_select = query_select.filter(config_info::Column::DataId.contains(data_id));
     }
     if !group.is_empty() {
-        count_select = count_select.filter(config_info::Column::GroupId.contains(group.clone()));
+        count_select = count_select.filter(config_info::Column::GroupId.contains(group));
         query_select = query_select.filter(config_info::Column::GroupId.contains(group));
     }
-    if let Some(app_name) = config_advance_info.get("app_name") {
-        count_select = count_select.filter(config_info::Column::AppName.contains(app_name.clone()));
+    if !app_name.is_empty() {
+        count_select = count_select.filter(config_info::Column::AppName.contains(app_name));
         query_select = query_select.filter(config_info::Column::AppName.contains(app_name));
     }
-    if let Some(content) = config_advance_info.get("content") {
-        count_select = count_select.filter(config_info::Column::Content.contains(content.clone()));
+    if !content.is_empty() {
+        count_select = count_select.filter(config_info::Column::Content.contains(content));
         query_select = query_select.filter(config_info::Column::Content.contains(content));
     }
 

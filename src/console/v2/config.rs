@@ -20,8 +20,9 @@ struct SearchParam {
     #[serde(rename = "config_tags")]
     config_tags: Option<String>,
     tenant: Option<String>,
+    types: Option<String>,
     #[serde(rename = "config_detail")]
-    config_detail: String,
+    config_detail: Option<String>,
     page_no: u64,
     page_size: u64,
 }
@@ -33,39 +34,19 @@ pub async fn search(
     params: web::Query<SearchParam>,
 ) -> impl Responder {
     if params.search.is_some() && params.search.as_ref().unwrap() == "blur" {
-        let mut config_advance_info = HashMap::<String, String>::new();
-
-        if params.app_name.is_some() && !params.app_name.as_ref().unwrap().to_string().is_empty() {
-            config_advance_info.insert(
-                "app_name".to_string(),
-                params.app_name.as_ref().unwrap().to_string(),
-            );
-        }
-
-        if params.config_tags.is_some()
-            && !params.config_tags.as_ref().unwrap().to_string().is_empty()
-        {
-            config_advance_info.insert(
-                "config_tags".to_string(),
-                params.config_tags.as_ref().unwrap().to_string(),
-            );
-        }
-
-        if !params.config_detail.is_empty() {
-            config_advance_info.insert(
-                "content".to_string(),
-                params.config_detail.trim_matches('*').to_string(),
-            );
-        }
+        let search_param = params.0;
 
         let result = crate::service::config::search_page(
             &data.database_connection,
-            params.page_no,
-            params.page_size,
-            params.data_id.clone().unwrap_or("".to_string()),
-            params.group.clone().unwrap_or("".to_string()),
-            params.tenant.clone().unwrap_or("".to_string()),
-            config_advance_info,
+            search_param.page_no,
+            search_param.page_size,
+            search_param.tenant.unwrap_or_default().as_str(),
+            search_param.data_id.unwrap_or_default().as_str(),
+            search_param.group.unwrap_or_default().as_str(),
+            search_param.app_name.unwrap_or_default().as_str(),
+            search_param.config_tags.unwrap_or_default().as_str(),
+            search_param.types.clone().unwrap_or_default().as_str(),
+            search_param.config_detail.unwrap_or_default().as_str(),
         )
         .await;
 
