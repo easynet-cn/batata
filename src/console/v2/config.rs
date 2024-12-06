@@ -1,13 +1,11 @@
-use std::collections::HashMap;
-
 use actix_web::{get, web, HttpRequest, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
 use chrono::Utc;
 
-use crate::{
-    api::model::{AppState, ErrorResult},
-    common::model::{ConfigInfo, Page},
+use crate::model::{
+    common::{AppState, ErrorResult, Page},
+    config::ConfigInfo,
 };
 
 #[derive(Debug, Deserialize)]

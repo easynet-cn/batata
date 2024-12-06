@@ -1,13 +1,14 @@
-use std::collections::HashMap;
-
 use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
 use chrono::Utc;
 
 use crate::{
-    api::model::{AppState, ErrorResult},
-    common::model::{ConfigInfo, NacosJwtPayload, Page},
+    model::{
+        auth::NacosJwtPayload,
+        common::{AppState, ErrorResult, Page},
+        config::ConfigInfo,
+    },
     service,
 };
 

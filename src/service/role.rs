@@ -2,8 +2,8 @@ use anyhow::Ok;
 use sea_orm::*;
 
 use crate::{
-    common::model::{Page, RoleInfo},
     entity::roles,
+    model::{auth::RoleInfo, common::Page},
 };
 
 pub async fn find_by_username(

@@ -1,10 +1,14 @@
 use actix_web::{post, web, HttpResponse, Responder, Scope};
 use serde::{Deserialize, Serialize};
 
-use crate::api::model::AppState;
-use crate::common::model::{NacosUser, DEFAULT_TOKEN_EXPIRE_SECONDS};
-use crate::service::auth::encode_jwt_token;
-use crate::{common, console, service};
+use crate::{
+    console::v1,
+    model::{
+        auth::{NacosUser, DEFAULT_TOKEN_EXPIRE_SECONDS, GLOBAL_ADMIN_ROLE},
+        common::AppState,
+    },
+    {service, service::auth::encode_jwt_token},
+};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +31,7 @@ pub async fn users_login(
     form: web::Form<LoginFormData>,
 ) -> impl Responder {
     let user_option =
-        crate::service::user::find_by_username(&data.database_connection, &form.username).await;
+        service::user::find_by_username(&data.database_connection, &form.username).await;
 
     if user_option.is_none() {
         return HttpResponse::Forbidden().json("user not found!");
@@ -62,7 +66,7 @@ pub async fn users_login(
                 .ok()
                 .unwrap()
                 .iter()
-                .any(|role| role.role == common::model::GLOBAL_ADMIN_ROLE);
+                .any(|role| role.role == GLOBAL_ADMIN_ROLE);
 
         let login_result = LoginResult {
             access_token: access_token.clone(),
@@ -82,16 +86,16 @@ pub async fn users_login(
 pub fn routers() -> Scope {
     return web::scope("/auth")
         .service(users_login)
-        .service(console::v1::user::search_page)
-        .service(console::v1::user::search)
-        .service(console::v1::user::update)
-        .service(console::v1::user::create)
-        .service(console::v1::user::delete)
-        .service(console::v1::role::search_page)
-        .service(console::v1::role::create)
-        .service(console::v1::role::delete)
-        .service(console::v1::role::search)
-        .service(console::v1::permission::search_page)
-        .service(console::v1::permission::create)
-        .service(console::v1::permission::delete);
+        .service(v1::user::search_page)
+        .service(v1::user::search)
+        .service(v1::user::update)
+        .service(v1::user::create)
+        .service(v1::user::delete)
+        .service(v1::role::search_page)
+        .service(v1::role::create)
+        .service(v1::role::delete)
+        .service(v1::role::search)
+        .service(v1::permission::search_page)
+        .service(v1::permission::create)
+        .service(v1::permission::delete);
 }

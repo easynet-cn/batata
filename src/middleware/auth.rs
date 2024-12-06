@@ -1,16 +1,19 @@
 use actix_service::forward_ready;
 use actix_utils::future::{ok, Ready};
-use actix_web::body::EitherBody;
-use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
-use actix_web::http::Method;
-use actix_web::web::Data;
-use actix_web::Error;
-use actix_web::HttpMessage;
-use actix_web::HttpResponse;
+use actix_web::{
+    body::EitherBody,
+    dev::{Service, ServiceRequest, ServiceResponse, Transform},
+    http::Method,
+    web::Data,
+    Error, HttpMessage, HttpResponse,
+};
 use chrono::Utc;
 use futures_core::future::LocalBoxFuture;
 
-use crate::{api, service};
+use crate::{
+    model::common::{AppState, ErrorResult},
+    service,
+};
 
 const IGNORE_ROUTES: [&str; 4] = [
     "/v1/auth/users/login",
@@ -57,7 +60,7 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        let app_state = req.app_data::<Data<api::model::AppState>>().unwrap();
+        let app_state = req.app_data::<Data<AppState>>().unwrap();
         let context_path = app_state.context_path.as_str();
         let mut authenticate_pass: bool;
 
@@ -76,7 +79,7 @@ where
                 if let Ok(authen_str) = authen_header.to_str() {
                     let token = authen_str.trim();
                     let secret_key = req
-                        .app_data::<Data<api::model::AppState>>()
+                        .app_data::<Data<AppState>>()
                         .unwrap()
                         .token_secret_key
                         .clone();
@@ -97,7 +100,7 @@ where
                             };
                             let (request, _pl) = req.into_parts();
                             let response = HttpResponse::Forbidden()
-                                .json(api::model::ErrorResult {
+                                .json(ErrorResult {
                                     timestamp: Utc::now().to_rfc3339(),
                                     status: 403,
                                     message: err_msg.to_string(),
@@ -116,7 +119,7 @@ where
         if !authenticate_pass {
             let (request, _pl) = req.into_parts();
             let response = HttpResponse::Forbidden()
-                .json(api::model::ErrorResult {
+                .json(ErrorResult {
                     timestamp: Utc::now().to_rfc3339(),
                     status: 403,
                     message: String::from("user not found!"),

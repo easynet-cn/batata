@@ -1,9 +1,6 @@
 use sea_orm::*;
 
-use crate::{
-    common::model::{Page, PermissionInfo},
-    entity::permissions,
-};
+use crate::{entity::permissions, model::auth::PermissionInfo, model::common::Page};
 
 pub async fn search_page(
     db: &DatabaseConnection,

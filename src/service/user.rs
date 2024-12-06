@@ -1,9 +1,13 @@
 use sea_orm::entity::ModelTrait;
 use sea_orm::*;
 
-use crate::common;
-use crate::common::model::{Page, User};
-use crate::entity::users;
+use crate::{
+    entity::users,
+    model::{
+        auth::User,
+        common::{BusinessError, Page},
+    },
+};
 
 pub async fn find_by_username(db: &DatabaseConnection, username: &str) -> Option<User> {
     let user_entity = users::Entity::find()
@@ -108,9 +112,9 @@ pub async fn update(
             user.update(db).await?;
         }
         None => {
-            return Err(anyhow::Error::from(
-                common::model::BusinessError::UserNotExist(username.to_string()),
-            ))
+            return Err(anyhow::Error::from(BusinessError::UserNotExist(
+                username.to_string(),
+            )))
         }
     }
 
@@ -125,9 +129,9 @@ pub async fn delete(db: &DatabaseConnection, username: &str) -> anyhow::Result<(
             entity.delete(db).await?;
         }
         None => {
-            return Err(anyhow::Error::from(
-                common::model::BusinessError::UserNotExist(username.to_string()),
-            ))
+            return Err(anyhow::Error::from(BusinessError::UserNotExist(
+                username.to_string(),
+            )))
         }
     }
 

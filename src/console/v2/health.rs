@@ -1,6 +1,6 @@
 use actix_web::{get, web, Scope};
 
-use crate::api::v2::model::Result;
+use crate::model::common::Result;
 
 #[get("/liveness")]
 pub async fn liveness() -> web::Json<Result<String>> {

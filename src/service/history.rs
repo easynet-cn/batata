@@ -1,8 +1,11 @@
 use sea_orm::*;
 
 use crate::{
-    common::model::{ConfigHistoryInfo, ConfigInfoWrapper, Page},
     entity::{config_info, his_config_info},
+    model::{
+        common::Page,
+        config::{ConfigHistoryInfo, ConfigInfoWrapper},
+    },
 };
 
 pub async fn search_page(

@@ -1,9 +1,11 @@
 use actix_web::{delete, get, post, put, web, HttpResponse, Responder};
 use serde::Deserialize;
 
-use crate::api::model::AppState;
-use crate::common::model::{RestResult, DEFAULT_USER};
-use crate::{common, service};
+use crate::model::{
+    auth::{DEFAULT_USER, GLOBAL_ADMIN_ROLE},
+    common::{AppState, BusinessError, RestResult},
+};
+use crate::service;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -136,7 +138,7 @@ pub async fn update(
         }),
         Err(err) => {
             let code = match err.downcast_ref() {
-                Some(common::model::BusinessError::UserNotExist(_)) => 400,
+                Some(BusinessError::UserNotExist(_)) => 400,
                 _ => 500,
             };
 
@@ -156,7 +158,7 @@ pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) 
         .ok()
         .unwrap()
         .iter()
-        .any(|role| role.role == common::model::GLOBAL_ADMIN_ROLE);
+        .any(|role| role.role == GLOBAL_ADMIN_ROLE);
 
     if global_admin {
         return HttpResponse::BadRequest().json(RestResult::<String> {
@@ -176,7 +178,7 @@ pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) 
         }),
         Err(err) => {
             let code = match err.downcast_ref() {
-                Some(common::model::BusinessError::UserNotExist(_)) => 400,
+                Some(BusinessError::UserNotExist(_)) => 400,
                 _ => 500,
             };
 

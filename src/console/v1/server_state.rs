@@ -2,8 +2,7 @@ use std::collections::HashMap;
 
 use actix_web::{get, web, Scope};
 
-use crate::api::model::AppState;
-use crate::common::model::RestResult;
+use crate::model::common::{AppState, RestResult};
 
 #[get("/state")]
 pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {

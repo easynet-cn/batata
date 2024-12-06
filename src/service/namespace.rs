@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use sea_orm::*;
 
-use crate::common::model::Namespace;
-use crate::entity::{config_info, tenant_info};
+use crate::{
+    entity::{config_info, tenant_info},
+    model::naming::Namespace,
+};
 
 #[derive(Debug, FromQueryResult)]
 struct SelectResult {

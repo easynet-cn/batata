@@ -1,4 +1,61 @@
+use config::Config;
+use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RestResult<T> {
+    pub code: i32,
+    pub message: String,
+    pub data: T,
+}
+
+impl<T> RestResult<T> {
+    pub fn success(data: T) -> RestResult<T> {
+        RestResult::<T> {
+            code: 200,
+            message: "".to_string(),
+            data,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Page<T> {
+    pub total_count: u64,
+    pub page_number: u64,
+    pub pages_available: u64,
+    pub page_items: Vec<T>,
+}
+
+impl<T> Default for Page<T> {
+    fn default() -> Self {
+        Self {
+            total_count: 0,
+            page_number: 1,
+            pages_available: 0,
+            page_items: vec![],
+        }
+    }
+}
+
+impl<T> Page<T> {
+    pub fn new(total_count: u64, page_number: u64, page_size: u64, page_items: Vec<T>) -> Self {
+        Self {
+            total_count: total_count,
+            page_number: page_number,
+            pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
+            page_items: page_items,
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+pub enum BusinessError {
+    #[error("user '{0}' not exist!")]
+    UserNotExist(String),
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorCode<'a> {
@@ -176,4 +233,21 @@ impl<T> Result<T> {
             data,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct AppState {
+    pub app_config: Config,
+    pub database_connection: DatabaseConnection,
+    pub context_path: String,
+    pub token_secret_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ErrorResult {
+    pub timestamp: String,
+    pub status: i32,
+    pub error: String,
+    pub message: String,
+    pub path: String,
 }

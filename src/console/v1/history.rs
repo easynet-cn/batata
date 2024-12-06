@@ -1,8 +1,7 @@
 use actix_web::{get, web, HttpResponse, Responder, Scope};
 use serde::Deserialize;
 
-use crate::api::model::AppState;
-use crate::service;
+use crate::{model::common::AppState, service};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

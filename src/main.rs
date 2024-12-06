@@ -1,21 +1,14 @@
 use std::time::Duration;
 
 use actix_web::{middleware::Logger, web, App, HttpServer};
+use batata::{console, middleware::auth::Authentication, model::common::AppState};
 use config::Config;
-use middleware::auth::Authentication;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
 use tracing::{subscriber::set_global_default, Subscriber};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, EnvFilter, Registry};
-
-pub mod api;
-pub mod common;
-pub mod console;
-pub mod entity;
-pub mod middleware;
-pub mod service;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -70,7 +63,7 @@ async fn main() -> std::io::Result<()> {
         .get_string("nacos.core.auth.plugin.nacos.token.secret.key")
         .unwrap();
 
-    let app_state = api::model::AppState {
+    let app_state = AppState {
         app_config,
         database_connection,
         context_path: context_path.clone(),
@@ -84,8 +77,8 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
-                    .service(crate::console::v1::router::routers())
-                    .service(crate::console::v2::router::routers()),
+                    .service(console::v1::router::routers())
+                    .service(console::v2::router::routers()),
             )
     })
     .bind((address, server_port))?

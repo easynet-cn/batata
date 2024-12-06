@@ -1,12 +1,13 @@
-use std::collections::HashMap;
-
 use chrono::{Local, NaiveDateTime};
 use crypto::{digest::Digest, md5::Md5};
 use sea_orm::*;
 
 use crate::{
-    common::model::{ConfigAllInfo, ConfigInfo, ConfigInfoStateWrapper, Page},
     entity::{config_info, config_tags_relation, his_config_info},
+    model::{
+        common::Page,
+        config::{ConfigAllInfo, ConfigInfo, ConfigInfoStateWrapper},
+    },
 };
 
 pub async fn search_page(
