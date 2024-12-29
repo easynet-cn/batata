@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBase {
     pub id: i64,
@@ -14,7 +14,7 @@ pub struct ConfigBase {
     pub encrypted_data_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigInfo {
     pub id: i64,
@@ -44,7 +44,7 @@ impl From<entity::config_info::Model> for ConfigInfo {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigInfoWrapper {
     pub id: i64,
@@ -76,7 +76,7 @@ impl From<entity::config_info::Model> for ConfigInfoWrapper {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigAllInfo {
     pub id: i64,
@@ -124,7 +124,7 @@ impl From<entity::config_info::Model> for ConfigAllInfo {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigInfoStateWrapper {
     pub id: i64,
@@ -148,7 +148,7 @@ impl From<entity::config_info::Model> for ConfigInfoStateWrapper {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryInfo {
     pub id: u64,

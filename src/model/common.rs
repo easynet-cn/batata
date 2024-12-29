@@ -3,7 +3,7 @@ use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RestResult<T> {
     pub code: i32,
     pub message: String,
@@ -20,7 +20,7 @@ impl<T> RestResult<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
     pub total_count: u64,
@@ -51,13 +51,13 @@ impl<T> Page<T> {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Clone, Debug, Serialize, Deserialize)]
 pub enum BusinessError {
     #[error("user '{0}' not exist!")]
     UserNotExist(String),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ErrorCode<'a> {
     pub code: i32,
     pub message: &'a str,
@@ -218,7 +218,7 @@ pub const SERVER_ERROR: ErrorCode<'static> = ErrorCode {
     message: "server error",
 };
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Result<T> {
     pub code: i32,
     pub message: String,
@@ -235,7 +235,7 @@ impl<T> Result<T> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct AppState {
     pub app_config: Config,
     pub database_connection: DatabaseConnection,
@@ -243,7 +243,7 @@ pub struct AppState {
     pub token_secret_key: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ErrorResult {
     pub timestamp: String,
     pub status: i32,
