@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use crate::entity;
 
 const DEFAULT_NAMESPACE_QUOTA: i32 = 200;
+const DEFAULT_NAMESPACE_SHOW_NAME: &str = "public";
+const DEFAULT_NAMESPACE_DESCRIPTION: &str = "Default Namespace";
+const DEFAULT_CREATE_SOURCE: &str = "nacos";
+const DEFAULT_KP: &str = "1";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,9 +23,9 @@ impl Default for Namespace {
     fn default() -> Self {
         Namespace {
             namespace: String::from(""),
-            namespace_show_name: String::from("public"),
-            namespace_desc: String::from("Public Namespace"),
-            quota: 200,
+            namespace_show_name: String::from(DEFAULT_NAMESPACE_SHOW_NAME),
+            namespace_desc: String::from(DEFAULT_NAMESPACE_DESCRIPTION),
+            quota: DEFAULT_NAMESPACE_QUOTA,
             config_count: 0,
             type_: 0,
         }
