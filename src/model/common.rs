@@ -3,6 +3,141 @@ use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub const CLIENT_VERSION: &str = "3.0.0";
+pub const DATA_IN_BODY_VERSION: i32 = 204;
+pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
+pub const APPNAME: &str = "AppName";
+pub const CLIENT_VERSION_KEY: &str = "ClientVersion";
+pub const CLIENT_IP: &str = "ClientIp";
+pub const UNKNOWN_APP: &str = "UnknownApp";
+pub const DEFAULT_DOMAINNAME: &str = "commonconfig.config-host.taobao.com";
+pub const DAILY_DOMAINNAME: &str = "commonconfig.taobao.net";
+pub const NULL: &str = "";
+pub const DATA_ID: &str = "dataId";
+pub const TENANT: &str = "tenant";
+pub const GROUP: &str = "group";
+pub const NAMESPACE_ID: &str = "namespaceId";
+pub const LAST_MODIFIED: &str = "Last-Modified";
+pub const ACCEPT_ENCODING: &str = "Accept-Encoding";
+pub const CONTENT_ENCODING: &str = "Content-Encoding";
+pub const PROBE_MODIFY_REQUEST: &str = "Listening-Configs";
+pub const PROBE_MODIFY_RESPONSE: &str = "Probe-Modify-Response";
+pub const PROBE_MODIFY_RESPONSE_NEW: &str = "Probe-Modify-Response-New";
+pub const USE_ZIP: &str = "true";
+pub const CONTENT_MD5: &str = "Content-MD5";
+pub const CONFIG_VERSION: &str = "Config-Version";
+pub const CONFIG_TYPE: &str = "Config-Type";
+pub const ENCRYPTED_DATA_KEY: &str = "Encrypted-Data-Key";
+pub const IF_MODIFIED_SINCE: &str = "If-Modified-Since";
+pub const SPACING_INTERVAL: &str = "client-spacing-interval";
+pub const BASE_PATH: &str = "/v1/cs";
+pub const CONFIG_CONTROLLER_PATH: &str = "/v1/cs/configs";
+pub const TOKEN: &str = "token";
+pub const ACCESS_TOKEN: &str = "accessToken";
+pub const TOKEN_TTL: &str = "tokenTtl";
+pub const GLOBAL_ADMIN: &str = "globalAdmin";
+pub const USERNAME: &str = "username";
+pub const TOKEN_REFRESH_WINDOW: &str = "tokenRefreshWindow";
+pub const SDK_GRPC_PORT_DEFAULT_OFFSET: i32 = 1000;
+pub const CLUSTER_GRPC_PORT_DEFAULT_OFFSET: i32 = 1001;
+
+// second.
+pub const ASYNC_UPDATE_ADDRESS_INTERVAL: i32 = 300;
+
+// second.
+pub const POLLING_INTERVAL_TIME: i32 = 15;
+
+// millisecond.
+pub const ONCE_TIMEOUT: i32 = 2000;
+
+// millisecond.
+pub const SO_TIMEOUT: i32 = 60000;
+
+//millisecond.
+pub const CONFIG_LONG_POLL_TIMEOUT: i32 = 30000;
+
+// millisecond.
+pub const MIN_CONFIG_LONG_POLL_TIMEOUT: i32 = 10000;
+
+// millisecond.
+pub const CONFIG_RETRY_TIME: i32 = 2000;
+
+// Maximum number of retries.
+pub const MAX_RETRY: i32 = 3;
+
+// millisecond.
+pub const RECV_WAIT_TIMEOUT: i32 = ONCE_TIMEOUT * 5;
+
+pub const ENCODE: &str = "UTF-8";
+pub const FLOW_CONTROL_THRESHOLD: i32 = 20;
+pub const FLOW_CONTROL_SLOT: i32 = 10;
+pub const FLOW_CONTROL_INTERVAL: i32 = 1000;
+pub const DEFAULT_PROTECT_THRESHOLD: f32 = 0.0;
+pub const LINE_SEPARATOR: &str = "\u{1}";
+pub const WORD_SEPARATOR: &str = "\u{2}";
+pub const LONGPOLLING_LINE_SEPARATOR: &str = "\r\n";
+pub const CLIENT_APPNAME_HEADER: &str = "Client-AppName";
+pub const CLIENT_REQUEST_TS_HEADER: &str = "Client-RequestTS";
+pub const CLIENT_REQUEST_TOKEN_HEADER: &str = "Client-RequestToken";
+pub const ATOMIC_MAX_SIZE: i32 = 1000;
+pub const NAMING_INSTANCE_ID_SPLITTER: &str = "#";
+pub const NAMING_INSTANCE_ID_SEG_COUNT: i32 = 4;
+pub const NAMING_HTTP_HEADER_SPLITTER: &str = "\\|";
+pub const DEFAULT_CLUSTER_NAME: &str = "DEFAULT";
+pub const DEFAULT_HEART_BEAT_TIMEOUT: i64 = 15000;
+pub const DEFAULT_IP_DELETE_TIMEOUT: i64 = 30000;
+pub const DEFAULT_HEART_BEAT_INTERVAL: i64 = 5000;
+pub const DEFAULT_NAMESPACE_ID: &str = "pub";
+pub const DEFAULT_USE_CLOUD_NAMESPACE_PARSING: bool = true;
+pub const WRITE_REDIRECT_CODE: i32 = 307;
+pub const SERVICE_INFO_SPLITER: &str = "@@";
+pub const SERVICE_INFO_SPLIT_COUNT: i32 = 2;
+pub const NULL_STRING: &str = "null";
+pub const NUMBER_PATTERN_STRING: &str = "^\\d+$";
+pub const ANY_PATTERN: &str = ".*";
+pub const DEFAULT_INSTANCE_ID_GENERATOR: &str = "simple";
+pub const SNOWFLAKE_INSTANCE_ID_GENERATOR: &str = "snowflake";
+pub const HTTP_PREFIX: &str = "http";
+pub const ALL_PATTERN: &str = "*";
+pub const COLON: &str = ":";
+pub const LINE_BREAK: &str = "\n";
+pub const POUND: &str = "#";
+pub const VIPSERVER_TAG: &str = "Vipserver-Tag";
+pub const AMORY_TAG: &str = "Amory-Tag";
+pub const LOCATION_TAG: &str = "Location-Tag";
+pub const CHARSET_KEY: &str = "charset";
+pub const CLUSTER_NAME_PATTERN_STRING: &str = "^[0-9a-zA-Z-]+$";
+
+/**
+ * millisecond.
+ */
+pub const DEFAULT_REDO_DELAY_TIME: i64 = 3000;
+pub const DEFAULT_REDO_THREAD_COUNT: i32 = 1;
+pub const APP_CONN_LABELS_KEY: &str = "nacos.app.conn.labels";
+
+pub const DOT: &str = ".";
+
+pub const WEIGHT: &str = "weight";
+
+pub const PROPERTIES_KEY: &str = "properties";
+
+pub const JVM_KEY: &str = "jvm";
+
+pub const ENV_KEY: &str = "env";
+
+pub const APP_CONN_LABELS_PREFERRED: &str = "nacos_app_conn_labels_preferred";
+
+pub const APP_CONN_PREFIX: &str = "app_";
+
+pub const CONFIG_GRAY_LABEL: &str = "nacos.config.gray.label";
+
+/**
+ * Since 2.3.3, For some situation like java agent using nacos-client which can't use env ram info.
+ */
+pub const DEFAULT_USE_RAM_INFO_PARSING: &str = "true";
+
+pub const CLIENT_MODULE_TYPE: &str = "clientModuleType";
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RestResult<T> {
     pub code: i32,
@@ -250,4 +385,14 @@ pub struct ErrorResult {
     pub error: String,
     pub message: String,
     pub path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HttpRequestExtensions {
+    pub namespace_id: String,
+    pub group: String,
+    pub resource_name: String,
+    pub username: String,
+    pub roles: Vec<String>,
+    pub permissions: Vec<super::auth::PermissionInfo>,
 }

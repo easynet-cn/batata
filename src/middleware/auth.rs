@@ -1,28 +1,34 @@
 use actix_service::forward_ready;
-use actix_utils::future::{ok, Ready};
+use actix_utils::future::{Ready, ok};
 use actix_web::{
+    Error, HttpMessage, HttpResponse,
     body::EitherBody,
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     http::Method,
-    web::Data,
-    Error, HttpMessage, HttpResponse,
+    web::{self, Data, service},
 };
 use chrono::Utc;
-use futures_core::future::LocalBoxFuture;
+use futures::future::LocalBoxFuture;
+use jsonwebtoken::TokenData;
 
 use crate::{
     model::common::{AppState, ErrorResult},
     service,
 };
 
-const IGNORE_ROUTES: [&str; 4] = [
+const IGNORE_ROUTES: [&str; 7] = [
     "/v1/auth/users/login",
     "/v1/console/server/state",
     "/v1/console/server/announcement",
     "/v1/console/server/guide",
+    "/v3/console/server/state",
+    "/v3/console/server/announcement",
+    "/v3/console/server/guide",
 ];
 
 const ACCESS_TOKEN: &str = "accessToken";
+
+struct RequstParam {}
 
 pub struct Authentication;
 
@@ -62,6 +68,7 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let app_state = req.app_data::<Data<AppState>>().unwrap();
         let context_path = app_state.context_path.as_str();
+        let path = req.path();
         let mut authenticate_pass: bool;
 
         if Method::OPTIONS == *req.method() {
@@ -70,7 +77,7 @@ where
             authenticate_pass = IGNORE_ROUTES.iter().any(|ignore_route| {
                 let path = format!("{}{}", &context_path, ignore_route);
 
-                req.path().starts_with(&path)
+                path.starts_with(&path)
             });
         }
 
@@ -89,7 +96,34 @@ where
                     match decode_result {
                         Ok(token_data) => {
                             authenticate_pass = true;
-                            req.extensions_mut().insert(token_data.claims);
+                            let claims = token_data.claims;
+
+                            req.extensions_mut().insert(claims.clone());
+
+                            let username = claims.clone().sub;
+
+                            let _ = Box::pin(async {
+                                let roles: Vec<String> = service::role::find_by_username(
+                                    &app_state.database_connection,
+                                    username.as_str(),
+                                )
+                                .await
+                                .ok()
+                                .unwrap()
+                                .iter()
+                                .map(|user| user.username.clone())
+                                .collect();
+                                let permissions = service::permission::find_by_roles(
+                                    &app_state.database_connection,
+                                    roles.clone(),
+                                )
+                                .await
+                                .ok()
+                                .unwrap();
+
+                                req.extensions_mut().insert(roles.clone());
+                                req.extensions_mut().insert(permissions);
+                            });
                         }
                         Err(err) => {
                             let err_msg = match err.kind() {

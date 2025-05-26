@@ -1,26 +1,36 @@
 use std::collections::HashMap;
 
-use actix_web::{get, web, Scope};
+use actix_web::{Scope, get, web};
 
-use crate::model::common::{AppState, RestResult};
+use crate::model::{
+    auth,
+    common::{AppState, RestResult},
+};
+
+pub const AUTH_ENABLED: &str = "auth_enabled";
+
+pub const LOGIN_PAGE_ENABLED: &str = "login_page_enabled";
+
+pub const AUTH_SYSTEM_TYPE: &str = "auth_system_type";
 
 #[get("/state")]
 pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {
     let mut state_map: HashMap<String, Option<String>> = HashMap::new();
 
+    // console auth
     state_map.insert(
-        "auth_enabled".to_string(),
+        AUTH_ENABLED.to_string(),
         Some(
             data.app_config
-                .get_string("nacos.core.auth.enabled")
-                .unwrap_or("false".to_string()),
+                .get_string(auth::NACOS_CORE_AUTH_ENABLED)
+                .unwrap_or("true".to_string()),
         ),
     );
     state_map.insert(
-        "login_page_enabled".to_string(),
+        LOGIN_PAGE_ENABLED.to_string(),
         Some(
             data.app_config
-                .get_string("nacos.core.auth.enabled")
+                .get_string(auth::NACOS_CORE_AUTH_CONSOLE_ENABLED)
                 .unwrap_or("false".to_string()),
         ),
     );

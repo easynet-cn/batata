@@ -2,9 +2,44 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity;
 
-pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 1800;
+pub const NACOS_CORE_AUTH_ENABLED: &str = "nacos.core.auth.enabled";
+pub const NACOS_CORE_AUTH_CONSOLE_ENABLED: &str = "nacos.core.auth.console.enabled";
+pub const NACOS_CORE_AUTH_ADMIN_ENABLED: &str = "nacos.core.auth.admin.enabled";
+pub const NACOS_CORE_AUTH_SYSTEM_TYPE: &str = "nacos.core.auth.system.type";
+pub const NACOS_CORE_AUTH_CACHING_ENABLED: &str = "nacos.core.auth.caching.enabled";
+pub const NACOS_CORE_AUTH_SERVER_IDENTITY_KEY: &str = "nacos.core.auth.server.identity.key";
+pub const NACOS_CORE_AUTH_SERVER_IDENTITY_VALUE: &str = "nacos.core.auth.server.identity.value";
+
+pub const AUTH_PLUGIN_TYPE: &str = "nacos";
+pub const LDAP_AUTH_PLUGIN_TYPE: &str = "ldap";
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
+pub const AUTHORIZATION_HEADER: &str = "Authorization";
+pub const TOKEN_PREFIX: &str = "Bearer ";
 pub const DEFAULT_USER: &str = "nacos";
+pub const PARAM_USERNAME: &str = "username";
+pub const PARAM_PASSWORD: &str = "password";
+pub const CONSOLE_RESOURCE_NAME_PREFIX: &str = "console/";
+pub const UPDATE_PASSWORD_ENTRY_POINT: &str = "onsole/user/password";
+pub const LOCK_OPERATOR_POINT: &str = "grpc/lock";
+pub const NACOS_USER_KEY: &str = "nacosuser";
+pub const TOKEN_SECRET_KEY: &str = "nacos.core.auth.plugin.nacos.token.secret.key";
+pub const DEFAULT_TOKEN_SECRET_KEY: &str = "";
+pub const TOKEN_EXPIRE_SECONDS: &str = "nacos.core.auth.plugin.nacos.token.expire.seconds";
+pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 18000;
+pub const NACOS_CORE_AUTH_LDAP_URL: &str = "nacos.core.auth.ldap.url";
+pub const NACOS_CORE_AUTH_LDAP_BASEDC: &str = "nacos.core.auth.ldap.basedc";
+pub const NACOS_CORE_AUTH_LDAP_TIMEOUT: &str = "nacos.core.auth.ldap.timeout";
+pub const NACOS_CORE_AUTH_LDAP_USERDN: &str = "nacos.core.auth.ldap.userDn";
+pub const NACOS_CORE_AUTH_LDAP_PASSWORD: &str = "nacos.core.auth.ldap.password";
+pub const NACOS_CORE_AUTH_LDAP_FILTER_PREFIX: &str = "nacos.core.auth.ldap.filter.prefix";
+pub const NACOS_CORE_AUTH_CASE_SENSITIVE: &str = "nacos.core.auth.ldap.case.sensitive";
+pub const NACOS_CORE_AUTH_IGNORE_PARTIAL_RESULT_EXCEPTION: &str =
+    "nacos.core.auth.ldap.ignore.partial.result.exception";
+pub const LDAP_PREFIX: &str = "LDAP_";
+pub const MAX_PASSWORD_LENGTH: i32 = 72;
+pub const USER_PATH: &str = "/v3/auth/user";
+pub const ROLE_PATH: &str = "/v3/auth/role";
+pub const PERMISSION_PATH: &str = "/v3/auth/permission";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {

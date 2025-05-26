@@ -32,6 +32,18 @@ impl Member {
                 std::env::var("nacos.core.member.meta.site").unwrap_or(String::from("unknow")),
             ),
         );
+        m.insert(
+            String::from("adWeight"),
+            serde_json::Value::String(
+                std::env::var("nacos.core.member.meta.adWeight").unwrap_or(String::from("0")),
+            ),
+        );
+        m.insert(
+            String::from("weight"),
+            serde_json::Value::String(
+                std::env::var("nacos.core.member.meta.weight").unwrap_or(String::from("1")),
+            ),
+        );
 
         Self {
             ip: String::from(""),

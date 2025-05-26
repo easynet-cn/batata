@@ -2,8 +2,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::entity;
 
+// Common parameters for service discovery.
+pub const CODE: &str = "code";
+pub const SERVICE_NAME: &str = "serviceName";
+pub const CLUSTER_NAME: &str = "clusterName";
+pub const NAMESPACE_ID: &str = "namespaceId";
+pub const GROUP_NAME: &str = "groupName";
+pub const LIGHT_BEAT_ENABLED: &str = "lightBeatEnabled";
+pub const NAMING_REQUEST_TIMEOUT: &str = "namingRequestTimeout";
+
 const DEFAULT_NAMESPACE_QUOTA: i32 = 200;
-const DEFAULT_NAMESPACE_SHOW_NAME: &str = "public";
+const DEFAULT_NAMESPACE_SHOW_NAME: &str = "pub";
 const DEFAULT_NAMESPACE_DESCRIPTION: &str = "Default Namespace";
 const DEFAULT_CREATE_SOURCE: &str = "nacos";
 const DEFAULT_KP: &str = "1";

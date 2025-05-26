@@ -1,14 +1,14 @@
 use std::time::Duration;
 
-use actix_web::{middleware::Logger, web, App, HttpServer};
+use actix_web::{App, HttpServer, middleware::Logger, web};
 use batata::{console, middleware::auth::Authentication, model::common::AppState};
 use config::Config;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
-use tracing::{subscriber::set_global_default, Subscriber};
+use tracing::{Subscriber, subscriber::set_global_default};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
-use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, EnvFilter, Registry};
+use tracing_subscriber::{EnvFilter, Registry, fmt::MakeWriter, layer::SubscriberExt};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -54,14 +54,20 @@ async fn main() -> std::io::Result<()> {
     let address = app_config
         .get_string("server.address")
         .unwrap_or("0.0.0.0".to_string());
-    let server_port = app_config.get_int("server.port").unwrap_or(8848) as u16;
+    let server_port = app_config.get_int("nacos.console.port").unwrap_or(8080) as u16;
     let context_path = app_config
-        .get_string("server.servlet.contextPath")
-        .unwrap_or("/nacos".to_string());
+        .get_string("nacos.console.contextPath")
+        .unwrap_or("".to_string());
 
     let token_secret_key = app_config
         .get_string("nacos.core.auth.plugin.nacos.token.secret.key")
         .unwrap();
+
+    let server_address = address.clone();
+    let server_main_port = app_config.get_int("nacos.server.main.port").unwrap_or(8080) as u16;
+    let server_context_path = app_config
+        .get_string("nacos.server.contextPath")
+        .unwrap_or("".to_string());
 
     let app_state = AppState {
         app_config,
@@ -70,20 +76,39 @@ async fn main() -> std::io::Result<()> {
         token_secret_key: token_secret_key.clone(),
     };
 
-    HttpServer::new(move || {
+    let server_app_state = app_state.clone();
+
+    let console_server = HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
             .wrap(Authentication)
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
-                    .service(console::v1::router::routers())
-                    .service(console::v2::router::routers()),
+                    .service(console::v2::router::routers())
+                    .service(console::v3::router::routers()),
             )
     })
     .bind((address, server_port))?
-    .run()
-    .await
+    .run();
+
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(Logger::default())
+            .wrap(Authentication)
+            .app_data(web::Data::new(server_app_state.clone()))
+            .service(
+                web::scope(&server_context_path)
+                    .service(console::v2::router::routers())
+                    .service(console::v3::router::routers()),
+            )
+    })
+    .bind((server_address, server_main_port))?
+    .run();
+
+    tokio::try_join!(console_server, server)?;
+
+    Ok(())
 }
 
 pub fn get_subscriber(

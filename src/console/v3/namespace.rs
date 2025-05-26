@@ -1,4 +1,4 @@
-use actix_web::{delete, get, post, put, web, HttpResponse, Responder, Scope};
+use actix_web::{HttpResponse, Responder, Scope, delete, get, post, put, web};
 use serde::Deserialize;
 
 use crate::{
@@ -41,7 +41,7 @@ struct DeleteParam {
 
 const NAMESPACE_ID_MAX_LENGTH: usize = 128;
 
-#[get("")]
+#[get("list")]
 pub async fn get_all(data: web::Data<AppState>, params: web::Query<GetParam>) -> impl Responder {
     if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
         let namespace = service::namespace::get_by_namespace_id(
@@ -166,7 +166,7 @@ pub async fn delete(data: web::Data<AppState>, form: web::Query<DeleteParam>) ->
 }
 
 pub fn routers() -> Scope {
-    web::scope("/namespaces")
+    web::scope("/core/namespace")
         .service(get_all)
         .service(create)
         .service(update)

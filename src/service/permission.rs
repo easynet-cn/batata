@@ -44,6 +44,25 @@ pub async fn search_page(
     return anyhow::Ok(Page::<PermissionInfo>::default());
 }
 
+pub async fn find_by_roles(
+    db: &DatabaseConnection,
+    roles: Vec<String>,
+) -> anyhow::Result<Vec<PermissionInfo>> {
+    if roles.is_empty() {
+        return anyhow::Ok(vec![]);
+    } else {
+        let permissions = permissions::Entity::find()
+            .filter(permissions::Column::Role.is_in(roles))
+            .all(db)
+            .await?
+            .iter()
+            .map(|entity| PermissionInfo::from(entity.clone()))
+            .collect();
+
+        return anyhow::Ok(permissions);
+    }
+}
+
 pub async fn create(
     db: &DatabaseConnection,
     role: &str,

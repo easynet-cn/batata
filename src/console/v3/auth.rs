@@ -1,10 +1,9 @@
-use actix_web::{post, web, HttpResponse, Responder, Scope};
+use actix_web::{HttpResponse, Responder, Scope, post, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    console::v1,
     model::{
-        auth::{NacosUser, DEFAULT_TOKEN_EXPIRE_SECONDS, GLOBAL_ADMIN_ROLE},
+        auth::{DEFAULT_TOKEN_EXPIRE_SECONDS, GLOBAL_ADMIN_ROLE, NacosUser},
         common::AppState,
     },
     {service, service::auth::encode_jwt_token},
@@ -25,8 +24,8 @@ struct LoginFormData {
     password: String,
 }
 
-#[post("/users/login")]
-pub async fn users_login(
+#[post("/user/login")]
+pub async fn user_login(
     data: web::Data<AppState>,
     form: web::Form<LoginFormData>,
 ) -> impl Responder {
@@ -85,17 +84,17 @@ pub async fn users_login(
 
 pub fn routers() -> Scope {
     return web::scope("/auth")
-        .service(users_login)
-        .service(v1::user::search_page)
-        .service(v1::user::search)
-        .service(v1::user::update)
-        .service(v1::user::create)
-        .service(v1::user::delete)
-        .service(v1::role::search_page)
-        .service(v1::role::create)
-        .service(v1::role::delete)
-        .service(v1::role::search)
-        .service(v1::permission::search_page)
-        .service(v1::permission::create)
-        .service(v1::permission::delete);
+        .service(user_login)
+        .service(super::user::search_page)
+        .service(super::user::search)
+        .service(super::user::update)
+        .service(super::user::create)
+        .service(super::user::delete)
+        .service(super::role::search_page)
+        .service(super::role::create)
+        .service(super::role::delete)
+        .service(super::role::search)
+        .service(super::permission::search_page)
+        .service(super::permission::create)
+        .service(super::permission::delete);
 }
