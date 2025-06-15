@@ -1,9 +1,10 @@
-use actix_web::{delete, get, post, put, web, HttpResponse, Responder};
+use actix_web::{HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
 use crate::model::{
     auth::{DEFAULT_USER, GLOBAL_ADMIN_ROLE},
-    common::{AppState, BusinessError, RestResult},
+    common,
+    common::{AppState, BusinessError},
 };
 use crate::service;
 
@@ -85,7 +86,7 @@ pub async fn create(
     params: web::Form<CreateFormData>,
 ) -> impl Responder {
     if params.username == DEFAULT_USER {
-        return HttpResponse::Conflict().json(RestResult::<String> {
+        return HttpResponse::Conflict().json(common::Result::<String> {
             code: 409,
             message:String::from("User `nacos` is default admin user. Please use `/nacos/v1/auth/users/admin` API to init `nacos` users. Detail see `https://nacos.io/docs/latest/manual/admin/auth/#31-%E8%AE%BE%E7%BD%AE%E7%AE%A1%E7%90%86%E5%91%98%E5%AF%86%E7%A0%81`"),
             data:String::from("User `nacos` is default admin user. Please use `/nacos/v1/auth/users/admin` API to init `nacos` users. Detail see `https://nacos.io/docs/latest/manual/admin/auth/#31-%E8%AE%BE%E7%BD%AE%E7%AE%A1%E7%90%86%E5%91%98%E5%AF%86%E7%A0%81`")
@@ -105,12 +106,12 @@ pub async fn create(
         service::user::create(&data.database_connection, &params.username, &password).await;
 
     return match result {
-        Ok(()) => HttpResponse::Ok().json(RestResult::<String> {
+        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
             code: 200,
             message: String::from("create user ok!"),
             data: String::from("create user ok!"),
         }),
-        Err(err) => HttpResponse::InternalServerError().json(RestResult::<String> {
+        Err(err) => HttpResponse::InternalServerError().json(common::Result::<String> {
             code: 500,
             message: err.to_string(),
             data: err.to_string(),
@@ -131,7 +132,7 @@ pub async fn update(
     .await;
 
     return match result {
-        Ok(()) => HttpResponse::Ok().json(RestResult::<String> {
+        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
             code: 200,
             message: String::from("update user ok!"),
             data: String::from("update user ok!"),
@@ -142,7 +143,7 @@ pub async fn update(
                 _ => 500,
             };
 
-            return HttpResponse::InternalServerError().json(RestResult::<String> {
+            return HttpResponse::InternalServerError().json(common::Result::<String> {
                 code: code,
                 message: err.to_string(),
                 data: err.to_string(),
@@ -161,7 +162,7 @@ pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) 
         .any(|role| role.role == GLOBAL_ADMIN_ROLE);
 
     if global_admin {
-        return HttpResponse::BadRequest().json(RestResult::<String> {
+        return HttpResponse::BadRequest().json(common::Result::<String> {
             code: 400,
             message: format!("cannot delete admin: {}", &params.username),
             data: format!("cannot delete admin: {}", &params.username),
@@ -171,7 +172,7 @@ pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) 
     let result = service::user::delete(&data.database_connection, &params.username).await;
 
     return match result {
-        Ok(()) => HttpResponse::Ok().json(RestResult::<String> {
+        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
             code: 200,
             message: String::from("delete user ok!"),
             data: String::from("delete user ok!"),
@@ -182,7 +183,7 @@ pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) 
                 _ => 500,
             };
 
-            return HttpResponse::InternalServerError().json(RestResult::<String> {
+            return HttpResponse::InternalServerError().json(common::Result::<String> {
                 code: code,
                 message: err.to_string(),
                 data: err.to_string(),

@@ -138,23 +138,6 @@ pub const DEFAULT_USE_RAM_INFO_PARSING: &str = "true";
 
 pub const CLIENT_MODULE_TYPE: &str = "clientModuleType";
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct RestResult<T> {
-    pub code: i32,
-    pub message: String,
-    pub data: T,
-}
-
-impl<T> RestResult<T> {
-    pub fn success(data: T) -> RestResult<T> {
-        RestResult::<T> {
-            code: 0,
-            message: "success".to_string(),
-            data,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {

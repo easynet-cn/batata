@@ -2,10 +2,7 @@ use actix_web::{HttpResponse, Responder, Scope, delete, get, post, put, web};
 use serde::Deserialize;
 
 use crate::{
-    model::{
-        common::{AppState, RestResult},
-        naming::Namespace,
-    },
+    model::{common, common::AppState, naming::Namespace},
     service,
 };
 
@@ -64,7 +61,7 @@ pub async fn get_all(data: web::Data<AppState>, params: web::Query<GetParam>) ->
     }
 
     let namespaces: Vec<Namespace> = service::namespace::find_all(&data.database_connection).await;
-    let rest_result = RestResult::<Vec<Namespace>>::success(namespaces);
+    let rest_result = common::Result::<Vec<Namespace>>::success(namespaces);
 
     return HttpResponse::Ok().json(rest_result);
 }

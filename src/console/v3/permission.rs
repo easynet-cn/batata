@@ -1,8 +1,8 @@
-use actix_web::{delete, get, post, web, HttpResponse, Responder};
+use actix_web::{HttpResponse, Responder, delete, get, post, web};
 use serde::Deserialize;
 
 use crate::{
-    model::common::{AppState, RestResult},
+    model::{common, common::AppState},
     service,
 };
 
@@ -73,12 +73,12 @@ pub async fn create(
     .await;
 
     return match result {
-        Ok(()) => HttpResponse::Ok().json(RestResult::<String> {
+        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
             code: 200,
             message: String::from("add permission ok!"),
             data: String::from("add permission ok!"),
         }),
-        Err(err) => HttpResponse::InternalServerError().json(RestResult::<String> {
+        Err(err) => HttpResponse::InternalServerError().json(common::Result::<String> {
             code: 500,
             message: err.to_string(),
             data: err.to_string(),
@@ -97,13 +97,13 @@ pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) 
     .await;
 
     return match result {
-        Ok(()) => HttpResponse::Ok().json(RestResult::<String> {
+        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
             code: 200,
             message: String::from("delete permission ok!"),
             data: String::from("delete permission ok!"),
         }),
         Err(err) => {
-            return HttpResponse::InternalServerError().json(RestResult::<String> {
+            return HttpResponse::InternalServerError().json(common::Result::<String> {
                 code: 500,
                 message: err.to_string(),
                 data: err.to_string(),

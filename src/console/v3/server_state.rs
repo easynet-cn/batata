@@ -3,10 +3,7 @@ use std::{collections::HashMap, fs};
 use actix_web::{Scope, get, web};
 use serde::Deserialize;
 
-use crate::model::{
-    auth,
-    common::{AppState, RestResult},
-};
+use crate::model::{auth, common, common::AppState};
 
 pub const AUTH_ENABLED: &str = "auth_enabled";
 pub const LOGIN_PAGE_ENABLED: &str = "login_page_enabled";
@@ -212,7 +209,7 @@ pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Optio
 }
 
 #[get("/announcement")]
-pub async fn announcement(params: web::Query<LanguageParam>) -> web::Json<RestResult<String>> {
+pub async fn announcement(params: web::Query<LanguageParam>) -> web::Json<common::Result<String>> {
     let file = format!(
         "conf/{}_{}.conf",
         ANNOUNCEMENT_FILE[0..ANNOUNCEMENT_FILE.len() - 5].to_string(),
@@ -220,20 +217,20 @@ pub async fn announcement(params: web::Query<LanguageParam>) -> web::Json<RestRe
     );
 
     if let Ok(content) = fs::read_to_string(file) {
-        web::Json(RestResult::<String>::success(content))
+        web::Json(common::Result::<String>::success(content))
     } else {
-        web::Json(RestResult::<String>::success("".to_string()))
+        web::Json(common::Result::<String>::success("".to_string()))
     }
 }
 
 #[get("/guide")]
-pub async fn guide() -> web::Json<RestResult<String>> {
+pub async fn guide() -> web::Json<common::Result<String>> {
     let file = format!("conf/{}", GUIDE_FILE.to_string());
 
     if let Ok(content) = fs::read_to_string(file) {
-        web::Json(RestResult::<String>::success(content))
+        web::Json(common::Result::<String>::success(content))
     } else {
-        web::Json(RestResult::<String>::success("".to_string()))
+        web::Json(common::Result::<String>::success("".to_string()))
     }
 }
 
