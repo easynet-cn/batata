@@ -148,8 +148,8 @@ pub struct RestResult<T> {
 impl<T> RestResult<T> {
     pub fn success(data: T) -> RestResult<T> {
         RestResult::<T> {
-            code: 200,
-            message: "".to_string(),
+            code: 0,
+            message: "success".to_string(),
             data,
         }
     }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::entity;
@@ -104,4 +106,20 @@ impl From<entity::permissions::Model> for PermissionInfo {
             action: value.action,
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resource {
+    pub namespace_id: String,
+    pub group: String,
+    pub name: String,
+    pub _type: String,
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct AuthContext {
+    pub username: String,
+    pub jwt_error: Option<jsonwebtoken::errors::Error>,
 }

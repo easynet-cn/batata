@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs};
 
 use actix_web::{Scope, get, web};
+use serde::Deserialize;
 
 use crate::model::{
     auth,
@@ -8,10 +9,16 @@ use crate::model::{
 };
 
 pub const AUTH_ENABLED: &str = "auth_enabled";
-
 pub const LOGIN_PAGE_ENABLED: &str = "login_page_enabled";
-
 pub const AUTH_SYSTEM_TYPE: &str = "auth_system_type";
+pub const ANNOUNCEMENT_FILE: &str = "announcement.conf";
+pub const GUIDE_FILE: &str = "console-guide.conf";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LanguageParam {
+    language: String,
+}
 
 #[get("/state")]
 pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {
@@ -205,17 +212,29 @@ pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Optio
 }
 
 #[get("/announcement")]
-pub async fn announcement() -> web::Json<RestResult<String>> {
-    let rest_result = RestResult::<String>::success("".to_string());
+pub async fn announcement(params: web::Query<LanguageParam>) -> web::Json<RestResult<String>> {
+    let file = format!(
+        "conf/{}_{}.conf",
+        ANNOUNCEMENT_FILE[0..ANNOUNCEMENT_FILE.len() - 5].to_string(),
+        params.language
+    );
 
-    web::Json(rest_result)
+    if let Ok(content) = fs::read_to_string(file) {
+        web::Json(RestResult::<String>::success(content))
+    } else {
+        web::Json(RestResult::<String>::success("".to_string()))
+    }
 }
 
 #[get("/guide")]
 pub async fn guide() -> web::Json<RestResult<String>> {
-    let rest_result = RestResult::<String>::success("".to_string());
+    let file = format!("conf/{}", GUIDE_FILE.to_string());
 
-    web::Json(rest_result)
+    if let Ok(content) = fs::read_to_string(file) {
+        web::Json(RestResult::<String>::success(content))
+    } else {
+        web::Json(RestResult::<String>::success("".to_string()))
+    }
 }
 
 pub fn routers() -> Scope {
