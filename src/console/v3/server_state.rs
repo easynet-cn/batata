@@ -21,6 +21,12 @@ struct LanguageParam {
 pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {
     let mut state_map: HashMap<String, Option<String>> = HashMap::new();
 
+    // config module state
+    state_map.insert(
+        common::DATASOURCE_PLATFORM_PROPERTY_STATE.to_string(),
+        Some(data.datasource_platform()),
+    );
+
     // console auth
     state_map.insert(
         AUTH_ENABLED.to_string(),
@@ -197,12 +203,8 @@ pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Optio
         Some((env!("CARGO_PKG_VERSION")).to_string()),
     );
     state_map.insert(
-        "server_port".to_string(),
-        Some(
-            data.app_config
-                .get_string("server.port")
-                .unwrap_or("8848".to_string()),
-        ),
+        common::SERVER_PORT_STATE.to_string(),
+        Some(data.server_port_state()),
     );
 
     web::Json(state_map)

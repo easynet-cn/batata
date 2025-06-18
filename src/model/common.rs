@@ -3,6 +3,7 @@ use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+// Common constants.
 pub const CLIENT_VERSION: &str = "3.0.0";
 pub const DATA_IN_BODY_VERSION: i32 = 204;
 pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
@@ -137,6 +138,285 @@ pub const CONFIG_GRAY_LABEL: &str = "nacos.config.gray.label";
 pub const DEFAULT_USE_RAM_INFO_PARSING: &str = "true";
 
 pub const CLIENT_MODULE_TYPE: &str = "clientModuleType";
+
+// System env constants.
+pub const SYS_MODULE: &str = "sys";
+
+/**
+ * Spring Profile : "standalone".
+ */
+pub const STANDALONE_SPRING_PROFILE: &str = "standalone";
+
+/**
+ * The System property name of  Standalone mode.
+ */
+pub const STANDALONE_MODE_PROPERTY_NAME: &str = "nacos.standalone";
+
+pub const STARTUP_MODE_STATE: &str = "startup_mode";
+
+/**
+ * The System property name of  Function mode.
+ */
+pub const FUNCTION_MODE_PROPERTY_NAME: &str = "nacos.functionMode";
+
+pub const FUNCTION_MODE_STATE: &str = "function_mode";
+
+/**
+ * The System property name of prefer hostname over ip.
+ */
+pub const PREFER_HOSTNAME_OVER_IP_PROPERTY_NAME: &str = "nacos.preferHostnameOverIp";
+
+/**
+ * the root context path.
+ */
+pub const ROOT_WEB_CONTEXT_PATH: &str = "/";
+pub const NACOS_VERSION: &str = "version";
+pub const NACOS_SERVER_IP: &str = "nacos.server.ip";
+pub const NACOS_SERVER_IP_STATE: &str = "nacos_server_ip";
+pub const SERVER_PORT_STATE: &str = "server_port";
+pub const USE_ONLY_SITE_INTERFACES: &str = "nacos.inetutils.use-only-site-local-interfaces";
+pub const PREFERRED_NETWORKS: &str = "nacos.inetutils.preferred-networks";
+pub const IGNORED_INTERFACES: &str = "nacos.inetutils.ignored-interfaces";
+pub const AUTO_REFRESH_TIME: &str = "nacos.core.inet.auto-refresh";
+pub const IP_ADDRESS: &str = "nacos.inetutils.ip-address";
+pub const PREFER_HOSTNAME_OVER_IP: &str = "nacos.inetutils.prefer-hostname-over-ip";
+pub const SYSTEM_PREFER_HOSTNAME_OVER_IP: &str = "nacos.preferHostnameOverIp";
+pub const WEB_CONTEXT_PATH: &str = "server.servlet.context-path";
+pub const COMMA_DIVISION: &str = ",";
+pub const NACOS_SERVER_HEADER: &str = "Nacos-Server";
+pub const REQUEST_PATH_SEPARATOR: &str = "-->";
+pub const AVAILABLE_PROCESSORS_BASIC: &str = "nacos.core.sys.basic.processors";
+pub const NACOS_DEPLOYMENT_TYPE: &str = "nacos.deployment.type";
+pub const NACOS_DEPLOYMENT_TYPE_MERGED: &str = "merged";
+pub const NACOS_DEPLOYMENT_TYPE_SERVER: &str = "server";
+pub const NACOS_DEPLOYMENT_TYPE_CONSOLE: &str = "console";
+pub const NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP: &str = "serverWithMcp";
+pub const NACOS_DUPLICATE_BEAN_ENHANCEMENT_ENABLED: &str =
+    "nacos.sys.duplicate.bean.enhancement.enabled";
+
+// Persistence consts.
+pub const DEFAULT_ENCODE: &str = "UTF-8";
+
+/**
+ * May be removed with the upgrade of springboot version.
+ */
+pub const DATASOURCE_PLATFORM_PROPERTY_OLD: &str = "spring.datasource.platform";
+
+pub const DATASOURCE_PLATFORM_PROPERTY: &str = "spring.sql.init.platform";
+
+pub const MYSQL: &str = "mysql";
+
+pub const EMPTY_DATASOURCE_PLATFORM: &str = "";
+
+pub const EMBEDDED_STORAGE: &str = "embeddedStorage";
+
+/**
+ * The derby base dir.
+ */
+pub const DERBY_BASE_DIR: &str = "derby-data";
+
+/**
+ * Specifies that reads wait without timeout.
+ */
+pub const EXTEND_NEED_READ_UNTIL_HAVE_DATA: &str = "00--0-read-join-0--00";
+
+pub const CONFIG_MODEL_RAFT_GROUP: &str = "nacos_config";
+
+// Datasource plugin common constants.
+pub const NACOS_PLUGIN_DATASOURCE_LOG: &str = "nacos.plugin.datasource.log.enabled";
+
+// Server constants.
+pub const CLIENT_VERSION_HEADER: &str = "Client-Version";
+
+pub const DATASOURCE_PLATFORM_PROPERTY_STATE: &str = "datasource_platform";
+
+pub const CONFIG_RENTENTION_DAYS_PROPERTY_STATE: &str = "config_retention_days";
+
+/**
+ * Config file directory in server side.
+ */
+pub const BASE_DIR: &str = "config-data";
+
+pub const DATAID: &str = "dataId";
+
+/**
+ * Unit: millisecond.
+ */
+pub const CONN_TIMEOUT: i32 = 2000;
+
+pub const BASE_V2_PATH: &str = "/v2/cs";
+
+pub const BASE_ADMIN_V3_PATH: &str = "/v3/admin/cs";
+
+pub const OPS_CONTROLLER_V3_ADMIN_PATH: &str = "/v3/admin/cs/ops";
+
+pub const CAPACITY_CONTROLLER_V3_ADMIN_PATH: &str = "/v3/admin/cs/capacity";
+
+pub const CONFIG_CONTROLLER_V2_PATH: &str = "/v2/cs/config";
+
+pub const CONFIG_ADMIN_V3_PATH: &str = "/v3/admin/cs/config";
+
+pub const HISTORY_CONTROLLER_V2_PATH: &str = "/v2/cs/history";
+
+pub const HISTORY_ADMIN_V3_PATH: &str = "/v3/admin/cs/history";
+
+pub const LISTENER_CONTROLLER_V3_ADMIN_PATH: &str = "/v3/admin/cs/listener";
+
+pub const METRICS_CONTROLLER_V3_ADMIN_PATH: &str = "/v3/admin/cs/metrics";
+
+pub const CONFIG_V3_CLIENT_API_PATH: &str = "/v3/client/cs/config";
+
+pub const ENCODE_GBK: &str = "GBK";
+
+pub const ENCODE_UTF8: &str = "UTF-8";
+
+pub const MAP_FILE: &str = "map-file.js";
+
+pub const NACOS_LINE_SEPARATOR: &str = "\r\n";
+
+/**
+ * Total time of threshold value when getting data from network(unit: millisecond).
+ */
+pub const TOTALTIME_FROM_SERVER: i64 = 10000;
+
+/**
+ * Invalid total time of threshold value when getting data from network(unit: millisecond).
+ */
+pub const TOTALTIME_INVALID_THRESHOLD: i64 = 60000;
+
+/**
+ * When exception or error occurs.
+ */
+pub const BATCH_OP_ERROR: i32 = -1;
+
+/**
+ * State code of single data when batch operation.
+ */
+pub const BATCH_OP_ERROR_IO_MSG: &str = "get config dump error";
+
+pub const BATCH_OP_ERROR_CONFLICT_MSG: &str = "config get conflicts";
+
+/**
+ * Batch query when data existent.
+ */
+pub const BATCH_QUERY_EXISTS: i32 = 1;
+
+pub const BATCH_QUERY_EXISTS_MSG: &str = "config exits";
+
+/**
+ * Batch query when data non-existent.
+ */
+pub const BATCH_QUERY_NONEXISTS: i32 = 2;
+
+pub const BATCH_QUERY_NONEEXISTS_MSG: &str = "config not exits";
+
+/**
+ * Batch adding successfully.
+ */
+pub const BATCH_ADD_SUCCESS: i32 = 3;
+
+/**
+ * Batch updating successfully.
+ */
+pub const BATCH_UPDATE_SUCCESS: i32 = 4;
+
+pub const MAX_UPDATE_FAIL_COUNT: i32 = 5;
+
+pub const MAX_UPDATEALL_FAIL_COUNT: i32 = 5;
+
+pub const MAX_REMOVE_FAIL_COUNT: i32 = 5;
+
+pub const MAX_REMOVEALL_FAIL_COUNT: i32 = 5;
+
+pub const MAX_NOTIFY_COUNT: i32 = 5;
+
+pub const MAX_ADDACK_COUNT: i32 = 5;
+
+/**
+ * First version of data.
+ */
+pub const FIRST_VERSION: i32 = 1;
+
+/**
+ * Poison version when data is deleted.
+ */
+pub const POISON_VERSION: i32 = -1;
+
+/**
+ * Temporary version when disk file is full.
+ */
+pub const TEMP_VERSION: i32 = 0;
+
+/**
+ * Plain sequence of getting data: backup file -> server -> local file.
+ */
+pub const GETCONFIG_LOCAL_SERVER_SNAPSHOT: i32 = 1;
+
+/**
+ * Plain sequence of getting data: backup file -> local file -> server.
+ */
+pub const GETCONFIG_LOCAL_SNAPSHOT_SERVER: i32 = 2;
+
+/**
+ * Client, identity for sdk request to server.
+ */
+pub const REQUEST_IDENTITY: &str = "Request-Identity";
+
+/**
+ * Forward to leader node.
+ */
+pub const FORWARD_LEADER: &str = "Forward-Leader";
+
+/**
+ * Acl result information.
+ */
+pub const ACL_RESPONSE: &str = "ACL-Response";
+
+pub const CONFIG_EXPORT_ITEM_FILE_SEPARATOR: &str = "/";
+
+pub const CONFIG_EXPORT_METADATA: &str = ".meta.yml";
+
+pub const CONFIG_EXPORT_METADATA_NEW: &str = ".metadata.yml";
+
+pub const LIMIT_ERROR_CODE: i32 = 429;
+
+pub const NACOS_PLUGIN_DATASOURCE_LOG_STATE: &str = "plugin_datasource_log_enabled";
+
+pub const CONFIG_SEARCH_BLUR: &str = "blur";
+
+pub const CONFIG_SEARCH_ACCURATE: &str = "accurate";
+
+/**
+ * Gray rule.
+ */
+pub const GRAY_RULE_TYPE: &str = "type";
+
+pub const GRAY_RULE_EXPR: &str = "expr";
+
+pub const GRAY_RULE_VERSION: &str = "version";
+
+pub const GRAY_RULE_PRIORITY: &str = "priority";
+
+/**
+ * default nacos encode.
+ */
+pub const DEFAULT_NACOS_ENCODE: &str = "UTF-8";
+
+pub const NACOS_PERSIST_ENCODE_KEY: &str = "nacosPersistEncodingKey";
+
+/**
+ * config publish type.
+ */
+pub const FORMAL: &str = "formal";
+
+pub const GRAY: &str = "gray";
+
+/**
+ * request source type.
+ */
+pub const HTTP: &str = "http";
+
+pub const RPC: &str = "rpc";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -359,6 +639,26 @@ pub struct AppState {
     pub database_connection: DatabaseConnection,
     pub context_path: String,
     pub token_secret_key: String,
+}
+
+impl AppState {
+    pub fn server_port_state(&self) -> String {
+        self.app_config
+            .get_string(SERVER_PORT_STATE)
+            .unwrap_or("8081".to_string())
+    }
+
+    pub fn datasource_platform(&self) -> String {
+        self.app_config
+            .get_string(DATASOURCE_PLATFORM_PROPERTY)
+            .unwrap_or("false".to_string())
+    }
+
+    pub fn plugin_datasource_log(&self) -> String {
+        self.app_config
+            .get_string(NACOS_PLUGIN_DATASOURCE_LOG)
+            .unwrap_or(EMPTY_DATASOURCE_PLATFORM.to_string())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
