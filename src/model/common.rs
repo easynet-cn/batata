@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use config::Config;
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
@@ -418,6 +420,53 @@ pub const HTTP: &str = "http";
 
 pub const RPC: &str = "rpc";
 
+// Property constants.
+pub const NOTIFY_CONNECT_TIMEOUT: &str = "notifyConnectTimeout";
+
+pub const NOTIFY_SOCKET_TIMEOUT: &str = "notifySocketTimeout";
+
+pub const IS_HEALTH_CHECK: &str = "isHealthCheck";
+
+pub const MAX_HEALTH_CHECK_FAIL_COUNT: &str = "maxHealthCheckFailCount";
+
+pub const MAX_CONTENT: &str = "maxContent";
+
+pub const IS_MANAGE_CAPACITY: &str = "isManageCapacity";
+
+pub const IS_CAPACITY_LIMIT_CHECK: &str = "isCapacityLimitCheck";
+
+pub const DEFAULT_CLUSTER_QUOTA: &str = "defaultClusterQuota";
+
+pub const DEFAULT_GROUP_QUOTA: &str = "defaultGroupQuota";
+
+pub const DEFAULT_TENANT_QUOTA: &str = "defaultTenantQuota";
+
+pub const DEFAULT_MAX_SIZE: &str = "defaultMaxSize";
+
+pub const DEFAULT_MAX_AGGR_COUNT: &str = "defaultMaxAggrCount";
+
+pub const DEFAULT_MAX_AGGR_SIZE: &str = "defaultMaxAggrSize";
+
+pub const CORRECT_USAGE_DELAY: &str = "correctUsageDelay";
+
+pub const INITIAL_EXPANSION_PERCENT: &str = "initialExpansionPercent";
+
+pub const SEARCH_MAX_CAPACITY: &str = "nacos.config.search.max_capacity";
+
+pub const SEARCH_MAX_THREAD: &str = "nacos.config.search.max_thread";
+
+pub const SEARCH_WAIT_TIMEOUT: &str = "nacos.config.search.wait_timeout";
+
+pub const DUMP_CHANGE_ON: &str = "dumpChangeOn";
+
+pub const DUMP_CHANGE_WORKER_INTERVAL: &str = "dumpChangeWorkerInterval";
+
+pub const CONFIG_RENTENTION_DAYS: &str = "nacos.config.retention.days";
+
+pub const GRAY_CAPATIBEL_MODEL: &str = "nacos.config.gray.compatible.model";
+
+pub const NAMESPACE_COMPATIBLE_MODE: &str = "nacos.config.namespace.compatible.mode";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
@@ -642,10 +691,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn server_port_state(&self) -> String {
-        self.app_config
-            .get_string(SERVER_PORT_STATE)
-            .unwrap_or("8081".to_string())
+    pub fn server_port(&self) -> i32 {
+        self.app_config.get_int("server.port").unwrap_or(8081) as i32
     }
 
     pub fn datasource_platform(&self) -> String {
@@ -654,10 +701,151 @@ impl AppState {
             .unwrap_or("false".to_string())
     }
 
-    pub fn plugin_datasource_log(&self) -> String {
+    pub fn plugin_datasource_log(&self) -> bool {
         self.app_config
-            .get_string(NACOS_PLUGIN_DATASOURCE_LOG)
-            .unwrap_or(EMPTY_DATASOURCE_PLATFORM.to_string())
+            .get_bool(NACOS_PLUGIN_DATASOURCE_LOG)
+            .unwrap_or(false)
+    }
+
+    pub fn notify_connect_timeout(&self) -> i32 {
+        self.app_config
+            .get_int(NOTIFY_CONNECT_TIMEOUT)
+            .unwrap_or(100) as i32
+    }
+
+    pub fn notify_socket_timeout(&self) -> i32 {
+        self.app_config
+            .get_int(NOTIFY_SOCKET_TIMEOUT)
+            .unwrap_or(200) as i32
+    }
+
+    pub fn is_health_check(&self) -> bool {
+        self.app_config
+            .get_bool(NOTIFY_SOCKET_TIMEOUT)
+            .unwrap_or(true)
+    }
+
+    pub fn max_health_check_fail_count(&self) -> i32 {
+        self.app_config
+            .get_int(MAX_HEALTH_CHECK_FAIL_COUNT)
+            .unwrap_or(12) as i32
+    }
+
+    pub fn max_content(&self) -> i32 {
+        self.app_config
+            .get_int(MAX_CONTENT)
+            .unwrap_or(10 * 1024 * 1024) as i32
+    }
+
+    pub fn is_manage_capacity(&self) -> bool {
+        self.app_config.get_bool(IS_MANAGE_CAPACITY).unwrap_or(true)
+    }
+
+    pub fn is_capacity_limit_check(&self) -> bool {
+        self.app_config
+            .get_bool(IS_CAPACITY_LIMIT_CHECK)
+            .unwrap_or(false)
+    }
+
+    pub fn default_cluster_quota(&self) -> i32 {
+        self.app_config
+            .get_int(DEFAULT_CLUSTER_QUOTA)
+            .unwrap_or(100000) as i32
+    }
+
+    pub fn default_group_quota(&self) -> i32 {
+        self.app_config.get_int(DEFAULT_GROUP_QUOTA).unwrap_or(200) as i32
+    }
+
+    pub fn default_max_size(&self) -> i32 {
+        self.app_config
+            .get_int(DEFAULT_MAX_SIZE)
+            .unwrap_or(100 * 1024) as i32
+    }
+
+    pub fn default_max_aggr_count(&self) -> i32 {
+        self.app_config
+            .get_int(DEFAULT_MAX_AGGR_COUNT)
+            .unwrap_or(10000) as i32
+    }
+
+    pub fn default_max_aggr_size(&self) -> i32 {
+        self.app_config
+            .get_int(DEFAULT_MAX_AGGR_SIZE)
+            .unwrap_or(1024) as i32
+    }
+
+    pub fn config_rentention_days(&self) -> i32 {
+        self.app_config
+            .get_int(CONFIG_RENTENTION_DAYS)
+            .unwrap_or(30) as i32
+    }
+
+    pub fn config_state(&self) -> HashMap<String, Option<String>> {
+        let mut state = HashMap::with_capacity(15);
+
+        state.insert(
+            DATASOURCE_PLATFORM_PROPERTY_STATE.to_string(),
+            Some(self.datasource_platform()),
+        );
+        state.insert(
+            NACOS_PLUGIN_DATASOURCE_LOG_STATE.to_string(),
+            Some(format!("{}", self.plugin_datasource_log())),
+        );
+        state.insert(
+            NOTIFY_CONNECT_TIMEOUT.to_string(),
+            Some(format!("{}", self.notify_connect_timeout())),
+        );
+        state.insert(
+            NOTIFY_SOCKET_TIMEOUT.to_string(),
+            Some(format!("{}", self.notify_socket_timeout())),
+        );
+        state.insert(
+            IS_HEALTH_CHECK.to_string(),
+            Some(format!("{}", self.is_health_check())),
+        );
+        state.insert(
+            MAX_HEALTH_CHECK_FAIL_COUNT.to_string(),
+            Some(format!("{}", self.max_health_check_fail_count())),
+        );
+        state.insert(
+            MAX_CONTENT.to_string(),
+            Some(format!("{}", self.max_content())),
+        );
+        state.insert(
+            IS_MANAGE_CAPACITY.to_string(),
+            Some(format!("{}", self.is_manage_capacity())),
+        );
+        state.insert(
+            IS_CAPACITY_LIMIT_CHECK.to_string(),
+            Some(format!("{}", self.is_capacity_limit_check())),
+        );
+        state.insert(
+            DEFAULT_CLUSTER_QUOTA.to_string(),
+            Some(format!("{}", self.default_cluster_quota())),
+        );
+        state.insert(
+            DEFAULT_GROUP_QUOTA.to_string(),
+            Some(format!("{}", self.default_group_quota())),
+        );
+        state.insert(
+            DEFAULT_MAX_SIZE.to_string(),
+            Some(format!("{}", self.default_max_size())),
+        );
+        state.insert(
+            DEFAULT_MAX_AGGR_COUNT.to_string(),
+            Some(format!("{}", self.default_max_aggr_count())),
+        );
+        state.insert(
+            DEFAULT_MAX_AGGR_SIZE.to_string(),
+            Some(format!("{}", self.default_max_aggr_size())),
+        );
+        state.insert(
+            CONFIG_RENTENTION_DAYS_PROPERTY_STATE.to_string(),
+            Some(format!("{}", self.config_rentention_days())),
+        );
+
+        state
     }
 }
 
