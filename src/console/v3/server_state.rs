@@ -3,11 +3,8 @@ use std::{collections::HashMap, fs};
 use actix_web::{Scope, get, web};
 use serde::Deserialize;
 
-use crate::model::{auth, common, common::AppState};
+use crate::model::{common, common::AppState};
 
-pub const AUTH_ENABLED: &str = "auth_enabled";
-pub const LOGIN_PAGE_ENABLED: &str = "login_page_enabled";
-pub const AUTH_SYSTEM_TYPE: &str = "auth_system_type";
 pub const ANNOUNCEMENT_FILE: &str = "announcement.conf";
 pub const GUIDE_FILE: &str = "console-guide.conf";
 
@@ -28,63 +25,26 @@ pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Optio
         state_map.insert(k, v);
     }
 
-    // console auth
-    state_map.insert(
-        AUTH_ENABLED.to_string(),
-        Some(
-            data.app_config
-                .get_string(auth::NACOS_CORE_AUTH_ENABLED)
-                .unwrap_or("true".to_string()),
-        ),
-    );
-    state_map.insert(
-        LOGIN_PAGE_ENABLED.to_string(),
-        Some(
-            data.app_config
-                .get_string(auth::NACOS_CORE_AUTH_CONSOLE_ENABLED)
-                .unwrap_or("false".to_string()),
-        ),
-    );
-    state_map.insert(
-        "auth_system_type".to_string(),
-        Some(
-            data.app_config
-                .get_string("nacos.core.auth.system.type")
-                .unwrap_or_default(),
-        ),
-    );
+    // auth module state
+    let auth_state = data.auth_state(false);
 
-    // Console state
-    state_map.insert(
-        "console_ui_enabled".to_string(),
-        Some(
-            data.app_config
-                .get_string("nacos.console.ui.enabled")
-                .unwrap_or("true".to_string()),
-        ),
-    );
+    for (k, v) in auth_state {
+        state_map.insert(k, v);
+    }
 
-    // Env state
-    state_map.insert(
-        "startup_mode".to_string(),
-        Some(
-            data.app_config
-                .get_string("nacos.standalone")
-                .unwrap_or("standalone".to_string()),
-        ),
-    );
-    state_map.insert(
-        "function_mode".to_string(),
-        data.app_config.get_string("nacos.functionMode").ok(),
-    );
-    state_map.insert(
-        "version".to_string(),
-        Some((env!("CARGO_PKG_VERSION")).to_string()),
-    );
-    state_map.insert(
-        common::SERVER_PORT_STATE.to_string(),
-        Some(format!("{}", data.server_port())),
-    );
+    // env module state
+    let env_state = data.env_state();
+
+    for (k, v) in env_state {
+        state_map.insert(k, v);
+    }
+
+    //console module state
+    let console_state = data.console_state();
+
+    for (k, v) in console_state {
+        state_map.insert(k, v);
+    }
 
     web::Json(state_map)
 }

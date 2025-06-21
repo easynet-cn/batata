@@ -295,3 +295,6 @@ nacos.k8s.sync.enabled: false
 
 ### Sets the deployment type: 'merged' for joint deployment, 'server' for separate deployment server only, 'console' for separate deployment console only.
 nacos.deployment.type: merged
+
+nacos.standalone: true
+nacos.version: 3.0.1

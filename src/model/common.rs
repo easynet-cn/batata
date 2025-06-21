@@ -467,6 +467,12 @@ pub const GRAY_CAPATIBEL_MODEL: &str = "nacos.config.gray.compatible.model";
 
 pub const NAMESPACE_COMPATIBLE_MODE: &str = "nacos.config.namespace.compatible.mode";
 
+// Auth moudle state constants.
+pub const AUTH_MODULE: &str = "auth";
+pub const AUTH_ENABLED: &str = "auth_enabled";
+pub const AUTH_SYSTEM_TYPE: &str = "auth_system_type";
+pub const AUTH_ADMIN_REQUEST: &str = "auth_admin_request";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
@@ -781,6 +787,62 @@ impl AppState {
             .unwrap_or(30) as i32
     }
 
+    pub fn auth_enabled(&self) -> bool {
+        self.app_config
+            .get_bool("nacos.core.auth.enabled")
+            .unwrap_or(false)
+            || self
+                .app_config
+                .get_bool("nacos.core.auth.admin.enabled")
+                .unwrap_or(false)
+    }
+
+    pub fn auth_system_type(&self) -> String {
+        self.app_config
+            .get_string("nacos.core.auth.system.type")
+            .unwrap_or("nacos".to_string())
+    }
+
+    pub fn is_standalone(&self) -> bool {
+        self.app_config
+            .get_bool(STANDALONE_MODE_PROPERTY_NAME)
+            .unwrap_or(false)
+    }
+
+    pub fn startup_mode(&self) -> String {
+        if self.is_standalone() {
+            "standalone".to_string()
+        } else {
+            "cluster".to_string()
+        }
+    }
+
+    pub fn function_mode(&self) -> Option<String> {
+        if let Ok(v) = self.app_config.get_string(FUNCTION_MODE_PROPERTY_NAME) {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    pub fn version(&self) -> String {
+        self.app_config
+            .get_string("nacos.version")
+            .unwrap_or("".to_string())
+    }
+
+    pub fn console_ui_enabled(&self) -> bool {
+        self.app_config
+            .get_bool("nacos.console.ui.enabled")
+            .unwrap_or(true)
+    }
+
+    pub fn auth_console_enabled(&self) -> bool {
+        self.app_config
+            .get_bool("nacos.core.auth.console.enabled")
+            .unwrap_or(true)
+    }
+
     pub fn config_state(&self) -> HashMap<String, Option<String>> {
         let mut state = HashMap::with_capacity(15);
 
@@ -843,6 +905,51 @@ impl AppState {
         state.insert(
             CONFIG_RENTENTION_DAYS_PROPERTY_STATE.to_string(),
             Some(format!("{}", self.config_rentention_days())),
+        );
+
+        state
+    }
+
+    pub fn auth_state(&self, is_admin_request: bool) -> HashMap<String, Option<String>> {
+        let mut state = HashMap::with_capacity(3);
+
+        state.insert(
+            AUTH_ENABLED.to_string(),
+            Some(format!("{}", self.auth_enabled())),
+        );
+        state.insert(AUTH_SYSTEM_TYPE.to_string(), Some(self.auth_system_type()));
+        state.insert(
+            AUTH_ADMIN_REQUEST.to_string(),
+            Some(format!("{}", is_admin_request)),
+        );
+
+        state
+    }
+
+    pub fn env_state(&self) -> HashMap<String, Option<String>> {
+        let mut state = HashMap::with_capacity(4);
+
+        state.insert(STARTUP_MODE_STATE.to_string(), Some(self.startup_mode()));
+        state.insert(FUNCTION_MODE_STATE.to_string(), self.function_mode());
+        state.insert(NACOS_VERSION.to_string(), Some(self.version()));
+        state.insert(
+            SERVER_PORT_STATE.to_string(),
+            Some(format!("{}", self.server_port())),
+        );
+
+        state
+    }
+
+    pub fn console_state(&self) -> HashMap<String, Option<String>> {
+        let mut state = HashMap::with_capacity(2);
+
+        state.insert(
+            "console_ui_enabled".to_string(),
+            Some(format!("{}", self.console_ui_enabled())),
+        );
+        state.insert(
+            "login_page_enabled".to_string(),
+            Some(format!("{}", self.auth_console_enabled())),
         );
 
         state
