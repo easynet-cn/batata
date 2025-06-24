@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use actix_web::{App, HttpServer, middleware::Logger, web};
 use batata::{console, middleware::auth::Authentication, model::common::AppState};
+use clap::Parser;
 use config::Config;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
@@ -10,15 +11,31 @@ use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, fmt::MakeWriter, layer::SubscriberExt};
 
+#[derive(Parser)]
+#[command()]
+struct Cli {
+    #[arg(short = 'm', long = "mode", default_value = "standalone")]
+    mode: String,
+    #[arg(short = 'f', long = "function_mode", default_value = "all")]
+    function_mode: String,
+    #[arg(short = 'd', long = "deployment", default_value = "merged")]
+    deployment: String,
+}
+
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Cli::parse();
+
     let subscriber = get_subscriber("nacos", "info", std::io::stdout);
     init_subscriber(subscriber);
 
-    let app_config = Config::builder()
-        .add_source(config::File::with_name("conf/application.yml"))
-        .build()
-        .unwrap();
+    let mut config_builder = Config::builder();
+
+    config_builder = config_builder.add_source(config::File::with_name("conf/application.yml"));
+    config_builder = config_builder.set_override("nacos.standalone", args.mode == "standalone")?;
+    config_builder = config_builder.set_override("nacos.deployment.type", args.deployment)?;
+
+    let app_config = config_builder.build()?;
 
     let max_connections = app_config
         .get_int("db.pool.config.maximumPoolSize")
@@ -39,7 +56,7 @@ async fn main() -> std::io::Result<()> {
         .get_int("db.pool.config.maxLifetime")
         .unwrap_or(30) as u64;
 
-    let url = app_config.get_string("db.url").unwrap();
+    let url = app_config.get_string("db.url")?;
 
     let mut opt = ConnectOptions::new(url);
 
@@ -50,7 +67,7 @@ async fn main() -> std::io::Result<()> {
         .idle_timeout(Duration::from_secs(idle_timeout))
         .max_lifetime(Duration::from_secs(max_lifetime));
 
-    let database_connection: DatabaseConnection = Database::connect(opt).await.unwrap();
+    let database_connection: DatabaseConnection = Database::connect(opt).await?;
     let address = app_config
         .get_string("server.address")
         .unwrap_or("0.0.0.0".to_string());
@@ -59,9 +76,8 @@ async fn main() -> std::io::Result<()> {
         .get_string("nacos.console.contextPath")
         .unwrap_or("".to_string());
 
-    let token_secret_key = app_config
-        .get_string("nacos.core.auth.plugin.nacos.token.secret.key")
-        .unwrap();
+    let token_secret_key =
+        app_config.get_string("nacos.core.auth.plugin.nacos.token.secret.key")?;
 
     let server_address = address.clone();
     let server_main_port = app_config.get_int("nacos.server.main.port").unwrap_or(8080) as u16;

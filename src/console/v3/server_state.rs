@@ -1,9 +1,15 @@
 use std::{collections::HashMap, fs};
 
-use actix_web::{Scope, get, web};
+use actix_web::{HttpMessage, HttpRequest, Scope, get, web};
 use serde::Deserialize;
 
-use crate::model::{common, common::AppState};
+use crate::{
+    model::{
+        self,
+        common::{self, AppState},
+    },
+    service,
+};
 
 pub const ANNOUNCEMENT_FILE: &str = "announcement.conf";
 pub const GUIDE_FILE: &str = "console-guide.conf";
@@ -15,7 +21,10 @@ struct LanguageParam {
 }
 
 #[get("/state")]
-pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {
+pub async fn state(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+) -> web::Json<HashMap<String, Option<String>>> {
     let mut state_map: HashMap<String, Option<String>> = HashMap::new();
 
     // config module state
@@ -26,7 +35,22 @@ pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Optio
     }
 
     // auth module state
-    let auth_state = data.auth_state(false);
+    let auth_enabled = data.auth_enabled();
+    let mut has_global_admin_role = false;
+
+    if let Some(auth_context) = req.extensions().get::<model::auth::AuthContext>() {
+        if auth_context.jwt_error.is_none() {
+            has_global_admin_role =
+                service::role::find_by_username(&data.database_connection, &auth_context.username)
+                    .await
+                    .ok()
+                    .unwrap()
+                    .iter()
+                    .any(|role| role.role == model::auth::GLOBAL_ADMIN_ROLE);
+        }
+    }
+
+    let auth_state = data.auth_state(auth_enabled && !has_global_admin_role);
 
     for (k, v) in auth_state {
         state_map.insert(k, v);

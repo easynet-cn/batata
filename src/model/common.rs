@@ -964,13 +964,3 @@ pub struct ErrorResult {
     pub message: String,
     pub path: String,
 }
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct HttpRequestExtensions {
-    pub namespace_id: String,
-    pub group: String,
-    pub resource_name: String,
-    pub username: String,
-    pub roles: Vec<String>,
-    pub permissions: Vec<super::auth::PermissionInfo>,
-}
