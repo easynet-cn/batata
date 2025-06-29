@@ -22,5 +22,5 @@
     "plugin_datasource_log_enabled": "false",
     "server_port": "8848",
     "startup_mode": "standalone",
-    "version": "3.0.1"
+    "version": "3.0.2"
 }

@@ -43,7 +43,8 @@ pub async fn user_login(
 
     if bcrypt_result {
         let token_expire_seconds = data
-            .app_config
+            .configuration
+            .config
             .get_int("nacos.core.auth.plugin.nacos.token.expire.seconds")
             .unwrap_or(DEFAULT_TOKEN_EXPIRE_SECONDS);
 

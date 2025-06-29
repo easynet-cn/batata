@@ -35,7 +35,7 @@ pub async fn state(
     }
 
     // auth module state
-    let auth_enabled = data.auth_enabled();
+    let auth_enabled = data.configuration.auth_enabled();
     let mut has_global_admin_role = false;
 
     if let Some(auth_context) = req.extensions().get::<model::auth::AuthContext>() {
