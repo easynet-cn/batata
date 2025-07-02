@@ -1,4 +1,4 @@
-use actix_web::{App, HttpServer, middleware::Logger, web};
+use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 use batata::{
     console,
     middleware::auth::Authentication,
@@ -18,44 +18,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     init_subscriber(subscriber);
 
+    let depolyment_type = configuration.deployment_type();
     let database_connection = configuration.database_connection().await?;
+    let server_address = configuration.server_address();
+    let console_server_address = server_address.clone();
+    let console_server_port = configuration.console_server_port();
+    let console_context_path = configuration.console_server_context_path();
+    let server_main_port = configuration.server_main_port();
+    let server_context_path = configuration.server_context_path();
 
-    let address = configuration
-        .config
-        .get_string("server.address")
-        .unwrap_or("0.0.0.0".to_string());
-    let server_port = configuration
-        .config
-        .get_int("nacos.console.port")
-        .unwrap_or(8080) as u16;
-    let context_path = configuration
-        .config
-        .get_string("nacos.console.contextPath")
-        .unwrap_or("".to_string());
-
-    let token_secret_key = configuration
-        .config
-        .get_string("nacos.core.auth.plugin.nacos.token.secret.key")?;
-
-    let server_address = address.clone();
-    let server_main_port = configuration
-        .config
-        .get_int("nacos.server.main.port")
-        .unwrap_or(8080) as u16;
-    let server_context_path = configuration
-        .config
-        .get_string("nacos.server.contextPath")
-        .unwrap_or("".to_string());
     let app_state = AppState {
         configuration,
         database_connection,
-        context_path: context_path.clone(),
-        token_secret_key: token_secret_key.clone(),
     };
 
     let server_app_state = app_state.clone();
 
-    let console_server = HttpServer::new(move || {
+    match depolyment_type.as_str() {
+        model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
+            console_server(
+                app_state,
+                console_context_path,
+                console_server_address,
+                console_server_port,
+            )
+            .await?;
+        }
+        model::common::NACOS_DEPLOYMENT_TYPE_SERVER => {
+            main_server(
+                app_state,
+                server_context_path,
+                server_address,
+                server_main_port,
+            )
+            .await?;
+        }
+        _ => {
+            tokio::try_join!(
+                console_server(
+                    app_state,
+                    console_context_path,
+                    console_server_address,
+                    console_server_port,
+                ),
+                main_server(
+                    server_app_state,
+                    server_context_path,
+                    server_address,
+                    server_main_port,
+                )
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn console_server(
+    app_state: AppState,
+    context_path: String,
+    address: String,
+    port: u16,
+) -> Server {
+    HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
             .wrap(Authentication)
@@ -66,26 +91,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .service(console::v3::router::routers()),
             )
     })
-    .bind((address, server_port))?
-    .run();
+    .bind((address, port))
+    .unwrap()
+    .run()
+}
 
-    let server = HttpServer::new(move || {
+pub fn main_server(
+    app_state: AppState,
+    context_path: String,
+    address: String,
+    port: u16,
+) -> Server {
+    HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
             .wrap(Authentication)
-            .app_data(web::Data::new(server_app_state.clone()))
+            .app_data(web::Data::new(app_state.clone()))
             .service(
-                web::scope(&server_context_path)
+                web::scope(&context_path)
                     .service(console::v2::router::routers())
                     .service(console::v3::router::routers()),
             )
     })
-    .bind((server_address, server_main_port))?
-    .run();
-
-    tokio::try_join!(console_server, server)?;
-
-    Ok(())
+    .bind((address, port))
+    .unwrap()
+    .run()
 }
 
 pub fn get_subscriber(

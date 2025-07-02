@@ -729,13 +729,19 @@ impl Configuration {
         }
         if let Some(v) = args.deployment {
             config_builder = config_builder
-                .set_override("nacos.deployment.type", v)
+                .set_override(NACOS_DEPLOYMENT_TYPE, v)
                 .unwrap();
         }
 
         let app_config = config_builder.build().unwrap();
 
         Configuration { config: app_config }
+    }
+
+    pub fn deployment_type(&self) -> String {
+        self.config
+            .get_string(NACOS_DEPLOYMENT_TYPE)
+            .unwrap_or(NACOS_DEPLOYMENT_TYPE_MERGED.to_string())
     }
 
     pub fn server_port(&self) -> i32 {
@@ -866,118 +872,6 @@ impl Configuration {
             .unwrap_or(true)
     }
 
-    pub fn config_state(&self) -> HashMap<String, Option<String>> {
-        let mut state = HashMap::with_capacity(15);
-
-        state.insert(
-            DATASOURCE_PLATFORM_PROPERTY_STATE.to_string(),
-            Some(self.datasource_platform()),
-        );
-        state.insert(
-            NACOS_PLUGIN_DATASOURCE_LOG_STATE.to_string(),
-            Some(format!("{}", self.plugin_datasource_log())),
-        );
-        state.insert(
-            NOTIFY_CONNECT_TIMEOUT.to_string(),
-            Some(format!("{}", self.notify_connect_timeout())),
-        );
-        state.insert(
-            NOTIFY_SOCKET_TIMEOUT.to_string(),
-            Some(format!("{}", self.notify_socket_timeout())),
-        );
-        state.insert(
-            IS_HEALTH_CHECK.to_string(),
-            Some(format!("{}", self.is_health_check())),
-        );
-        state.insert(
-            MAX_HEALTH_CHECK_FAIL_COUNT.to_string(),
-            Some(format!("{}", self.max_health_check_fail_count())),
-        );
-        state.insert(
-            MAX_CONTENT.to_string(),
-            Some(format!("{}", self.max_content())),
-        );
-        state.insert(
-            IS_MANAGE_CAPACITY.to_string(),
-            Some(format!("{}", self.is_manage_capacity())),
-        );
-        state.insert(
-            IS_CAPACITY_LIMIT_CHECK.to_string(),
-            Some(format!("{}", self.is_capacity_limit_check())),
-        );
-        state.insert(
-            DEFAULT_CLUSTER_QUOTA.to_string(),
-            Some(format!("{}", self.default_cluster_quota())),
-        );
-        state.insert(
-            DEFAULT_GROUP_QUOTA.to_string(),
-            Some(format!("{}", self.default_group_quota())),
-        );
-        state.insert(
-            DEFAULT_MAX_SIZE.to_string(),
-            Some(format!("{}", self.default_max_size())),
-        );
-        state.insert(
-            DEFAULT_MAX_AGGR_COUNT.to_string(),
-            Some(format!("{}", self.default_max_aggr_count())),
-        );
-        state.insert(
-            DEFAULT_MAX_AGGR_SIZE.to_string(),
-            Some(format!("{}", self.default_max_aggr_size())),
-        );
-        state.insert(
-            CONFIG_RENTENTION_DAYS_PROPERTY_STATE.to_string(),
-            Some(format!("{}", self.config_rentention_days())),
-        );
-
-        state
-    }
-
-    pub fn auth_state(&self, is_admin_request: bool) -> HashMap<String, Option<String>> {
-        let mut state = HashMap::with_capacity(3);
-
-        state.insert(
-            AUTH_ENABLED.to_string(),
-            Some(format!("{}", self.auth_enabled())),
-        );
-        state.insert(AUTH_SYSTEM_TYPE.to_string(), Some(self.auth_system_type()));
-        state.insert(
-            AUTH_ADMIN_REQUEST.to_string(),
-            Some(format!("{}", is_admin_request)),
-        );
-
-        state
-    }
-
-    pub fn env_state(&self) -> HashMap<String, Option<String>> {
-        let mut state = HashMap::with_capacity(4);
-
-        state.insert(STARTUP_MODE_STATE.to_string(), Some(self.startup_mode()));
-        state.insert(FUNCTION_MODE_STATE.to_string(), self.function_mode());
-        state.insert(NACOS_VERSION.to_string(), Some(self.version()));
-        state.insert(
-            SERVER_PORT_STATE.to_string(),
-            Some(format!("{}", self.server_port())),
-        );
-
-        state
-    }
-
-    pub fn console_state(&self) -> HashMap<String, Option<String>> {
-        let mut state = HashMap::with_capacity(2);
-
-        state.insert(
-            "console_ui_enabled".to_string(),
-            Some(format!("{}", self.console_ui_enabled())),
-        );
-        state.insert(
-            "login_page_enabled".to_string(),
-            Some(format!("{}", self.auth_console_enabled())),
-        );
-
-        state
-    }
-
     pub async fn database_connection(
         &self,
     ) -> std::result::Result<DatabaseConnection, Box<dyn std::error::Error>> {
@@ -1021,14 +915,46 @@ impl Configuration {
 
         Ok(database_connection)
     }
+
+    pub fn server_address(&self) -> String {
+        self.config
+            .get_string("server.address")
+            .unwrap_or("0.0.0.0".to_string())
+    }
+
+    pub fn console_server_port(&self) -> u16 {
+        self.config.get_int("nacos.console.port").unwrap_or(8080) as u16
+    }
+
+    pub fn console_server_context_path(&self) -> String {
+        self.config
+            .get_string("nacos.console.contextPath")
+            .unwrap_or("".to_string())
+    }
+
+    pub fn token_secret_key(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.plugin.nacos.token.secret.key")
+            .unwrap_or_default()
+    }
+
+    pub fn server_main_port(&self) -> u16 {
+        self.config
+            .get_int("nacos.server.main.port")
+            .unwrap_or(8849) as u16
+    }
+
+    pub fn server_context_path(&self) -> String {
+        self.config
+            .get_string("nacos.server.contextPath")
+            .unwrap_or("nacos".to_string())
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct AppState {
     pub configuration: Configuration,
     pub database_connection: DatabaseConnection,
-    pub context_path: String,
-    pub token_secret_key: String,
 }
 
 impl AppState {

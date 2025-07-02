@@ -68,7 +68,8 @@ where
                     let secret_key = req
                         .app_data::<Data<AppState>>()
                         .unwrap()
-                        .token_secret_key
+                        .configuration
+                        .token_secret_key()
                         .clone();
 
                     let decode_result = service::auth::decode_jwt_token(token, &secret_key);

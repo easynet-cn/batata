@@ -36,7 +36,7 @@ pub async fn user_login(
         return HttpResponse::Forbidden().json("user not found!");
     }
 
-    let token_secret_key = data.token_secret_key.as_str();
+    let token_secret_key = data.configuration.token_secret_key();
 
     let user = user_option.unwrap();
     let bcrypt_result = bcrypt::verify(&form.password, &user.password).unwrap();
@@ -55,7 +55,7 @@ pub async fn user_login(
                 token: "".to_string(),
                 global_admin: false,
             },
-            token_secret_key,
+            token_secret_key.as_str(),
             token_expire_seconds,
         )
         .unwrap();
