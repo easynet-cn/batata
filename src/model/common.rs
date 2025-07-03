@@ -949,6 +949,12 @@ impl Configuration {
             .get_string("nacos.server.contextPath")
             .unwrap_or("nacos".to_string())
     }
+
+    pub fn auth_token_expire_seconds(&self) -> i64 {
+        self.config
+            .get_int(super::auth::TOKEN_EXPIRE_SECONDS)
+            .unwrap_or(super::auth::DEFAULT_TOKEN_EXPIRE_SECONDS)
+    }
 }
 
 #[derive(Clone, Debug, Default)]

@@ -2,12 +2,12 @@ use actix_web::{HttpResponse, Responder, Scope, post, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    model::{
-        auth::{DEFAULT_TOKEN_EXPIRE_SECONDS, GLOBAL_ADMIN_ROLE, NacosUser},
-        common::AppState,
-    },
-    {service, service::auth::encode_jwt_token},
+    model::{self, auth::NacosUser, common::AppState},
+    service::{self, auth::encode_jwt_token},
 };
+
+const USER_NOT_FOUND_MESSAGE: &str =
+    "User not found! Please check user exist or password is right!";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,34 +19,53 @@ struct LoginResult {
 }
 
 #[derive(Deserialize)]
-struct LoginFormData {
-    username: String,
-    password: String,
+struct LoginData {
+    username: Option<String>,
+    password: Option<String>,
 }
 
 #[post("/user/login")]
 pub async fn user_login(
     data: web::Data<AppState>,
-    form: web::Form<LoginFormData>,
+    form: Option<web::Form<LoginData>>,
+    query: Option<web::Query<LoginData>>,
 ) -> impl Responder {
-    let user_option =
-        service::user::find_by_username(&data.database_connection, &form.username).await;
+    let mut username: String = "".to_string();
+    let mut password: String = "".to_string();
+
+    if let Some(form_data) = form {
+        if let Some(v) = &form_data.username {
+            username = v.to_string();
+        }
+        if let Some(v) = &form_data.password {
+            password = v.to_string();
+        }
+    } else if let Some(query_data) = query {
+        if let Some(v) = &query_data.username {
+            username = v.to_string();
+        }
+        if let Some(v) = &query_data.password {
+            password = v.to_string();
+        }
+    }
+
+    if username.is_empty() || password.is_empty() {
+        return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
+    }
+
+    let user_option = service::user::find_by_username(&data.database_connection, &username).await;
 
     if user_option.is_none() {
-        return HttpResponse::Forbidden().json("user not found!");
+        return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
     let token_secret_key = data.configuration.token_secret_key();
 
     let user = user_option.unwrap();
-    let bcrypt_result = bcrypt::verify(&form.password, &user.password).unwrap();
+    let bcrypt_result = bcrypt::verify(password, &user.password).unwrap();
 
     if bcrypt_result {
-        let token_expire_seconds = data
-            .configuration
-            .config
-            .get_int("nacos.core.auth.plugin.nacos.token.expire.seconds")
-            .unwrap_or(DEFAULT_TOKEN_EXPIRE_SECONDS);
+        let token_expire_seconds = data.configuration.auth_token_expire_seconds();
 
         let access_token = encode_jwt_token(
             &NacosUser {
@@ -61,12 +80,10 @@ pub async fn user_login(
         .unwrap();
 
         let global_admin =
-            service::role::find_by_username(&data.database_connection, &user.username)
+            service::role::has_global_admin_role(&data.database_connection, &user.username)
                 .await
                 .ok()
-                .unwrap()
-                .iter()
-                .any(|role| role.role == GLOBAL_ADMIN_ROLE);
+                .unwrap_or_default();
 
         let login_result = LoginResult {
             access_token: access_token.clone(),
@@ -76,11 +93,14 @@ pub async fn user_login(
         };
 
         return HttpResponse::Ok()
-            .append_header(("Authorization", format!("Bearer {}", access_token)))
+            .append_header((
+                model::auth::AUTHORIZATION_HEADER,
+                format!("{}{}", model::auth::TOKEN_PREFIX, access_token),
+            ))
             .json(login_result);
     }
 
-    return HttpResponse::Forbidden().json("user not found!");
+    return HttpResponse::Forbidden().body("USER_NOT_FOUND_MESSAGE");
 }
 
 pub fn routers() -> Scope {

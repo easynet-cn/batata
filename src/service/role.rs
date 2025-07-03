@@ -3,7 +3,7 @@ use sea_orm::*;
 
 use crate::{
     entity::roles,
-    model::{auth::RoleInfo, common::Page},
+    model::{self, auth::RoleInfo, common::Page},
 };
 
 pub async fn find_by_username(
@@ -116,4 +116,16 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
     }
 
     anyhow::Ok(())
+}
+
+pub async fn has_global_admin_role(
+    db: &DatabaseConnection,
+    username: &str,
+) -> anyhow::Result<bool> {
+    let has = find_by_username(db, username)
+        .await?
+        .iter()
+        .any(|role| role.role == model::auth::GLOBAL_ADMIN_ROLE);
+
+    anyhow::Ok(has)
 }
