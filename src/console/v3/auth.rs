@@ -2,7 +2,7 @@ use actix_web::{HttpResponse, Responder, Scope, post, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    model::{self, auth::NacosUser, common::AppState},
+    model::{self, common::AppState},
     service::{self, auth::encode_jwt_token},
 };
 
@@ -67,17 +67,8 @@ pub async fn user_login(
     if bcrypt_result {
         let token_expire_seconds = data.configuration.auth_token_expire_seconds();
 
-        let access_token = encode_jwt_token(
-            &NacosUser {
-                username: user.username.clone(),
-                password: user.password.clone(),
-                token: "".to_string(),
-                global_admin: false,
-            },
-            token_secret_key.as_str(),
-            token_expire_seconds,
-        )
-        .unwrap();
+        let access_token =
+            encode_jwt_token(&username, token_secret_key.as_str(), token_expire_seconds).unwrap();
 
         let global_admin =
             service::role::has_global_admin_role(&data.database_connection, &user.username)

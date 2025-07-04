@@ -1,5 +1,5 @@
 use chrono;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 
 use crate::model::auth::{NacosJwtPayload, NacosUser};
 
@@ -15,17 +15,17 @@ pub fn decode_jwt_token(
 }
 
 pub fn encode_jwt_token(
-    user: &NacosUser,
+    sub: &str,
     secret_key: &str,
-    token_expire_seconds: i64,
+    expire_seconds: i64,
 ) -> jsonwebtoken::errors::Result<String> {
     let exp = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::seconds(token_expire_seconds))
+        .checked_add_signed(chrono::Duration::seconds(expire_seconds))
         .expect("valid timestamp")
         .timestamp();
 
     let payload = NacosJwtPayload {
-        sub: user.username.clone(),
+        sub: sub.to_string(),
         exp,
     };
 

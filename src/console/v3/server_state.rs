@@ -25,14 +25,8 @@ pub async fn state(
     req: HttpRequest,
     data: web::Data<AppState>,
 ) -> web::Json<HashMap<String, Option<String>>> {
-    let mut state_map: HashMap<String, Option<String>> = HashMap::new();
-
     // config module state
     let config_state = data.config_state();
-
-    for (k, v) in config_state {
-        state_map.insert(k, v);
-    }
 
     // auth module state
     let auth_enabled = data.configuration.auth_enabled();
@@ -52,19 +46,32 @@ pub async fn state(
 
     let auth_state = data.auth_state(auth_enabled && !has_global_admin_role);
 
+    // env module state
+    let env_state = data.env_state();
+
+    //console module state
+    let console_state = data.console_state();
+
+    let mut state_map: HashMap<String, Option<String>> = HashMap::with_capacity(
+        config_state.len() + auth_state.len() + env_state.len() + console_state.len() + 1,
+    );
+
+    state_map.insert(
+        common::SERVER_PORT_STATE.to_string(),
+        Some(format!("{}", data.configuration.console_server_port())),
+    );
+
+    for (k, v) in config_state {
+        state_map.insert(k, v);
+    }
+
     for (k, v) in auth_state {
         state_map.insert(k, v);
     }
 
-    // env module state
-    let env_state = data.env_state();
-
     for (k, v) in env_state {
         state_map.insert(k, v);
     }
-
-    //console module state
-    let console_state = data.console_state();
 
     for (k, v) in console_state {
         state_map.insert(k, v);

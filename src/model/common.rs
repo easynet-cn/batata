@@ -473,6 +473,51 @@ pub const AUTH_ENABLED: &str = "auth_enabled";
 pub const AUTH_SYSTEM_TYPE: &str = "auth_system_type";
 pub const AUTH_ADMIN_REQUEST: &str = "auth_admin_request";
 
+pub const STANDALONE_MODE_ALONE: &str = "standalone";
+
+pub const STANDALONE_MODE_CLUSTER: &str = "cluster";
+
+pub const FUNCTION_MODE_CONFIG: &str = "config";
+
+pub const FUNCTION_MODE_NAMING: &str = "naming";
+
+/**
+ * The key of nacos home.
+ */
+pub const NACOS_HOME_KEY: &str = "nacos.home";
+
+const FILE_PREFIX: &str = "file:";
+
+const SERVER_PORT_PROPERTY: &str = "nacos.server.main.port";
+
+const DEFAULT_SERVER_PORT: i32 = 8849;
+
+const DEFAULT_WEB_CONTEXT_PATH: &str = "/nacos";
+
+const MEMBER_LIST_PROPERTY: &str = "nacos.member.list";
+
+const NACOS_HOME_PROPERTY: &str = "user.home";
+
+const CUSTOM_CONFIG_LOCATION_PROPERTY: &str = "spring.config.additional-location";
+
+const DEFAULT_CONFIG_LOCATION: &str = "application.properties";
+
+const DEFAULT_RESOURCE_PATH: &str = "/application.properties";
+
+const DEFAULT_ADDITIONAL_PATH: &str = "conf";
+
+const DEFAULT_ADDITIONAL_FILE: &str = "cluster.conf";
+
+const NACOS_HOME_ADDITIONAL_FILEPATH: &str = "nacos";
+
+const NACOS_TEMP_DIR_1: &str = "data";
+
+const NACOS_TEMP_DIR_2: &str = "tmp";
+
+const NACOS_CUSTOM_ENVIRONMENT_ENABLED: &str = "nacos.custom.environment.enabled";
+
+const NACOS_CUSTOM_CONFIG_NAME: &str = "customFirstNacosConfig";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
@@ -744,10 +789,6 @@ impl Configuration {
             .unwrap_or(NACOS_DEPLOYMENT_TYPE_MERGED.to_string())
     }
 
-    pub fn server_port(&self) -> i32 {
-        self.config.get_int("server.port").unwrap_or(8081) as i32
-    }
-
     pub fn datasource_platform(&self) -> String {
         self.config
             .get_string(DATASOURCE_PLATFORM_PROPERTY)
@@ -923,7 +964,7 @@ impl Configuration {
     }
 
     pub fn console_server_port(&self) -> u16 {
-        self.config.get_int("nacos.console.port").unwrap_or(8080) as u16
+        self.config.get_int("nacos.console.port").unwrap_or(8081) as u16
     }
 
     pub fn console_server_context_path(&self) -> String {
@@ -940,8 +981,8 @@ impl Configuration {
 
     pub fn server_main_port(&self) -> u16 {
         self.config
-            .get_int("nacos.server.main.port")
-            .unwrap_or(8849) as u16
+            .get_int(SERVER_PORT_PROPERTY)
+            .unwrap_or(DEFAULT_SERVER_PORT.into()) as u16
     }
 
     pub fn server_context_path(&self) -> String {
@@ -1070,7 +1111,7 @@ impl AppState {
         );
         state.insert(
             SERVER_PORT_STATE.to_string(),
-            Some(format!("{}", self.configuration.server_port())),
+            Some(format!("{}", self.configuration.server_main_port())),
         );
 
         state
