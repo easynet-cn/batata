@@ -220,7 +220,7 @@ nacos.core.auth.system.type: nacos
 
 ### If turn on auth system:
 # Whether open nacos server API auth system
-nacos.core.auth.enabled: false
+nacos.core.auth.enabled: true
 # Whether open nacos admin API auth system
 nacos.core.auth.admin.enabled: true
 # Whether open nacos console API auth system
@@ -231,8 +231,8 @@ nacos.core.auth.caching.enabled: true
 
 ### worked when nacos.core.auth.enabled=true
 ### The two properties is the white list for auth and used by identity the request from other server.
-nacos.core.auth.server.identity.key: acos-server
-nacos.core.auth.server.identity.value: acos-server
+nacos.core.auth.server.identity.key: nacos-server-key
+nacos.core.auth.server.identity.value: nacos-server-value
 
 ### worked when nacos.core.auth.system.type=nacos or nacos.core.auth.console.enabled=true
 ### The token expiration in seconds:

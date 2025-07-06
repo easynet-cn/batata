@@ -43,7 +43,7 @@ struct DeleteParam {
     username: String,
 }
 
-#[get("/users")]
+#[get("/user/list")]
 pub async fn search_page(
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,

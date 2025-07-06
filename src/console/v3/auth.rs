@@ -70,11 +70,13 @@ pub async fn user_login(
         let access_token =
             encode_jwt_token(&username, token_secret_key.as_str(), token_expire_seconds).unwrap();
 
-        let global_admin =
-            service::role::has_global_admin_role(&data.database_connection, &user.username)
-                .await
-                .ok()
-                .unwrap_or_default();
+        let global_admin = service::role::has_global_admin_role_by_username(
+            &data.database_connection,
+            &user.username,
+        )
+        .await
+        .ok()
+        .unwrap_or_default();
 
         let login_result = LoginResult {
             access_token: access_token.clone(),

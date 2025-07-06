@@ -6,6 +6,21 @@ use crate::{
     model::{self, auth::RoleInfo, common::Page},
 };
 
+pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> {
+    let user_roles = roles::Entity::find()
+        .all(db)
+        .await
+        .unwrap()
+        .iter()
+        .map(|role| RoleInfo {
+            role: role.role.clone(),
+            username: role.username.clone(),
+        })
+        .collect();
+
+    Ok(user_roles)
+}
+
 pub async fn find_by_username(
     db: &DatabaseConnection,
     username: &str,
@@ -118,7 +133,16 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
     anyhow::Ok(())
 }
 
-pub async fn has_global_admin_role(
+pub async fn has_global_admin_role(db: &DatabaseConnection) -> anyhow::Result<bool> {
+    let has = find_all(db)
+        .await?
+        .iter()
+        .any(|role| role.role == model::auth::GLOBAL_ADMIN_ROLE);
+
+    anyhow::Ok(has)
+}
+
+pub async fn has_global_admin_role_by_username(
     db: &DatabaseConnection,
     username: &str,
 ) -> anyhow::Result<bool> {

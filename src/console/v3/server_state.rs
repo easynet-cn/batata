@@ -30,19 +30,9 @@ pub async fn state(
 
     // auth module state
     let auth_enabled = data.configuration.auth_enabled();
-    let mut has_global_admin_role = false;
-
-    if let Some(auth_context) = req.extensions().get::<model::auth::AuthContext>() {
-        if auth_context.jwt_error.is_none() {
-            has_global_admin_role =
-                service::role::find_by_username(&data.database_connection, &auth_context.username)
-                    .await
-                    .ok()
-                    .unwrap()
-                    .iter()
-                    .any(|role| role.role == model::auth::GLOBAL_ADMIN_ROLE);
-        }
-    }
+    let mut has_global_admin_role = service::role::has_global_admin_role(&data.database_connection)
+        .await
+        .unwrap();
 
     let auth_state = data.auth_state(auth_enabled && !has_global_admin_role);
 
