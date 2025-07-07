@@ -1,13 +1,10 @@
 use std::{collections::HashMap, fs};
 
-use actix_web::{HttpMessage, HttpRequest, Scope, get, web};
+use actix_web::{Scope, get, web};
 use serde::Deserialize;
 
 use crate::{
-    model::{
-        self,
-        common::{self, AppState},
-    },
+    model::common::{self, AppState},
     service,
 };
 
@@ -21,20 +18,17 @@ struct LanguageParam {
 }
 
 #[get("/state")]
-pub async fn state(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-) -> web::Json<HashMap<String, Option<String>>> {
+pub async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {
     // config module state
     let config_state = data.config_state();
 
     // auth module state
     let auth_enabled = data.configuration.auth_enabled();
-    let mut has_global_admin_role = service::role::has_global_admin_role(&data.database_connection)
+    let global_admin = service::role::has_global_admin_role(&data.database_connection)
         .await
         .unwrap();
 
-    let auth_state = data.auth_state(auth_enabled && !has_global_admin_role);
+    let auth_state = data.auth_state(auth_enabled && !global_admin);
 
     // env module state
     let env_state = data.env_state();

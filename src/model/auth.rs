@@ -126,3 +126,60 @@ pub struct AuthContext {
     pub username: String,
     pub jwt_error: Option<jsonwebtoken::errors::Error>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActionTypes {
+    Read,
+    Write,
+}
+
+impl ActionTypes {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ActionTypes::Read => "r",
+            ActionTypes::Write => "w",
+        }
+    }
+}
+
+impl std::fmt::Display for ActionTypes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+pub struct SignType {}
+
+impl SignType {
+    pub const NAMING: &str = "naming";
+    pub const CONFIG: &str = "config";
+    pub const LOCK: &str = "lock";
+    pub const AI: &str = "ai";
+    pub const CONSOLE: &str = "console";
+    pub const SPECIFIED: &str = "specified";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ApiType {
+    AdminApi,
+    ConsoleApi,
+    OpenApi,
+    InnerApi,
+}
+
+impl ApiType {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            ApiType::AdminApi => "ADMIN_API",
+            ApiType::ConsoleApi => "CONSOLE_API",
+            ApiType::OpenApi => "OPEN_API",
+            ApiType::InnerApi => "INNER_API",
+        }
+    }
+}
+
+impl std::fmt::Display for ApiType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}

@@ -1,5 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
+use actix_web::{HttpRequest, HttpResponse, Responder};
 use clap::Parser;
 use config::{Config, Environment};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
@@ -1140,4 +1141,36 @@ pub struct ErrorResult {
     pub error: String,
     pub message: String,
     pub path: String,
+}
+
+impl ErrorResult {
+    pub fn new(status: i32, error: String, message: String, path: String) -> Self {
+        ErrorResult {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            status: status,
+            error: error,
+            message: message,
+            path: path,
+        }
+    }
+
+    pub fn forbidden(message: &str, path: &str) -> Self {
+        ErrorResult {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            status: actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+            error: actix_web::http::StatusCode::FORBIDDEN
+                .canonical_reason()
+                .unwrap_or_default()
+                .to_string(),
+            message: message.to_string(),
+            path: path.to_string(),
+        }
+    }
+
+    pub fn http_response_forbidden(code: i32, message: &str, path: &str) -> HttpResponse {
+        HttpResponse::Forbidden().json(ErrorResult::forbidden(
+            format!("Code: {}, Message: {}", code, message).as_str(),
+            path,
+        ))
+    }
 }
