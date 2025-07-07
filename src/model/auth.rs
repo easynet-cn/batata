@@ -43,6 +43,9 @@ pub const USER_PATH: &str = "/v3/auth/user";
 pub const ROLE_PATH: &str = "/v3/auth/role";
 pub const PERMISSION_PATH: &str = "/v3/auth/permission";
 
+pub const USER_NOT_FOUND_MESSAGE: &str =
+    "User not found! Please check user exist or password is right!";
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     pub username: String,

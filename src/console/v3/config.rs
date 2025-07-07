@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, HttpMessage, HttpRequest, HttpResponse, Responder, Scope};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, Scope, get, post, web};
 use serde::Deserialize;
 
 use chrono::Utc;
@@ -101,8 +101,8 @@ pub async fn search(
 
 #[post("")]
 pub async fn create_or_update(
-    data: web::Data<AppState>,
     req: HttpRequest,
+    data: web::Data<AppState>,
     form: web::Form<CreateFormParam>,
 ) -> impl Responder {
     let token_data = req

@@ -1,12 +1,15 @@
-use actix_web::{HttpResponse, Responder, delete, get, post, put, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
-use crate::model::{
-    auth::{DEFAULT_USER, GLOBAL_ADMIN_ROLE},
-    common,
-    common::{AppState, BusinessError},
-};
 use crate::service;
+use crate::{
+    model::{
+        self,
+        auth::{DEFAULT_USER, GLOBAL_ADMIN_ROLE},
+        common::{self, AppState, BusinessError},
+    },
+    secured,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,9 +48,12 @@ struct DeleteParam {
 
 #[get("/user/list")]
 pub async fn search_page(
+    req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
+    secured!(req, data);
+
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
 

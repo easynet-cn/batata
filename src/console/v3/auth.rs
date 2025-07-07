@@ -6,9 +6,6 @@ use crate::{
     service::{self, auth::encode_jwt_token},
 };
 
-const USER_NOT_FOUND_MESSAGE: &str =
-    "User not found! Please check user exist or password is right!";
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LoginResult {
@@ -50,13 +47,13 @@ pub async fn user_login(
     }
 
     if username.is_empty() || password.is_empty() {
-        return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
+        return HttpResponse::Forbidden().body(model::auth::USER_NOT_FOUND_MESSAGE);
     }
 
     let user_option = service::user::find_by_username(&data.database_connection, &username).await;
 
     if user_option.is_none() {
-        return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
+        return HttpResponse::Forbidden().body(model::auth::USER_NOT_FOUND_MESSAGE);
     }
 
     let token_secret_key = data.configuration.token_secret_key();
