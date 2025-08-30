@@ -1,4 +1,4 @@
-use actix_web::{get, web, HttpRequest, HttpResponse, Responder, Scope};
+use actix_web::{HttpRequest, HttpResponse, Responder, Scope, get, web};
 use serde::Deserialize;
 
 use chrono::Utc;
@@ -63,6 +63,6 @@ pub async fn search(
     return HttpResponse::Ok().json(Page::<ConfigInfo>::default());
 }
 
-pub fn routers() -> Scope {
+pub fn routes() -> Scope {
     return web::scope("/cs/config").service(search);
 }

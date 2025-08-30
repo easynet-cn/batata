@@ -51,7 +51,7 @@ struct CreateFormParam {
 }
 
 #[get("")]
-pub async fn search(
+async fn search(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
@@ -100,7 +100,7 @@ pub async fn search(
 }
 
 #[post("")]
-pub async fn create_or_update(
+async fn create_or_update(
     req: HttpRequest,
     data: web::Data<AppState>,
     form: web::Form<CreateFormParam>,
@@ -141,7 +141,7 @@ pub async fn create_or_update(
     return HttpResponse::Ok().json(true);
 }
 
-pub fn routers() -> Scope {
+pub fn routes() -> Scope {
     web::scope("/cs/configs")
         .service(search)
         .service(create_or_update)

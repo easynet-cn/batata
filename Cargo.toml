@@ -11,29 +11,30 @@ actix-macros = "0.2.4"
 actix-service = "2.0.3"
 actix-utils = "3.0.1"
 actix-web = { version = "4.11.0" }
-anyhow = "1.0.98"
+anyhow = "1.0.99"
 base64 = "0.22.1"
-bcrypt = "0.17.0"
+bcrypt = "0.17.1"
 bytes = "1.10.1"
 chrono = "0.4.41"
-clap = { version = "4.5.40", features = ["derive"] }
-clap_derive = "4.5.40"
-config = "0.15.11"
+clap = { version = "4.5.46", features = ["derive", "env"] }
+clap_derive = "4.5.45"
+config = "0.15.15"
 futures = "0.3.31"
+htmlescape = "0.3.1"
 jsonwebtoken = "9.3.1"
 pin-project-lite = "0.2.16"
 regex = "1.11.1"
 rust-crypto = "0.2.36"
-sea-orm = { version = "1.1.13", features = ["sqlx-mysql", "runtime-tokio"] }
+sea-orm = { version = "1.1.14", features = ["sqlx-mysql", "runtime-tokio"] }
 serde = "1.0.219"
-serde_json = "1.0.140"
+serde_json = "1.0.143"
 sqlx = { version = "0.8.6", features = ["runtime-tokio"] }
-thiserror = "2.0.12"
+thiserror = "2.0.16"
 time = "0.3.41"
-tokio = { version = "1.46.1", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full"] }
 tonic = "0.13.1"
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-bunyan-formatter = "0.3.10"
 tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3.19", features = ["registry", "env-filter"] }
-uuid = { version = "1.17.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
+uuid = { version = "1.18.0", features = ["v4", "fast-rng", "macro-diagnostics"] }

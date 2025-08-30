@@ -1,4 +1,4 @@
-use actix_web::{get, web, HttpResponse, Responder, Scope};
+use actix_web::{HttpResponse, Responder, Scope, get, web};
 use serde::Deserialize;
 
 use crate::{model::common::AppState, service};
@@ -23,7 +23,7 @@ struct GetDataIdsParam {
 }
 
 #[get("")]
-pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
+async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
     if params.search.is_some() && params.search.as_ref().unwrap() == "accurate" {
         let result = service::history::search_page(
             &data.database_connection,
@@ -45,7 +45,7 @@ pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) 
 }
 
 #[get("configs")]
-pub async fn get_data_ids(
+async fn get_data_ids(
     data: web::Data<AppState>,
     params: web::Query<GetDataIdsParam>,
 ) -> impl Responder {
@@ -56,7 +56,7 @@ pub async fn get_data_ids(
     return HttpResponse::Ok().json(config_infos.ok().unwrap());
 }
 
-pub fn routers() -> Scope {
+pub fn routes() -> Scope {
     web::scope("/cs/history")
         .service(get_data_ids)
         .service(search)

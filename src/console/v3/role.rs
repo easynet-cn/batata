@@ -36,8 +36,8 @@ struct DeleteParam {
     username: Option<String>,
 }
 
-#[get("/roles")]
-pub async fn search_page(
+#[get("/role/list")]
+async fn search_page(
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
@@ -74,8 +74,8 @@ pub async fn search_page(
     return HttpResponse::Ok().json(result);
 }
 
-#[get("/roles/search")]
-pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
+#[get("/role/search")]
+async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
     let result = service::role::search(&data.database_connection, &params.role)
         .await
         .unwrap();
@@ -83,11 +83,8 @@ pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) 
     return HttpResponse::Ok().json(result);
 }
 
-#[post("/roles")]
-pub async fn create(
-    data: web::Data<AppState>,
-    params: web::Form<CreateFormData>,
-) -> impl Responder {
+#[post("role")]
+async fn create(data: web::Data<AppState>, params: web::Form<CreateFormData>) -> impl Responder {
     let result =
         service::role::create(&data.database_connection, &params.role, &params.username).await;
 
@@ -105,7 +102,7 @@ pub async fn create(
     };
 }
 
-#[delete("/roles")]
+#[delete("role")]
 pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
     let result = service::role::delete(
         &data.database_connection,

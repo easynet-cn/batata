@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use actix_web::{HttpRequest, HttpResponse, Responder};
+use actix_web::{HttpRequest, HttpResponse, HttpResponseBuilder, Responder, http::StatusCode};
 use clap::Parser;
 use config::{Config, Environment};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
@@ -519,6 +519,22 @@ const NACOS_CUSTOM_ENVIRONMENT_ENABLED: &str = "nacos.custom.environment.enabled
 
 const NACOS_CUSTOM_CONFIG_NAME: &str = "customFirstNacosConfig";
 
+pub const NACOS_SERVER_CONTEXT: &str = "/nacos";
+
+pub const NACOS_SERVER_VERSION: &str = "/v1";
+
+pub const NACOS_SERVER_VERSION_V2: &str = "/v2";
+
+pub const NACOS_SERVER_VERSION_V3: &str = "/v3";
+
+pub const DEFAULT_NACOS_CORE_CONTEXT: &str = "/v1/core";
+
+pub const NACOS_CORE_CONTEXT: &str = "/v1/core";
+
+pub const NACOS_CORE_CONTEXT_V2: &str = "/v2/core";
+
+pub const NACOS_ADMIN_CORE_CONTEXT_V3: &str = "/v3/admin/core";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
@@ -725,12 +741,24 @@ pub struct Result<T> {
 }
 
 impl<T> Result<T> {
+    pub fn new(code: i32, message: String, data: T) -> Self {
+        Result::<T> {
+            code: code,
+            message: message,
+            data: data,
+        }
+    }
+
     pub fn success(data: T) -> Result<T> {
         Result::<T> {
             code: SUCCESS.code,
             message: SUCCESS.message.to_string(),
             data,
         }
+    }
+
+    pub fn http_success(data: impl Serialize) -> HttpResponse {
+        HttpResponse::Ok().json(Result::success(data))
     }
 }
 
@@ -1172,5 +1200,35 @@ impl ErrorResult {
             format!("Code: {}, Message: {}", code, message).as_str(),
             path,
         ))
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConsoleExecption {}
+
+impl ConsoleExecption {
+    pub fn handle_access_exectpion(message: String) -> HttpResponse {
+        HttpResponse::Forbidden().body(message)
+    }
+
+    pub fn handle_illegal_argument_exectpion(message: String) -> HttpResponse {
+        HttpResponse::BadRequest().body(format!("caused: {}", message))
+    }
+
+    pub fn handle_runtime_exectpion(code: u16, message: String) -> HttpResponse {
+        HttpResponseBuilder::new(StatusCode::from_u16(code).unwrap_or_default())
+            .body(format!("caused: {}", message))
+    }
+
+    pub fn handle_exectpion(uri: String, message: String) -> HttpResponse {
+        if uri.contains(NACOS_SERVER_VERSION_V2) {
+            HttpResponse::InternalServerError().json(Result::new(
+                500,
+                htmlescape::encode_minimal(format!("caused: {}", message).as_str()),
+                "",
+            ))
+        } else {
+            HttpResponse::InternalServerError().body(format!("caused: {}", message))
+        }
     }
 }

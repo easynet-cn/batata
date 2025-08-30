@@ -1,5 +1,6 @@
-use sea_orm::entity::ModelTrait;
+use sea_orm::sea_query::Asterisk;
 use sea_orm::*;
+use sea_orm::{entity::ModelTrait, prelude::Expr};
 
 use crate::{
     entity::users,
@@ -36,8 +37,7 @@ pub async fn search_page(
     accurate: bool,
 ) -> anyhow::Result<Page<User>> {
     let mut count_select = users::Entity::find();
-    let mut query_select =
-        users::Entity::find().columns([users::Column::Username, users::Column::Password]);
+    let mut query_select = users::Entity::find().columns([users::Column::Username]);
 
     if !username.is_empty() {
         if accurate {
@@ -49,12 +49,20 @@ pub async fn search_page(
         }
     }
 
-    let total_count = count_select.count(db).await?;
+    let total_count = count_select
+        .select_only()
+        .column_as(Expr::col(Asterisk).count(), "count")
+        .into_tuple::<i64>()
+        .one(db)
+        .await?
+        .unwrap_or_default() as u64;
 
     if total_count > 0 {
+        let offset = (page_no - 1) * page_size;
         let page_items = query_select
-            .paginate(db, page_size)
-            .fetch_page(page_no - 1)
+            .offset(offset)
+            .limit(page_size)
+            .all(db)
             .await?
             .iter()
             .map(|entity| User::from(entity.clone()))
@@ -114,7 +122,7 @@ pub async fn update(
         None => {
             return Err(anyhow::Error::from(BusinessError::UserNotExist(
                 username.to_string(),
-            )))
+            )));
         }
     }
 
@@ -131,7 +139,7 @@ pub async fn delete(db: &DatabaseConnection, username: &str) -> anyhow::Result<(
         None => {
             return Err(anyhow::Error::from(BusinessError::UserNotExist(
                 username.to_string(),
-            )))
+            )));
         }
     }
 

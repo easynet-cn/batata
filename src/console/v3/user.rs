@@ -1,11 +1,10 @@
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
-use crate::service;
+use crate::{model, service};
 use crate::{
     model::{
-        self,
-        auth::{DEFAULT_USER, GLOBAL_ADMIN_ROLE},
+        auth::GLOBAL_ADMIN_ROLE,
         common::{self, AppState, BusinessError},
     },
     secured,
@@ -47,7 +46,7 @@ struct DeleteParam {
 }
 
 #[get("/user/list")]
-pub async fn search_page(
+async fn search_page(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
@@ -74,11 +73,11 @@ pub async fn search_page(
     .await
     .unwrap();
 
-    return HttpResponse::Ok().json(result);
+    return HttpResponse::Ok().json(common::Result::success(result));
 }
 
-#[get("/users/search")]
-pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
+#[get("/user/search")]
+async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
     let result = service::user::search(&data.database_connection, &params.username)
         .await
         .unwrap();
@@ -86,24 +85,27 @@ pub async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) 
     return HttpResponse::Ok().json(result);
 }
 
-#[post("/users")]
-pub async fn create(
+#[post("/user")]
+async fn create(
+    req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Form<CreateFormData>,
 ) -> impl Responder {
-    if params.username == DEFAULT_USER {
-        return HttpResponse::Conflict().json(common::Result::<String> {
-            code: 409,
-            message:String::from("User `nacos` is default admin user. Please use `/nacos/v1/auth/users/admin` API to init `nacos` users. Detail see `https://nacos.io/docs/latest/manual/admin/auth/#31-%E8%AE%BE%E7%BD%AE%E7%AE%A1%E7%90%86%E5%91%98%E5%AF%86%E7%A0%81`"),
-            data:String::from("User `nacos` is default admin user. Please use `/nacos/v1/auth/users/admin` API to init `nacos` users. Detail see `https://nacos.io/docs/latest/manual/admin/auth/#31-%E8%AE%BE%E7%BD%AE%E7%AE%A1%E7%90%86%E5%91%98%E5%AF%86%E7%A0%81`")
-        });
+    secured!(req, data);
+
+    if params.username.is_empty() || params.password.is_empty() {
+        return model::common::ConsoleExecption::handle_illegal_argument_exectpion(
+            "username or password cann't be empty".to_string(),
+        );
     }
 
     let user = service::user::find_by_username(&data.database_connection, &params.username).await;
 
     if user.is_some() {
-        return HttpResponse::BadRequest()
-            .json(format!("user '{}' already exist!", params.username));
+        return model::common::ConsoleExecption::handle_illegal_argument_exectpion(format!(
+            "user '{}' already exist!",
+            params.username
+        ));
     }
 
     let password = bcrypt::hash(params.password.clone(), 10u32).ok().unwrap();
@@ -112,24 +114,16 @@ pub async fn create(
         service::user::create(&data.database_connection, &params.username, &password).await;
 
     return match result {
-        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
-            code: 200,
-            message: String::from("create user ok!"),
-            data: String::from("create user ok!"),
-        }),
-        Err(err) => HttpResponse::InternalServerError().json(common::Result::<String> {
-            code: 500,
-            message: err.to_string(),
-            data: err.to_string(),
-        }),
+        Ok(()) => model::common::Result::<String>::http_success("create user ok!"),
+        Err(err) => model::common::ConsoleExecption::handle_exectpion(
+            req.uri().path().to_string(),
+            err.to_string(),
+        ),
     };
 }
 
-#[put("/users")]
-pub async fn update(
-    data: web::Data<AppState>,
-    params: web::Form<UpdateFormData>,
-) -> impl Responder {
+#[put("/user")]
+async fn update(data: web::Data<AppState>, params: web::Form<UpdateFormData>) -> impl Responder {
     let result = service::user::update(
         &data.database_connection,
         &params.username,
@@ -158,8 +152,8 @@ pub async fn update(
     };
 }
 
-#[delete("/users")]
-pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
+#[delete("/user")]
+async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
     let global_admin = service::role::find_by_username(&data.database_connection, &params.username)
         .await
         .ok()

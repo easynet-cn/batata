@@ -39,7 +39,7 @@ struct DeleteParam {
 const NAMESPACE_ID_MAX_LENGTH: usize = 128;
 
 #[get("list")]
-pub async fn get_all(data: web::Data<AppState>, params: web::Query<GetParam>) -> impl Responder {
+async fn get_all(data: web::Data<AppState>, params: web::Query<GetParam>) -> impl Responder {
     if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
         let namespace = service::namespace::get_by_namespace_id(
             &data.database_connection,
@@ -67,7 +67,7 @@ pub async fn get_all(data: web::Data<AppState>, params: web::Query<GetParam>) ->
 }
 
 #[post("")]
-pub async fn create(data: web::Data<AppState>, form: web::Form<CreateFormData>) -> impl Responder {
+async fn create(data: web::Data<AppState>, form: web::Form<CreateFormData>) -> impl Responder {
     let namespace_id: String;
 
     if form.custom_namespace_id.is_some() && !form.custom_namespace_id.as_ref().unwrap().is_empty()
@@ -128,7 +128,7 @@ pub async fn create(data: web::Data<AppState>, form: web::Form<CreateFormData>) 
 }
 
 #[put("")]
-pub async fn update(data: web::Data<AppState>, form: web::Form<UpdateFormData>) -> impl Responder {
+async fn update(data: web::Data<AppState>, form: web::Form<UpdateFormData>) -> impl Responder {
     let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
 
     if !regex.is_match(&form.namespace_show_name) {
@@ -155,14 +155,14 @@ pub async fn update(data: web::Data<AppState>, form: web::Form<UpdateFormData>) 
 }
 
 #[delete("")]
-pub async fn delete(data: web::Data<AppState>, form: web::Query<DeleteParam>) -> impl Responder {
+async fn delete(data: web::Data<AppState>, form: web::Query<DeleteParam>) -> impl Responder {
     let res =
         service::namespace::delete(&data.database_connection, form.namespace_id.clone()).await;
 
     return HttpResponse::Ok().json(res);
 }
 
-pub fn routers() -> Scope {
+pub fn routes() -> Scope {
     web::scope("/core/namespace")
         .service(get_all)
         .service(create)

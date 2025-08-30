@@ -31,8 +31,8 @@ struct DeleteParam {
     action: String,
 }
 
-#[get("/permissions")]
-pub async fn search_page(
+#[get("/permission/list")]
+async fn search_page(
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
@@ -59,11 +59,8 @@ pub async fn search_page(
     return HttpResponse::Ok().json(result);
 }
 
-#[post("/permissions")]
-pub async fn create(
-    data: web::Data<AppState>,
-    params: web::Form<CreateFormData>,
-) -> impl Responder {
+#[post("/permission")]
+async fn create(data: web::Data<AppState>, params: web::Form<CreateFormData>) -> impl Responder {
     let result = service::permission::create(
         &data.database_connection,
         &params.role,
@@ -86,8 +83,8 @@ pub async fn create(
     };
 }
 
-#[delete("/permissions")]
-pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
+#[delete("/permission")]
+async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
     let result = service::permission::delete(
         &data.database_connection,
         &params.role,

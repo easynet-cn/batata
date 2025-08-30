@@ -87,8 +87,8 @@ pub fn console_server(
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
-                    .service(console::v2::router::routers())
-                    .service(console::v3::router::routers()),
+                    .service(console::v2::route::routes())
+                    .service(console::v3::route::routes()),
             )
     })
     .bind((address, port))
@@ -109,8 +109,8 @@ pub fn main_server(
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
-                    .service(console::v2::router::routers())
-                    .service(console::v3::router::routers()),
+                    .service(console::v2::route::routes())
+                    .service(console::v3::route::routes()),
             )
     })
     .bind((address, port))

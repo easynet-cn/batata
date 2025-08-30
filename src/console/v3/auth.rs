@@ -21,8 +21,8 @@ struct LoginData {
     password: Option<String>,
 }
 
-#[post("/user/login")]
-pub async fn user_login(
+#[post("user/login")]
+async fn login(
     data: web::Data<AppState>,
     form: Option<web::Form<LoginData>>,
     query: Option<web::Query<LoginData>>,
@@ -93,9 +93,9 @@ pub async fn user_login(
     return HttpResponse::Forbidden().body("USER_NOT_FOUND_MESSAGE");
 }
 
-pub fn routers() -> Scope {
+pub fn routes() -> Scope {
     return web::scope("/auth")
-        .service(user_login)
+        .service(login)
         .service(super::user::search_page)
         .service(super::user::search)
         .service(super::user::update)
