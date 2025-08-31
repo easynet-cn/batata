@@ -2,6 +2,24 @@ use sea_orm::*;
 
 use crate::{entity::permissions, model::auth::PermissionInfo, model::common::Page};
 
+pub async fn find_by_id(
+    db: &DatabaseConnection,
+    role: &str,
+    resource: &str,
+    action: &str,
+) -> anyhow::Result<Option<PermissionInfo>> {
+    let permission = permissions::Entity::find_by_id((
+        role.to_string(),
+        resource.to_string(),
+        action.to_string(),
+    ))
+    .one(db)
+    .await?
+    .map(PermissionInfo::from);
+
+    Ok(permission)
+}
+
 pub async fn search_page(
     db: &DatabaseConnection,
     role: &str,
@@ -30,10 +48,10 @@ pub async fn search_page(
             .fetch_page(page_no - 1)
             .await?
             .iter()
-            .map(|entity| PermissionInfo::from(entity.clone()))
+            .map(PermissionInfo::from)
             .collect();
 
-        return anyhow::Ok(Page::<PermissionInfo>::new(
+        return Ok(Page::<PermissionInfo>::new(
             total_count,
             page_no,
             page_size,
@@ -41,7 +59,7 @@ pub async fn search_page(
         ));
     }
 
-    return anyhow::Ok(Page::<PermissionInfo>::default());
+    return Ok(Page::<PermissionInfo>::default());
 }
 
 pub async fn find_by_roles(
@@ -49,7 +67,7 @@ pub async fn find_by_roles(
     roles: Vec<String>,
 ) -> anyhow::Result<Vec<PermissionInfo>> {
     if roles.is_empty() {
-        return anyhow::Ok(vec![]);
+        return Ok(vec![]);
     } else {
         let permissions = permissions::Entity::find()
             .filter(permissions::Column::Role.is_in(roles))
@@ -59,7 +77,7 @@ pub async fn find_by_roles(
             .map(|entity| PermissionInfo::from(entity.clone()))
             .collect();
 
-        return anyhow::Ok(permissions);
+        return Ok(permissions);
     }
 }
 
@@ -77,7 +95,7 @@ pub async fn create(
 
     permissions::Entity::insert(entity).exec(db).await?;
 
-    anyhow::Ok(())
+    Ok(())
 }
 
 pub async fn delete(
@@ -90,5 +108,5 @@ pub async fn delete(
         .exec(db)
         .await?;
 
-    anyhow::Ok(())
+    Ok(())
 }

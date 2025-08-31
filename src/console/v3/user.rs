@@ -1,6 +1,8 @@
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
+use crate::model::auth::User;
+use crate::model::common::Page;
 use crate::{model, service};
 use crate::{
     model::{
@@ -73,16 +75,22 @@ async fn search_page(
     .await
     .unwrap();
 
-    return HttpResponse::Ok().json(common::Result::success(result));
+    common::Result::<Page<User>>::http_success(result)
 }
 
 #[get("/user/search")]
-async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
+async fn search(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<SearchParam>,
+) -> impl Responder {
+    secured!(req, data);
+
     let result = service::user::search(&data.database_connection, &params.username)
         .await
         .unwrap();
 
-    return HttpResponse::Ok().json(result);
+    common::Result::<Vec<String>>::http_success(result)
 }
 
 #[post("/user")]
@@ -113,17 +121,23 @@ async fn create(
     let result =
         service::user::create(&data.database_connection, &params.username, &password).await;
 
-    return match result {
+    match result {
         Ok(()) => model::common::Result::<String>::http_success("create user ok!"),
         Err(err) => model::common::ConsoleExecption::handle_exectpion(
             req.uri().path().to_string(),
             err.to_string(),
         ),
-    };
+    }
 }
 
 #[put("/user")]
-async fn update(data: web::Data<AppState>, params: web::Form<UpdateFormData>) -> impl Responder {
+async fn update(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Form<UpdateFormData>,
+) -> impl Responder {
+    secured!(req, data);
+
     let result = service::user::update(
         &data.database_connection,
         &params.username,
@@ -131,29 +145,31 @@ async fn update(data: web::Data<AppState>, params: web::Form<UpdateFormData>) ->
     )
     .await;
 
-    return match result {
-        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
-            code: 200,
-            message: String::from("update user ok!"),
-            data: String::from("update user ok!"),
-        }),
+    match result {
+        Ok(()) => common::Result::<String>::http_success("update user ok!"),
         Err(err) => {
             let code = match err.downcast_ref() {
                 Some(BusinessError::UserNotExist(_)) => 400,
                 _ => 500,
             };
 
-            return HttpResponse::InternalServerError().json(common::Result::<String> {
+            HttpResponse::InternalServerError().json(common::Result::<String> {
                 code: code,
                 message: err.to_string(),
                 data: err.to_string(),
-            });
+            })
         }
-    };
+    }
 }
 
 #[delete("/user")]
-async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
+async fn delete(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<DeleteParam>,
+) -> impl Responder {
+    secured!(req, data);
+
     let global_admin = service::role::find_by_username(&data.database_connection, &params.username)
         .await
         .ok()
@@ -171,23 +187,19 @@ async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> i
 
     let result = service::user::delete(&data.database_connection, &params.username).await;
 
-    return match result {
-        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
-            code: 200,
-            message: String::from("delete user ok!"),
-            data: String::from("delete user ok!"),
-        }),
+    match result {
+        Ok(()) => common::Result::<String>::http_success("delete user ok!"),
         Err(err) => {
             let code = match err.downcast_ref() {
                 Some(BusinessError::UserNotExist(_)) => 400,
                 _ => 500,
             };
 
-            return HttpResponse::InternalServerError().json(common::Result::<String> {
+            HttpResponse::InternalServerError().json(common::Result::<String> {
                 code: code,
                 message: err.to_string(),
                 data: err.to_string(),
-            });
+            })
         }
-    };
+    }
 }

@@ -61,6 +61,15 @@ impl From<entity::users::Model> for User {
     }
 }
 
+impl From<&entity::users::Model> for User {
+    fn from(value: &entity::users::Model) -> Self {
+        Self {
+            username: value.username.to_string(),
+            password: value.password.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NacosUser {
@@ -93,6 +102,15 @@ impl From<entity::roles::Model> for RoleInfo {
     }
 }
 
+impl From<&entity::roles::Model> for RoleInfo {
+    fn from(value: &entity::roles::Model) -> Self {
+        Self {
+            username: value.username.to_string(),
+            role: value.role.to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionInfo {
@@ -107,6 +125,16 @@ impl From<entity::permissions::Model> for PermissionInfo {
             role: value.role,
             resource: value.resource,
             action: value.action,
+        }
+    }
+}
+
+impl From<&entity::permissions::Model> for PermissionInfo {
+    fn from(value: &entity::permissions::Model) -> Self {
+        Self {
+            role: value.role.to_string(),
+            resource: value.resource.to_string(),
+            action: value.action.to_string(),
         }
     }
 }

@@ -1,9 +1,13 @@
-use anyhow::Ok;
-use sea_orm::*;
+use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
-    entity::roles,
-    model::{self, auth::RoleInfo, common::Page},
+    BatataError,
+    entity::{roles, users},
+    model::{
+        self,
+        auth::{self, RoleInfo},
+        common::Page,
+    },
 };
 
 pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> {
@@ -12,10 +16,7 @@ pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> 
         .await
         .unwrap()
         .iter()
-        .map(|role| RoleInfo {
-            role: role.role.clone(),
-            username: role.username.clone(),
-        })
+        .map(RoleInfo::from)
         .collect();
 
     Ok(user_roles)
@@ -31,10 +32,7 @@ pub async fn find_by_username(
         .await
         .unwrap()
         .iter()
-        .map(|role| RoleInfo {
-            role: role.role.clone(),
-            username: role.username.clone(),
-        })
+        .map(RoleInfo::from)
         .collect();
 
     Ok(user_roles)
@@ -72,7 +70,13 @@ pub async fn search_page(
         }
     }
 
-    let total_count = count_select.count(db).await?;
+    let total_count = count_select
+        .select_only()
+        .column_as(Expr::col(Asterisk).count(), "count")
+        .into_tuple::<i64>()
+        .one(db)
+        .await?
+        .unwrap_or_default() as u64;
 
     if total_count > 0 {
         let page_items = query_select
@@ -80,10 +84,10 @@ pub async fn search_page(
             .fetch_page(page_no - 1)
             .await?
             .iter()
-            .map(|entity| RoleInfo::from(entity.clone()))
+            .map(RoleInfo::from)
             .collect();
 
-        return anyhow::Ok(Page::<RoleInfo>::new(
+        return Ok(Page::<RoleInfo>::new(
             total_count,
             page_no,
             page_size,
@@ -91,7 +95,7 @@ pub async fn search_page(
         ));
     }
 
-    return anyhow::Ok(Page::<RoleInfo>::default());
+    return Ok(Page::<RoleInfo>::default());
 }
 
 pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<String>> {
@@ -104,10 +108,32 @@ pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<S
         .map(|role| role.role.clone())
         .collect();
 
-    return anyhow::Ok(users);
+    return Ok(users);
 }
 
 pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyhow::Result<()> {
+    if users::Entity::find_by_id(username).one(db).await?.is_none() {
+        return Err(BatataError::IllegalArgument(format!("user '{}' not found!", username)).into());
+    }
+    if auth::GLOBAL_ADMIN_ROLE == role {
+        return Err(BatataError::IllegalArgument(format!(
+            "role '{}' is not permitted to create!",
+            auth::GLOBAL_ADMIN_ROLE
+        ))
+        .into());
+    }
+    if roles::Entity::find_by_id((username.to_string(), role.to_string()))
+        .one(db)
+        .await?
+        .is_some()
+    {
+        return Err(BatataError::IllegalArgument(format!(
+            "user '{}' already bound to the role '{}'!",
+            username, role
+        ))
+        .into());
+    }
+
     let entity = roles::ActiveModel {
         role: Set(role.to_string()),
         username: Set(username.to_string()),
@@ -115,10 +141,18 @@ pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyh
 
     roles::Entity::insert(entity).exec(db).await?;
 
-    anyhow::Ok(())
+    Ok(())
 }
 
 pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyhow::Result<()> {
+    if auth::GLOBAL_ADMIN_ROLE == role {
+        return Err(BatataError::IllegalArgument(format!(
+            "role '{}' is not permitted to delete!",
+            auth::GLOBAL_ADMIN_ROLE
+        ))
+        .into());
+    }
+
     if username.is_empty() {
         roles::Entity::delete_many()
             .filter(roles::Column::Role.eq(role))
@@ -130,7 +164,7 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
             .await?;
     }
 
-    anyhow::Ok(())
+    Ok(())
 }
 
 pub async fn has_global_admin_role(db: &DatabaseConnection) -> anyhow::Result<bool> {
@@ -139,7 +173,7 @@ pub async fn has_global_admin_role(db: &DatabaseConnection) -> anyhow::Result<bo
         .iter()
         .any(|role| role.role == model::auth::GLOBAL_ADMIN_ROLE);
 
-    anyhow::Ok(has)
+    Ok(has)
 }
 
 pub async fn has_global_admin_role_by_username(
@@ -151,5 +185,5 @@ pub async fn has_global_admin_role_by_username(
         .iter()
         .any(|role| role.role == model::auth::GLOBAL_ADMIN_ROLE);
 
-    anyhow::Ok(has)
+    Ok(has)
 }

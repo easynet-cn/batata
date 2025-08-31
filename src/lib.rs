@@ -1,5 +1,3 @@
-use actix_web::web;
-
 pub mod console;
 pub mod entity;
 pub mod middleware;
@@ -45,4 +43,10 @@ macro_rules! secured {
             );
         }
     };
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum BatataError {
+    #[error("caused: {0}")]
+    IllegalArgument(String),
 }

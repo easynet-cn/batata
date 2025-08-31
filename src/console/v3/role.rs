@@ -1,9 +1,13 @@
-use actix_web::{HttpResponse, Responder, delete, get, post, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, web};
 use serde::Deserialize;
 
 use crate::{
-    model::{common, common::AppState},
-    service,
+    BatataError,
+    model::{
+        auth::RoleInfo,
+        common::{self, AppState, Page},
+    },
+    secured, service,
 };
 
 #[derive(Debug, Deserialize)]
@@ -38,9 +42,12 @@ struct DeleteParam {
 
 #[get("/role/list")]
 async fn search_page(
+    req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
+    secured!(req, data);
+
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
 
@@ -71,39 +78,63 @@ async fn search_page(
     .await
     .unwrap();
 
-    return HttpResponse::Ok().json(result);
+    common::Result::<Page<RoleInfo>>::http_success(result)
 }
 
 #[get("/role/search")]
-async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
+async fn search(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<SearchParam>,
+) -> impl Responder {
+    secured!(req, data);
+
     let result = service::role::search(&data.database_connection, &params.role)
         .await
         .unwrap();
 
-    return HttpResponse::Ok().json(result);
+    common::Result::<Vec<String>>::http_success(result)
 }
 
 #[post("role")]
-async fn create(data: web::Data<AppState>, params: web::Form<CreateFormData>) -> impl Responder {
+async fn create(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Form<CreateFormData>,
+) -> impl Responder {
+    secured!(req, data);
+
     let result =
         service::role::create(&data.database_connection, &params.role, &params.username).await;
 
-    return match result {
-        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
-            code: 200,
-            message: String::from("add role ok!"),
-            data: String::from("add role ok!"),
-        }),
-        Err(err) => HttpResponse::InternalServerError().json(common::Result::<String> {
-            code: 500,
-            message: err.to_string(),
-            data: err.to_string(),
-        }),
-    };
+    match result {
+        Ok(()) => common::Result::<String>::http_success("add role ok!"),
+        Err(err) => {
+            if let Some(e) = err.downcast_ref::<BatataError>() {
+                match e {
+                    BatataError::IllegalArgument(msg) => {
+                        return HttpResponse::BadRequest().body(msg.to_string());
+                    }
+                }
+            }
+
+            HttpResponse::InternalServerError().json(common::Result::<String> {
+                code: 500,
+                message: err.to_string(),
+                data: err.to_string(),
+            })
+        }
+    }
 }
 
 #[delete("role")]
-pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
+pub async fn delete(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<DeleteParam>,
+) -> impl Responder {
+    secured!(req, data);
+
     let result = service::role::delete(
         &data.database_connection,
         &params.role,
@@ -111,24 +142,25 @@ pub async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) 
     )
     .await;
 
-    return match result {
-        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
-            code: 200,
-            message: format!(
-                "delete role of user {} ok!",
-                params.username.clone().unwrap_or_default()
-            ),
-            data: format!(
-                "delete role of user {} ok!",
-                params.username.clone().unwrap_or_default()
-            ),
-        }),
+    match result {
+        Ok(()) => common::Result::<String>::http_success(format!(
+            "delete role of user {} ok!",
+            params.username.clone().unwrap_or_default()
+        )),
         Err(err) => {
-            return HttpResponse::InternalServerError().json(common::Result::<String> {
+            if let Some(e) = err.downcast_ref::<BatataError>() {
+                match e {
+                    BatataError::IllegalArgument(msg) => {
+                        return HttpResponse::BadRequest().body(msg.to_string());
+                    }
+                }
+            }
+
+            HttpResponse::InternalServerError().json(common::Result::<String> {
                 code: 500,
                 message: err.to_string(),
                 data: err.to_string(),
-            });
+            })
         }
-    };
+    }
 }

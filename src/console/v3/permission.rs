@@ -1,9 +1,12 @@
-use actix_web::{HttpResponse, Responder, delete, get, post, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, web};
 use serde::Deserialize;
 
 use crate::{
-    model::{common, common::AppState},
-    service,
+    model::{
+        auth::PermissionInfo,
+        common::{self, AppState, Page},
+    },
+    secured, service,
 };
 
 #[derive(Debug, Deserialize)]
@@ -31,11 +34,35 @@ struct DeleteParam {
     action: String,
 }
 
+#[get("/permission")]
+async fn exist(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<CreateFormData>,
+) -> impl Responder {
+    secured!(req, data);
+
+    let exist = service::permission::find_by_id(
+        &data.database_connection,
+        &params.role,
+        &params.resource,
+        &params.action,
+    )
+    .await
+    .unwrap()
+    .is_some();
+
+    common::Result::<bool>::http_success(exist)
+}
+
 #[get("/permission/list")]
 async fn search_page(
+    req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
+    secured!(req, data);
+
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut role = params.role.clone().unwrap_or_default();
 
@@ -56,11 +83,17 @@ async fn search_page(
     .await
     .unwrap();
 
-    return HttpResponse::Ok().json(result);
+    common::Result::<Page<PermissionInfo>>::http_success(result)
 }
 
 #[post("/permission")]
-async fn create(data: web::Data<AppState>, params: web::Form<CreateFormData>) -> impl Responder {
+async fn create(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Form<CreateFormData>,
+) -> impl Responder {
+    secured!(req, data);
+
     let result = service::permission::create(
         &data.database_connection,
         &params.role,
@@ -84,7 +117,13 @@ async fn create(data: web::Data<AppState>, params: web::Form<CreateFormData>) ->
 }
 
 #[delete("/permission")]
-async fn delete(data: web::Data<AppState>, params: web::Query<DeleteParam>) -> impl Responder {
+async fn delete(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<DeleteParam>,
+) -> impl Responder {
+    secured!(req, data);
+
     let result = service::permission::delete(
         &data.database_connection,
         &params.role,

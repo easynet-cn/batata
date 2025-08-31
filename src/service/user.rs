@@ -65,10 +65,10 @@ pub async fn search_page(
             .all(db)
             .await?
             .iter()
-            .map(|entity| User::from(entity.clone()))
+            .map(User::from)
             .collect();
 
-        return anyhow::Ok(Page::<User>::new(
+        return Ok(Page::<User>::new(
             total_count,
             page_no,
             page_size,
@@ -76,7 +76,7 @@ pub async fn search_page(
         ));
     }
 
-    return anyhow::Ok(Page::<User>::default());
+    return Ok(Page::<User>::default());
 }
 
 pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<Vec<String>> {
@@ -86,10 +86,10 @@ pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<V
         .all(db)
         .await?
         .iter()
-        .map(|user| user.username.clone())
+        .map(|user| user.username.to_string())
         .collect();
 
-    return anyhow::Ok(users);
+    return Ok(users);
 }
 
 pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> anyhow::Result<()> {
@@ -101,7 +101,7 @@ pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> 
 
     users::Entity::insert(entity).exec(db).await?;
 
-    anyhow::Ok(())
+    Ok(())
 }
 
 pub async fn update(
@@ -126,7 +126,7 @@ pub async fn update(
         }
     }
 
-    anyhow::Ok(())
+    Ok(())
 }
 
 pub async fn delete(db: &DatabaseConnection, username: &str) -> anyhow::Result<()> {
@@ -143,5 +143,5 @@ pub async fn delete(db: &DatabaseConnection, username: &str) -> anyhow::Result<(
         }
     }
 
-    anyhow::Ok(())
+    Ok(())
 }

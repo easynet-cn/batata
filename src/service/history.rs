@@ -36,7 +36,7 @@ pub async fn search_page(
             .map(|entity| ConfigHistoryInfo::from(entity.clone()))
             .collect();
 
-        return anyhow::Ok(Page::<ConfigHistoryInfo>::new(
+        return Ok(Page::<ConfigHistoryInfo>::new(
             total_count,
             page_no,
             page_size,
@@ -44,7 +44,7 @@ pub async fn search_page(
         ));
     }
 
-    anyhow::Ok(Page::<ConfigHistoryInfo>::default())
+    Ok(Page::<ConfigHistoryInfo>::default())
 }
 
 pub async fn get_by_id(

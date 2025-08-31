@@ -105,6 +105,7 @@ pub fn routes() -> Scope {
         .service(super::role::create)
         .service(super::role::delete)
         .service(super::role::search)
+        .service(super::permission::exist)
         .service(super::permission::search_page)
         .service(super::permission::create)
         .service(super::permission::delete);

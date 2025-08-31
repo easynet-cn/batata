@@ -55,7 +55,7 @@ pub async fn search_page(
             .map(|entity| ConfigInfo::from(entity.clone()))
             .collect();
 
-        return anyhow::Ok(Page::<ConfigInfo>::new(
+        return Ok(Page::<ConfigInfo>::new(
             total_count,
             page_no,
             page_size,
@@ -63,7 +63,7 @@ pub async fn search_page(
         ));
     }
 
-    return anyhow::Ok(Page::<ConfigInfo>::default());
+    return Ok(Page::<ConfigInfo>::default());
 }
 
 pub async fn find_all(
@@ -126,7 +126,7 @@ pub async fn find_state(
         .await?
         .map(|entity| ConfigInfoStateWrapper::from(entity.clone()));
 
-    anyhow::Ok(result)
+    Ok(result)
 }
 
 pub async fn create_or_update(
@@ -198,7 +198,7 @@ pub async fn create_or_update(
                 .await?;
             }
 
-            anyhow::Ok(true)
+            Ok(true)
         }
         None => {
             let model = config_info::ActiveModel {
@@ -242,7 +242,7 @@ pub async fn create_or_update(
             .insert(db)
             .await?;
 
-            anyhow::Ok(true)
+            Ok(true)
         }
     };
 }
