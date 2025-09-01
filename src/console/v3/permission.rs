@@ -18,27 +18,11 @@ struct SearchPageParam {
     page_size: u64,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CreateFormData {
-    role: String,
-    resource: String,
-    action: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeleteParam {
-    role: String,
-    resource: String,
-    action: String,
-}
-
 #[get("/permission")]
 async fn exist(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Query<CreateFormData>,
+    params: web::Query<PermissionInfo>,
 ) -> impl Responder {
     secured!(req, data);
 
@@ -90,7 +74,7 @@ async fn search_page(
 async fn create(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Form<CreateFormData>,
+    params: web::Form<PermissionInfo>,
 ) -> impl Responder {
     secured!(req, data);
 
@@ -102,25 +86,21 @@ async fn create(
     )
     .await;
 
-    return match result {
-        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
-            code: 200,
-            message: String::from("add permission ok!"),
-            data: String::from("add permission ok!"),
-        }),
+    match result {
+        Ok(()) => common::Result::<String>::http_success("add permission ok!"),
         Err(err) => HttpResponse::InternalServerError().json(common::Result::<String> {
             code: 500,
             message: err.to_string(),
             data: err.to_string(),
         }),
-    };
+    }
 }
 
 #[delete("/permission")]
 async fn delete(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Query<DeleteParam>,
+    params: web::Query<PermissionInfo>,
 ) -> impl Responder {
     secured!(req, data);
 
@@ -132,12 +112,8 @@ async fn delete(
     )
     .await;
 
-    return match result {
-        Ok(()) => HttpResponse::Ok().json(common::Result::<String> {
-            code: 200,
-            message: String::from("delete permission ok!"),
-            data: String::from("delete permission ok!"),
-        }),
+    match result {
+        Ok(()) => common::Result::<String>::http_success("delete permission ok!"),
         Err(err) => {
             return HttpResponse::InternalServerError().json(common::Result::<String> {
                 code: 500,
@@ -145,5 +121,5 @@ async fn delete(
                 data: err.to_string(),
             });
         }
-    };
+    }
 }

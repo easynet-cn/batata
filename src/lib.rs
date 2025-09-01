@@ -15,7 +15,7 @@ macro_rules! secured {
             if auth_context.jwt_error.is_some() {
                 return crate::model::common::ErrorResult::http_response_forbidden(
                     actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                    auth_context.jwt_error.unwrap().to_string().as_str(),
+                    &auth_context.jwt_error_string(),
                     $req.path(),
                 );
             } else {

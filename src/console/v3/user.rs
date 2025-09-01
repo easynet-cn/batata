@@ -23,15 +23,8 @@ struct SearchPageParam {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SearchParam {
+struct UserParam {
     username: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CreateFormData {
-    username: String,
-    password: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,12 +32,6 @@ struct CreateFormData {
 struct UpdateFormData {
     username: String,
     new_password: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeleteParam {
-    username: String,
 }
 
 #[get("/user/list")]
@@ -82,7 +69,7 @@ async fn search_page(
 async fn search(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Query<SearchParam>,
+    params: web::Query<UserParam>,
 ) -> impl Responder {
     secured!(req, data);
 
@@ -97,7 +84,7 @@ async fn search(
 async fn create(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Form<CreateFormData>,
+    params: web::Form<User>,
 ) -> impl Responder {
     secured!(req, data);
 
@@ -166,7 +153,7 @@ async fn update(
 async fn delete(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Query<DeleteParam>,
+    params: web::Query<UserParam>,
 ) -> impl Responder {
     secured!(req, data);
 

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use jsonwebtoken::errors::ErrorKind;
 use serde::{Deserialize, Serialize};
 
 use crate::entity;
@@ -153,6 +154,19 @@ pub struct Resource {
 pub struct AuthContext {
     pub username: String,
     pub jwt_error: Option<jsonwebtoken::errors::Error>,
+}
+
+impl AuthContext {
+    pub fn jwt_error_string(&self) -> String {
+        if let Some(e) = &self.jwt_error {
+            match e.kind() {
+                ErrorKind::ExpiredSignature => "token expired!".to_string(),
+                _ => e.to_string(),
+            }
+        } else {
+            String::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

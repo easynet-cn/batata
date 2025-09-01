@@ -105,7 +105,7 @@ pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<S
         .all(db)
         .await?
         .iter()
-        .map(|role| role.role.clone())
+        .map(|role| role.role.to_string())
         .collect();
 
     return Ok(users);
@@ -156,6 +156,7 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
     if username.is_empty() {
         roles::Entity::delete_many()
             .filter(roles::Column::Role.eq(role))
+            .filter(roles::Column::Role.ne(auth::GLOBAL_ADMIN_ROLE))
             .exec(db)
             .await?;
     } else {
