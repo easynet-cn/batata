@@ -1,8 +1,8 @@
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
-    BatataError,
     entity::{roles, users},
+    error::BatataError,
     model::{
         self,
         auth::{self, RoleInfo},

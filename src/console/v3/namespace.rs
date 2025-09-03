@@ -1,23 +1,29 @@
-use actix_web::{HttpResponse, Responder, Scope, delete, get, post, put, web};
+use actix_web::{
+    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, http::StatusCode, post,
+    put, web,
+};
 use serde::Deserialize;
 
 use crate::{
-    model::{common, common::AppState, naming::Namespace},
-    service,
+    error::{self, BatataError},
+    model::{
+        common::{self, AppState},
+        naming::Namespace,
+    },
+    secured, service,
 };
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetParam {
-    show: Option<String>,
-    namespace_id: Option<String>,
-    check_namespace_id_exist: Option<bool>,
+    namespace_id: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateFormData {
     custom_namespace_id: Option<String>,
+    namespace_id: Option<String>,
     namespace_name: String,
     namespace_desc: Option<String>,
 }
@@ -25,147 +31,227 @@ struct CreateFormData {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateFormData {
-    namespace: String,
-    namespace_show_name: String,
+    namespace_id: String,
+    namespace_name: String,
     namespace_desc: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeleteParam {
-    namespace_id: String,
+struct CheckParam {
+    custom_namespace_id: String,
 }
 
 const NAMESPACE_ID_MAX_LENGTH: usize = 128;
 
+#[get("")]
+async fn get(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<GetParam>,
+) -> impl Responder {
+    secured!(req, data);
+
+    match service::namespace::get_by_namespace_id(
+        &data.database_connection,
+        &params.namespace_id,
+        "1",
+    )
+    .await
+    {
+        Ok(namespace) => common::Result::<Namespace>::http_success(namespace),
+        Err(err) => {
+            if let Some(BatataError::ApiError(status, code, message, data)) = err.downcast_ref() {
+                common::Result::<String>::http_response(
+                    *status as u16,
+                    *code,
+                    message.to_string(),
+                    data.to_string(),
+                )
+            } else {
+                HttpResponse::InternalServerError().body(err.to_string())
+            }
+        }
+    }
+}
+
 #[get("list")]
-async fn get_all(data: web::Data<AppState>, params: web::Query<GetParam>) -> impl Responder {
-    if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
-        let namespace = service::namespace::get_by_namespace_id(
-            &data.database_connection,
-            params.namespace_id.as_ref().unwrap().to_string(),
-        )
-        .await;
-
-        return HttpResponse::Ok().json(namespace);
-    }
-
-    if params.check_namespace_id_exist.is_some() && params.check_namespace_id_exist.unwrap() {
-        let count = service::namespace::get_count_by_tenant_id(
-            &data.database_connection,
-            params.namespace_id.as_ref().unwrap().to_string(),
-        )
-        .await;
-
-        return HttpResponse::Ok().json(count > 0);
-    }
+async fn find_all(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
+    secured!(req, data);
 
     let namespaces: Vec<Namespace> = service::namespace::find_all(&data.database_connection).await;
-    let rest_result = common::Result::<Vec<Namespace>>::success(namespaces);
 
-    return HttpResponse::Ok().json(rest_result);
+    common::Result::<Vec<Namespace>>::http_success(namespaces)
 }
 
 #[post("")]
-async fn create(data: web::Data<AppState>, form: web::Form<CreateFormData>) -> impl Responder {
-    let namespace_id: String;
+async fn create(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<CreateFormData>,
+) -> impl Responder {
+    secured!(req, data);
 
-    if form.custom_namespace_id.is_some() && !form.custom_namespace_id.as_ref().unwrap().is_empty()
-    {
-        namespace_id = form
-            .custom_namespace_id
-            .as_ref()
-            .unwrap()
-            .trim()
-            .to_string();
+    let mut namespace_id = form
+        .custom_namespace_id
+        .clone()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let namespace_name = form.namespace_name.trim().to_string();
+    let namespace_desc = form.namespace_desc.clone().unwrap_or_default();
 
-        let regex = regex::Regex::new(r"^[\w-]+").unwrap();
-
-        if !regex.is_match(&namespace_id) {
-            return HttpResponse::Ok().json(false);
-        }
-
-        if namespace_id.len() > NAMESPACE_ID_MAX_LENGTH {
-            return HttpResponse::Ok().json(false);
-        }
-
-        if service::namespace::get_count_by_tenant_id(
-            &data.database_connection,
-            namespace_id.clone(),
-        )
-        .await
-            > 0
-        {
-            return HttpResponse::Ok().json(false);
-        }
-    } else {
+    if namespace_id.is_empty() {
         namespace_id = uuid::Uuid::new_v4().to_string();
+    }
+
+    let regex = regex::Regex::new(r"^[\w-]+").unwrap();
+
+    if !regex.is_match(&namespace_id) {
+        return common::Result::<String>::http_response(
+            StatusCode::NOT_FOUND.as_u16(),
+            error::ILLEGAL_NAMESPACE.code,
+            error::ILLEGAL_NAMESPACE.message.to_string(),
+            format!("namespaceId [{}] mismatch the pattern", namespace_id),
+        );
+    }
+
+    if namespace_id.len() > NAMESPACE_ID_MAX_LENGTH {
+        return common::Result::<String>::http_response(
+            StatusCode::NOT_FOUND.as_u16(),
+            error::ILLEGAL_NAMESPACE.code,
+            error::ILLEGAL_NAMESPACE.message.to_string(),
+            format!("too long namespaceId, over {}", namespace_id),
+        );
+    }
+
+    let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
+
+    if !regex.is_match(&namespace_name) {
+        return common::Result::<String>::http_response(
+            StatusCode::NOT_FOUND.as_u16(),
+            error::ILLEGAL_NAMESPACE.code,
+            error::ILLEGAL_NAMESPACE.message.to_string(),
+            format!("namespaceName [{}] contains illegal char", namespace_name),
+        );
+    }
+
+    let res = service::namespace::create(
+        &data.database_connection,
+        &namespace_id,
+        &namespace_name,
+        &namespace_desc,
+    )
+    .await;
+
+    common::Result::<bool>::http_success(res.is_ok())
+}
+
+#[put("")]
+async fn update(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<UpdateFormData>,
+) -> impl Responder {
+    secured!(req, data);
+
+    if form.namespace_id.is_empty() {
+        return common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "required parameter 'namespaceId' is missing".to_string(),
+        );
+    }
+
+    if form.namespace_name.is_empty() {
+        return common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "required parameter 'namespaceName' is missing".to_string(),
+        );
     }
 
     let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
 
     if !regex.is_match(&form.namespace_name) {
-        return HttpResponse::Ok().json(false);
+        return common::Result::<String>::http_response(
+            StatusCode::NOT_FOUND.as_u16(),
+            error::ILLEGAL_NAMESPACE.code,
+            error::ILLEGAL_NAMESPACE.message.to_string(),
+            format!(
+                "namespaceName [{}] contains illegal char",
+                &form.namespace_name
+            ),
+        );
     }
 
-    let namespace_desc: String;
-
-    if form.namespace_desc.is_some() {
-        namespace_desc = form.namespace_desc.as_ref().unwrap().to_string();
-    } else {
-        namespace_desc = "".to_string();
-    }
-
-    let res = service::namespace::create(
-        &data.database_connection,
-        namespace_id,
-        form.namespace_name.clone(),
-        namespace_desc,
-    )
-    .await;
-
-    return HttpResponse::Ok().json(res);
-}
-
-#[put("")]
-async fn update(data: web::Data<AppState>, form: web::Form<UpdateFormData>) -> impl Responder {
-    let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
-
-    if !regex.is_match(&form.namespace_show_name) {
-        return HttpResponse::Ok().json(false);
-    }
-
-    let namespace_desc: String;
-
-    if form.namespace_desc.is_some() {
-        namespace_desc = form.namespace_desc.as_ref().unwrap().to_string();
-    } else {
-        namespace_desc = "".to_string();
-    }
+    let namespace_desc = form.namespace_desc.clone().unwrap_or_default();
 
     let res = service::namespace::update(
         &data.database_connection,
-        form.namespace.clone(),
-        form.namespace_show_name.clone(),
-        namespace_desc,
+        &form.namespace_id,
+        &form.namespace_name,
+        &namespace_desc,
     )
-    .await;
+    .await
+    .unwrap();
 
-    return HttpResponse::Ok().json(res);
+    common::Result::<bool>::http_success(res)
 }
 
 #[delete("")]
-async fn delete(data: web::Data<AppState>, form: web::Query<DeleteParam>) -> impl Responder {
-    let res =
-        service::namespace::delete(&data.database_connection, form.namespace_id.clone()).await;
+async fn delete(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Query<GetParam>,
+) -> impl Responder {
+    secured!(req, data);
 
-    return HttpResponse::Ok().json(res);
+    let res = service::namespace::delete(&data.database_connection, &form.namespace_id).await;
+
+    common::Result::<bool>::http_success(res.unwrap_or_default())
+}
+
+#[get("exist")]
+async fn exist(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<CheckParam>,
+) -> impl Responder {
+    secured!(req, data);
+
+    if params.custom_namespace_id.is_empty() {
+        return common::Result::<bool>::http_success(false);
+    }
+
+    let result =
+        service::namespace::check(&data.database_connection, &params.custom_namespace_id).await;
+
+    match result {
+        Ok(e) => common::Result::<bool>::http_success(e),
+        Err(err) => {
+            if let Some(BatataError::ApiError(status, code, message, data)) = err.downcast_ref() {
+                common::Result::<String>::http_response(
+                    *status as u16,
+                    *code,
+                    message.to_string(),
+                    data.to_string(),
+                )
+            } else {
+                HttpResponse::InternalServerError().body(err.to_string())
+            }
+        }
+    }
 }
 
 pub fn routes() -> Scope {
     web::scope("/core/namespace")
-        .service(get_all)
+        .service(get)
+        .service(find_all)
         .service(create)
         .service(update)
         .service(delete)
+        .service(exist)
 }

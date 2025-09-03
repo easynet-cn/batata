@@ -1,13 +1,14 @@
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
+use crate::error::BatataError;
 use crate::model::auth::User;
 use crate::model::common::Page;
 use crate::{model, service};
 use crate::{
     model::{
         auth::GLOBAL_ADMIN_ROLE,
-        common::{self, AppState, BusinessError},
+        common::{self, AppState},
     },
     secured,
 };
@@ -136,7 +137,7 @@ async fn update(
         Ok(()) => common::Result::<String>::http_success("update user ok!"),
         Err(err) => {
             let code = match err.downcast_ref() {
-                Some(BusinessError::UserNotExist(_)) => 400,
+                Some(BatataError::UserNotExist(_)) => 400,
                 _ => 500,
             };
 
@@ -178,7 +179,7 @@ async fn delete(
         Ok(()) => common::Result::<String>::http_success("delete user ok!"),
         Err(err) => {
             let code = match err.downcast_ref() {
-                Some(BusinessError::UserNotExist(_)) => 400,
+                Some(BatataError::UserNotExist(_)) => 400,
                 _ => 500,
             };
 

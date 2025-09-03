@@ -2,12 +2,10 @@ use sea_orm::sea_query::Asterisk;
 use sea_orm::*;
 use sea_orm::{entity::ModelTrait, prelude::Expr};
 
+use crate::error::BatataError;
 use crate::{
     entity::users,
-    model::{
-        auth::User,
-        common::{BusinessError, Page},
-    },
+    model::{auth::User, common::Page},
 };
 
 pub async fn find_by_username(db: &DatabaseConnection, username: &str) -> Option<User> {
@@ -120,9 +118,7 @@ pub async fn update(
             user.update(db).await?;
         }
         None => {
-            return Err(anyhow::Error::from(BusinessError::UserNotExist(
-                username.to_string(),
-            )));
+            return Err(BatataError::UserNotExist(username.to_string()).into());
         }
     }
 
@@ -137,9 +133,7 @@ pub async fn delete(db: &DatabaseConnection, username: &str) -> anyhow::Result<(
             entity.delete(db).await?;
         }
         None => {
-            return Err(anyhow::Error::from(BusinessError::UserNotExist(
-                username.to_string(),
-            )));
+            return Err(BatataError::UserNotExist(username.to_string()).into());
         }
     }
 

@@ -1,17 +1,14 @@
 use std::collections::HashMap;
 
-use sea_orm::*;
+use actix_web::http::StatusCode;
+use anyhow::Ok;
+use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
     entity::{config_info, tenant_info},
-    model::naming::Namespace,
+    error::{self, BatataError, ErrorCode},
+    model::{common::DEFAULT_NAMESPACE_ID, naming::Namespace},
 };
-
-#[derive(Debug, FromQueryResult)]
-struct SelectResult {
-    tenant_id: Option<String>,
-    count: i32,
-}
 
 const DEFAULT_NAMESPACE: &'static str = "public";
 const DEFAULT_CREATE_SOURCE: &'static str = "nacos";
@@ -46,12 +43,12 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
         .filter(config_info::Column::TenantId.is_in(tenant_ids))
         .filter(config_info::Column::TenantId.is_not_null())
         .group_by(config_info::Column::TenantId)
-        .into_model::<SelectResult>()
+        .into_tuple::<(String, i32)>()
         .all(db)
         .await
         .unwrap()
         .iter()
-        .map(|x| (x.tenant_id.clone().unwrap_or_default(), x.count))
+        .map(|x| (x.0.to_string(), x.1))
         .collect::<HashMap<String, i32>>();
 
     namespaces.iter_mut().for_each(|namespace| {
@@ -65,56 +62,58 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
 
 pub async fn get_by_namespace_id(
     db: &DatabaseConnection,
-    namespace_id: String,
-) -> Option<Namespace> {
-    let mut namspace: Namespace;
+    namespace_id: &str,
+    namespace_type: &str,
+) -> anyhow::Result<Namespace> {
+    if namespace_id.is_empty() || namespace_id == DEFAULT_NAMESPACE {
+        return Ok(Namespace::default());
+    }
 
-    if namespace_id.is_empty() || namespace_id.eq(DEFAULT_NAMESPACE) {
-        namspace = Namespace::default();
-    } else {
-        let tenant_info_option = tenant_info::Entity::find()
-            .filter(tenant_info::Column::TenantId.eq(namespace_id))
+    if let Some(tenant_info) = tenant_info::Entity::find()
+        .filter(tenant_info::Column::TenantId.eq(namespace_id))
+        .filter(tenant_info::Column::Kp.eq(namespace_type))
+        .one(db)
+        .await?
+    {
+        let mut namespace = Namespace::from(tenant_info);
+
+        namespace.type_ = namespace_type.parse::<i32>().unwrap_or_default();
+
+        if let Some(config_count) = config_info::Entity::find()
+            .column(config_info::Column::TenantId)
+            .column_as(config_info::Column::Id.count(), "count")
+            .filter(config_info::Column::TenantId.eq(namespace_id))
+            .filter(config_info::Column::TenantId.is_not_null())
+            .group_by(config_info::Column::TenantId)
+            .into_tuple::<(String, i32)>()
             .one(db)
-            .await
-            .unwrap();
-
-        if tenant_info_option.is_none() {
-            return None;
+            .await?
+        {
+            namespace.config_count = config_count.1;
         }
 
-        let tenant_info = tenant_info_option.unwrap();
-
-        namspace = Namespace::from(tenant_info.clone());
+        return Ok(namespace);
+    } else {
+        return Err(BatataError::ApiError(
+            StatusCode::NOT_FOUND.as_u16() as i32,
+            error::NAMESPACE_NOT_EXIST.code,
+            error::NAMESPACE_NOT_EXIST.message.to_string(),
+            format!("namespaceId [{}] not exist", namespace_id),
+        )
+        .into());
     }
-
-    let config_info = config_info::Entity::find()
-        .column(config_info::Column::TenantId)
-        .column_as(config_info::Column::Id.count(), "count")
-        .filter(config_info::Column::TenantId.eq(namspace.namespace.clone()))
-        .filter(config_info::Column::TenantId.is_not_null())
-        .group_by(config_info::Column::TenantId)
-        .into_model::<SelectResult>()
-        .one(db)
-        .await
-        .unwrap();
-
-    if config_info.is_some() {
-        namspace.config_count = config_info.unwrap().count;
-    }
-
-    return Some(namspace);
 }
 
 pub async fn create(
     db: &DatabaseConnection,
-    namespace_id: String,
-    namespace_name: String,
-    namespace_desc: String,
-) -> bool {
+    namespace_id: &str,
+    namespace_name: &str,
+    namespace_desc: &str,
+) -> anyhow::Result<bool> {
     let entity = tenant_info::ActiveModel {
-        tenant_id: Set(Some(namespace_id)),
-        tenant_name: Set(Some(namespace_name)),
-        tenant_desc: Set(Some(namespace_desc)),
+        tenant_id: Set(Some(namespace_id.to_string())),
+        tenant_name: Set(Some(namespace_name.to_string())),
+        tenant_desc: Set(Some(namespace_desc.to_string())),
         kp: Set(DEFAULT_KP.to_string()),
         create_source: Set(Some(DEFAULT_CREATE_SOURCE.to_string())),
         gmt_create: Set(chrono::Utc::now().timestamp_millis()),
@@ -122,66 +121,89 @@ pub async fn create(
         ..Default::default()
     };
 
-    let res = tenant_info::Entity::insert(entity).exec(db).await;
+    tenant_info::Entity::insert(entity).exec(db).await?;
 
-    if res.is_err() {
-        return false;
-    }
-
-    return true;
+    Ok(true)
 }
 
-pub async fn get_count_by_tenant_id(db: &DatabaseConnection, namespace_id: String) -> u64 {
-    return tenant_info::Entity::find()
+pub async fn get_count_by_tenant_id(
+    db: &DatabaseConnection,
+    namespace_id: &str,
+) -> anyhow::Result<u64> {
+    let count = tenant_info::Entity::find()
+        .select_only()
+        .column_as(Expr::col(Asterisk).count(), "count")
         .filter(tenant_info::Column::TenantId.eq(namespace_id))
-        .count(db)
-        .await
-        .unwrap();
+        .into_tuple::<i64>()
+        .one(db)
+        .await?
+        .unwrap_or_default() as u64;
+
+    Ok(count)
 }
 
 pub async fn update(
     db: &DatabaseConnection,
-    namespace: String,
-    namespace_show_name: String,
-    namespace_desc: String,
-) -> bool {
-    let entity_option = tenant_info::Entity::find()
-        .filter(tenant_info::Column::TenantId.eq(namespace))
+    namespace_id: &str,
+    namespace_name: &str,
+    namespace_desc: &str,
+) -> anyhow::Result<bool> {
+    if let Some(entity) = tenant_info::Entity::find()
+        .filter(tenant_info::Column::TenantId.eq(namespace_id))
         .one(db)
-        .await
-        .unwrap();
+        .await?
+    {
+        let mut tenant_info: tenant_info::ActiveModel = entity.into();
 
-    if entity_option.is_none() {
-        return false;
-    }
+        tenant_info.tenant_name = Set(Some(namespace_name.to_string()));
+        tenant_info.tenant_desc = Set(Some(namespace_desc.to_string()));
 
-    let mut entity: tenant_info::ActiveModel = entity_option.unwrap().into();
+        if tenant_info.is_changed() {
+            tenant_info.gmt_modified = Set(chrono::Utc::now().timestamp_millis());
 
-    entity.tenant_name = Set(Some(namespace_show_name));
-    entity.tenant_desc = Set(Some(namespace_desc));
-
-    if entity.is_changed() {
-        entity.gmt_modified = Set(chrono::Utc::now().timestamp_millis());
-
-        let res = entity.update(db).await;
-
-        if res.is_err() {
-            return false;
+            tenant_info.update(db).await?;
         }
+
+        return Ok(true);
     }
 
-    return true;
+    Ok(false)
 }
 
-pub async fn delete(db: &DatabaseConnection, namespace_id: String) -> bool {
+pub async fn delete(db: &DatabaseConnection, namespace_id: &str) -> anyhow::Result<bool> {
     let res = tenant_info::Entity::delete_many()
         .filter(tenant_info::Column::TenantId.eq(namespace_id))
         .exec(db)
-        .await;
+        .await?;
 
-    if res.is_err() {
-        return false;
+    Ok(res.rows_affected > 0)
+}
+
+pub async fn check(db: &DatabaseConnection, namespace_id: &str) -> anyhow::Result<bool> {
+    if DEFAULT_NAMESPACE_ID == namespace_id {
+        return Err(BatataError::ApiError(
+            StatusCode::BAD_REQUEST.as_u16() as i32,
+            error::NAMESPACE_ALREADY_EXIST.code,
+            error::NAMESPACE_ALREADY_EXIST.message.to_string(),
+            format!(
+                "namespaceId [{}] is default namespace id and already exist.",
+                namespace_id
+            ),
+        )
+        .into());
     }
 
-    return true;
+    let count = get_count_by_tenant_id(db, namespace_id).await?;
+
+    if count > 0 {
+        return Err(BatataError::ApiError(
+            StatusCode::BAD_REQUEST.as_u16() as i32,
+            error::NAMESPACE_ALREADY_EXIST.code,
+            error::NAMESPACE_ALREADY_EXIST.message.to_string(),
+            format!("namespaceId [{}] already exist.", namespace_id),
+        )
+        .into());
+    }
+
+    Ok(false)
 }

@@ -2,7 +2,7 @@ use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, 
 use serde::Deserialize;
 
 use crate::{
-    BatataError,
+    error::BatataError,
     model::{
         auth::RoleInfo,
         common::{self, AppState, Page},
@@ -110,12 +110,10 @@ async fn create(
     match result {
         Ok(()) => common::Result::<String>::http_success("add role ok!"),
         Err(err) => {
-            if let Some(e) = err.downcast_ref::<BatataError>() {
-                match e {
-                    BatataError::IllegalArgument(msg) => {
-                        return HttpResponse::BadRequest().body(msg.to_string());
-                    }
-                }
+            if let Some(e) = err.downcast_ref::<BatataError>()
+                && let BatataError::IllegalArgument(msg) = e
+            {
+                return HttpResponse::BadRequest().body(msg.to_string());
             }
 
             HttpResponse::InternalServerError().json(common::Result::<String> {
@@ -148,12 +146,10 @@ pub async fn delete(
             params.username.clone().unwrap_or_default()
         )),
         Err(err) => {
-            if let Some(e) = err.downcast_ref::<BatataError>() {
-                match e {
-                    BatataError::IllegalArgument(msg) => {
-                        return HttpResponse::BadRequest().body(msg.to_string());
-                    }
-                }
+            if let Some(e) = err.downcast_ref::<BatataError>()
+                && let BatataError::IllegalArgument(msg) = e
+            {
+                return HttpResponse::BadRequest().body(msg.to_string());
             }
 
             HttpResponse::InternalServerError().json(common::Result::<String> {

@@ -1,5 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 pub mod console;
 pub mod entity;
+pub mod error;
 pub mod middleware;
 pub mod model;
 pub mod service;
@@ -43,10 +46,4 @@ macro_rules! secured {
             );
         }
     };
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum BatataError {
-    #[error("caused: {0}")]
-    IllegalArgument(String),
 }

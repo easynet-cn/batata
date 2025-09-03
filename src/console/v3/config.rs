@@ -9,7 +9,7 @@ use crate::{
         common::{AppState, ErrorResult, Page},
         config::ConfigInfo,
     },
-    service,
+    secured, service,
 };
 
 #[derive(Debug, Deserialize)]
@@ -50,12 +50,14 @@ struct CreateFormParam {
     encrypted_data_key: Option<String>,
 }
 
-#[get("")]
+#[get("list")]
 async fn search(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
+    secured!(req, data);
+
     if params.search.is_some() && params.search.as_ref().unwrap() == "blur" {
         let search_param = params.0;
 
@@ -105,6 +107,8 @@ async fn create_or_update(
     data: web::Data<AppState>,
     form: web::Form<CreateFormParam>,
 ) -> impl Responder {
+    secured!(req, data);
+
     let token_data = req
         .extensions_mut()
         .get::<NacosJwtPayload>()
@@ -142,7 +146,7 @@ async fn create_or_update(
 }
 
 pub fn routes() -> Scope {
-    web::scope("/cs/configs")
+    web::scope("/cs/config")
         .service(search)
         .service(create_or_update)
 }
