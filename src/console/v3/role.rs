@@ -2,7 +2,7 @@ use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, 
 use serde::Deserialize;
 
 use crate::{
-    Secured,
+    ActionTypes, Secured,
     error::BatataError,
     model::{
         auth::RoleInfo,
@@ -47,7 +47,11 @@ async fn search_page(
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/roles")
+            .action(ActionTypes::Read)
+            .build()
+    );
 
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
@@ -88,7 +92,11 @@ async fn search(
     data: web::Data<AppState>,
     params: web::Query<SearchParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/roles")
+            .action(ActionTypes::Read)
+            .build()
+    );
 
     let result = service::role::search(&data.database_connection, &params.role)
         .await
@@ -103,7 +111,11 @@ async fn create(
     data: web::Data<AppState>,
     params: web::Form<CreateFormData>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/roles")
+            .action(ActionTypes::Write)
+            .build()
+    );
 
     let result =
         service::role::create(&data.database_connection, &params.role, &params.username).await;
@@ -132,7 +144,11 @@ pub async fn delete(
     data: web::Data<AppState>,
     params: web::Query<DeleteParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/roles")
+            .action(ActionTypes::Write)
+            .build()
+    );
 
     let result = service::role::delete(
         &data.database_connection,

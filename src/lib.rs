@@ -162,40 +162,44 @@ impl FromStr for ApiType {
 }
 
 #[derive(Debug, Clone)]
-pub struct Secured {
-    pub req: HttpRequest,
-    pub data: web::Data<AppState>,
+pub struct Secured<'a> {
+    pub req: &'a HttpRequest,
+    pub data: &'a web::Data<AppState>,
     pub action: ActionTypes,
-    pub resource: String,
+    pub resource: &'a str,
     pub sign_type: SignType,
     pub tags: Vec<String>,
     pub api_type: ApiType,
 }
 
-impl Secured {
-    pub fn builder(req: &HttpRequest, data: &web::Data<AppState>) -> SecuredBuilder {
-        SecuredBuilder::new(req.clone(), data.clone())
+impl<'a> Secured<'a> {
+    pub fn builder(
+        req: &'a HttpRequest,
+        data: &'a web::Data<AppState>,
+        resource: &'a str,
+    ) -> SecuredBuilder<'a> {
+        SecuredBuilder::new(req, data, resource)
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct SecuredBuilder {
-    req: HttpRequest,
-    data: web::Data<AppState>,
+pub struct SecuredBuilder<'a> {
+    req: &'a HttpRequest,
+    data: &'a web::Data<AppState>,
     action: ActionTypes,
-    resource: String,
+    resource: &'a str,
     sign_type: SignType,
     tags: Vec<String>,
     api_type: ApiType,
 }
 
-impl SecuredBuilder {
-    pub fn new(req: HttpRequest, data: web::Data<AppState>) -> Self {
-        SecuredBuilder {
-            req,
-            data,
+impl<'a> SecuredBuilder<'a> {
+    pub fn new(req: &'a HttpRequest, data: &'a web::Data<AppState>, resource: &'a str) -> Self {
+        SecuredBuilder::<'a> {
+            req: req,
+            data: data,
             action: ActionTypes::default(),
-            resource: "".to_string(),
+            resource: resource,
             sign_type: SignType::default(),
             tags: Vec::new(),
             api_type: ApiType::default(),
@@ -208,7 +212,7 @@ impl SecuredBuilder {
         self
     }
 
-    pub fn resource(mut self, resource: String) -> Self {
+    pub fn resource(mut self, resource: &'a str) -> Self {
         self.resource = resource;
 
         self
@@ -231,8 +235,8 @@ impl SecuredBuilder {
         self
     }
 
-    pub fn build(self) -> Secured {
-        Secured {
+    pub fn build(self) -> Secured<'a> {
+        Secured::<'a> {
             req: self.req,
             data: self.data,
             action: self.action,

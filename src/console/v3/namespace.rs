@@ -5,9 +5,10 @@ use actix_web::{
 use serde::Deserialize;
 
 use crate::{
-    Secured,
+    ActionTypes, ApiType, Secured, SignType,
     error::{self, BatataError},
     model::{
+        self,
         common::{self, AppState},
         naming::Namespace,
     },
@@ -51,7 +52,13 @@ async fn get(
     data: web::Data<AppState>,
     params: web::Query<GetParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/namespaces")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
 
     match service::namespace::get_by_namespace_id(
         &data.database_connection,
@@ -78,7 +85,14 @@ async fn get(
 
 #[get("list")]
 async fn find_all(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/namespaces")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .tags(vec![model::auth::ONLY_IDENTITY.to_string()])
+            .build()
+    );
 
     let namespaces: Vec<Namespace> = service::namespace::find_all(&data.database_connection).await;
 
@@ -91,7 +105,13 @@ async fn create(
     data: web::Data<AppState>,
     form: web::Form<CreateFormData>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/namespaces")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
 
     let mut namespace_id = form
         .custom_namespace_id
@@ -154,7 +174,13 @@ async fn update(
     data: web::Data<AppState>,
     form: web::Form<UpdateFormData>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/namespaces")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
 
     if form.namespace_id.is_empty() {
         return common::Result::<String>::http_response(
@@ -208,7 +234,13 @@ async fn delete(
     data: web::Data<AppState>,
     form: web::Query<GetParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/namespaces")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
 
     let res = service::namespace::delete(&data.database_connection, &form.namespace_id).await;
 
@@ -221,7 +253,14 @@ async fn exist(
     data: web::Data<AppState>,
     params: web::Query<CheckParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/namespaces")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .tags(vec![model::auth::ONLY_IDENTITY.to_string()])
+            .build()
+    );
 
     if params.custom_namespace_id.is_empty() {
         return common::Result::<bool>::http_success(false);

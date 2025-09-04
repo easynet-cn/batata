@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::error::BatataError;
 use crate::model::auth::User;
 use crate::model::common::Page;
-use crate::{Secured, model, service};
+use crate::{ActionTypes, Secured, model, service};
 use crate::{
     model::{
         auth::GLOBAL_ADMIN_ROLE,
@@ -41,7 +41,11 @@ async fn search_page(
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
-    secured!(Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/users")
+            .action(ActionTypes::Read)
+            .build()
+    );
 
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
@@ -72,7 +76,11 @@ async fn search(
     data: web::Data<AppState>,
     params: web::Query<UserParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/users")
+            .action(ActionTypes::Read)
+            .build()
+    );
 
     let result = service::user::search(&data.database_connection, &params.username)
         .await
@@ -87,7 +95,11 @@ async fn create(
     data: web::Data<AppState>,
     params: web::Form<User>,
 ) -> impl Responder {
-    secured!(Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/users")
+            .action(ActionTypes::Write)
+            .build()
+    );
 
     if params.username.is_empty() || params.password.is_empty() {
         return model::common::ConsoleExecption::handle_illegal_argument_exectpion(
@@ -124,7 +136,15 @@ async fn update(
     data: web::Data<AppState>,
     params: web::Form<UpdateFormData>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/user/password")
+            .action(ActionTypes::Write)
+            .tags(vec![
+                model::auth::ONLY_IDENTITY.to_string(),
+                model::auth::UPDATE_PASSWORD_ENTRY_POINT.to_string()
+            ])
+            .build()
+    );
 
     let result = service::user::update(
         &data.database_connection,
@@ -156,7 +176,11 @@ async fn delete(
     data: web::Data<AppState>,
     params: web::Query<UserParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/users")
+            .action(ActionTypes::Write)
+            .build()
+    );
 
     let global_admin = service::role::find_by_username(&data.database_connection, &params.username)
         .await

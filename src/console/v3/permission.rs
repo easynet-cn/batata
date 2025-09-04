@@ -2,7 +2,7 @@ use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, 
 use serde::Deserialize;
 
 use crate::{
-    Secured,
+    ActionTypes, Secured,
     model::{
         auth::PermissionInfo,
         common::{self, AppState, Page},
@@ -25,7 +25,11 @@ async fn exist(
     data: web::Data<AppState>,
     params: web::Query<PermissionInfo>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/permissions")
+            .action(ActionTypes::Read)
+            .build()
+    );
 
     let exist = service::permission::find_by_id(
         &data.database_connection,
@@ -46,7 +50,11 @@ async fn search_page(
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/permissions")
+            .action(ActionTypes::Read)
+            .build()
+    );
 
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut role = params.role.clone().unwrap_or_default();
@@ -77,7 +85,11 @@ async fn create(
     data: web::Data<AppState>,
     params: web::Form<PermissionInfo>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/permissions")
+            .action(ActionTypes::Write)
+            .build()
+    );
 
     let result = service::permission::create(
         &data.database_connection,
@@ -103,7 +115,11 @@ async fn delete(
     data: web::Data<AppState>,
     params: web::Query<PermissionInfo>,
 ) -> impl Responder {
-    secured!(&Secured::builder(&req, &data).build());
+    secured!(
+        Secured::builder(&req, &data, "console/permissions")
+            .action(ActionTypes::Write)
+            .build()
+    );
 
     let result = service::permission::delete(
         &data.database_connection,
