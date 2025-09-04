@@ -4,6 +4,7 @@ use serde::Deserialize;
 use chrono::Utc;
 
 use crate::{
+    Secured,
     model::{
         auth::NacosJwtPayload,
         common::{AppState, ErrorResult, Page},
@@ -56,7 +57,7 @@ async fn search(
     data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
-    secured!(req, data);
+    secured!(&Secured::builder(&req, &data).build());
 
     if params.search.is_some() && params.search.as_ref().unwrap() == "blur" {
         let search_param = params.0;
@@ -107,7 +108,7 @@ async fn create_or_update(
     data: web::Data<AppState>,
     form: web::Form<CreateFormParam>,
 ) -> impl Responder {
-    secured!(req, data);
+    secured!(&Secured::builder(&req, &data).build());
 
     let token_data = req
         .extensions_mut()

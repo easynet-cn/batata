@@ -5,6 +5,7 @@ use actix_web::{
 use serde::Deserialize;
 
 use crate::{
+    Secured,
     error::{self, BatataError},
     model::{
         common::{self, AppState},
@@ -50,7 +51,7 @@ async fn get(
     data: web::Data<AppState>,
     params: web::Query<GetParam>,
 ) -> impl Responder {
-    secured!(req, data);
+    secured!(&Secured::builder(&req, &data).build());
 
     match service::namespace::get_by_namespace_id(
         &data.database_connection,
@@ -77,7 +78,7 @@ async fn get(
 
 #[get("list")]
 async fn find_all(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
-    secured!(req, data);
+    secured!(&Secured::builder(&req, &data).build());
 
     let namespaces: Vec<Namespace> = service::namespace::find_all(&data.database_connection).await;
 
@@ -90,7 +91,7 @@ async fn create(
     data: web::Data<AppState>,
     form: web::Form<CreateFormData>,
 ) -> impl Responder {
-    secured!(req, data);
+    secured!(&Secured::builder(&req, &data).build());
 
     let mut namespace_id = form
         .custom_namespace_id
@@ -153,7 +154,7 @@ async fn update(
     data: web::Data<AppState>,
     form: web::Form<UpdateFormData>,
 ) -> impl Responder {
-    secured!(req, data);
+    secured!(&Secured::builder(&req, &data).build());
 
     if form.namespace_id.is_empty() {
         return common::Result::<String>::http_response(
@@ -207,7 +208,7 @@ async fn delete(
     data: web::Data<AppState>,
     form: web::Query<GetParam>,
 ) -> impl Responder {
-    secured!(req, data);
+    secured!(&Secured::builder(&req, &data).build());
 
     let res = service::namespace::delete(&data.database_connection, &form.namespace_id).await;
 
@@ -220,7 +221,7 @@ async fn exist(
     data: web::Data<AppState>,
     params: web::Query<CheckParam>,
 ) -> impl Responder {
-    secured!(req, data);
+    secured!(&Secured::builder(&req, &data).build());
 
     if params.custom_namespace_id.is_empty() {
         return common::Result::<bool>::http_success(false);
