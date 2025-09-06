@@ -1,11 +1,16 @@
 use std::{
+    collections::HashMap,
     fmt::{Display, Formatter},
     str::FromStr,
 };
 
 use actix_web::{HttpRequest, web};
 
-use crate::model::common::AppState;
+use crate::model::{
+    auth::Resource,
+    common::{AppState, DATA_ID, GROUP, TENANT},
+    naming::{GROUP_NAME, NAMESPACE_ID},
+};
 
 pub mod console;
 pub mod entity;
@@ -172,6 +177,24 @@ pub struct Secured<'a> {
     pub api_type: ApiType,
 }
 
+impl<'a> Into<Resource> for Secured<'a> {
+    fn into(self) -> Resource {
+        let properties = self
+            .tags
+            .iter()
+            .map(|e| (e.to_string(), serde_json::Value::from(e.to_string())))
+            .collect::<HashMap<String, serde_json::Value>>();
+
+        Resource {
+            namespace_id: String::default(),
+            group: String::default(),
+            name: self.resource.to_string(),
+            _type: self.sign_type.as_str().to_string(),
+            properties: properties,
+        }
+    }
+}
+
 impl<'a> Secured<'a> {
     pub fn builder(
         req: &'a HttpRequest,
@@ -179,6 +202,16 @@ impl<'a> Secured<'a> {
         resource: &'a str,
     ) -> SecuredBuilder<'a> {
         SecuredBuilder::new(req, data, resource)
+    }
+
+    pub fn has_update_password_permission(&self) -> bool {
+        self.tags
+            .iter()
+            .any(|e| e == model::auth::UPDATE_PASSWORD_ENTRY_POINT)
+    }
+
+    pub fn only_identity(&self) -> bool {
+        self.tags.iter().any(|e| e == model::auth::ONLY_IDENTITY)
     }
 }
 
@@ -263,8 +296,10 @@ macro_rules! secured {
                     &auth_context.jwt_error_string(),
                     $secured.req.path(),
                 );
-            } else {
-                let global_admin = service::role::has_global_admin_role_by_username(
+            }
+
+            if !$secured.only_identity() && !$secured.has_update_password_permission() {
+                let roles = service::role::find_by_username(
                     &$secured.data.database_connection,
                     &auth_context.username,
                 )
@@ -272,20 +307,188 @@ macro_rules! secured {
                 .ok()
                 .unwrap_or_default();
 
-                if !global_admin {
+                if roles.is_empty() {
                     return crate::model::common::ErrorResult::http_response_forbidden(
-                        actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
-                        "authorization failed!.",
+                        actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
+                        &auth_context.jwt_error_string(),
                         $secured.req.path(),
                     );
                 }
+
+                let global_admin = roles
+                    .iter()
+                    .any(|e| e.role == crate::model::auth::GLOBAL_ADMIN_ROLE);
+
+                if !global_admin {
+                    if $secured
+                        .resource
+                        .starts_with(crate::model::auth::CONSOLE_RESOURCE_NAME_PREFIX)
+                    {
+                        return crate::model::common::ErrorResult::http_response_forbidden(
+                            actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+                            "authorization failed!.",
+                            $secured.req.path(),
+                        );
+                    }
+
+                    let role_names = roles
+                        .iter()
+                        .map(|e| e.role.to_string())
+                        .collect::<Vec<String>>();
+                    let permissions = service::permission::find_by_roles(
+                        &$secured.data.database_connection,
+                        role_names,
+                    )
+                    .await
+                    .ok()
+                    .unwrap_or_default();
+
+                    let mut resource: crate::model::auth::Resource = $secured.into();
+
+                    if $secured.sign_type == crate::SignType::Config {
+                        resource = crate::ConfigHttpResourceParser::parse(&$secured.req, &$secured);
+                    }
+
+                    let has_permission = roles.iter().any(|role| {
+                        permissions.iter().filter(|e| e.role == role.role).any(|e| {
+                            let regex = regex::Regex::new("\\*").unwrap();
+
+                            let mut permission_resource =
+                                regex.replace_all(&e.resource, ".*").into_owned();
+
+                            if permission_resource.starts_with(":") {
+                                permission_resource = format!(
+                                    "{}{}",
+                                    crate::model::common::DEFAULT_NAMESPACE_ID,
+                                    permission_resource,
+                                );
+                            }
+
+                            let regex = regex::Regex::new(&permission_resource).unwrap();
+
+                            e.action.contains($secured.action.as_str())
+                                && regex.is_match(&crate::join_resource(&resource))
+                        })
+                    });
+
+                    if !has_permission {
+                        return crate::model::common::ErrorResult::http_response_forbidden(
+                            actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+                            "authorization failed!.",
+                            $secured.req.path(),
+                        );
+                    }
+                }
             }
-        } else {
-            return crate::model::common::ErrorResult::http_response_forbidden(
-                actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                crate::model::auth::USER_NOT_FOUND_MESSAGE,
-                $secured.req.path(),
-            );
         }
     };
+}
+
+pub struct ConfigHttpResourceParser {}
+
+impl ConfigHttpResourceParser {
+    pub fn parse(req: &HttpRequest, secured: &Secured) -> Resource {
+        let namespace_id = ConfigHttpResourceParser::get_namespace_id(req);
+        let group = ConfigHttpResourceParser::get_group(req);
+        let name = ConfigHttpResourceParser::get_resource_name(req);
+        let action = secured.action.as_str();
+
+        let mut properties = secured
+            .tags
+            .iter()
+            .map(|e| (e.to_string(), serde_json::Value::from(e.to_string())))
+            .collect::<HashMap<String, serde_json::Value>>();
+
+        properties.insert(
+            Resource::ACTION.to_string(),
+            serde_json::Value::from(action.to_string()),
+        );
+
+        Resource {
+            namespace_id,
+            group,
+            name,
+            _type: secured.sign_type.as_str().to_string(),
+            properties,
+        }
+    }
+
+    pub fn get_namespace_id(req: &HttpRequest) -> String {
+        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
+            .ok()
+            .unwrap()
+            .into_inner();
+
+        params
+            .get(NAMESPACE_ID)
+            .or(params.get(TENANT))
+            .unwrap_or(&String::default())
+            .to_string()
+    }
+
+    pub fn get_group(req: &HttpRequest) -> String {
+        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
+            .ok()
+            .unwrap()
+            .into_inner();
+
+        params
+            .get(GROUP_NAME)
+            .or(params.get(GROUP))
+            .unwrap_or(&String::default())
+            .to_string()
+    }
+
+    pub fn get_resource_name(req: &HttpRequest) -> String {
+        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
+            .ok()
+            .unwrap()
+            .into_inner();
+
+        params
+            .get(DATA_ID)
+            .unwrap_or(&String::default())
+            .to_string()
+    }
+}
+
+fn join_resource(resource: &Resource) -> String {
+    if SignType::Specified.as_str() == resource._type {
+        return resource.name.to_string();
+    }
+
+    let mut result = String::new();
+
+    let mut namespace_id = resource.namespace_id.to_string();
+
+    if resource.namespace_id.is_empty() {
+        namespace_id = crate::model::common::DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    result.push_str(namespace_id.as_str());
+
+    let group = resource.group.to_string();
+
+    if group.is_empty() {
+        result.push_str(Resource::SPLITTER);
+        result.push_str("*");
+    } else {
+        result.push_str(Resource::SPLITTER);
+        result.push_str(&group);
+    }
+
+    let name = resource.name.to_string();
+
+    if name.is_empty() {
+        result.push_str(Resource::SPLITTER);
+        result.push_str(&resource._type.to_lowercase());
+        result.push_str("/*");
+    } else {
+        result.push_str(Resource::SPLITTER);
+        result.push_str(&resource._type.to_lowercase());
+        result.push_str("/");
+        result.push_str(&name);
+    }
+
+    result
 }

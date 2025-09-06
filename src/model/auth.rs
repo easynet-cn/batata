@@ -152,6 +152,13 @@ pub struct Resource {
     pub properties: HashMap<String, serde_json::Value>,
 }
 
+impl Resource {
+    pub const SPLITTER: &str = ":";
+    pub const ANY: &str = "*";
+    pub const ACTION: &str = "action";
+    pub const REQUEST_CLASS: &str = "requestClass";
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct AuthContext {
     pub username: String,
