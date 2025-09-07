@@ -12,7 +12,10 @@ use crate::model::{
     naming::{GROUP_NAME, NAMESPACE_ID},
 };
 
+pub mod api;
+pub mod config;
 pub mod console;
+pub mod core;
 pub mod entity;
 pub mod error;
 pub mod middleware;
@@ -189,7 +192,7 @@ impl<'a> Into<Resource> for Secured<'a> {
             namespace_id: String::default(),
             group: String::default(),
             name: self.resource.to_string(),
-            _type: self.sign_type.as_str().to_string(),
+            r#type: self.sign_type.as_str().to_string(),
             properties: properties,
         }
     }
@@ -408,7 +411,7 @@ impl ConfigHttpResourceParser {
             namespace_id,
             group,
             name,
-            _type: secured.sign_type.as_str().to_string(),
+            r#type: secured.sign_type.as_str().to_string(),
             properties,
         }
     }
@@ -453,7 +456,7 @@ impl ConfigHttpResourceParser {
 }
 
 fn join_resource(resource: &Resource) -> String {
-    if SignType::Specified.as_str() == resource._type {
+    if SignType::Specified.as_str() == resource.r#type {
         return resource.name.to_string();
     }
 
@@ -481,14 +484,20 @@ fn join_resource(resource: &Resource) -> String {
 
     if name.is_empty() {
         result.push_str(Resource::SPLITTER);
-        result.push_str(&resource._type.to_lowercase());
+        result.push_str(&resource.r#type.to_lowercase());
         result.push_str("/*");
     } else {
         result.push_str(Resource::SPLITTER);
-        result.push_str(&resource._type.to_lowercase());
+        result.push_str(&resource.r#type.to_lowercase());
         result.push_str("/");
         result.push_str(&name);
     }
 
     result
+}
+
+pub fn is_valid(str: &str) -> bool {
+    let regex = regex::Regex::new("^[a-zA-Z0-9_.:-]*$").unwrap();
+
+    regex.is_match(str)
 }

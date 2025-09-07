@@ -1,11 +1,11 @@
 use std::{collections::HashMap, time::Duration};
 
-use actix_web::{HttpRequest, HttpResponse, HttpResponseBuilder, Responder, http::StatusCode};
+use actix_web::{HttpResponse, HttpResponseBuilder, http::StatusCode};
 use clap::Parser;
 use config::{Config, Environment};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
+
 // Common constants.
 pub const CLIENT_VERSION: &str = "3.0.0";
 pub const DATA_IN_BODY_VERSION: i32 = 204;

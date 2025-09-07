@@ -1,18 +1,12 @@
+use std::{
+    fmt::{Display, Formatter},
+    str::FromStr,
+};
+
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
 use crate::entity;
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigBase {
-    pub id: i64,
-    pub data_id: String,
-    pub group: String,
-    pub content: String,
-    pub md5: String,
-    pub encrypted_data_key: String,
-}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -185,5 +179,62 @@ impl From<entity::his_config_info::Model> for ConfigHistoryInfo {
             last_modified_time: value.gmt_modified,
             encrypted_data_key: value.encrypted_data_key,
         }
+    }
+}
+
+pub enum ConfigType {
+    Properties,
+    Xml,
+    Json,
+    Text,
+    Html,
+    Yaml,
+    Toml,
+}
+
+impl ConfigType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConfigType::Properties => "properties",
+            ConfigType::Xml => "xml",
+            ConfigType::Json => "json",
+            ConfigType::Text => "text",
+            ConfigType::Html => "html",
+            ConfigType::Yaml => "yaml",
+            ConfigType::Toml => "toml",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "properties" => Ok(ConfigType::Properties),
+            "xml" => Ok(ConfigType::Xml),
+            "json" => Ok(ConfigType::Json),
+            "text" => Ok(ConfigType::Text),
+            "html" => Ok(ConfigType::Html),
+            "yaml" => Ok(ConfigType::Yaml),
+            "toml" => Ok(ConfigType::Toml),
+            _ => Err(format!("Invalid config type: {}", s)),
+        }
+    }
+}
+
+impl Default for ConfigType {
+    fn default() -> Self {
+        ConfigType::Text
+    }
+}
+
+impl Display for ConfigType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for ConfigType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ConfigType::from_str(s)
     }
 }

@@ -1,0 +1,112 @@
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigBasicInfo {
+    pub id: i64,
+    pub namespace_id: String,
+    pub group_name: String,
+    pub data_id: String,
+    pub md5: String,
+    pub r#type: String,
+    pub app_name: String,
+    pub create_time: i64,
+    pub modify_time: i64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigDetailInfo {
+    #[serde(flatten)]
+    pub config_basic_info: ConfigBasicInfo,
+    pub content: String,
+    pub desc: String,
+    pub encrypted_data_key: String,
+    pub create_user: String,
+    pub create_ip: String,
+    pub config_tags: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigCloneInfo {
+    pub config_id: i64,
+    pub target_group_name: String,
+    pub target_data_id: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigGrayInfo {
+    #[serde(flatten)]
+    pub config_detail_info: ConfigDetailInfo,
+    pub gray_name: String,
+    pub gray_rule: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigHistoryBasicInfo {
+    #[serde(flatten)]
+    pub config_basic_info: ConfigBasicInfo,
+    pub src_ip: String,
+    pub src_user: String,
+    pub op_type: String,
+    pub publish_type: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigHistoryDetailInfo {
+    #[serde(flatten)]
+    pub config_history_basic_info: ConfigHistoryBasicInfo,
+    pub content: String,
+    pub encrypted_data_key: String,
+    pub gray_name: String,
+    pub ext_info: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigListenerInfo {
+    pub query_type: String,
+    pub listeners_status: HashMap<String, String>,
+}
+
+impl ConfigListenerInfo {
+    pub const QUERY_TYPE_CONFIG: &str = "config";
+    pub const QUERY_TYPE_IP: &str = "ip";
+}
+
+pub enum SameConfigPolicy {
+    Abort,
+    Skip,
+    Overwrite,
+}
+
+impl SameConfigPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SameConfigPolicy::Abort => "ABORT",
+            SameConfigPolicy::Skip => "SKIP",
+            SameConfigPolicy::Overwrite => "OVERWRITE",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "ABORT" => Ok(SameConfigPolicy::Abort),
+            "SKIP" => Ok(SameConfigPolicy::Skip),
+            "OVERWRITE" => Ok(SameConfigPolicy::Overwrite),
+            _ => Err(format!("Invalid same config policy: {}", s)),
+        }
+    }
+}
+
+impl Default for SameConfigPolicy {
+    fn default() -> Self {
+        SameConfigPolicy::Abort
+    }
+}

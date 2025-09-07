@@ -31,35 +31,6 @@ pub async fn search(
     data: web::Data<AppState>,
     params: web::Query<SearchParam>,
 ) -> impl Responder {
-    if params.search.is_some() && params.search.as_ref().unwrap() == "blur" {
-        let search_param = params.0;
-
-        let result = crate::service::config::search_page(
-            &data.database_connection,
-            search_param.page_no,
-            search_param.page_size,
-            search_param.tenant.unwrap_or_default().as_str(),
-            search_param.data_id.unwrap_or_default().as_str(),
-            search_param.group.unwrap_or_default().as_str(),
-            search_param.app_name.unwrap_or_default().as_str(),
-            search_param.config_tags.unwrap_or_default().as_str(),
-            search_param.types.clone().unwrap_or_default().as_str(),
-            search_param.config_detail.unwrap_or_default().as_str(),
-        )
-        .await;
-
-        return match result {
-            Ok(page_result) => HttpResponse::Ok().json(page_result),
-            Err(err) => HttpResponse::InternalServerError().json(ErrorResult {
-                timestamp: Utc::now().to_rfc3339(),
-                status: 403,
-                message: err.to_string(),
-                error: String::from("Forbiden"),
-                path: req.path().to_string(),
-            }),
-        };
-    }
-
     return HttpResponse::Ok().json(Page::<ConfigInfo>::default());
 }
 

@@ -49,7 +49,7 @@ impl From<entity::tenant_info::Model> for Namespace {
             namespace_desc: value.tenant_desc.unwrap_or_default(),
             quota: DEFAULT_NAMESPACE_QUOTA,
             config_count: 0,
-            type_: 2,
+            type_: value.kp.parse().unwrap_or(1),
         }
     }
 }

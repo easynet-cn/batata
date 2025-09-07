@@ -148,7 +148,7 @@ pub struct Resource {
     pub namespace_id: String,
     pub group: String,
     pub name: String,
-    pub _type: String,
+    pub r#type: String,
     pub properties: HashMap<String, serde_json::Value>,
 }
 

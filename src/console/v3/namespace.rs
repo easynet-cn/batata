@@ -137,7 +137,7 @@ async fn create(
         );
     }
 
-    if namespace_id.len() > NAMESPACE_ID_MAX_LENGTH {
+    if namespace_id.chars().count() > NAMESPACE_ID_MAX_LENGTH {
         return common::Result::<String>::http_response(
             StatusCode::NOT_FOUND.as_u16(),
             error::ILLEGAL_NAMESPACE.code,

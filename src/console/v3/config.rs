@@ -1,14 +1,20 @@
-use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, Scope, get, post, web};
+use actix_web::{
+    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, get, http::StatusCode, post, web,
+};
 use serde::Deserialize;
 
 use chrono::Utc;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
+    api::config::model::ConfigBasicInfo,
+    config::model::ConfigForm,
+    error, is_valid,
     model::{
-        auth::NacosJwtPayload,
+        self,
+        auth::AuthContext,
         common::{AppState, ErrorResult, Page},
-        config::ConfigInfo,
+        config::ConfigType,
     },
     secured, service,
 };
@@ -16,39 +22,10 @@ use crate::{
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchPageParam {
-    search: Option<String>,
-    show: Option<String>,
-    data_id: Option<String>,
-    group: Option<String>,
-    app_name: Option<String>,
-    #[serde(rename = "config_tags")]
-    config_tags: Option<String>,
-    types: Option<String>,
-    #[serde(rename = "config_detail")]
-    config_detail: Option<String>,
-    tenant: Option<String>,
-    page_no: Option<u64>,
-    page_size: Option<u64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CreateFormParam {
-    data_id: String,
-    group: String,
-    tenant: Option<String>,
-    content: String,
-    tag: Option<String>,
-    app_name: Option<String>,
-    #[serde(rename = "src_user")]
-    src_user: Option<String>,
-    config_tags: Option<String>,
-    desc: Option<String>,
-    r#use: Option<String>,
-    effect: Option<String>,
-    r#type: Option<String>,
-    schema: Option<String>,
-    encrypted_data_key: Option<String>,
+    #[serde(flatten)]
+    config_form: ConfigForm,
+    pub page_no: u64,
+    pub page_size: u64,
 }
 
 #[get("list")]
@@ -65,54 +42,57 @@ async fn search(
             .build()
     );
 
-    if params.search.is_some() && params.search.as_ref().unwrap() == "blur" {
-        let search_param = params.0;
+    let search_param = params.0;
+    let tags = search_param
+        .config_form
+        .config_tags
+        .split(",")
+        .into_iter()
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
+    let types = search_param
+        .config_form
+        .r#type
+        .split(",")
+        .into_iter()
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
 
-        let result = crate::service::config::search_page(
-            &data.database_connection,
-            search_param.page_no.unwrap_or_default(),
-            search_param.page_size.unwrap_or_default(),
-            search_param.tenant.unwrap_or_default().as_str(),
-            search_param.data_id.unwrap_or_default().as_str(),
-            search_param.group.unwrap_or_default().as_str(),
-            search_param.app_name.unwrap_or_default().as_str(),
-            search_param.config_tags.unwrap_or_default().as_str(),
-            search_param.types.clone().unwrap_or_default().as_str(),
-            search_param.config_detail.unwrap_or_default().as_str(),
-        )
-        .await;
+    let result = crate::service::config::search_page(
+        &data.database_connection,
+        search_param.page_no,
+        search_param.page_size,
+        &search_param.config_form.namespace_id,
+        &search_param.config_form.data_id,
+        &search_param.config_form.group_name,
+        &search_param.config_form.app_name,
+        tags,
+        types,
+        &search_param.config_form.content,
+    )
+    .await;
 
-        return match result {
-            Ok(page_result) => HttpResponse::Ok().json(page_result),
-            Err(err) => HttpResponse::InternalServerError().json(ErrorResult {
-                timestamp: Utc::now().to_rfc3339(),
-                status: 403,
-                message: err.to_string(),
-                error: String::from("Forbiden"),
-                path: req.path().to_string(),
-            }),
-        };
-    } else if params.show.is_some() && params.show.as_ref().unwrap() == "all" {
-        let config_all_info = service::config::find_all(
-            &data.database_connection,
-            params.data_id.clone().unwrap_or_default().as_str(),
-            params.group.clone().unwrap_or_default().as_str(),
-            params.tenant.clone().unwrap_or_default().as_str(),
-        )
-        .await
-        .ok();
-
-        return HttpResponse::Ok().json(config_all_info);
-    }
-
-    return HttpResponse::Ok().json(Page::<ConfigInfo>::default());
+    return match result {
+        Ok(page_result) => {
+            model::common::Result::<Page<ConfigBasicInfo>>::http_success(page_result)
+        }
+        Err(err) => HttpResponse::InternalServerError().json(ErrorResult {
+            timestamp: Utc::now().to_rfc3339(),
+            status: 403,
+            message: err.to_string(),
+            error: String::from("Forbiden"),
+            path: req.path().to_string(),
+        }),
+    };
 }
 
 #[post("")]
 async fn create_or_update(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Form<CreateFormParam>,
+    form: web::Form<ConfigForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -122,13 +102,78 @@ async fn create_or_update(
             .build()
     );
 
-    let token_data = req
-        .extensions_mut()
-        .get::<NacosJwtPayload>()
-        .unwrap()
-        .clone();
-    let src_user = form.src_user.clone().unwrap_or(token_data.sub.clone());
-    let config_type = form.r#type.clone().unwrap_or(String::from("text"));
+    if form.data_id.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'dataId' type String is not present",
+        );
+    }
+
+    if !is_valid(&form.data_id) {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            format!("invalid dataId : {}", form.data_id),
+        );
+    }
+
+    if form.group_name.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'groupName' type String is not present",
+        );
+    }
+
+    if !is_valid(&form.group_name) {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            format!("invalid group : {}", form.group_name),
+        );
+    }
+
+    if form.content.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'content' type String is not present",
+        );
+    }
+
+    if form.content.chars().count() > data.configuration.max_content() as usize {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            format!("invalid content, over {}", data.configuration.max_content()),
+        );
+    }
+
+    let mut config_form = form.into_inner();
+    let namespace_transferred = config_form.namespace_id.is_empty();
+
+    if namespace_transferred {
+        config_form.namespace_id = model::common::DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    config_form.namespace_id = config_form.namespace_id.trim().to_string();
+    config_form.r#type = ConfigType::from_str(&config_form.r#type)
+        .unwrap_or(ConfigType::default())
+        .to_string();
+
+    let auth_content = req.extensions().get::<AuthContext>().unwrap().clone();
+    let src_user = config_form
+        .src_user
+        .clone()
+        .unwrap_or(auth_content.username);
+
     let src_ip = String::from(
         req.connection_info()
             .realip_remote_addr()
@@ -137,25 +182,24 @@ async fn create_or_update(
 
     let _ = service::config::create_or_update(
         &data.database_connection,
-        form.data_id.as_str(),
-        form.group.as_str(),
-        form.tenant.clone().unwrap_or_default().as_str(),
-        form.content.as_str(),
-        form.tag.clone().unwrap_or_default().as_str(),
-        form.app_name.clone().unwrap_or_default().as_str(),
-        src_user.as_str(),
-        src_ip.as_str(),
-        form.config_tags.clone().unwrap_or_default().as_str(),
-        form.desc.clone().unwrap_or_default().as_str(),
-        form.r#use.clone().unwrap_or_default().as_str(),
-        form.effect.clone().unwrap_or_default().as_str(),
-        config_type.as_str(),
-        form.schema.clone().unwrap_or_default().as_str(),
-        form.encrypted_data_key.clone().unwrap_or_default().as_str(),
+        &config_form.data_id,
+        &config_form.group_name,
+        &config_form.namespace_id,
+        &config_form.content,
+        &config_form.app_name,
+        &src_user,
+        &src_ip,
+        &config_form.config_tags,
+        &config_form.desc,
+        &config_form.r#use.unwrap_or_default(),
+        &config_form.effect.unwrap_or_default(),
+        &config_form.r#type,
+        &config_form.schema.unwrap_or_default(),
+        &config_form.encrypted_data_key.unwrap_or_default(),
     )
     .await;
 
-    return HttpResponse::Ok().json(true);
+    model::common::Result::<bool>::http_success(true)
 }
 
 pub fn routes() -> Scope {
