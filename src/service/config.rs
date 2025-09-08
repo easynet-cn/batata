@@ -1,17 +1,50 @@
 use std::collections::HashMap;
 
+use anyhow::Ok;
 use chrono::Local;
-use crypto::{digest::Digest, md5::Md5};
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
     api::config::model::ConfigBasicInfo,
+    config::model::ConfigAllInfo,
     entity::{config_info, config_tags_relation, his_config_info},
-    model::{
-        common::Page,
-        config::{ConfigAllInfo, ConfigInfoStateWrapper},
-    },
+    model::{common::Page, config::ConfigInfoStateWrapper},
 };
+
+pub async fn find_one(
+    db: &DatabaseConnection,
+    data_id: &str,
+    group: &str,
+    namespace_id: &str,
+) -> anyhow::Result<Option<ConfigAllInfo>> {
+    if let Some(mut config_all_info) = config_info::Entity::find()
+        .filter(config_info::Column::DataId.eq(data_id))
+        .filter(config_info::Column::GroupId.eq(group))
+        .filter(config_info::Column::TenantId.eq(namespace_id))
+        .one(db)
+        .await?
+        .map(ConfigAllInfo::from)
+    {
+        let config_tags = config_tags_relation::Entity::find()
+            .select_only()
+            .column(config_tags_relation::Column::TagName)
+            .filter(
+                config_tags_relation::Column::Id
+                    .eq(config_all_info.config_info.config_info_base.id),
+            )
+            .order_by_asc(config_tags_relation::Column::Id)
+            .into_tuple::<String>()
+            .all(db)
+            .await?
+            .join(",");
+
+        config_all_info.config_tags = config_tags;
+
+        Ok(Some(config_all_info))
+    } else {
+        Ok(None)
+    }
+}
 
 pub async fn search_page(
     db: &DatabaseConnection,
@@ -470,9 +503,5 @@ pub async fn create_or_update(
 }
 
 fn md5_digest(content: &str) -> String {
-    let mut md5 = Md5::new();
-
-    md5.input_str(content);
-
-    md5.result_str()
+    format!("{:x}", md5::compute(content))
 }

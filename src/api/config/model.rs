@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::model::ConfigAllInfo;
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBasicInfo {
@@ -27,6 +29,30 @@ pub struct ConfigDetailInfo {
     pub create_user: String,
     pub create_ip: String,
     pub config_tags: String,
+}
+
+impl From<ConfigAllInfo> for ConfigDetailInfo {
+    fn from(value: ConfigAllInfo) -> Self {
+        Self {
+            config_basic_info: ConfigBasicInfo {
+                id: value.config_info.config_info_base.id,
+                namespace_id: value.config_info.tenant,
+                group_name: value.config_info.config_info_base.group,
+                data_id: value.config_info.config_info_base.data_id,
+                md5: value.config_info.config_info_base.md5,
+                r#type: value.config_info.r#type,
+                app_name: value.config_info.app_name,
+                create_time: value.create_time,
+                modify_time: value.modify_time,
+            },
+            content: value.config_info.config_info_base.content,
+            desc: value.desc,
+            encrypted_data_key: value.config_info.config_info_base.encrypted_data_key,
+            create_user: value.create_user,
+            create_ip: value.create_ip,
+            config_tags: value.config_tags,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

@@ -7,8 +7,8 @@ use chrono::Utc;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
-    api::config::model::ConfigBasicInfo,
-    config::model::ConfigForm,
+    api::config::model::{ConfigBasicInfo, ConfigDetailInfo},
+    config::model::{ConfigAllInfo, ConfigForm},
     error, is_valid,
     model::{
         self,
@@ -26,6 +26,33 @@ struct SearchPageParam {
     config_form: ConfigForm,
     pub page_no: u64,
     pub page_size: u64,
+}
+
+#[get("")]
+async fn find_one(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ConfigForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let result = service::config::find_one(
+        &data.database_connection,
+        &params.data_id,
+        &params.group_name,
+        &params.namespace_id,
+    )
+    .await
+    .unwrap()
+    .map(ConfigDetailInfo::from);
+
+    model::common::Result::<Option<ConfigAllInfo>>::http_success(result)
 }
 
 #[get("list")]
@@ -204,6 +231,7 @@ async fn create_or_update(
 
 pub fn routes() -> Scope {
     web::scope("/cs/config")
+        .service(find_one)
         .service(search)
         .service(create_or_update)
 }
