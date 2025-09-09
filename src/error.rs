@@ -1,4 +1,9 @@
+use std::fmt::{Display, Formatter};
+
+use actix_web::HttpResponse;
 use serde::{Deserialize, Serialize};
+
+use crate::model::common;
 
 #[derive(thiserror::Error, Debug)]
 pub enum BatataError {
@@ -8,6 +13,48 @@ pub enum BatataError {
     UserNotExist(String),
     #[error("{2}")]
     ApiError(i32, i32, String, String),
+}
+
+#[derive(Debug)]
+pub struct AppError {
+    inner: anyhow::Error,
+}
+
+impl Display for AppError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.inner.to_string())
+    }
+}
+
+impl From<anyhow::Error> for AppError {
+    fn from(value: anyhow::Error) -> Self {
+        AppError { inner: value }
+    }
+}
+
+impl actix_web::error::ResponseError for AppError {
+    fn error_response(&self) -> HttpResponse {
+        if let Some(e) = self.inner.downcast_ref::<BatataError>() {
+            match e {
+                BatataError::IllegalArgument(message) => {
+                    HttpResponse::BadRequest().body(message.to_string())
+                }
+                BatataError::UserNotExist(message) => {
+                    HttpResponse::BadRequest().body(message.to_string())
+                }
+                BatataError::ApiError(status, code, message, data) => {
+                    common::Result::<String>::http_response(
+                        *status as u16,
+                        *code,
+                        message.to_string(),
+                        data.to_string(),
+                    )
+                }
+            }
+        } else {
+            HttpResponse::InternalServerError().body(self.inner.to_string())
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

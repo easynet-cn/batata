@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::entity;
@@ -101,4 +103,51 @@ impl From<entity::config_info::Model> for ConfigAllInfo {
             config_tags: String::default(),
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigInfoGrayWrapper {
+    #[serde(flatten)]
+    pub config_info: ConfigInfo,
+    pub last_modified: i64,
+    pub gray_name: String,
+    pub gray_rule: String,
+    pub src_user: String,
+}
+
+impl From<entity::config_info_gray::Model> for ConfigInfoGrayWrapper {
+    fn from(value: entity::config_info_gray::Model) -> Self {
+        Self {
+            config_info: ConfigInfo {
+                config_info_base: ConfigInfoBase {
+                    id: value.id as i64,
+                    data_id: value.data_id,
+                    group: value.group_id,
+                    content: value.content,
+                    md5: value.md5.unwrap_or_default(),
+                    encrypted_data_key: value.encrypted_data_key,
+                },
+                tenant: value.tenant_id.unwrap_or_default(),
+                app_name: value.app_name.unwrap_or_default(),
+                r#type: "".to_string(),
+            },
+            last_modified: 0,
+            gray_name: value.gray_name,
+            gray_rule: value.gray_rule,
+            src_user: value.src_user.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigListenerInfo {
+    pub query_type: String,
+    pub listeners_status: HashMap<String, String>,
+}
+
+impl ConfigListenerInfo {
+    pub const QUERY_TYPE_CONFIG: &str = "config";
+    pub const QUERY_TYPE_IP: &str = "ip";
 }

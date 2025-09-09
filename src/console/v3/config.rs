@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use actix_web::{
-    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, get, http::StatusCode, post, web,
+    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, http::StatusCode, post,
+    web,
 };
 use serde::Deserialize;
 
@@ -7,13 +10,13 @@ use chrono::Utc;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
-    api::config::model::{ConfigBasicInfo, ConfigDetailInfo},
+    api::config::model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigListenerInfo},
     config::model::{ConfigAllInfo, ConfigForm},
     error, is_valid,
     model::{
         self,
         auth::AuthContext,
-        common::{AppState, ErrorResult, Page},
+        common::{AppState, DEFAULT_NAMESPACE_ID, ErrorResult, Page},
         config::ConfigType,
     },
     secured, service,
@@ -26,6 +29,20 @@ struct SearchPageParam {
     config_form: ConfigForm,
     pub page_no: u64,
     pub page_size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteParam {
+    pub data_id: String,
+    pub group_name: String,
+    pub tenant: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteForm {
+    pub namespace_id: String,
 }
 
 #[get("")]
@@ -229,9 +246,114 @@ async fn create_or_update(
     model::common::Result::<bool>::http_success(true)
 }
 
+#[delete("")]
+async fn delete(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<DeleteParam>,
+    form: Option<web::Form<DeleteForm>>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let mut tenant = params.tenant.to_string();
+
+    if let Some(delete_form) = form
+        && let namespace_id = delete_form.namespace_id.to_string()
+        && !namespace_id.is_empty()
+        && tenant.is_empty()
+    {
+        tenant = namespace_id;
+    }
+
+    if tenant.is_empty() {
+        tenant = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let client_ip = String::from(
+        req.connection_info()
+            .realip_remote_addr()
+            .unwrap_or_default(),
+    );
+
+    let auth_content = req.extensions().get::<AuthContext>().unwrap().clone();
+
+    let src_user = auth_content.username;
+
+    service::config::delete(
+        &data.database_connection,
+        &params.data_id,
+        &params.group_name,
+        &tenant,
+        "",
+        &client_ip,
+        &src_user,
+        "",
+    )
+    .await
+    .unwrap();
+
+    model::common::Result::<bool>::http_success(true)
+}
+
+#[get("beta")]
+async fn find_beta_one(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ConfigForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let result = service::config::find_gray_one(
+        &data.database_connection,
+        &params.data_id,
+        &params.group_name,
+        &params.namespace_id,
+    )
+    .await
+    .unwrap()
+    .map(ConfigGrayInfo::from);
+
+    model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
+}
+
+#[get("listener")]
+async fn find_listeners(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ConfigForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    model::common::Result::<Option<ConfigListenerInfo>>::http_success(ConfigListenerInfo {
+        query_type: ConfigListenerInfo::QUERY_TYPE_CONFIG.to_string(),
+        listeners_status: HashMap::new(),
+    })
+}
+
 pub fn routes() -> Scope {
     web::scope("/cs/config")
         .service(find_one)
         .service(search)
         .service(create_or_update)
+        .service(delete)
+        .service(find_beta_one)
+        .service(find_listeners)
 }

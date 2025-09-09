@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::model::ConfigAllInfo;
+use crate::config::model::{ConfigAllInfo, ConfigInfoGrayWrapper};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,19 +57,46 @@ impl From<ConfigAllInfo> for ConfigDetailInfo {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfigCloneInfo {
-    pub config_id: i64,
-    pub target_group_name: String,
-    pub target_data_id: String,
+pub struct ConfigGrayInfo {
+    pub config_detail_info: ConfigDetailInfo,
+    pub gray_name: String,
+    pub gray_rule: String,
+}
+
+impl From<ConfigInfoGrayWrapper> for ConfigGrayInfo {
+    fn from(value: ConfigInfoGrayWrapper) -> Self {
+        Self {
+            config_detail_info: ConfigDetailInfo {
+                config_basic_info: ConfigBasicInfo {
+                    id: value.config_info.config_info_base.id,
+                    namespace_id: value.config_info.tenant,
+                    group_name: value.config_info.config_info_base.group,
+                    data_id: value.config_info.config_info_base.data_id,
+                    md5: value.config_info.config_info_base.md5,
+                    r#type: value.config_info.r#type,
+                    app_name: value.config_info.app_name,
+                    create_time: 0,
+                    modify_time: value.last_modified,
+                },
+                content: value.config_info.config_info_base.content,
+                desc: "".to_string(),
+                encrypted_data_key: value.config_info.config_info_base.encrypted_data_key,
+                create_user: value.src_user,
+                create_ip: "".to_string(),
+                config_tags: "".to_string(),
+            },
+            gray_name: value.gray_name,
+            gray_rule: value.gray_rule,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfigGrayInfo {
-    #[serde(flatten)]
-    pub config_detail_info: ConfigDetailInfo,
-    pub gray_name: String,
-    pub gray_rule: String,
+pub struct ConfigCloneInfo {
+    pub config_id: i64,
+    pub target_group_name: String,
+    pub target_data_id: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
