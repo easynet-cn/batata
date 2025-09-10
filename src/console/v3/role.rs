@@ -3,10 +3,11 @@ use serde::Deserialize;
 
 use crate::{
     ActionTypes, Secured,
+    api::model::Page,
     error::BatataError,
     model::{
         auth::RoleInfo,
-        common::{self, AppState, Page},
+        common::{self, AppState},
     },
     secured, service,
 };

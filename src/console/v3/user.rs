@@ -1,9 +1,9 @@
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
+use crate::api::model::Page;
 use crate::error::BatataError;
 use crate::model::auth::User;
-use crate::model::common::Page;
 use crate::{ActionTypes, Secured, model, service};
 use crate::{
     model::{

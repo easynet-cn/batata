@@ -3,9 +3,10 @@ use serde::Deserialize;
 
 use crate::{
     ActionTypes, Secured,
+    api::model::Page,
     model::{
         auth::PermissionInfo,
-        common::{self, AppState, Page},
+        common::{self, AppState},
     },
     secured, service,
 };

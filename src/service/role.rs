@@ -1,12 +1,12 @@
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
+    api::model::Page,
     entity::{roles, users},
     error::BatataError,
     model::{
         self,
         auth::{self, RoleInfo},
-        common::Page,
     },
 };
 

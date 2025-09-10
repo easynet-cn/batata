@@ -1,39 +1,44 @@
-use sea_orm::*;
+use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
+    api::model::Page,
+    config::model::ConfigHistoryInfo,
     entity::{config_info, his_config_info},
-    model::{
-        common::Page,
-        config::{ConfigHistoryInfo, ConfigInfoWrapper},
-    },
+    model::config::ConfigInfoWrapper,
 };
 
 pub async fn search_page(
     db: &DatabaseConnection,
     data_id: &str,
-    group: &str,
-    tenant: &str,
+    group_name: &str,
+    namespace_id: &str,
     page_no: u64,
     page_size: u64,
 ) -> anyhow::Result<Page<ConfigHistoryInfo>> {
     let total_count = his_config_info::Entity::find()
-        .filter(his_config_info::Column::TenantId.eq(tenant))
+        .select_only()
+        .column_as(Expr::col(Asterisk).count(), "count")
+        .filter(his_config_info::Column::TenantId.eq(namespace_id))
         .filter(his_config_info::Column::DataId.contains(data_id))
-        .filter(his_config_info::Column::GroupId.contains(group))
-        .count(db)
-        .await?;
+        .filter(his_config_info::Column::GroupId.contains(group_name))
+        .into_tuple::<i64>()
+        .one(db)
+        .await?
+        .unwrap_or_default() as u64;
 
     if total_count > 0 {
+        let offset = (page_no - 1) * page_size;
         let page_item = his_config_info::Entity::find()
-            .filter(his_config_info::Column::TenantId.eq(tenant))
+            .filter(his_config_info::Column::TenantId.eq(namespace_id))
             .filter(his_config_info::Column::DataId.contains(data_id))
-            .filter(his_config_info::Column::GroupId.contains(group))
+            .filter(his_config_info::Column::GroupId.contains(group_name))
+            .offset(offset)
+            .limit(page_size)
             .order_by_desc(his_config_info::Column::Nid)
-            .paginate(db, page_size)
-            .fetch_page(page_no - 1)
+            .all(db)
             .await?
             .iter()
-            .map(|entity| ConfigHistoryInfo::from(entity.clone()))
+            .map(ConfigHistoryInfo::from)
             .collect();
 
         return Ok(Page::<ConfigHistoryInfo>::new(

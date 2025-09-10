@@ -22,7 +22,7 @@ pub fn encode_jwt_token(
     let exp = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::seconds(expire_seconds))
         .expect("valid timestamp")
-        .timestamp();
+        .timestamp_millis();
 
     let payload = NacosJwtPayload {
         sub: sub.to_string(),

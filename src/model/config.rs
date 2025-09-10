@@ -65,7 +65,7 @@ impl From<entity::config_info::Model> for ConfigInfoWrapper {
             tenant: value.tenant_id.clone().unwrap_or_default(),
             app_name: value.app_name.clone().unwrap_or_default(),
             _type: value.r#type.clone().unwrap_or_default(),
-            last_modified: value.gmt_modified.unwrap().and_utc().timestamp(),
+            last_modified: value.gmt_modified.unwrap().and_utc().timestamp_millis(),
         }
     }
 }
@@ -88,48 +88,8 @@ impl From<entity::config_info::Model> for ConfigInfoStateWrapper {
             data_id: value.data_id,
             group: value.group_id.unwrap_or_default(),
             tenant: value.tenant_id.unwrap_or_default(),
-            last_modified: value.gmt_modified.unwrap().and_utc().timestamp(),
+            last_modified: value.gmt_modified.unwrap().and_utc().timestamp_millis(),
             md5: value.md5.unwrap_or_default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigHistoryInfo {
-    pub id: u64,
-    pub last_id: i64,
-    pub data_id: String,
-    pub group: String,
-    pub tenant: String,
-    pub app_name: String,
-    pub md5: String,
-    pub content: String,
-    pub src_ip: String,
-    pub src_user: String,
-    pub op_type: String,
-    pub created_time: NaiveDateTime,
-    pub last_modified_time: NaiveDateTime,
-    pub encrypted_data_key: String,
-}
-
-impl From<entity::his_config_info::Model> for ConfigHistoryInfo {
-    fn from(value: entity::his_config_info::Model) -> Self {
-        Self {
-            id: value.nid,
-            last_id: -1,
-            data_id: value.data_id,
-            group: value.group_id,
-            tenant: value.tenant_id.unwrap_or_default(),
-            app_name: value.app_name.unwrap_or_default(),
-            md5: value.md5.unwrap_or_default(),
-            content: value.content,
-            src_ip: value.src_ip.unwrap_or_default(),
-            src_user: value.src_user.unwrap_or_default(),
-            op_type: value.op_type.unwrap_or_default(),
-            created_time: value.gmt_create,
-            last_modified_time: value.gmt_modified,
-            encrypted_data_key: value.encrypted_data_key,
         }
     }
 }

@@ -10,13 +10,16 @@ use chrono::Utc;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
-    api::config::model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigListenerInfo},
+    api::{
+        config::model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigListenerInfo},
+        model::Page,
+    },
     config::model::{ConfigAllInfo, ConfigForm},
     error, is_valid,
     model::{
         self,
         auth::AuthContext,
-        common::{AppState, DEFAULT_NAMESPACE_ID, ErrorResult, Page},
+        common::{AppState, DEFAULT_NAMESPACE_ID, ErrorResult},
         config::ConfigType,
     },
     secured, service,

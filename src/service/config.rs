@@ -3,13 +3,12 @@ use std::collections::HashMap;
 use anyhow::Ok;
 use chrono::Local;
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
-use tonic::client;
 
 use crate::{
-    api::config::model::ConfigBasicInfo,
+    api::{config::model::ConfigBasicInfo, model::Page},
     config::model::{ConfigAllInfo, ConfigInfoGrayWrapper},
     entity::{config_info, config_info_gray, config_tags_relation, his_config_info},
-    model::{common::Page, config::ConfigInfoStateWrapper},
+    model::config::ConfigInfoStateWrapper,
 };
 
 pub async fn find_one(
@@ -140,12 +139,16 @@ pub async fn search_page(
                 md5: entity.md5.clone().unwrap_or_default(),
                 r#type: entity.r#type.clone().unwrap_or_default(),
                 app_name: entity.app_name.clone().unwrap_or_default(),
-                create_time: entity.gmt_create.unwrap_or_default().and_utc().timestamp(),
+                create_time: entity
+                    .gmt_create
+                    .unwrap_or_default()
+                    .and_utc()
+                    .timestamp_millis(),
                 modify_time: entity
                     .gmt_modified
                     .unwrap_or_default()
                     .and_utc()
-                    .timestamp(),
+                    .timestamp_millis(),
             })
             .collect();
 

@@ -37,16 +37,6 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
 
     tenant_ids.push("".to_string());
 
-    let sql = config_info::Entity::find()
-        .select_only()
-        .column(config_info::Column::TenantId)
-        .column_as(config_info::Column::Id.count(), "count")
-        .filter(config_info::Column::TenantId.is_in(tenant_ids.clone()))
-        .filter(config_info::Column::TenantId.is_not_null())
-        .group_by(config_info::Column::TenantId)
-        .build(DbBackend::MySql)
-        .to_string();
-
     let config_infos = config_info::Entity::find()
         .select_only()
         .column(config_info::Column::TenantId)

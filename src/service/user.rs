@@ -2,11 +2,9 @@ use sea_orm::sea_query::Asterisk;
 use sea_orm::*;
 use sea_orm::{entity::ModelTrait, prelude::Expr};
 
+use crate::api::model::Page;
 use crate::error::BatataError;
-use crate::{
-    entity::users,
-    model::{auth::User, common::Page},
-};
+use crate::{entity::users, model::auth::User};
 
 pub async fn find_by_username(db: &DatabaseConnection, username: &str) -> Option<User> {
     let user_entity = users::Entity::find()

@@ -1,11 +1,9 @@
 use actix_web::{HttpRequest, HttpResponse, Responder, Scope, get, web};
 use serde::Deserialize;
 
-use chrono::Utc;
-
-use crate::model::{
-    common::{AppState, ErrorResult, Page},
-    config::ConfigInfo,
+use crate::{
+    api::model::Page,
+    model::{common::AppState, config::ConfigInfo},
 };
 
 #[derive(Debug, Deserialize)]

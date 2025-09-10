@@ -1,12 +1,15 @@
 use actix_web::{HttpResponse, Responder, Scope, get, web};
 use serde::Deserialize;
 
-use crate::{model::common::AppState, service};
+use crate::{
+    api::{config::model::ConfigHistoryBasicInfo, model::Page},
+    model::{self, common::AppState},
+    service,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchParam {
-    search: Option<String>,
     data_id: Option<String>,
     group: Option<String>,
     tenant: Option<String>,
@@ -22,26 +25,31 @@ struct GetDataIdsParam {
     tenant: String,
 }
 
-#[get("")]
+#[get("list")]
 async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
-    if params.search.is_some() && params.search.as_ref().unwrap() == "accurate" {
-        let result = service::history::search_page(
-            &data.database_connection,
-            params.data_id.clone().unwrap_or_default().as_str(),
-            params.group.clone().unwrap_or_default().as_str(),
-            params.tenant.clone().unwrap_or_default().as_str(),
-            params.page_no.unwrap_or(1),
-            params.page_size.unwrap_or(100),
-        )
-        .await;
+    let result = service::history::search_page(
+        &data.database_connection,
+        params.data_id.clone().unwrap_or_default().as_str(),
+        params.group.clone().unwrap_or_default().as_str(),
+        params.tenant.clone().unwrap_or_default().as_str(),
+        params.page_no.unwrap_or(1),
+        params.page_size.unwrap_or(100),
+    )
+    .await
+    .unwrap();
 
-        return HttpResponse::Ok().json(result.ok().unwrap());
-    } else {
-        let result =
-            service::history::get_by_id(&data.database_connection, params.nid.unwrap()).await;
+    let page_result = Page::<ConfigHistoryBasicInfo>::new(
+        result.total_count,
+        result.page_number,
+        result.pages_available,
+        result
+            .page_items
+            .into_iter()
+            .map(ConfigHistoryBasicInfo::from)
+            .collect(),
+    );
 
-        return HttpResponse::Ok().json(result.ok().unwrap());
-    }
+    model::common::Result::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
 }
 
 #[get("configs")]
