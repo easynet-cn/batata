@@ -14,13 +14,12 @@ use crate::{
         config::model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigListenerInfo},
         model::Page,
     },
-    config::model::{ConfigAllInfo, ConfigForm},
+    auth::model::AuthContext,
+    config::model::{ConfigAllInfo, ConfigForm, ConfigType},
     error, is_valid,
     model::{
         self,
-        auth::AuthContext,
         common::{AppState, DEFAULT_NAMESPACE_ID, ErrorResult},
-        config::ConfigType,
     },
     secured, service,
 };

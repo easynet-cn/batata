@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
+    auth::model::ONLY_IDENTITY,
     error::{self, BatataError},
     model::{
         self,
@@ -90,7 +91,7 @@ async fn find_all(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
             .action(ActionTypes::Read)
             .sign_type(SignType::Console)
             .api_type(ApiType::ConsoleApi)
-            .tags(vec![model::auth::ONLY_IDENTITY.to_string()])
+            .tags(vec![ONLY_IDENTITY.to_string()])
             .build()
     );
 
@@ -258,7 +259,7 @@ async fn exist(
             .action(ActionTypes::Read)
             .sign_type(SignType::Console)
             .api_type(ApiType::ConsoleApi)
-            .tags(vec![model::auth::ONLY_IDENTITY.to_string()])
+            .tags(vec![ONLY_IDENTITY.to_string()])
             .build()
     );
 

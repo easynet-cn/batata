@@ -1,9 +1,13 @@
-use actix_web::{HttpResponse, Responder, Scope, post, web};
+use actix_web::{HttpResponse, Responder, post, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    model::{self, common::AppState},
-    service::{self, auth::encode_jwt_token},
+    auth::{
+        self,
+        model::{AUTHORIZATION_HEADER, TOKEN_PREFIX, USER_NOT_FOUND_MESSAGE},
+        service::auth::encode_jwt_token,
+    },
+    model::common::AppState,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -47,13 +51,14 @@ async fn login(
     }
 
     if username.is_empty() || password.is_empty() {
-        return HttpResponse::Forbidden().body(model::auth::USER_NOT_FOUND_MESSAGE);
+        return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
-    let user_option = service::user::find_by_username(&data.database_connection, &username).await;
+    let user_option =
+        auth::service::user::find_by_username(&data.database_connection, &username).await;
 
     if user_option.is_none() {
-        return HttpResponse::Forbidden().body(model::auth::USER_NOT_FOUND_MESSAGE);
+        return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
     let token_secret_key = data.configuration.token_secret_key();
@@ -67,7 +72,7 @@ async fn login(
         let access_token =
             encode_jwt_token(&username, token_secret_key.as_str(), token_expire_seconds).unwrap();
 
-        let global_admin = service::role::has_global_admin_role_by_username(
+        let global_admin = auth::service::role::has_global_admin_role_by_username(
             &data.database_connection,
             &user.username,
         )
@@ -84,29 +89,11 @@ async fn login(
 
         return HttpResponse::Ok()
             .append_header((
-                model::auth::AUTHORIZATION_HEADER,
-                format!("{}{}", model::auth::TOKEN_PREFIX, access_token),
+                AUTHORIZATION_HEADER,
+                format!("{}{}", TOKEN_PREFIX, access_token),
             ))
             .json(login_result);
     }
 
     return HttpResponse::Forbidden().body("USER_NOT_FOUND_MESSAGE");
-}
-
-pub fn routes() -> Scope {
-    return web::scope("/auth")
-        .service(login)
-        .service(super::user::search_page)
-        .service(super::user::search)
-        .service(super::user::update)
-        .service(super::user::create)
-        .service(super::user::delete)
-        .service(super::role::search_page)
-        .service(super::role::create)
-        .service(super::role::delete)
-        .service(super::role::search)
-        .service(super::permission::exist)
-        .service(super::permission::search_page)
-        .service(super::permission::create)
-        .service(super::permission::delete);
 }

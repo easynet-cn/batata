@@ -2,14 +2,11 @@ use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, 
 use serde::Deserialize;
 
 use crate::api::model::Page;
+use crate::auth::model::{GLOBAL_ADMIN_ROLE, ONLY_IDENTITY, UPDATE_PASSWORD_ENTRY_POINT, User};
 use crate::error::BatataError;
-use crate::model::auth::User;
-use crate::{ActionTypes, Secured, model, service};
+use crate::{ActionTypes, Secured, auth, model, service};
 use crate::{
-    model::{
-        auth::GLOBAL_ADMIN_ROLE,
-        common::{self, AppState},
-    },
+    model::common::{self, AppState},
     secured,
 };
 
@@ -57,7 +54,7 @@ async fn search_page(
         username = username.strip_suffix("*").unwrap().to_string();
     }
 
-    let result = service::user::search_page(
+    let result = auth::service::user::search_page(
         &data.database_connection,
         &username,
         params.page_no,
@@ -82,7 +79,7 @@ async fn search(
             .build()
     );
 
-    let result = service::user::search(&data.database_connection, &params.username)
+    let result = auth::service::user::search(&data.database_connection, &params.username)
         .await
         .unwrap();
 
@@ -107,7 +104,8 @@ async fn create(
         );
     }
 
-    let user = service::user::find_by_username(&data.database_connection, &params.username).await;
+    let user =
+        auth::service::user::find_by_username(&data.database_connection, &params.username).await;
 
     if user.is_some() {
         return model::common::ConsoleExecption::handle_illegal_argument_exectpion(format!(
@@ -119,7 +117,7 @@ async fn create(
     let password = bcrypt::hash(params.password.clone(), 10u32).ok().unwrap();
 
     let result =
-        service::user::create(&data.database_connection, &params.username, &password).await;
+        auth::service::user::create(&data.database_connection, &params.username, &password).await;
 
     match result {
         Ok(()) => model::common::Result::<String>::http_success("create user ok!"),
@@ -140,13 +138,13 @@ async fn update(
         Secured::builder(&req, &data, "console/user/password")
             .action(ActionTypes::Write)
             .tags(vec![
-                model::auth::ONLY_IDENTITY.to_string(),
-                model::auth::UPDATE_PASSWORD_ENTRY_POINT.to_string()
+                ONLY_IDENTITY.to_string(),
+                UPDATE_PASSWORD_ENTRY_POINT.to_string()
             ])
             .build()
     );
 
-    let result = service::user::update(
+    let result = auth::service::user::update(
         &data.database_connection,
         &params.username,
         &params.new_password,
@@ -182,12 +180,13 @@ async fn delete(
             .build()
     );
 
-    let global_admin = service::role::find_by_username(&data.database_connection, &params.username)
-        .await
-        .ok()
-        .unwrap()
-        .iter()
-        .any(|role| role.role == GLOBAL_ADMIN_ROLE);
+    let global_admin =
+        auth::service::role::find_by_username(&data.database_connection, &params.username)
+            .await
+            .ok()
+            .unwrap()
+            .iter()
+            .any(|role| role.role == GLOBAL_ADMIN_ROLE);
 
     if global_admin {
         return HttpResponse::BadRequest().json(common::Result::<String> {
@@ -197,7 +196,7 @@ async fn delete(
         });
     }
 
-    let result = service::user::delete(&data.database_connection, &params.username).await;
+    let result = auth::service::user::delete(&data.database_connection, &params.username).await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("delete user ok!"),

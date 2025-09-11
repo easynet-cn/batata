@@ -11,7 +11,8 @@ use actix_web::{
 use futures::future::LocalBoxFuture;
 
 use crate::{
-    model::{auth::AuthContext, common::AppState},
+    auth::{self, model::AuthContext},
+    model::common::AppState,
     service,
 };
 
@@ -72,7 +73,7 @@ where
                         .token_secret_key()
                         .clone();
 
-                    let decode_result = service::auth::decode_jwt_token(token, &secret_key);
+                    let decode_result = auth::service::auth::decode_jwt_token(token, &secret_key);
 
                     match decode_result {
                         Ok(token_data) => {

@@ -1,6 +1,6 @@
 use sea_orm::*;
 
-use crate::{api::model::Page, entity::permissions, model::auth::PermissionInfo};
+use crate::{api::model::Page, auth::model::PermissionInfo, entity::permissions};
 
 pub async fn find_by_id(
     db: &DatabaseConnection,

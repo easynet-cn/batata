@@ -1,7 +1,7 @@
 use chrono;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 
-use crate::model::auth::NacosJwtPayload;
+use crate::auth::model::NacosJwtPayload;
 
 pub fn decode_jwt_token(
     token: &str,

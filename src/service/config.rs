@@ -8,7 +8,6 @@ use crate::{
     api::{config::model::ConfigBasicInfo, model::Page},
     config::model::{ConfigAllInfo, ConfigInfoGrayWrapper},
     entity::{config_info, config_info_gray, config_tags_relation, his_config_info},
-    model::config::ConfigInfoStateWrapper,
 };
 
 pub async fn find_one(
@@ -199,31 +198,6 @@ pub async fn find_all(
         .unwrap();
 
     Ok(config_all_info)
-}
-
-pub async fn find_state(
-    db: &DatabaseConnection,
-    data_id: &str,
-    group: &str,
-    tenant: &str,
-) -> anyhow::Result<Option<ConfigInfoStateWrapper>> {
-    let result = config_info::Entity::find()
-        .select_only()
-        .columns([
-            config_info::Column::Id,
-            config_info::Column::DataId,
-            config_info::Column::GroupId,
-            config_info::Column::TenantId,
-            config_info::Column::GmtModified,
-        ])
-        .filter(config_info::Column::DataId.eq(data_id))
-        .filter(config_info::Column::GroupId.eq(group))
-        .filter(config_info::Column::TenantId.eq(tenant))
-        .one(db)
-        .await?
-        .map(|entity| ConfigInfoStateWrapper::from(entity.clone()));
-
-    Ok(result)
 }
 
 pub async fn create_or_update(

@@ -6,6 +6,8 @@ use config::{Config, Environment};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use serde::{Deserialize, Serialize};
 
+use crate::auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
+
 // Common constants.
 pub const CLIENT_VERSION: &str = "3.0.0";
 pub const DATA_IN_BODY_VERSION: i32 = 204;
@@ -834,8 +836,8 @@ impl Configuration {
 
     pub fn auth_token_expire_seconds(&self) -> i64 {
         self.config
-            .get_int(super::auth::TOKEN_EXPIRE_SECONDS)
-            .unwrap_or(super::auth::DEFAULT_TOKEN_EXPIRE_SECONDS)
+            .get_int(TOKEN_EXPIRE_SECONDS)
+            .unwrap_or(DEFAULT_TOKEN_EXPIRE_SECONDS)
     }
 }
 

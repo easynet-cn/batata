@@ -4,11 +4,9 @@ use serde::Deserialize;
 use crate::{
     ActionTypes, Secured,
     api::model::Page,
+    auth::{self, model::RoleInfo},
     error::BatataError,
-    model::{
-        auth::RoleInfo,
-        common::{self, AppState},
-    },
+    model::common::{self, AppState},
     secured, service,
 };
 
@@ -73,7 +71,7 @@ async fn search_page(
         role = role.strip_suffix("*").unwrap().to_string();
     }
 
-    let result = service::role::search_page(
+    let result = auth::service::role::search_page(
         &data.database_connection,
         &username,
         &role,
@@ -99,7 +97,7 @@ async fn search(
             .build()
     );
 
-    let result = service::role::search(&data.database_connection, &params.role)
+    let result = auth::service::role::search(&data.database_connection, &params.role)
         .await
         .unwrap();
 
@@ -119,7 +117,8 @@ async fn create(
     );
 
     let result =
-        service::role::create(&data.database_connection, &params.role, &params.username).await;
+        auth::service::role::create(&data.database_connection, &params.role, &params.username)
+            .await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("add role ok!"),
@@ -151,7 +150,7 @@ pub async fn delete(
             .build()
     );
 
-    let result = service::role::delete(
+    let result = auth::service::role::delete(
         &data.database_connection,
         &params.role,
         &params.username.clone().unwrap_or_default(),

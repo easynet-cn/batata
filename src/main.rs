@@ -1,6 +1,6 @@
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 use batata::{
-    console,
+    auth, console,
     middleware::auth::Authentication,
     model::{self, common::AppState},
 };
@@ -87,7 +87,7 @@ pub fn console_server(
             .app_data(web::Data::new(app_state.clone()))
             .service(
                 web::scope(&context_path)
-                    .service(console::v2::route::routes())
+                    .service(auth::v3::route::routes())
                     .service(console::v3::route::routes()),
             )
     })
@@ -107,11 +107,7 @@ pub fn main_server(
             .wrap(Logger::default())
             .wrap(Authentication)
             .app_data(web::Data::new(app_state.clone()))
-            .service(
-                web::scope(&context_path)
-                    .service(console::v2::route::routes())
-                    .service(console::v3::route::routes()),
-            )
+            .service(web::scope(&context_path).service(console::v3::route::routes()))
     })
     .bind((address, port))
     .unwrap()

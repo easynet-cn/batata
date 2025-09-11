@@ -6,13 +6,16 @@ use std::{
 
 use actix_web::{HttpRequest, web};
 
-use crate::model::{
-    auth::Resource,
-    common::{AppState, DATA_ID, GROUP, TENANT},
-    naming::{GROUP_NAME, NAMESPACE_ID},
+use crate::{
+    auth::model::{ONLY_IDENTITY, Resource, UPDATE_PASSWORD_ENTRY_POINT},
+    model::{
+        common::{AppState, DATA_ID, GROUP, TENANT},
+        naming::{GROUP_NAME, NAMESPACE_ID},
+    },
 };
 
 pub mod api;
+pub mod auth;
 pub mod config;
 pub mod console;
 pub mod core;
@@ -208,13 +211,11 @@ impl<'a> Secured<'a> {
     }
 
     pub fn has_update_password_permission(&self) -> bool {
-        self.tags
-            .iter()
-            .any(|e| e == model::auth::UPDATE_PASSWORD_ENTRY_POINT)
+        self.tags.iter().any(|e| e == UPDATE_PASSWORD_ENTRY_POINT)
     }
 
     pub fn only_identity(&self) -> bool {
-        self.tags.iter().any(|e| e == model::auth::ONLY_IDENTITY)
+        self.tags.iter().any(|e| e == ONLY_IDENTITY)
     }
 }
 
@@ -290,7 +291,7 @@ macro_rules! secured {
         if let Some(auth_context) = $secured
             .req
             .extensions()
-            .get::<crate::model::auth::AuthContext>()
+            .get::<crate::auth::model::AuthContext>()
             .cloned()
         {
             if auth_context.jwt_error.is_some() {
@@ -302,7 +303,7 @@ macro_rules! secured {
             }
 
             if !$secured.only_identity() && !$secured.has_update_password_permission() {
-                let roles = service::role::find_by_username(
+                let roles = crate::auth::service::role::find_by_username(
                     &$secured.data.database_connection,
                     &auth_context.username,
                 )
@@ -320,12 +321,12 @@ macro_rules! secured {
 
                 let global_admin = roles
                     .iter()
-                    .any(|e| e.role == crate::model::auth::GLOBAL_ADMIN_ROLE);
+                    .any(|e| e.role == crate::auth::model::GLOBAL_ADMIN_ROLE);
 
                 if !global_admin {
                     if $secured
                         .resource
-                        .starts_with(crate::model::auth::CONSOLE_RESOURCE_NAME_PREFIX)
+                        .starts_with(crate::auth::model::CONSOLE_RESOURCE_NAME_PREFIX)
                     {
                         return crate::model::common::ErrorResult::http_response_forbidden(
                             actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
@@ -338,7 +339,7 @@ macro_rules! secured {
                         .iter()
                         .map(|e| e.role.to_string())
                         .collect::<Vec<String>>();
-                    let permissions = service::permission::find_by_roles(
+                    let permissions = crate::auth::service::permission::find_by_roles(
                         &$secured.data.database_connection,
                         role_names,
                     )
@@ -346,7 +347,7 @@ macro_rules! secured {
                     .ok()
                     .unwrap_or_default();
 
-                    let mut resource: crate::model::auth::Resource = $secured.into();
+                    let mut resource: crate::auth::model::Resource = $secured.into();
 
                     if $secured.sign_type == crate::SignType::Config {
                         resource = crate::ConfigHttpResourceParser::parse(&$secured.req, &$secured);

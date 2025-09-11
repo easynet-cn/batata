@@ -4,8 +4,8 @@ use actix_web::{Scope, get, web};
 use serde::Deserialize;
 
 use crate::{
+    auth,
     model::common::{self, AppState},
-    service,
 };
 
 pub const ANNOUNCEMENT_FILE: &str = "announcement.conf";
@@ -24,7 +24,7 @@ async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<St
 
     // auth module state
     let auth_enabled = data.configuration.auth_enabled();
-    let global_admin = service::role::has_global_admin_role(&data.database_connection)
+    let global_admin = auth::service::role::has_global_admin_role(&data.database_connection)
         .await
         .unwrap();
 

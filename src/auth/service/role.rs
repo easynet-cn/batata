@@ -2,12 +2,10 @@ use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
     api::model::Page,
+    auth::model::{GLOBAL_ADMIN_ROLE, RoleInfo},
     entity::{roles, users},
     error::BatataError,
-    model::{
-        self,
-        auth::{self, RoleInfo},
-    },
+    model::{self},
 };
 
 pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> {
@@ -115,10 +113,10 @@ pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyh
     if users::Entity::find_by_id(username).one(db).await?.is_none() {
         return Err(BatataError::IllegalArgument(format!("user '{}' not found!", username)).into());
     }
-    if auth::GLOBAL_ADMIN_ROLE == role {
+    if GLOBAL_ADMIN_ROLE == role {
         return Err(BatataError::IllegalArgument(format!(
             "role '{}' is not permitted to create!",
-            auth::GLOBAL_ADMIN_ROLE
+            GLOBAL_ADMIN_ROLE
         ))
         .into());
     }
@@ -145,10 +143,10 @@ pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyh
 }
 
 pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyhow::Result<()> {
-    if auth::GLOBAL_ADMIN_ROLE == role {
+    if GLOBAL_ADMIN_ROLE == role {
         return Err(BatataError::IllegalArgument(format!(
             "role '{}' is not permitted to delete!",
-            auth::GLOBAL_ADMIN_ROLE
+            GLOBAL_ADMIN_ROLE
         ))
         .into());
     }
@@ -156,7 +154,7 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
     if username.is_empty() {
         roles::Entity::delete_many()
             .filter(roles::Column::Role.eq(role))
-            .filter(roles::Column::Role.ne(auth::GLOBAL_ADMIN_ROLE))
+            .filter(roles::Column::Role.ne(GLOBAL_ADMIN_ROLE))
             .exec(db)
             .await?;
     } else {
@@ -172,7 +170,7 @@ pub async fn has_global_admin_role(db: &DatabaseConnection) -> anyhow::Result<bo
     let has = find_all(db)
         .await?
         .iter()
-        .any(|role| role.role == model::auth::GLOBAL_ADMIN_ROLE);
+        .any(|role| role.role == GLOBAL_ADMIN_ROLE);
 
     Ok(has)
 }
@@ -184,7 +182,7 @@ pub async fn has_global_admin_role_by_username(
     let has = find_by_username(db, username)
         .await?
         .iter()
-        .any(|role| role.role == model::auth::GLOBAL_ADMIN_ROLE);
+        .any(|role| role.role == GLOBAL_ADMIN_ROLE);
 
     Ok(has)
 }

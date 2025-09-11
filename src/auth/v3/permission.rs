@@ -4,10 +4,8 @@ use serde::Deserialize;
 use crate::{
     ActionTypes, Secured,
     api::model::Page,
-    model::{
-        auth::PermissionInfo,
-        common::{self, AppState},
-    },
+    auth::{self, model::PermissionInfo},
+    model::common::{self, AppState},
     secured, service,
 };
 
@@ -32,7 +30,7 @@ async fn exist(
             .build()
     );
 
-    let exist = service::permission::find_by_id(
+    let exist = auth::service::permission::find_by_id(
         &data.database_connection,
         &params.role,
         &params.resource,
@@ -67,7 +65,7 @@ async fn search_page(
         role = role.strip_suffix("*").unwrap().to_string();
     }
 
-    let result = service::permission::search_page(
+    let result = auth::service::permission::search_page(
         &data.database_connection,
         &role,
         params.page_no,
@@ -92,7 +90,7 @@ async fn create(
             .build()
     );
 
-    let result = service::permission::create(
+    let result = auth::service::permission::create(
         &data.database_connection,
         &params.role,
         &params.resource,
@@ -122,7 +120,7 @@ async fn delete(
             .build()
     );
 
-    let result = service::permission::delete(
+    let result = auth::service::permission::delete(
         &data.database_connection,
         &params.role,
         &params.resource,
