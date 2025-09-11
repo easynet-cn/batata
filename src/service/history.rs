@@ -2,9 +2,8 @@ use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
     api::model::Page,
-    config::model::ConfigHistoryInfo,
+    config::model::{ConfigHistoryInfo, ConfigInfoWrapper},
     entity::{config_info, his_config_info},
-    model::config::ConfigInfoWrapper,
 };
 
 pub async fn search_page(
@@ -80,7 +79,8 @@ pub async fn get_by_id(
 
     Ok(config_history_info)
 }
-pub async fn get_config_list_by_namespace(
+
+pub async fn find_configs_by_namespace_id(
     db: &DatabaseConnection,
     namespace_id: &str,
 ) -> anyhow::Result<Vec<ConfigInfoWrapper>> {
@@ -93,14 +93,12 @@ pub async fn get_config_list_by_namespace(
             config_info::Column::TenantId,
             config_info::Column::AppName,
             config_info::Column::Type,
-            config_info::Column::GmtModified,
         ])
         .filter(config_info::Column::TenantId.eq(namespace_id))
         .all(db)
-        .await
-        .unwrap()
+        .await?
         .iter()
-        .map(|entity| ConfigInfoWrapper::from(entity.clone()))
+        .map(ConfigInfoWrapper::from)
         .collect();
 
     Ok(config_infos)

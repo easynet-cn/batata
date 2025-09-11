@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::model::{ConfigAllInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper};
+use crate::config::model::{
+    ConfigAllInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
+};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +18,22 @@ pub struct ConfigBasicInfo {
     pub app_name: String,
     pub create_time: i64,
     pub modify_time: i64,
+}
+
+impl From<ConfigInfoWrapper> for ConfigBasicInfo {
+    fn from(value: ConfigInfoWrapper) -> Self {
+        Self {
+            id: value.id.unwrap_or_default() as i64,
+            namespace_id: value.namespace_id,
+            group_name: value.group_name,
+            data_id: value.data_id,
+            md5: value.md5.unwrap_or_default(),
+            r#type: value.r#type,
+            app_name: value.app_name,
+            create_time: value.create_time,
+            modify_time: value.modify_time,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

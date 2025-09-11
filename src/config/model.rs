@@ -161,8 +161,8 @@ impl ConfigListenerInfo {
     pub const QUERY_TYPE_IP: &str = "ip";
 }
 
-#[serde_as]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde_as]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryInfo {
     #[serde_as(as = "DisplayFromStr")]
@@ -229,6 +229,62 @@ impl From<&entity::his_config_info::Model> for ConfigHistoryInfo {
             created_time: value.gmt_create.and_utc().timestamp_millis(),
             last_modified_time: value.gmt_modified.and_utc().timestamp_millis(),
             encrypted_data_key: value.encrypted_data_key.to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde_as]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigInfoWrapper {
+    #[serde_as(as = "DisplayFromStr")]
+    pub id: Option<u64>,
+    pub namespace_id: String,
+    pub group_name: String,
+    pub data_id: String,
+    pub md5: Option<String>,
+    pub r#type: String,
+    pub app_name: String,
+    pub create_time: i64,
+    pub modify_time: i64,
+}
+
+impl From<entity::config_info::Model> for ConfigInfoWrapper {
+    fn from(value: entity::config_info::Model) -> Self {
+        Self {
+            id: Some(value.id as u64),
+            namespace_id: value.tenant_id.unwrap_or_default(),
+            group_name: value.group_id.unwrap_or_default(),
+            data_id: value.data_id,
+            md5: value.md5,
+            r#type: value.r#type.unwrap_or_default(),
+            app_name: value.app_name.unwrap_or_default(),
+            create_time: value
+                .gmt_create
+                .map_or(0, |e| e.and_utc().timestamp_millis()),
+            modify_time: value
+                .gmt_modified
+                .map_or(0, |e| e.and_utc().timestamp_millis()),
+        }
+    }
+}
+
+impl From<&entity::config_info::Model> for ConfigInfoWrapper {
+    fn from(value: &entity::config_info::Model) -> Self {
+        Self {
+            id: Some(value.id as u64),
+            namespace_id: value.tenant_id.clone().unwrap_or_default(),
+            group_name: value.group_id.clone().unwrap_or_default(),
+            data_id: value.data_id.to_string(),
+            md5: value.md5.clone(),
+            r#type: value.r#type.clone().unwrap_or_default(),
+            app_name: value.app_name.clone().unwrap_or_default(),
+            create_time: value
+                .gmt_create
+                .map_or(0, |e| e.and_utc().timestamp_millis()),
+            modify_time: value
+                .gmt_modified
+                .map_or(0, |e| e.and_utc().timestamp_millis()),
         }
     }
 }

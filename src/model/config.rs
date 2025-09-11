@@ -40,38 +40,6 @@ impl From<entity::config_info::Model> for ConfigInfo {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfigInfoWrapper {
-    pub id: i64,
-    pub data_id: String,
-    pub group: String,
-    pub content: String,
-    pub md5: String,
-    pub encrypted_data_key: String,
-    pub tenant: String,
-    pub app_name: String,
-    pub _type: String,
-    pub last_modified: i64,
-}
-
-impl From<entity::config_info::Model> for ConfigInfoWrapper {
-    fn from(value: entity::config_info::Model) -> Self {
-        Self {
-            id: value.id,
-            data_id: value.data_id,
-            group: value.group_id.unwrap_or_default(),
-            content: value.content.unwrap_or_default(),
-            md5: value.md5.unwrap_or_default(),
-            encrypted_data_key: value.encrypted_data_key.unwrap_or_default(),
-            tenant: value.tenant_id.clone().unwrap_or_default(),
-            app_name: value.app_name.clone().unwrap_or_default(),
-            _type: value.r#type.clone().unwrap_or_default(),
-            last_modified: value.gmt_modified.unwrap().and_utc().timestamp_millis(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ConfigInfoStateWrapper {
     pub id: i64,
     pub data_id: String,
