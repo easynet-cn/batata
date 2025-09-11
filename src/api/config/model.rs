@@ -161,6 +161,34 @@ pub struct ConfigHistoryDetailInfo {
     pub ext_info: String,
 }
 
+impl From<ConfigHistoryInfo> for ConfigHistoryDetailInfo {
+    fn from(value: ConfigHistoryInfo) -> Self {
+        Self {
+            config_history_basic_info: ConfigHistoryBasicInfo {
+                config_basic_info: ConfigBasicInfo {
+                    id: value.id as i64,
+                    namespace_id: value.tenant,
+                    group_name: value.group,
+                    data_id: value.data_id,
+                    md5: value.md5,
+                    r#type: String::default(),
+                    app_name: value.app_name,
+                    create_time: value.created_time,
+                    modify_time: value.last_modified_time,
+                },
+                src_ip: value.src_ip,
+                src_user: value.src_user,
+                op_type: value.op_type,
+                publish_type: value.publish_type,
+            },
+            content: value.content,
+            encrypted_data_key: value.encrypted_data_key,
+            gray_name: value.gray_name,
+            ext_info: value.ext_info,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigListenerInfo {

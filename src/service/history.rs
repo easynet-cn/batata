@@ -51,33 +51,14 @@ pub async fn search_page(
     Ok(Page::<ConfigHistoryInfo>::default())
 }
 
-pub async fn get_by_id(
+pub async fn find_by_id(
     db: &DatabaseConnection,
     id: u64,
 ) -> anyhow::Result<Option<ConfigHistoryInfo>> {
-    let config_history_info = his_config_info::Entity::find_by_id(id)
-        .select_only()
-        .columns([
-            his_config_info::Column::Id,
-            his_config_info::Column::Nid,
-            his_config_info::Column::DataId,
-            his_config_info::Column::GroupId,
-            his_config_info::Column::TenantId,
-            his_config_info::Column::AppName,
-            his_config_info::Column::Content,
-            his_config_info::Column::Md5,
-            his_config_info::Column::SrcUser,
-            his_config_info::Column::SrcIp,
-            his_config_info::Column::OpType,
-            his_config_info::Column::GmtCreate,
-            his_config_info::Column::GmtModified,
-            his_config_info::Column::EncryptedDataKey,
-        ])
+    his_config_info::Entity::find_by_id(id)
         .one(db)
         .await?
-        .map(|entity| ConfigHistoryInfo::from(entity));
-
-    Ok(config_history_info)
+        .map_or(Ok(None), |e| Ok(Some(ConfigHistoryInfo::from(e))))
 }
 
 pub async fn find_configs_by_namespace_id(

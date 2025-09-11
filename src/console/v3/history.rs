@@ -1,17 +1,27 @@
-use actix_web::{HttpResponse, Responder, Scope, get, web};
+use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, web};
 use serde::Deserialize;
 
 use crate::{
+    ActionTypes, ApiType, Secured, SignType,
     api::{
-        config::model::{ConfigBasicInfo, ConfigHistoryBasicInfo},
+        config::model::{ConfigBasicInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo},
         model::Page,
     },
     model::{
         self,
         common::{AppState, DEFAULT_NAMESPACE_ID},
     },
-    service,
+    secured, service,
 };
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FindOneParam {
+    data_id: String,
+    group_name: String,
+    namespace_id: String,
+    nid: u64,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,8 +40,42 @@ struct FindConfigsbyNamespaceIdParam {
     namespace_id: String,
 }
 
+#[get("")]
+async fn find_one(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<FindOneParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let result = service::history::find_by_id(&data.database_connection, params.nid)
+        .await
+        .unwrap()
+        .map(ConfigHistoryDetailInfo::from);
+
+    model::common::Result::<Option<ConfigHistoryDetailInfo>>::http_success(result)
+}
+
 #[get("list")]
-async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> impl Responder {
+async fn search(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<SearchParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
     let data_id = &params.data_id;
     let group_name = &params.group_name;
     let mut namespace_id = params.tenant.clone().unwrap_or_default();
@@ -70,9 +114,18 @@ async fn search(data: web::Data<AppState>, params: web::Query<SearchParam>) -> i
 
 #[get("configs")]
 async fn find_configs_by_namespace_id(
+    req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<FindConfigsbyNamespaceIdParam>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
     let config_infos = service::history::find_configs_by_namespace_id(
         &data.database_connection,
         &params.namespace_id,
@@ -88,6 +141,7 @@ async fn find_configs_by_namespace_id(
 
 pub fn routes() -> Scope {
     web::scope("/cs/history")
+        .service(find_one)
         .service(search)
         .service(find_configs_by_namespace_id)
 }
