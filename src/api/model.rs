@@ -113,6 +113,17 @@ impl Member {
     pub const SUPPORT_REMOTE_C_TYPE: &str = "remoteConnectType";
     pub const READY_TO_UPGRADE: &str = "readyToUpgrade";
     pub const SUPPORT_GRAY_MODEL: &str = "supportGrayModel";
+
+    pub const TARGET_MEMBER_CONNECT_REFUSE_ERRMSG: &str = "Connection refused";
+    pub const SERVER_PORT_PROPERTY: &str = "nacos.server.main.port";
+    pub const DEFAULT_SERVER_PORT: u16 = 8848;
+    pub const DEFAULT_RAFT_OFFSET_PORT: u16 = 1000;
+    pub const MEMBER_FAIL_ACCESS_CNT_PROPERTY: &str = "nacos.core.member.fail-access-cnt";
+    pub const DEFAULT_MEMBER_FAIL_ACCESS_CNT: i16 = 3;
+
+    pub fn calculate_raft_port(&self) -> u16 {
+        self.port - Member::DEFAULT_RAFT_OFFSET_PORT
+    }
 }
 
 pub struct MemberBuilder {
@@ -124,26 +135,7 @@ pub struct MemberBuilder {
 
 impl MemberBuilder {
     pub fn new(ip: String, port: u16) -> Self {
-        let mut map: BTreeMap<String, Value> = BTreeMap::<String, serde_json::Value>::new();
-
-        map.insert(
-            String::from("site"),
-            serde_json::Value::String(
-                std::env::var("nacos.core.member.meta.site").unwrap_or(String::from("unknow")),
-            ),
-        );
-        map.insert(
-            String::from("adWeight"),
-            serde_json::Value::String(
-                std::env::var("nacos.core.member.meta.adWeight").unwrap_or(String::from("0")),
-            ),
-        );
-        map.insert(
-            String::from("weight"),
-            serde_json::Value::String(
-                std::env::var("nacos.core.member.meta.weight").unwrap_or(String::from("1")),
-            ),
-        );
+        let map: BTreeMap<String, Value> = BTreeMap::<String, serde_json::Value>::new();
 
         MemberBuilder {
             ip: ip,

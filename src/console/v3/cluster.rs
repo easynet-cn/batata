@@ -1,4 +1,5 @@
 use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, web};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
@@ -7,17 +8,36 @@ use crate::{
     secured,
 };
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetNodesParam {
+    pub keyword: Option<String>,
+}
+
 #[get("nodes")]
-async fn get_nodes(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
+async fn get_nodes(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<GetNodesParam>,
+) -> impl Responder {
     secured!(
-        Secured::builder(&req, &data, "")
+        Secured::builder(&req, &data, "/v3/core/cluster")
             .action(ActionTypes::Read)
             .sign_type(SignType::Config)
             .api_type(ApiType::ConsoleApi)
             .build()
     );
 
-    let members = data.server_member_manager.all_members();
+    let mut members = data.server_member_manager.all_members();
+
+    if let Some(keyword) = &params.keyword
+        && !keyword.is_empty()
+    {
+        members = members
+            .into_iter()
+            .filter(|e| e.address.contains(keyword))
+            .collect();
+    }
 
     model::common::Result::<Vec<Member>>::http_success(members)
 }

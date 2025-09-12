@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use serde_json::Value;
 
 use crate::{
     api::model::{Member, MemberBuilder},
@@ -24,6 +25,26 @@ impl ServerMemberManager {
 
         let server_list = Arc::new(DashMap::new());
         let mut member = MemberBuilder::new(ip, port).build();
+
+        member.extend_info.write().unwrap().insert(
+            Member::RAFT_PORT.to_string(),
+            Value::from(member.calculate_raft_port()),
+        );
+        member
+            .extend_info
+            .write()
+            .unwrap()
+            .insert(Member::READY_TO_UPGRADE.to_string(), Value::from(true));
+        member
+            .extend_info
+            .write()
+            .unwrap()
+            .insert(Member::VERSION.to_string(), Value::from(config.version()));
+        member
+            .extend_info
+            .write()
+            .unwrap()
+            .insert(Member::SUPPORT_GRAY_MODEL.to_string(), Value::from(true));
 
         server_list.insert(local_address.clone(), member.clone());
 
