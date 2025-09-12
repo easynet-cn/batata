@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 use batata::{
     auth, console,
+    core::service::cluster::ServerMemberManager,
     middleware::auth::Authentication,
     model::{self, common::AppState},
 };
@@ -27,9 +30,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_main_port = configuration.server_main_port();
     let server_context_path = configuration.server_context_path();
 
+    let server_member_manager = Arc::new(ServerMemberManager::new(&configuration));
+
     let app_state = AppState {
         configuration,
         database_connection,
+        server_member_manager: server_member_manager,
     };
 
     let server_app_state = app_state.clone();

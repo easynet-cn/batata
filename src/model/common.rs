@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use actix_web::{HttpResponse, HttpResponseBuilder, http::StatusCode};
 use clap::Parser;
@@ -6,7 +6,10 @@ use config::{Config, Environment};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use serde::{Deserialize, Serialize};
 
-use crate::auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
+use crate::{
+    auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS},
+    core::service::cluster::ServerMemberManager,
+};
 
 // Common constants.
 pub const CLIENT_VERSION: &str = "3.0.0";
@@ -841,10 +844,11 @@ impl Configuration {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AppState {
     pub configuration: Configuration,
     pub database_connection: DatabaseConnection,
+    pub server_member_manager: Arc<ServerMemberManager>,
 }
 
 impl AppState {

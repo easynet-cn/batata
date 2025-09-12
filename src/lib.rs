@@ -5,6 +5,7 @@ use std::{
 };
 
 use actix_web::{HttpRequest, web};
+use if_addrs::IfAddr;
 
 use crate::{
     auth::model::{ONLY_IDENTITY, Resource, UPDATE_PASSWORD_ENTRY_POINT},
@@ -269,6 +270,7 @@ impl<'a> SecuredBuilder<'a> {
 
     pub fn api_type(mut self, api_type: ApiType) -> Self {
         self.api_type = api_type;
+
         self
     }
 
@@ -501,4 +503,17 @@ pub fn is_valid(str: &str) -> bool {
     let regex = regex::Regex::new("^[a-zA-Z0-9_.:-]*$").unwrap();
 
     regex.is_match(str)
+}
+
+pub fn local_ip() -> String {
+    if_addrs::get_if_addrs()
+        .ok()
+        .unwrap()
+        .into_iter()
+        .find(|iface| !iface.is_loopback() && matches!(iface.addr, IfAddr::V4(_)))
+        .and_then(|iface| match iface.addr {
+            IfAddr::V4(addr) => Some(addr.ip.to_string()),
+            _ => Some("127.0.0.1".to_string()),
+        })
+        .unwrap()
 }
