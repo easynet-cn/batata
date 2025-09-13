@@ -7,23 +7,17 @@ use crate::auth::model::User;
 use crate::entity::users;
 use crate::error::BatataError;
 
-pub async fn find_by_username(db: &DatabaseConnection, username: &str) -> Option<User> {
-    let user_entity = users::Entity::find()
+pub async fn find_by_username(
+    db: &DatabaseConnection,
+    username: &str,
+) -> anyhow::Result<Option<User>> {
+    let user = users::Entity::find()
         .filter(users::Column::Username.eq(username))
         .one(db)
-        .await
-        .unwrap();
+        .await?
+        .map(User::from);
 
-    if user_entity.is_some() {
-        let user_entity = user_entity.unwrap();
-
-        Some(User {
-            username: user_entity.username,
-            password: user_entity.password,
-        })
-    } else {
-        None
-    }
+    Ok(user)
 }
 
 pub async fn search_page(
@@ -73,7 +67,7 @@ pub async fn search_page(
         ));
     }
 
-    return Ok(Page::<User>::default());
+    Ok(Page::<User>::default())
 }
 
 pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<Vec<String>> {
@@ -106,35 +100,27 @@ pub async fn update(
     username: &str,
     new_password: &str,
 ) -> anyhow::Result<()> {
-    let user_option = users::Entity::find_by_id(username).one(db).await?;
-
-    match user_option {
+    match users::Entity::find_by_id(username).one(db).await? {
         Some(entity) => {
             let mut user: users::ActiveModel = entity.into();
 
             user.password = Set(bcrypt::hash(new_password, 10u32).ok().unwrap());
 
             user.update(db).await?;
-        }
-        None => {
-            return Err(BatataError::UserNotExist(username.to_string()).into());
-        }
-    }
 
-    Ok(())
+            Ok(())
+        }
+        None => Err(BatataError::UserNotExist(username.to_string()).into()),
+    }
 }
 
 pub async fn delete(db: &DatabaseConnection, username: &str) -> anyhow::Result<()> {
-    let user_option = users::Entity::find_by_id(username).one(db).await?;
-
-    match user_option {
+    match users::Entity::find_by_id(username).one(db).await? {
         Some(entity) => {
             entity.delete(db).await?;
-        }
-        None => {
-            return Err(BatataError::UserNotExist(username.to_string()).into());
-        }
-    }
 
-    Ok(())
+            Ok(())
+        }
+        None => Err(BatataError::UserNotExist(username.to_string()).into()),
+    }
 }

@@ -5,11 +5,10 @@ use crate::{
     auth::model::{GLOBAL_ADMIN_ROLE, RoleInfo},
     entity::{roles, users},
     error::BatataError,
-    model::{self},
 };
 
 pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> {
-    let user_roles = roles::Entity::find()
+    let roles = roles::Entity::find()
         .all(db)
         .await
         .unwrap()
@@ -17,14 +16,14 @@ pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> 
         .map(RoleInfo::from)
         .collect();
 
-    Ok(user_roles)
+    Ok(roles)
 }
 
 pub async fn find_by_username(
     db: &DatabaseConnection,
     username: &str,
 ) -> anyhow::Result<Vec<RoleInfo>> {
-    let user_roles = roles::Entity::find()
+    let roles = roles::Entity::find()
         .filter(roles::Column::Username.eq(username))
         .all(db)
         .await
@@ -33,7 +32,7 @@ pub async fn find_by_username(
         .map(RoleInfo::from)
         .collect();
 
-    Ok(user_roles)
+    Ok(roles)
 }
 
 pub async fn search_page(
@@ -93,11 +92,11 @@ pub async fn search_page(
         ));
     }
 
-    return Ok(Page::<RoleInfo>::default());
+    Ok(Page::<RoleInfo>::default())
 }
 
 pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<String>> {
-    let users = roles::Entity::find()
+    let roles = roles::Entity::find()
         .column(roles::Column::Role)
         .filter(roles::Column::Role.contains(role))
         .all(db)
@@ -106,7 +105,7 @@ pub async fn search(db: &DatabaseConnection, role: &str) -> anyhow::Result<Vec<S
         .map(|role| role.role.to_string())
         .collect();
 
-    return Ok(users);
+    Ok(roles)
 }
 
 pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyhow::Result<()> {
@@ -167,22 +166,29 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
 }
 
 pub async fn has_global_admin_role(db: &DatabaseConnection) -> anyhow::Result<bool> {
-    let has = find_all(db)
-        .await?
-        .iter()
-        .any(|role| role.role == GLOBAL_ADMIN_ROLE);
+    let result = roles::Entity::find()
+        .select_only()
+        .column_as(Expr::cust("1"), "exists_flag")
+        .filter(roles::Column::Role.eq(GLOBAL_ADMIN_ROLE))
+        .into_tuple::<i32>()
+        .one(db)
+        .await?;
 
-    Ok(has)
+    Ok(result.is_some())
 }
 
 pub async fn has_global_admin_role_by_username(
     db: &DatabaseConnection,
     username: &str,
 ) -> anyhow::Result<bool> {
-    let has = find_by_username(db, username)
-        .await?
-        .iter()
-        .any(|role| role.role == GLOBAL_ADMIN_ROLE);
+    let result = roles::Entity::find()
+        .select_only()
+        .column_as(Expr::cust("1"), "exists_flag")
+        .filter(roles::Column::Username.eq(username))
+        .filter(roles::Column::Role.eq(GLOBAL_ADMIN_ROLE))
+        .into_tuple::<i32>()
+        .one(db)
+        .await?;
 
-    Ok(has)
+    Ok(result.is_some())
 }

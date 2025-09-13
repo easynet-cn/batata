@@ -68,17 +68,17 @@ pub async fn find_by_roles(
 ) -> anyhow::Result<Vec<PermissionInfo>> {
     if roles.is_empty() {
         return Ok(vec![]);
-    } else {
-        let permissions = permissions::Entity::find()
-            .filter(permissions::Column::Role.is_in(roles))
-            .all(db)
-            .await?
-            .iter()
-            .map(|entity| PermissionInfo::from(entity.clone()))
-            .collect();
-
-        return Ok(permissions);
     }
+
+    let permissions = permissions::Entity::find()
+        .filter(permissions::Column::Role.is_in(roles))
+        .all(db)
+        .await?
+        .iter()
+        .map(PermissionInfo::from)
+        .collect();
+
+    Ok(permissions)
 }
 
 pub async fn create(

@@ -54,8 +54,9 @@ async fn login(
         return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
-    let user_option =
-        auth::service::user::find_by_username(&data.database_connection, &username).await;
+    let user_option = auth::service::user::find_by_username(&data.database_connection, &username)
+        .await
+        .unwrap();
 
     if user_option.is_none() {
         return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);

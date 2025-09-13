@@ -104,8 +104,9 @@ async fn create(
         );
     }
 
-    let user =
-        auth::service::user::find_by_username(&data.database_connection, &params.username).await;
+    let user = auth::service::user::find_by_username(&data.database_connection, &params.username)
+        .await
+        .unwrap();
 
     if user.is_some() {
         return model::common::ConsoleExecption::handle_illegal_argument_exectpion(format!(
