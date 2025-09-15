@@ -22,6 +22,8 @@ pub mod console;
 pub mod core;
 pub mod entity;
 pub mod error;
+#[path = "grpc/_.rs"]
+pub mod grpc;
 pub mod middleware;
 pub mod model;
 pub mod service;

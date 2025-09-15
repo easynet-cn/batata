@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use actix_web::{
     HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, http::StatusCode, post,
     put, web,
@@ -9,7 +11,6 @@ use crate::{
     auth::model::ONLY_IDENTITY,
     error::{self, BatataError},
     model::{
-        self,
         common::{self, AppState},
         naming::Namespace,
     },
@@ -147,9 +148,7 @@ async fn create(
         );
     }
 
-    let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
-
-    if !regex.is_match(&namespace_name) {
+    if !namespace_name_check(&namespace_name) {
         return common::Result::<String>::http_response(
             StatusCode::NOT_FOUND.as_u16(),
             error::ILLEGAL_NAMESPACE.code,
@@ -201,9 +200,7 @@ async fn update(
         );
     }
 
-    let regex = regex::Regex::new(r"^[^@#$%^&*]+$").unwrap();
-
-    if !regex.is_match(&form.namespace_name) {
+    if !namespace_name_check(&form.namespace_name) {
         return common::Result::<String>::http_response(
             StatusCode::NOT_FOUND.as_u16(),
             error::ILLEGAL_NAMESPACE.code,
@@ -285,6 +282,13 @@ async fn exist(
             }
         }
     }
+}
+
+fn namespace_name_check(namespace_name: &str) -> bool {
+    static RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^[^@#$%^&*]+$").unwrap());
+
+    RE.is_match(namespace_name)
 }
 
 pub fn routes() -> Scope {

@@ -19,24 +19,32 @@ chrono = "0.4.42"
 clap = { version = "4.5.47", features = ["derive", "env"] }
 config = "0.15.15"
 dashmap = "6.1.0"
+env_logger = "0.11.8"
 futures = "0.3.31"
 htmlescape = "0.3.1"
 if-addrs = "0.14.0"
 jsonwebtoken = "9.3.1"
 md5 = "0.8.0"
 pin-project-lite = "0.2.16"
-regex = "1.11.1"
+prost = "0.14.1"
+prost-types = "0.14.1"
+regex = "1.11.2"
 sea-orm = { version = "1.1.16", features = ["sqlx-mysql", "runtime-tokio"] }
-serde = "1.0.219"
-serde_json = "1.0.143"
+serde = "1.0.223"
+serde_json = "1.0.145"
 serde_with = "3.14.0"
 sqlx = { version = "0.8.6", features = ["runtime-tokio"] }
 thiserror = "2.0.16"
 time = "0.3.43"
 tokio = { version = "1.47.1", features = ["full"] }
-tonic = "0.13.1"
+tokio-stream = "0.1.17"
+tonic = "0.14.2"
+tonic-prost = "0.14.2"
 tracing = { version = "0.1.41", features = ["log"] }
 tracing-bunyan-formatter = "0.3.10"
 tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3.19", features = ["registry", "env-filter"] }
 uuid = { version = "1.18.1", features = ["v4", "fast-rng", "macro-diagnostics"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14.2"
