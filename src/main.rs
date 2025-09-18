@@ -3,11 +3,18 @@ use std::sync::Arc;
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 use batata::{
     auth, console,
-    core::service::cluster::ServerMemberManager,
+    core::service::{cluster::ServerMemberManager, remote::context_interceptor},
+    grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
     middleware::auth::Authentication,
     model::{self, common::AppState},
+    service::{
+        handler::HealthCheckHandler,
+        rpc::{GrpcBiRequestStreamService, GrpcRequestService, HandlerRegistry},
+    },
 };
 
+use tonic::service::InterceptorLayer;
+use tower::ServiceBuilder;
 use tracing::{Subscriber, subscriber::set_global_default};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
@@ -29,6 +36,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let console_context_path = configuration.console_server_context_path();
     let server_main_port = configuration.server_main_port();
     let server_context_path = configuration.server_context_path();
+    let sdk_server_port = configuration.sdk_server_port();
+    let cluster_server_port = configuration.cluster_server_port();
 
     let server_member_manager = Arc::new(ServerMemberManager::new(&configuration));
 
@@ -39,6 +48,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let server_app_state = app_state.clone();
+
+    let layer = ServiceBuilder::new()
+        .load_shed()
+        .layer(InterceptorLayer::new(context_interceptor))
+        .into_inner();
+
+    let mut handler_registry = HandlerRegistry::new();
+
+    let health_check_handler = Arc::new(HealthCheckHandler {});
+
+    handler_registry.register_handler(health_check_handler);
+
+    let handler_registry_arc = Arc::new(handler_registry);
+
+    let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
+
+    let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;
+
+    let grpc_sdk_server = tonic::transport::Server::builder()
+        .layer(layer.clone())
+        .add_service(RequestServer::new(grpc_request_service))
+        .serve(grpc_sdk_addr);
+
+    tokio::spawn(grpc_sdk_server);
+
+    let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(handler_registry_arc);
+
+    let grpc_cluster_addr = format!("0.0.0.0:{}", cluster_server_port).parse()?;
+
+    let grpc_cluster_server = tonic::transport::Server::builder()
+        .layer(layer)
+        .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+        .serve(grpc_cluster_addr);
+
+    tokio::spawn(grpc_cluster_server);
 
     match depolyment_type.as_str() {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {

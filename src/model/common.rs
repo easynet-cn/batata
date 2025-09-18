@@ -7,6 +7,7 @@ use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    api::model::{CLUSTER_GRPC_PORT_DEFAULT_OFFSET, SDK_GRPC_PORT_DEFAULT_OFFSET},
     auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS},
     core::service::cluster::ServerMemberManager,
 };
@@ -47,8 +48,6 @@ pub const TOKEN_TTL: &str = "tokenTtl";
 pub const GLOBAL_ADMIN: &str = "globalAdmin";
 pub const USERNAME: &str = "username";
 pub const TOKEN_REFRESH_WINDOW: &str = "tokenRefreshWindow";
-pub const SDK_GRPC_PORT_DEFAULT_OFFSET: i32 = 1000;
-pub const CLUSTER_GRPC_PORT_DEFAULT_OFFSET: i32 = 1001;
 
 // second.
 pub const ASYNC_UPDATE_ADDRESS_INTERVAL: i32 = 300;
@@ -841,6 +840,14 @@ impl Configuration {
         self.config
             .get_int(TOKEN_EXPIRE_SECONDS)
             .unwrap_or(DEFAULT_TOKEN_EXPIRE_SECONDS)
+    }
+
+    pub fn sdk_server_port(&self) -> u16 {
+        self.server_main_port() + SDK_GRPC_PORT_DEFAULT_OFFSET
+    }
+
+    pub fn cluster_server_port(&self) -> u16 {
+        self.server_main_port() + CLUSTER_GRPC_PORT_DEFAULT_OFFSET
     }
 }
 

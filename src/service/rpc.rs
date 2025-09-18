@@ -65,6 +65,10 @@ impl GrpcRequestService {
             handler_registry: Arc::new(handler_registry),
         }
     }
+
+    pub fn from_arc(handler_registry: Arc<HandlerRegistry>) -> Self {
+        Self { handler_registry }
+    }
 }
 
 #[tonic::async_trait]
@@ -100,6 +104,9 @@ impl GrpcBiRequestStreamService {
         Self {
             handler_registry: Arc::new(handler_registry),
         }
+    }
+    pub fn from_arc(handler_registry: Arc<HandlerRegistry>) -> Self {
+        Self { handler_registry }
     }
 }
 
