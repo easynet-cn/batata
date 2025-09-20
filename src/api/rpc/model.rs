@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use derive_builder::Builder;
+use prost_types::Any;
 use serde::{Deserialize, Serialize};
+
+use crate::grpc::{Metadata, Payload};
 
 pub trait RequestTrait {
     fn headers(&self) -> HashMap<String, String>;
@@ -345,8 +348,11 @@ pub trait ResponseTrait {
 
     fn request_id(&mut self, request_id: String);
 
-    fn body(&self) -> String {
-        String::default()
+    fn body(&self) -> Vec<u8>
+    where
+        Self: Serialize,
+    {
+        serde_json::to_vec(self).unwrap_or_default()
     }
 
     fn error_code(&self) -> i32 {
@@ -357,6 +363,26 @@ pub trait ResponseTrait {
 
     fn message(&self) -> String {
         String::default()
+    }
+
+    fn into_any(&self) -> Any
+    where
+        Self: Serialize,
+    {
+        Any {
+            type_url: String::default(),
+            value: self.body(),
+        }
+    }
+
+    fn into_payload(&self, metadata: Option<Metadata>) -> Payload
+    where
+        Self: Serialize,
+    {
+        Payload {
+            metadata: metadata,
+            body: Some(self.into_any()),
+        }
     }
 }
 
@@ -384,8 +410,13 @@ impl ResponseCode {
 pub struct Response {
     #[builder(default = "ResponseCode::Success.code()")]
     pub result_code: i32,
+    #[builder(default)]
     pub error_code: i32,
+    #[builder(default = "true")]
+    pub success: bool,
+    #[builder(default)]
     pub message: String,
+    #[builder(default)]
     pub request_id: String,
 }
 
@@ -393,6 +424,7 @@ impl Response {
     pub fn new() -> Self {
         Self {
             result_code: ResponseCode::Success.code(),
+            success: true,
             ..Default::default()
         }
     }
@@ -405,10 +437,6 @@ impl Response {
 impl ResponseTrait for Response {
     fn request_id(&mut self, request_id: String) {
         self.request_id = request_id
-    }
-
-    fn body(&self) -> String {
-        serde_json::to_string(&self).unwrap_or_default()
     }
 
     fn error_code(&self) -> i32 {
@@ -424,10 +452,11 @@ impl ResponseTrait for Response {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Builder)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthCheckResponse {
     #[serde(flatten)]
+    #[builder(default)]
     pub respones: Response,
 }
 
@@ -436,5 +465,65 @@ impl HealthCheckResponse {
         Self {
             respones: Response::new(),
         }
+    }
+}
+
+impl ResponseTrait for HealthCheckResponse {
+    fn response_type(&self) -> String {
+        "HealthCheckResponse".to_string()
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.respones.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.respones.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.respones.result_code
+    }
+}
+
+impl Into<Any> for HealthCheckResponse {
+    fn into(self) -> Any {
+        self.into_any()
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, Builder)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerCheckResponse {
+    #[serde(flatten)]
+    #[builder(default)]
+    pub respones: Response,
+    #[builder(default)]
+    pub connection_id: String,
+    #[builder(default = "true")]
+    pub support_ability_negotiation: bool,
+}
+
+impl ResponseTrait for ServerCheckResponse {
+    fn response_type(&self) -> String {
+        "ServerCheckResponse".to_string()
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.respones.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.respones.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.respones.result_code
+    }
+}
+
+impl Into<Any> for ServerCheckResponse {
+    fn into(self) -> Any {
+        self.into_any()
     }
 }

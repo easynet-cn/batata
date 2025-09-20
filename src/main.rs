@@ -8,7 +8,7 @@ use batata::{
     middleware::auth::Authentication,
     model::{self, common::AppState},
     service::{
-        handler::HealthCheckHandler,
+        handler::{ConnectionSetupHandler, HealthCheckHandler, ServerCheckHanlder},
         rpc::{GrpcBiRequestStreamService, GrpcRequestService, HandlerRegistry},
     },
 };
@@ -57,28 +57,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handler_registry = HandlerRegistry::new();
 
     let health_check_handler = Arc::new(HealthCheckHandler {});
+    let server_check_hanlder = Arc::new(ServerCheckHanlder {});
+    let connection_setup_handler = Arc::new(ConnectionSetupHandler {});
 
     handler_registry.register_handler(health_check_handler);
+    handler_registry.register_handler(server_check_hanlder);
+    handler_registry.register_handler(connection_setup_handler);
 
     let handler_registry_arc = Arc::new(handler_registry);
 
     let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
+    let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(handler_registry_arc);
 
     let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;
 
     let grpc_sdk_server = tonic::transport::Server::builder()
         .layer(layer.clone())
-        .add_service(RequestServer::new(grpc_request_service))
+        .add_service(RequestServer::new(grpc_request_service.clone()))
+        .add_service(BiRequestStreamServer::new(
+            grpc_bi_request_stream_service.clone(),
+        ))
         .serve(grpc_sdk_addr);
 
     tokio::spawn(grpc_sdk_server);
-
-    let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(handler_registry_arc);
 
     let grpc_cluster_addr = format!("0.0.0.0:{}", cluster_server_port).parse()?;
 
     let grpc_cluster_server = tonic::transport::Server::builder()
         .layer(layer)
+        .add_service(RequestServer::new(grpc_request_service))
         .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
         .serve(grpc_cluster_addr);
 
@@ -157,7 +164,11 @@ pub fn main_server(
             .wrap(Logger::default())
             .wrap(Authentication)
             .app_data(web::Data::new(app_state.clone()))
-            .service(web::scope(&context_path).service(console::v3::route::routes()))
+            .service(
+                web::scope(&context_path)
+                    .service(auth::v1::route::routes())
+                    .service(console::v3::route::routes()),
+            )
     })
     .bind((address, port))
     .unwrap()

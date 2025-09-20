@@ -5,11 +5,14 @@ use tokio::sync::mpsc;
 use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
 
-use crate::grpc::{Payload, bi_request_stream_server::BiRequestStream};
+use crate::{
+    core::model::Connection,
+    grpc::{Payload, bi_request_stream_server::BiRequestStream},
+};
 
 #[tonic::async_trait]
 pub trait PayloadHandler: Send + Sync {
-    async fn handle(&self, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let message_type = payload.metadata.clone().unwrap_or_default().r#type;
 
         Err(Status::unimplemented(format!(
@@ -77,14 +80,19 @@ impl crate::grpc::request_server::Request for GrpcRequestService {
         &self,
         request: tonic::Request<Payload>,
     ) -> std::result::Result<tonic::Response<Payload>, tonic::Status> {
-        let payload = request.get_ref();
-
         if let Some(metadata) = &request.get_ref().metadata {
+            let connection = request
+                .extensions()
+                .get::<Connection>()
+                .cloned()
+                .unwrap_or_default();
+
             let message_type = &metadata.r#type;
+            let payload = request.get_ref();
 
             let handler = self.handler_registry.get_handler(message_type);
 
-            return match handler.handle(&payload).await {
+            return match handler.handle(&connection, &payload).await {
                 Ok(reponse_payload) => Ok(Response::new(reponse_payload)),
                 Err(err) => Err(err),
             };
@@ -119,7 +127,13 @@ impl BiRequestStream for GrpcBiRequestStreamService {
         &self,
         request: Request<Streaming<Payload>>,
     ) -> Result<Response<Self::requestBiStreamStream>, Status> {
+        let connection = request
+            .extensions()
+            .get::<Connection>()
+            .cloned()
+            .unwrap_or_default();
         let mut inbound_stream = request.into_inner();
+
         let (tx, rx) = mpsc::channel(128);
 
         let handler_registry = self.handler_registry.clone();
@@ -133,7 +147,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
                             let handler = handler_registry.get_handler(message_type);
 
-                            match handler.handle(&payload).await {
+                            match handler.handle(&connection, &payload).await {
                                 Ok(response_payload) => {
                                     if let Err(e) = tx.send(Ok(response_payload)).await {
                                         tracing::error!("Failed to send response: {}", e);
