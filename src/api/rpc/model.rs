@@ -341,6 +341,15 @@ impl RequestTrait for ConnectionSetupRequest {
     }
 }
 
+impl From<&Payload> for ConnectionSetupRequest {
+    fn from(value: &Payload) -> Self {
+        serde_json::from_slice::<ConnectionSetupRequest>(
+            &value.body.clone().unwrap_or_default().value.to_vec(),
+        )
+        .unwrap_or_default()
+    }
+}
+
 pub trait ResponseTrait {
     fn response_type(&self) -> String {
         String::default()

@@ -3,6 +3,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use derive_builder::Builder;
+use tokio::sync::mpsc::Sender;
+use tonic::Status;
+
+use crate::grpc::Payload;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,5 +111,16 @@ pub struct Connection {
 impl Connection {
     pub fn builder() -> ConnectionBuilder {
         ConnectionBuilder::default()
+    }
+}
+
+pub struct GrpcClient {
+    pub connection: Connection,
+    pub tx: Sender<Result<Payload, Status>>,
+}
+
+impl GrpcClient {
+    pub fn new(connection: Connection, tx: Sender<Result<Payload, Status>>) -> Self {
+        Self { connection, tx }
     }
 }

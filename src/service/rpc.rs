@@ -6,7 +6,11 @@ use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::{
-    core::model::Connection,
+    api::{model::APPNAME, rpc::model::ConnectionSetupRequest},
+    core::{
+        model::{Connection, GrpcClient},
+        service::remote::ConnectionManager,
+    },
     grpc::{Payload, bi_request_stream_server::BiRequestStream},
 };
 
@@ -105,16 +109,24 @@ impl crate::grpc::request_server::Request for GrpcRequestService {
 #[derive(Clone)]
 pub struct GrpcBiRequestStreamService {
     handler_registry: Arc<HandlerRegistry>,
+    connection_manager: Arc<ConnectionManager>,
 }
 
 impl GrpcBiRequestStreamService {
-    pub fn new(handler_registry: HandlerRegistry) -> Self {
+    pub fn new(handler_registry: HandlerRegistry, connection_manager: ConnectionManager) -> Self {
         Self {
             handler_registry: Arc::new(handler_registry),
+            connection_manager: Arc::new(connection_manager),
         }
     }
-    pub fn from_arc(handler_registry: Arc<HandlerRegistry>) -> Self {
-        Self { handler_registry }
+    pub fn from_arc(
+        handler_registry: Arc<HandlerRegistry>,
+        connection_manager: Arc<ConnectionManager>,
+    ) -> Self {
+        Self {
+            handler_registry,
+            connection_manager,
+        }
     }
 }
 
@@ -125,18 +137,20 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
     async fn request_bi_stream(
         &self,
-        request: Request<Streaming<Payload>>,
+        mut request: Request<Streaming<Payload>>,
     ) -> Result<Response<Self::requestBiStreamStream>, Status> {
         let connection = request
             .extensions()
             .get::<Connection>()
             .cloned()
             .unwrap_or_default();
+        let connection_id = connection.meta_info.connection_id.clone();
         let mut inbound_stream = request.into_inner();
 
         let (tx, rx) = mpsc::channel(128);
 
         let handler_registry = self.handler_registry.clone();
+        let connection_manager = self.connection_manager.clone();
 
         tokio::spawn(async move {
             while let Some(message) = inbound_stream.next().await {
@@ -144,6 +158,27 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                     Ok(payload) => {
                         if let Some(metadata) = &payload.metadata {
                             let message_type = &metadata.r#type;
+
+                            if message_type == "ConnectionSetupRequest" {
+                                let request = ConnectionSetupRequest::from(&payload);
+
+                                let mut con = connection.clone();
+
+                                con.meta_info.client_ip = metadata.client_ip.clone();
+                                con.meta_info.version = request.client_version;
+                                con.meta_info.labels = request.labels.clone();
+                                con.meta_info.app_name = con
+                                    .meta_info
+                                    .labels
+                                    .get(APPNAME)
+                                    .map_or("-".to_string(), |e| e.to_string());
+
+                                let connection_id = con.meta_info.connection_id.clone();
+
+                                let client = GrpcClient::new(con.clone(), tx.clone());
+
+                                connection_manager.register(&connection_id, client);
+                            }
 
                             let handler = handler_registry.get_handler(message_type);
 
@@ -177,6 +212,8 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                 }
             }
         });
+
+        self.connection_manager.unregister(&connection_id);
 
         let output_stream = ReceiverStream::new(rx);
 

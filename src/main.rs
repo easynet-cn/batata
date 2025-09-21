@@ -3,7 +3,10 @@ use std::sync::Arc;
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 use batata::{
     auth, console,
-    core::service::{cluster::ServerMemberManager, remote::context_interceptor},
+    core::service::{
+        cluster::ServerMemberManager,
+        remote::{ConnectionManager, context_interceptor},
+    },
     grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
     middleware::auth::Authentication,
     model::{self, common::AppState},
@@ -67,7 +70,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handler_registry_arc = Arc::new(handler_registry);
 
     let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
-    let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(handler_registry_arc);
+    let connection_manager = Arc::new(ConnectionManager::new());
+    let grpc_bi_request_stream_service =
+        GrpcBiRequestStreamService::from_arc(handler_registry_arc, connection_manager);
 
     let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;
 
