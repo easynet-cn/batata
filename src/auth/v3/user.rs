@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::api::model::Page;
 use crate::auth::model::{GLOBAL_ADMIN_ROLE, ONLY_IDENTITY, UPDATE_PASSWORD_ENTRY_POINT, User};
 use crate::error::BatataError;
-use crate::{ActionTypes, Secured, auth, model, service};
+use crate::{ActionTypes, Secured, auth, model};
 use crate::{
     model::common::{self, AppState},
     secured,

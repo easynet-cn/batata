@@ -19,7 +19,6 @@ chrono = "0.4.42"
 clap = { version = "4.5.48", features = ["derive", "env"] }
 config = "0.15.16"
 dashmap = "6.1.0"
-derive_builder = "0.20.2"
 env_logger = "0.11.8"
 futures = "0.3.31"
 htmlescape = "0.3.1"

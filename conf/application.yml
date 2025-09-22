@@ -291,9 +291,5 @@ nacos.k8s.sync.enabled: false
 #nacos.k8s.sync.outsideCluster=false
 #nacos.k8s.sync.kubeConfig=/.kube/config
 
-#*************** Deployment Type Configuration ***************#
-
-### Sets the deployment type: 'merged' for joint deployment, 'server' for separate deployment server only, 'console' for separate deployment console only.
-nacos.deployment.type: merged
 nacos.standalone: true
-nacos.version: 3.0.2
+nacos.version: 3.1.0

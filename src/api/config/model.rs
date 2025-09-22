@@ -1,10 +1,28 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::config::model::{
-    ConfigAllInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
+use crate::{
+    api::{
+        model::CONFIG_MODULE,
+        remote::model::{Request, RequestTrait},
+    },
+    config::model::{ConfigAllInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper},
 };
+
+fn serialize_config_module<S>(_: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(CONFIG_MODULE)
+}
+
+fn deserialize_config_module<'de, D>(_: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(CONFIG_MODULE.to_string())
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -230,4 +248,59 @@ impl Default for SameConfigPolicy {
     fn default() -> Self {
         SameConfigPolicy::Abort
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    #[serde(
+        serialize_with = "serialize_config_module",
+        deserialize_with = "deserialize_config_module"
+    )]
+    module: String,
+}
+
+impl ConfigRequest {
+    pub fn new() -> Self {
+        Self {
+            request: Request::new(),
+            ..Default::default()
+        }
+    }
+}
+
+impl RequestTrait for ConfigRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.request.headers()
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.request.request_id.clone()
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigBatchListenRequest {
+    pub config_request: ConfigRequest,
+    pub listen: bool,
+    pub config_listen_contexts: Vec<ConfigListenContext>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigListenContext {
+    pub group: String,
+    pub md5: String,
+    pub data_id: String,
+    pub tenant: String,
 }

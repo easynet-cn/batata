@@ -1,8 +1,7 @@
-use prost_types::Any;
-use tonic::{Request, Status};
+use tonic::Status;
 
 use crate::{
-    api::rpc::model::{HealthCheckResponse, Response, ResponseTrait, ServerCheckResponse},
+    api::remote::model::{HealthCheckResponse, Response, ResponseTrait, ServerCheckResponse},
     core::model::Connection,
     grpc::{Metadata, Payload},
     service::rpc::PayloadHandler,
@@ -15,11 +14,11 @@ pub struct HealthCheckHandler {}
 impl PayloadHandler for HealthCheckHandler {
     async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let response = HealthCheckResponse {
-            respones: Response::new(),
+            response: Response::new(),
         };
 
         let metadata = Metadata {
-            r#type: response.response_type(),
+            r#type: response.response_type().to_string(),
             ..Default::default()
         };
 
@@ -28,8 +27,8 @@ impl PayloadHandler for HealthCheckHandler {
         Ok(response_payload)
     }
 
-    fn can_handle(&self) -> String {
-        "HealthCheckRequest".to_string()
+    fn can_handle(&self) -> &'static str {
+        "HealthCheckRequest"
     }
 }
 
@@ -40,13 +39,13 @@ pub struct ServerCheckHanlder {}
 impl PayloadHandler for ServerCheckHanlder {
     async fn handle(&self, connection: &Connection, _: &Payload) -> Result<Payload, Status> {
         let response = ServerCheckResponse {
-            respones: Response::new(),
+            response: Response::new(),
             connection_id: connection.meta_info.connection_id.clone(),
             ..Default::default()
         };
 
         let metadata = Metadata {
-            r#type: response.response_type(),
+            r#type: response.response_type().to_string(),
             ..Default::default()
         };
 
@@ -55,8 +54,8 @@ impl PayloadHandler for ServerCheckHanlder {
         Ok(response_payload)
     }
 
-    fn can_handle(&self) -> String {
-        "ServerCheckRequest".to_string()
+    fn can_handle(&self) -> &'static str {
+        "ServerCheckRequest"
     }
 }
 
@@ -84,7 +83,7 @@ impl PayloadHandler for ConnectionSetupHandler {
         Ok(payload.clone())
     }
 
-    fn can_handle(&self) -> String {
-        "ConnectionSetupRequest".to_string()
+    fn can_handle(&self) -> &'static str {
+        "ConnectionSetupRequest"
     }
 }

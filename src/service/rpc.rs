@@ -6,7 +6,7 @@ use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::{
-    api::{model::APPNAME, rpc::model::ConnectionSetupRequest},
+    api::{model::APPNAME, remote::model::ConnectionSetupRequest},
     core::{
         model::{Connection, GrpcClient},
         service::remote::ConnectionManager,
@@ -25,8 +25,8 @@ pub trait PayloadHandler: Send + Sync {
         )))
     }
 
-    fn can_handle(&self) -> String {
-        String::default()
+    fn can_handle(&self) -> &'static str {
+        ""
     }
 }
 
@@ -57,7 +57,8 @@ impl HandlerRegistry {
     }
 
     pub fn register_handler(&mut self, handler: Arc<dyn PayloadHandler>) {
-        self.handlers.insert(handler.can_handle(), handler);
+        self.handlers
+            .insert(handler.can_handle().to_string(), handler);
     }
 }
 
@@ -137,7 +138,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
     async fn request_bi_stream(
         &self,
-        mut request: Request<Streaming<Payload>>,
+        request: Request<Streaming<Payload>>,
     ) -> Result<Response<Self::requestBiStreamStream>, Status> {
         let connection = request
             .extensions()
@@ -172,6 +173,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     .labels
                                     .get(APPNAME)
                                     .map_or("-".to_string(), |e| e.to_string());
+                                con.meta_info.namespace_id = request.tenant;
 
                                 let connection_id = con.meta_info.connection_id.clone();
 

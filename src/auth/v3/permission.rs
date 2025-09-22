@@ -6,7 +6,7 @@ use crate::{
     api::model::Page,
     auth::{self, model::PermissionInfo},
     model::common::{self, AppState},
-    secured, service,
+    secured,
 };
 
 #[derive(Debug, Deserialize)]

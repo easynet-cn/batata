@@ -7,7 +7,7 @@ use crate::{
     auth::{self, model::RoleInfo},
     error::BatataError,
     model::common::{self, AppState},
-    secured, service,
+    secured,
 };
 
 #[derive(Debug, Deserialize)]
