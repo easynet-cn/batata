@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 use batata::{
+    api::grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
     auth, console,
     core::service::{
         cluster::ServerMemberManager,
         remote::{ConnectionManager, context_interceptor},
     },
-    grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
     middleware::auth::Authentication,
     model::{self, common::AppState},
     service::{

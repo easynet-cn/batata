@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tonic::Status;
 
-use crate::grpc::Payload;
+use crate::api::grpc::Payload;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

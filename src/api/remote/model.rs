@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use prost_types::Any;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{
-    api::model::INTERNAL_MODULE,
+use crate::api::{
     grpc::{Metadata, Payload},
+    model::INTERNAL_MODULE,
 };
 
 fn serialize_internal_module<S>(_: &str, serializer: S) -> Result<S::Ok, S::Error>

@@ -1,9 +1,11 @@
 use tonic::Status;
 
 use crate::{
-    api::remote::model::{HealthCheckResponse, Response, ResponseTrait, ServerCheckResponse},
+    api::{
+        grpc::{Metadata, Payload},
+        remote::model::{HealthCheckResponse, Response, ResponseTrait, ServerCheckResponse},
+    },
     core::model::Connection,
-    grpc::{Metadata, Payload},
     service::rpc::PayloadHandler,
 };
 

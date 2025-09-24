@@ -6,12 +6,15 @@ use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::{
-    api::{model::APPNAME, remote::model::ConnectionSetupRequest},
+    api::{
+        grpc::{Payload, bi_request_stream_server::BiRequestStream},
+        model::APPNAME,
+        remote::model::ConnectionSetupRequest,
+    },
     core::{
         model::{Connection, GrpcClient},
         service::remote::ConnectionManager,
     },
-    grpc::{Payload, bi_request_stream_server::BiRequestStream},
 };
 
 #[tonic::async_trait]
@@ -80,7 +83,7 @@ impl GrpcRequestService {
 }
 
 #[tonic::async_trait]
-impl crate::grpc::request_server::Request for GrpcRequestService {
+impl crate::api::grpc::request_server::Request for GrpcRequestService {
     async fn request(
         &self,
         request: tonic::Request<Payload>,
