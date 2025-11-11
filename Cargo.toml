@@ -16,8 +16,8 @@ base64 = "0.22.1"
 bcrypt = "0.17.1"
 bytes = "1.10.1"
 chrono = "0.4.42"
-clap = { version = "4.5.48", features = ["derive", "env"] }
-config = "0.15.16"
+clap = { version = "4.5.51", features = ["derive", "env"] }
+config = "0.15.18"
 dashmap = "6.1.0"
 env_logger = "0.11.8"
 futures = "0.3.31"
@@ -28,14 +28,14 @@ md5 = "0.8.0"
 pin-project-lite = "0.2.16"
 prost = "0.14.1"
 prost-types = "0.14.1"
-regex = "1.11.2"
-sea-orm = { version = "1.1.16", features = ["sqlx-mysql", "runtime-tokio"] }
-serde = "1.0.226"
+regex = "1.11.3"
+sea-orm = { version = "1.1.19", features = ["sqlx-mysql", "runtime-tokio"] }
+serde = "1.0.228"
 serde_json = "1.0.145"
-serde_with = "3.14.1"
-thiserror = "2.0.16"
+serde_with = "3.15.1"
+thiserror = "2.0.17"
 time = "0.3.44"
-tokio = { version = "1.47.1", features = ["full"] }
+tokio = { version = "1.48.0", features = ["full"] }
 tokio-stream = "0.1.17"
 tonic = "0.14.2"
 tonic-prost = "0.14.2"

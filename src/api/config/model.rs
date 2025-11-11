@@ -889,6 +889,12 @@ pub struct ConfigQueryResponse {
 }
 
 impl ConfigQueryResponse {
+    pub const CONFIG_NOT_FOUND: i32 = 300;
+
+    pub const CONFIG_QUERY_CONFLICT: i32 = 400;
+
+    pub const NO_RIGHT: i32 = 403;
+
     pub fn new() -> Self {
         Self {
             response: Response::new(),

@@ -8,6 +8,24 @@ use crate::api::{
     model::INTERNAL_MODULE,
 };
 
+pub const LABEL_SOURCE: &str = "source";
+
+pub const LABEL_SOURCE_SDK: &str = "sdk";
+
+pub const LABEL_SOURCE_CLUSTER: &str = "cluster";
+
+pub const LABEL_MODULE: &str = "module";
+
+pub const LABEL_MODULE_CONFIG: &str = "config";
+
+pub const LABEL_MODULE_NAMING: &str = "naming";
+
+pub const MONITOR_LABEL_NONE: &str = "none";
+
+pub const LABEL_MODULE_LOCK: &str = "lock";
+
+pub const LABEL_MODULE_AI: &str = "ai";
+
 fn serialize_internal_module<S>(_: &str, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,

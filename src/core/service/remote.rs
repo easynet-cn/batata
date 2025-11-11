@@ -57,8 +57,6 @@ impl ConnectionManager {
     }
 
     pub fn unregister(&self, connection_id: &str) {
-        let count = self.clients.len();
-
         self.clients.remove(connection_id);
     }
 }

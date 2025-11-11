@@ -5,7 +5,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 use tonic::Status;
 
-use crate::api::grpc::Payload;
+use crate::api::{
+    grpc::Payload,
+    model::{APP_CONN_PREFIX, APPNAME, CLIENT_VERSION_KEY},
+    remote::model::{LABEL_SOURCE, LABEL_SOURCE_CLUSTER, LABEL_SOURCE_SDK},
+};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,9 +76,56 @@ pub struct ConnectionMeta {
 
     /// Tls protected.
     pub tls_protected: bool,
+
+    first_push_queue_block_time: i64,
+    last_push_queue_block_time: i64,
 }
 
-impl ConnectionMeta {}
+impl ConnectionMeta {
+    pub fn is_sdk_source(&self) -> bool {
+        self.labels
+            .get(LABEL_SOURCE)
+            .is_some_and(|e| e.to_lowercase() == LABEL_SOURCE_SDK.to_lowercase())
+    }
+
+    pub fn is_cluster_source(&self) -> bool {
+        self.labels
+            .get(LABEL_SOURCE)
+            .is_some_and(|e| e.to_lowercase() == LABEL_SOURCE_CLUSTER.to_lowercase())
+    }
+
+    pub fn get_app_labels(&self) -> HashMap<String, String> {
+        let mut map = HashMap::<String, String>::new();
+
+        map.insert(
+            APPNAME.to_string(),
+            self.labels
+                .get(APPNAME)
+                .map_or(String::default(), |e| e.to_string()),
+        );
+        map.insert(CLIENT_VERSION_KEY.to_string(), self.version.clone());
+
+        for (k, v) in self.labels.iter() {
+            if k.starts_with(APP_CONN_PREFIX) && k.len() > APP_CONN_PREFIX.len() && !v.is_empty() {
+                map.insert(k[APP_CONN_PREFIX.len()..].to_string(), v.to_string());
+            }
+        }
+
+        map
+    }
+
+    pub fn record_push_queue_block_times(&mut self) {
+        if self.first_push_queue_block_time == 0 {
+            self.first_push_queue_block_time = chrono::Utc::now().timestamp_millis();
+        } else {
+            self.last_push_queue_block_time = chrono::Utc::now().timestamp_millis();
+        }
+    }
+
+    pub fn push_queue_block_times_last_over(&self, time_mills_seconds: i64) -> bool {
+        self.last_push_queue_block_time - self.first_push_queue_block_time > time_mills_seconds
+    }
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
