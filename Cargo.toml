@@ -10,13 +10,13 @@ edition = "2024"
 actix-macros = "0.2.4"
 actix-service = "2.0.3"
 actix-utils = "3.0.1"
-actix-web = { version = "4.12.0" }
+actix-web = { version = "4.12.1" }
 anyhow = "1.0.100"
 base64 = "0.22.1"
 bcrypt = "0.17.1"
 bytes = "1.11.0"
 chrono = "0.4.42"
-clap = { version = "4.5.51", features = ["derive", "env"] }
+clap = { version = "4.5.53", features = ["derive", "env"] }
 config = "0.15.19"
 dashmap = "6.1.0"
 env_logger = "0.11.8"
@@ -48,3 +48,13 @@ uuid = { version = "1.18.1", features = ["v4", "fast-rng", "macro-diagnostics"] 
 
 [build-dependencies]
 tonic-prost-build = "0.14.2"
+
+[profile.dev]
+incremental = true # Compile your binary in smaller steps.
+
+[profile.release]
+codegen-units = 1 # Allows LLVM to perform better optimization.
+lto = true # Enables link-time-optimizations.
+opt-level = "s" # Prioritizes small binary size. Use `3` if you prefer speed.
+panic = "abort" # Higher performance by disabling panic handlers.
+strip = true # Ensures debug symbols are removed.
