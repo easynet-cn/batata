@@ -1,3 +1,6 @@
+// Configuration management API models
+// This file defines request/response structures and data models for configuration management operations
+
 use std::collections::{HashMap, HashSet};
 
 use prost_types::Any;
@@ -27,6 +30,7 @@ where
     Ok(CONFIG_MODULE.to_string())
 }
 
+// Basic configuration information structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigBasicInfo {

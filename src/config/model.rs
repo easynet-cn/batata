@@ -1,3 +1,6 @@
+// Configuration data models and structures
+// This file defines various data structures for configuration management operations
+
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
@@ -9,6 +12,7 @@ use serde_with::serde_as;
 
 use crate::entity;
 
+// Form structure for configuration creation/update requests
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ConfigForm {
@@ -32,6 +36,7 @@ pub struct ConfigForm {
     pub schema: Option<String>,
 }
 
+// Request metadata for configuration operations
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigRequestInfo {
@@ -44,6 +49,7 @@ pub struct ConfigRequestInfo {
     pub update_for_exist: bool,
 }
 
+// Base configuration information structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigInfoBase {

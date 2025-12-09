@@ -1,3 +1,6 @@
+// Authentication and authorization models
+// This file defines data structures for users, roles, permissions, and JWT tokens
+
 use std::collections::HashMap;
 
 use jsonwebtoken::errors::ErrorKind;

@@ -1,3 +1,6 @@
+// Console cluster management API endpoints
+// This module provides web console endpoints for cluster node management and monitoring
+
 use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, web};
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +11,7 @@ use crate::{
     secured,
 };
 
+// Parameters for cluster node query
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetNodesParam {

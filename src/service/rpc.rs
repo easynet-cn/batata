@@ -1,3 +1,6 @@
+// RPC service implementations for gRPC communication
+// This file defines the core RPC services for handling client connections and message processing
+
 use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use futures::Stream;
@@ -17,6 +20,7 @@ use crate::{
     },
 };
 
+// Trait for handling gRPC payload messages
 #[tonic::async_trait]
 pub trait PayloadHandler: Send + Sync {
     async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
@@ -33,12 +37,14 @@ pub trait PayloadHandler: Send + Sync {
     }
 }
 
+// Default handler for unregistered message types
 #[derive(Clone)]
 pub struct DefaultHandler;
 
 #[tonic::async_trait]
 impl PayloadHandler for DefaultHandler {}
 
+// Registry for managing payload handlers by message type
 pub struct HandlerRegistry {
     handlers: HashMap<String, Arc<dyn PayloadHandler>>,
     default_handler: Arc<dyn PayloadHandler>,
@@ -216,9 +222,10 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                     }
                 }
             }
+            
+            // 连接断开时清理资源
+            connection_manager.unregister(&connection_id);
         });
-
-        self.connection_manager.unregister(&connection_id);
 
         let output_stream = ReceiverStream::new(rx);
 

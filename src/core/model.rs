@@ -1,3 +1,6 @@
+// Core data models and structures
+// This file defines fundamental data structures used throughout the application
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -11,6 +14,7 @@ use crate::api::{
     remote::model::{LABEL_SOURCE, LABEL_SOURCE_CLUSTER, LABEL_SOURCE_SDK},
 };
 
+// Pagination parameters for list queries
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PageParam {

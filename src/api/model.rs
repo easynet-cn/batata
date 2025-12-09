@@ -1,3 +1,6 @@
+// Common API models and constants for Batata application
+// This file defines shared constants, data structures, and enums used across different API modules
+
 use std::{
     collections::BTreeMap,
     fmt::{Display, Formatter},
@@ -8,6 +11,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// Client protocol version
 pub const CLIENT_VERSION: &str = "3.0.0";
 
 pub const DATA_IN_BODY_VERSION: i32 = 204;
@@ -278,6 +282,7 @@ pub const FIND_TABLE_ERROR_CODE: i32 = 103;
 
 pub const AI_MODULE: &str = "ai";
 
+// Generic pagination wrapper for API responses
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
@@ -309,6 +314,7 @@ impl<T> Page<T> {
     }
 }
 
+// Node state enumeration for cluster members
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum NodeState {
@@ -362,6 +368,7 @@ impl FromStr for NodeState {
     }
 }
 
+// Cluster member information structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {
@@ -396,6 +403,7 @@ impl Member {
     }
 }
 
+// Builder pattern for creating Member instances
 pub struct MemberBuilder {
     pub ip: String,
     pub port: u16,

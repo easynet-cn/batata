@@ -1,3 +1,6 @@
+// Common models and shared application structures
+// This file defines application state, configuration, and common data structures
+
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use actix_web::{HttpResponse, HttpResponseBuilder, http::StatusCode};

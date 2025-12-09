@@ -1,3 +1,6 @@
+// Authentication API v1 handlers
+// Legacy authentication endpoints for backward compatibility
+
 use actix_web::{HttpResponse, Responder, post, web};
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +13,7 @@ use crate::{
     model::common::AppState,
 };
 
+// Login response structure containing authentication token and user info
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LoginResult {
@@ -19,6 +23,7 @@ struct LoginResult {
     username: String,
 }
 
+// Login request structure containing user credentials
 #[derive(Deserialize)]
 struct LoginData {
     username: Option<String>,

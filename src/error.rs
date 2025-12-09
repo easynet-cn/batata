@@ -1,3 +1,6 @@
+// Error handling and response types for Batata application
+// This module defines error types, HTTP error responses, and error code constants
+
 use std::fmt::{Display, Formatter};
 
 use actix_web::HttpResponse;
@@ -5,19 +8,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::common;
 
+// Application-specific error types
 #[derive(thiserror::Error, Debug)]
 pub enum BatataError {
     #[error("caused: {0}")]
-    IllegalArgument(String),
+    IllegalArgument(String),      // Invalid input parameter
     #[error("user '{0}' not exist!")]
-    UserNotExist(String),
+    UserNotExist(String),         // User not found
     #[error("{2}")]
-    ApiError(i32, i32, String, String),
+    ApiError(i32, i32, String, String), // API error with status, code, message, and data
 }
 
+// Wrapper for application errors to implement actix-web error handling
 #[derive(Debug)]
 pub struct AppError {
-    inner: anyhow::Error,
+    inner: anyhow::Error, // Wrapped anyhow error
 }
 
 impl Display for AppError {
@@ -57,12 +62,14 @@ impl actix_web::error::ResponseError for AppError {
     }
 }
 
+// Error code structure for API responses
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ErrorCode<'a> {
-    pub code: i32,
-    pub message: &'a str,
+    pub code: i32,        // Numeric error code
+    pub message: &'a str, // Human-readable error message
 }
 
+// General success and error codes
 pub const SUCCESS: ErrorCode<'static> = ErrorCode {
     code: 0,
     message: "success",
@@ -83,6 +90,7 @@ pub const DATA_ACCESS_ERROR: ErrorCode<'static> = ErrorCode {
     message: "data access error",
 };
 
+// Tenant and parameter validation errors
 pub const TENANT_PARAM_ERROR: ErrorCode<'static> = ErrorCode {
     code: 20001,
     message: "'tenant' parameter error",

@@ -1,3 +1,6 @@
+// Main library module for Batata - A Nacos-compatible service discovery and configuration management system
+// This file defines core types, utilities, and security models used throughout the application
+
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter},
@@ -15,24 +18,27 @@ use crate::{
     },
 };
 
-pub mod api;
-pub mod auth;
-pub mod config;
-pub mod console;
-pub mod core;
-pub mod entity;
-pub mod error;
-pub mod middleware;
-pub mod model;
-pub mod service;
+// Module declarations
+pub mod api;      // API handlers and models
+pub mod auth;     // Authentication and authorization
+pub mod config;   // Configuration management
+pub mod console;  // Console web interface
+pub mod core;     // Core business logic
+pub mod entity;   // Database entities
+pub mod error;    // Error handling and types
+pub mod middleware; // HTTP middleware
+pub mod model;    // Data models and types
+pub mod service;  // Business services
 
+// Action types for permission control
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionTypes {
-    Read,
-    Write,
+    Read,  // Read-only access
+    Write, // Write access
 }
 
 impl ActionTypes {
+    // Convert action type to string representation
     pub fn as_str(self) -> &'static str {
         match self {
             ActionTypes::Read => "r",
@@ -40,6 +46,7 @@ impl ActionTypes {
         }
     }
 
+    // Parse string to action type
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "r" => Ok(ActionTypes::Read),
@@ -69,17 +76,19 @@ impl FromStr for ActionTypes {
     }
 }
 
+// Signature types for different service modules
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignType {
-    Naming,
-    Config,
-    Lock,
-    Ai,
-    Console,
-    Specified,
+    Naming,    // Service discovery module
+    Config,    // Configuration management module
+    Lock,      // Distributed lock module
+    Ai,        // AI services module
+    Console,   // Console module
+    Specified, // Custom specified module
 }
 
 impl SignType {
+    // Convert sign type to string representation
     pub fn as_str(&self) -> &'static str {
         match self {
             SignType::Naming => "naming",
@@ -91,6 +100,7 @@ impl SignType {
         }
     }
 
+    // Parse string to sign type
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "naming" => Ok(SignType::Naming),
@@ -124,15 +134,17 @@ impl FromStr for SignType {
     }
 }
 
+// API access types with different permission levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ApiType {
-    AdminApi,
-    ConsoleApi,
-    OpenApi,
-    InnerApi,
+    AdminApi,   // Administrative API with full access
+    ConsoleApi, // Console management API
+    OpenApi,    // Public API for external access
+    InnerApi,   // Internal service API
 }
 
 impl ApiType {
+    // Get description string for API type
     pub fn description(&self) -> &'static str {
         match self {
             ApiType::AdminApi => "ADMIN_API",
@@ -142,6 +154,7 @@ impl ApiType {
         }
     }
 
+    // Parse string to API type
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "ADMIN_API" => Ok(ApiType::AdminApi),
@@ -173,18 +186,20 @@ impl FromStr for ApiType {
     }
 }
 
+// Security context for API access control
 #[derive(Debug, Clone)]
 pub struct Secured<'a> {
-    pub req: &'a HttpRequest,
-    pub data: &'a web::Data<AppState>,
-    pub action: ActionTypes,
-    pub resource: &'a str,
-    pub sign_type: SignType,
-    pub tags: Vec<String>,
-    pub api_type: ApiType,
+    pub req: &'a HttpRequest,           // HTTP request reference
+    pub data: &'a web::Data<AppState>,  // Application state
+    pub action: ActionTypes,             // Requested action type
+    pub resource: &'a str,              // Target resource name
+    pub sign_type: SignType,            // Service module type
+    pub tags: Vec<String>,              // Security tags for permission checking
+    pub api_type: ApiType,              // API access type
 }
 
 impl<'a> Into<Resource> for Secured<'a> {
+    // Convert security context to authorization resource
     fn into(self) -> Resource {
         let properties = self
             .tags
@@ -203,6 +218,7 @@ impl<'a> Into<Resource> for Secured<'a> {
 }
 
 impl<'a> Secured<'a> {
+    // Create a new builder for Secured context
     pub fn builder(
         req: &'a HttpRequest,
         data: &'a web::Data<AppState>,
@@ -211,10 +227,12 @@ impl<'a> Secured<'a> {
         SecuredBuilder::new(req, data, resource)
     }
 
+    // Check if context has password update permission
     pub fn has_update_password_permission(&self) -> bool {
         self.tags.iter().any(|e| e == UPDATE_PASSWORD_ENTRY_POINT)
     }
 
+    // Check if context only requires identity verification
     pub fn only_identity(&self) -> bool {
         self.tags.iter().any(|e| e == ONLY_IDENTITY)
     }

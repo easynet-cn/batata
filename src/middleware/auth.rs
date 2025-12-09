@@ -1,3 +1,6 @@
+// Authentication middleware for Actix-web
+// This middleware handles JWT token validation and authentication context setup
+
 use actix_service::forward_ready;
 use actix_utils::future::{Ready, ok};
 use actix_web::{
@@ -18,6 +21,7 @@ use crate::{
 
 const ACCESS_TOKEN: &str = "accessToken";
 
+// Authentication middleware transformer
 pub struct Authentication;
 
 impl<S, B> Transform<S, ServiceRequest> for Authentication

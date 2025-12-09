@@ -1,3 +1,6 @@
+// Main entry point for Batata Nacos-compatible server
+// This file sets up and starts the HTTP and gRPC servers with their respective services
+
 use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
@@ -25,12 +28,14 @@ use tracing_subscriber::{EnvFilter, Registry, fmt::MakeWriter, layer::Subscriber
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize configuration and logging
     let configuration = model::common::Configuration::new();
 
     let subscriber = get_subscriber("nacos", "info", std::io::stdout);
 
     init_subscriber(subscriber);
 
+    // Extract configuration parameters
     let depolyment_type = configuration.deployment_type();
     let database_connection = configuration.database_connection().await?;
     let server_address = configuration.server_address();
@@ -42,8 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sdk_server_port = configuration.sdk_server_port();
     let cluster_server_port = configuration.cluster_server_port();
 
+    // Initialize server member management
     let server_member_manager = Arc::new(ServerMemberManager::new(&configuration));
 
+    // Create application state
     let app_state = AppState {
         configuration,
         database_connection,
@@ -52,11 +59,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let server_app_state = app_state.clone();
 
+    // Setup gRPC interceptor layer
     let layer = ServiceBuilder::new()
         .load_shed()
         .layer(InterceptorLayer::new(context_interceptor))
         .into_inner();
 
+    // Initialize gRPC handlers
     let mut handler_registry = HandlerRegistry::new();
 
     let health_check_handler = Arc::new(HealthCheckHandler {});
@@ -69,11 +78,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let handler_registry_arc = Arc::new(handler_registry);
 
+    // Create gRPC services
     let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
     let connection_manager = Arc::new(ConnectionManager::new());
     let grpc_bi_request_stream_service =
         GrpcBiRequestStreamService::from_arc(handler_registry_arc, connection_manager);
 
+    // Start SDK gRPC server
     let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;
 
     let grpc_sdk_server = tonic::transport::Server::builder()
@@ -86,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::spawn(grpc_sdk_server);
 
+    // Start cluster gRPC server
     let grpc_cluster_addr = format!("0.0.0.0:{}", cluster_server_port).parse()?;
 
     let grpc_cluster_server = tonic::transport::Server::builder()
