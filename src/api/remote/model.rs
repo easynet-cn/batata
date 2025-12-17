@@ -733,3 +733,245 @@ impl Into<Any> for ServerCheckResponse {
         self.into_any()
     }
 }
+
+// Client detection response
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientDetectionResponse {
+    #[serde(flatten)]
+    pub response: Response,
+}
+
+impl ClientDetectionResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl ResponseTrait for ClientDetectionResponse {
+    fn response_type(&self) -> &'static str {
+        "ClientDetectionResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl Into<Any> for ClientDetectionResponse {
+    fn into(self) -> Any {
+        self.into_any()
+    }
+}
+
+// Server loader info response with load metrics
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerLoaderInfoResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    pub loader_metrics: std::collections::HashMap<String, String>,
+}
+
+impl ServerLoaderInfoResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            loader_metrics: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl ResponseTrait for ServerLoaderInfoResponse {
+    fn response_type(&self) -> &'static str {
+        "ServerLoaderInfoResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl Into<Any> for ServerLoaderInfoResponse {
+    fn into(self) -> Any {
+        self.into_any()
+    }
+}
+
+// Server reload response
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerReloadResponse {
+    #[serde(flatten)]
+    pub response: Response,
+}
+
+impl ServerReloadResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl ResponseTrait for ServerReloadResponse {
+    fn response_type(&self) -> &'static str {
+        "ServerReloadResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl Into<Any> for ServerReloadResponse {
+    fn into(self) -> Any {
+        self.into_any()
+    }
+}
+
+// Connect reset response
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectResetResponse {
+    #[serde(flatten)]
+    pub response: Response,
+}
+
+impl ConnectResetResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl ResponseTrait for ConnectResetResponse {
+    fn response_type(&self) -> &'static str {
+        "ConnectResetResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl Into<Any> for ConnectResetResponse {
+    fn into(self) -> Any {
+        self.into_any()
+    }
+}
+
+// Setup acknowledgment response
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupAckResponse {
+    #[serde(flatten)]
+    pub response: Response,
+}
+
+impl SetupAckResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl ResponseTrait for SetupAckResponse {
+    fn response_type(&self) -> &'static str {
+        "SetupAckResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl Into<Any> for SetupAckResponse {
+    fn into(self) -> Any {
+        self.into_any()
+    }
+}
+
+// Push acknowledgment request for confirming server push
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PushAckRequest {
+    #[serde(flatten)]
+    pub internal_request: InternalRequest,
+}
+
+impl PushAckRequest {
+    pub fn new() -> Self {
+        Self {
+            internal_request: InternalRequest::new(),
+        }
+    }
+}
+
+impl RequestTrait for PushAckRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.internal_request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "PushAckRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.internal_request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.internal_request.request_id()
+    }
+}
+
+impl From<&Payload> for PushAckRequest {
+    fn from(value: &Payload) -> Self {
+        PushAckRequest::from_payload(value)
+    }
+}

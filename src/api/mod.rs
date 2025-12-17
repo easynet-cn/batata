@@ -13,6 +13,11 @@ pub mod grpc;
 // Common API models and utilities
 pub mod model;
 
+// Naming/Service discovery API
+pub mod naming {
+    pub mod model;
+}
+
 // Remote communication API models
 pub mod remote {
     pub mod model;

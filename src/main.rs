@@ -14,7 +14,24 @@ use batata::{
     middleware::auth::Authentication,
     model::{self, common::AppState},
     service::{
-        handler::{ConnectionSetupHandler, HealthCheckHandler, ServerCheckHanlder},
+        config_handler::{
+            ClientConfigMetricHandler, ConfigBatchListenHandler, ConfigChangeClusterSyncHandler,
+            ConfigChangeNotifyHandler, ConfigFuzzyWatchChangeNotifyHandler, ConfigFuzzyWatchHandler,
+            ConfigFuzzyWatchSyncHandler, ConfigPublishHandler, ConfigQueryHandler,
+            ConfigRemoveHandler,
+        },
+        handler::{
+            ClientDetectionHandler, ConnectResetHandler, ConnectionSetupHandler,
+            HealthCheckHandler, PushAckHandler, ServerCheckHanlder, ServerLoaderInfoHandler,
+            ServerReloadHandler, SetupAckHandler,
+        },
+        naming::NamingService,
+        naming_handler::{
+            BatchInstanceRequestHandler, InstanceRequestHandler,
+            NamingFuzzyWatchChangeNotifyHandler, NamingFuzzyWatchHandler,
+            NamingFuzzyWatchSyncHandler, NotifySubscriberHandler, PersistentInstanceRequestHandler,
+            ServiceListRequestHandler, ServiceQueryRequestHandler, SubscribeServiceRequestHandler,
+        },
         rpc::{GrpcBiRequestStreamService, GrpcRequestService, HandlerRegistry},
     },
 };
@@ -68,13 +85,116 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize gRPC handlers
     let mut handler_registry = HandlerRegistry::new();
 
+    let app_state_arc = Arc::new(app_state.clone());
+
+    // Internal handlers
     let health_check_handler = Arc::new(HealthCheckHandler {});
     let server_check_hanlder = Arc::new(ServerCheckHanlder {});
     let connection_setup_handler = Arc::new(ConnectionSetupHandler {});
+    let client_detection_handler = Arc::new(ClientDetectionHandler {});
+    let server_loader_info_handler = Arc::new(ServerLoaderInfoHandler {});
+    let server_reload_handler = Arc::new(ServerReloadHandler {});
+    let connect_reset_handler = Arc::new(ConnectResetHandler {});
+    let setup_ack_handler = Arc::new(SetupAckHandler {});
+    let push_ack_handler = Arc::new(PushAckHandler {});
 
     handler_registry.register_handler(health_check_handler);
     handler_registry.register_handler(server_check_hanlder);
     handler_registry.register_handler(connection_setup_handler);
+    handler_registry.register_handler(client_detection_handler);
+    handler_registry.register_handler(server_loader_info_handler);
+    handler_registry.register_handler(server_reload_handler);
+    handler_registry.register_handler(connect_reset_handler);
+    handler_registry.register_handler(setup_ack_handler);
+    handler_registry.register_handler(push_ack_handler);
+
+    // Config handlers
+    let config_query_handler = Arc::new(ConfigQueryHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let config_publish_handler = Arc::new(ConfigPublishHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let config_remove_handler = Arc::new(ConfigRemoveHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let config_batch_listen_handler = Arc::new(ConfigBatchListenHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let config_change_notify_handler = Arc::new(ConfigChangeNotifyHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let config_change_cluster_sync_handler = Arc::new(ConfigChangeClusterSyncHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let config_fuzzy_watch_handler = Arc::new(ConfigFuzzyWatchHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let config_fuzzy_watch_change_notify_handler = Arc::new(ConfigFuzzyWatchChangeNotifyHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let config_fuzzy_watch_sync_handler = Arc::new(ConfigFuzzyWatchSyncHandler {
+        app_state: app_state_arc.clone(),
+    });
+    let client_config_metric_handler = Arc::new(ClientConfigMetricHandler {
+        app_state: app_state_arc.clone(),
+    });
+
+    handler_registry.register_handler(config_query_handler);
+    handler_registry.register_handler(config_publish_handler);
+    handler_registry.register_handler(config_remove_handler);
+    handler_registry.register_handler(config_batch_listen_handler);
+    handler_registry.register_handler(config_change_notify_handler);
+    handler_registry.register_handler(config_change_cluster_sync_handler);
+    handler_registry.register_handler(config_fuzzy_watch_handler);
+    handler_registry.register_handler(config_fuzzy_watch_change_notify_handler);
+    handler_registry.register_handler(config_fuzzy_watch_sync_handler);
+    handler_registry.register_handler(client_config_metric_handler);
+
+    // Naming handlers
+    let naming_service = Arc::new(NamingService::new());
+
+    let instance_request_handler = Arc::new(InstanceRequestHandler {
+        naming_service: naming_service.clone(),
+    });
+    let batch_instance_request_handler = Arc::new(BatchInstanceRequestHandler {
+        naming_service: naming_service.clone(),
+    });
+    let service_list_request_handler = Arc::new(ServiceListRequestHandler {
+        naming_service: naming_service.clone(),
+    });
+    let service_query_request_handler = Arc::new(ServiceQueryRequestHandler {
+        naming_service: naming_service.clone(),
+    });
+    let subscribe_service_request_handler = Arc::new(SubscribeServiceRequestHandler {
+        naming_service: naming_service.clone(),
+    });
+    let persistent_instance_request_handler = Arc::new(PersistentInstanceRequestHandler {
+        naming_service: naming_service.clone(),
+    });
+    let notify_subscriber_handler = Arc::new(NotifySubscriberHandler {
+        naming_service: naming_service.clone(),
+    });
+    let naming_fuzzy_watch_handler = Arc::new(NamingFuzzyWatchHandler {
+        naming_service: naming_service.clone(),
+    });
+    let naming_fuzzy_watch_change_notify_handler = Arc::new(NamingFuzzyWatchChangeNotifyHandler {
+        naming_service: naming_service.clone(),
+    });
+    let naming_fuzzy_watch_sync_handler = Arc::new(NamingFuzzyWatchSyncHandler {
+        naming_service: naming_service.clone(),
+    });
+
+    handler_registry.register_handler(instance_request_handler);
+    handler_registry.register_handler(batch_instance_request_handler);
+    handler_registry.register_handler(service_list_request_handler);
+    handler_registry.register_handler(service_query_request_handler);
+    handler_registry.register_handler(subscribe_service_request_handler);
+    handler_registry.register_handler(persistent_instance_request_handler);
+    handler_registry.register_handler(notify_subscriber_handler);
+    handler_registry.register_handler(naming_fuzzy_watch_handler);
+    handler_registry.register_handler(naming_fuzzy_watch_change_notify_handler);
+    handler_registry.register_handler(naming_fuzzy_watch_sync_handler);
 
     let handler_registry_arc = Arc::new(handler_registry);
 
