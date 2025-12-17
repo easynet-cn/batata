@@ -4,6 +4,9 @@
 // Core data models and structures
 pub mod model;
 
+// Raft consensus protocol for strong consistency
+pub mod raft;
+
 // Core service implementations
 pub mod service {
     pub mod cluster;        // Cluster management and coordination

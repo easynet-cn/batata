@@ -22,3 +22,6 @@ pub mod naming {
 pub mod remote {
     pub mod model;
 }
+
+// Raft consensus gRPC service definitions
+pub mod raft;

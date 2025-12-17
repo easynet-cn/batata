@@ -1,0 +1,207 @@
+/*
+ * Raft consensus protocol gRPC service definition
+ * Used for inter-node communication in the Batata cluster
+ */
+
+syntax = "proto3";
+
+package raft;
+
+option java_multiple_files = true;
+option java_package = "com.alibaba.nacos.consistency.raft";
+
+// Log identifier containing term and index
+message LogId {
+    uint64 term = 1;
+    uint64 index = 2;
+}
+
+// Vote information
+message Vote {
+    uint64 leader_id = 1;
+    uint64 term = 2;
+    bool committed = 3;
+}
+
+// Raft node information
+message RaftNodeInfo {
+    uint64 node_id = 1;
+    string addr = 2;
+}
+
+// Log entry
+message Entry {
+    LogId log_id = 1;
+    // Entry payload type: 0 = blank, 1 = normal, 2 = membership
+    uint32 payload_type = 2;
+    // Serialized payload data
+    bytes payload = 3;
+}
+
+// Membership configuration
+message Membership {
+    repeated RaftNodeInfo voters = 1;
+    repeated RaftNodeInfo learners = 2;
+}
+
+// Snapshot metadata
+message SnapshotMeta {
+    LogId last_log_id = 1;
+    Membership last_membership = 2;
+    string snapshot_id = 3;
+}
+
+// AppendEntries RPC request
+message AppendEntriesRequest {
+    // Leader's term
+    uint64 term = 1;
+    // Leader's node ID
+    uint64 leader_id = 2;
+    // Index of log entry immediately preceding new ones
+    LogId prev_log_id = 3;
+    // Log entries to store (empty for heartbeat)
+    repeated Entry entries = 4;
+    // Leader's commit index
+    LogId leader_commit = 5;
+    // Leader's vote
+    Vote vote = 6;
+}
+
+// AppendEntries RPC response
+message AppendEntriesResponse {
+    // Current term for leader to update itself
+    uint64 term = 1;
+    // True if follower contained entry matching prev_log_id
+    bool success = 2;
+    // The last log id on the follower after applying entries
+    LogId match_log_id = 3;
+    // Conflict information if success is false
+    LogId conflict = 4;
+}
+
+// RequestVote RPC request
+message VoteRequest {
+    // Candidate's term
+    uint64 term = 1;
+    // Candidate requesting vote
+    uint64 candidate_id = 2;
+    // Index of candidate's last log entry
+    LogId last_log_id = 3;
+    // Candidate's vote
+    Vote vote = 4;
+}
+
+// RequestVote RPC response
+message VoteResponse {
+    // Current term for candidate to update itself
+    uint64 term = 1;
+    // True means candidate received vote
+    bool vote_granted = 2;
+    // The vote of this node
+    Vote vote = 3;
+    // The last log id of this node
+    LogId last_log_id = 4;
+}
+
+// InstallSnapshot RPC request
+message InstallSnapshotRequest {
+    // Leader's term
+    uint64 term = 1;
+    // Leader's node ID
+    uint64 leader_id = 2;
+    // Snapshot metadata
+    SnapshotMeta meta = 3;
+    // Snapshot chunk offset
+    uint64 offset = 4;
+    // Snapshot chunk data
+    bytes data = 5;
+    // True if this is the last chunk
+    bool done = 6;
+    // Leader's vote
+    Vote vote = 7;
+}
+
+// InstallSnapshot RPC response
+message InstallSnapshotResponse {
+    // Current term for leader to update itself
+    uint64 term = 1;
+    // The vote of this node
+    Vote vote = 2;
+}
+
+// Raft service for inter-node communication
+service RaftService {
+    // Append entries (log replication and heartbeat)
+    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+
+    // Request vote (leader election)
+    rpc Vote(VoteRequest) returns (VoteResponse);
+
+    // Install snapshot (state transfer)
+    rpc InstallSnapshot(stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
+}
+
+// Client request to write data through Raft
+message ClientWriteRequest {
+    // Serialized RaftRequest
+    bytes data = 1;
+}
+
+// Client response from Raft write
+message ClientWriteResponse {
+    bool success = 1;
+    // Serialized response data
+    bytes data = 2;
+    string message = 3;
+    // Leader ID if redirected
+    optional uint64 leader_id = 4;
+    // Leader address if redirected
+    optional string leader_addr = 5;
+}
+
+// Raft management service for cluster operations
+service RaftManagementService {
+    // Forward write request to leader
+    rpc Write(ClientWriteRequest) returns (ClientWriteResponse);
+
+    // Add a learner node
+    rpc AddLearner(AddLearnerRequest) returns (AddLearnerResponse);
+
+    // Change membership
+    rpc ChangeMembership(ChangeMembershipRequest) returns (ChangeMembershipResponse);
+
+    // Get cluster metrics
+    rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
+}
+
+message AddLearnerRequest {
+    uint64 node_id = 1;
+    string addr = 2;
+}
+
+message AddLearnerResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ChangeMembershipRequest {
+    repeated uint64 members = 1;
+}
+
+message ChangeMembershipResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message GetMetricsRequest {}
+
+message GetMetricsResponse {
+    uint64 node_id = 1;
+    string state = 2;  // leader, follower, candidate
+    uint64 current_term = 3;
+    optional uint64 leader_id = 4;
+    uint64 last_log_index = 5;
+    uint64 commit_index = 6;
+    uint64 applied_index = 7;
+    repeated RaftNodeInfo members = 8;
+}
