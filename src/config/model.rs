@@ -299,10 +299,12 @@ impl From<&entity::config_info::Model> for ConfigInfoWrapper {
     }
 }
 
+#[derive(Default)]
 pub enum ConfigType {
     Properties,
     Xml,
     Json,
+    #[default]
     Text,
     Html,
     Yaml,
@@ -333,12 +335,6 @@ impl ConfigType {
             "toml" => Ok(ConfigType::Toml),
             _ => Err(format!("Invalid config type: {}", s)),
         }
-    }
-}
-
-impl Default for ConfigType {
-    fn default() -> Self {
-        ConfigType::Text
     }
 }
 

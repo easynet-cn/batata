@@ -61,15 +61,17 @@ async fn find_one(
             .build()
     );
 
-    let result = service::config::find_one(
+    let result = match service::config::find_one(
         &data.database_connection,
         &params.data_id,
         &params.group_name,
         &params.namespace_id,
     )
     .await
-    .unwrap()
-    .map(ConfigDetailInfo::from);
+    {
+        Ok(config) => config.map(ConfigDetailInfo::from),
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
 
     model::common::Result::<Option<ConfigAllInfo>>::http_success(result)
 }
@@ -93,7 +95,6 @@ async fn search(
         .config_form
         .config_tags
         .split(",")
-        .into_iter()
         .filter(|e| !e.is_empty())
         .map(|e| e.to_string())
         .collect::<Vec<String>>();
@@ -101,7 +102,6 @@ async fn search(
         .config_form
         .r#type
         .split(",")
-        .into_iter()
         .filter(|e| !e.is_empty())
         .map(|e| e.to_string())
         .collect::<Vec<String>>();
@@ -120,7 +120,7 @@ async fn search(
     )
     .await;
 
-    return match result {
+    match result {
         Ok(page_result) => {
             model::common::Result::<Page<ConfigBasicInfo>>::http_success(page_result)
         }
@@ -131,7 +131,7 @@ async fn search(
             error: String::from("Forbiden"),
             path: req.path().to_string(),
         }),
-    };
+    }
 }
 
 #[post("")]
@@ -211,20 +211,20 @@ async fn create_or_update(
 
     config_form.namespace_id = config_form.namespace_id.trim().to_string();
     config_form.r#type = ConfigType::from_str(&config_form.r#type)
-        .unwrap_or(ConfigType::default())
+        .unwrap_or_default()
         .to_string();
 
-    let auth_content = req.extensions().get::<AuthContext>().unwrap().clone();
-    let src_user = config_form
-        .src_user
-        .clone()
-        .unwrap_or(auth_content.username);
+    let auth_content = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
+    let src_user = config_form.src_user.take().unwrap_or(auth_content.username);
 
-    let src_ip = String::from(
-        req.connection_info()
-            .realip_remote_addr()
-            .unwrap_or_default(),
-    );
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
 
     let _ = service::config::create_or_update(
         &data.database_connection,
@@ -277,17 +277,20 @@ async fn delete(
         tenant = DEFAULT_NAMESPACE_ID.to_string();
     }
 
-    let client_ip = String::from(
-        req.connection_info()
-            .realip_remote_addr()
-            .unwrap_or_default(),
-    );
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
 
-    let auth_content = req.extensions().get::<AuthContext>().unwrap().clone();
+    let auth_content = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
 
     let src_user = auth_content.username;
 
-    service::config::delete(
+    if let Err(e) = service::config::delete(
         &data.database_connection,
         &params.data_id,
         &params.group_name,
@@ -298,7 +301,9 @@ async fn delete(
         "",
     )
     .await
-    .unwrap();
+    {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
 
     model::common::Result::<bool>::http_success(true)
 }
@@ -317,15 +322,17 @@ async fn find_beta_one(
             .build()
     );
 
-    let result = service::config::find_gray_one(
+    let result = match service::config::find_gray_one(
         &data.database_connection,
         &params.data_id,
         &params.group_name,
         &params.namespace_id,
     )
     .await
-    .unwrap()
-    .map(ConfigGrayInfo::from);
+    {
+        Ok(config) => config.map(ConfigGrayInfo::from),
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
 
     model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
 }
@@ -334,7 +341,7 @@ async fn find_beta_one(
 async fn find_listeners(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Query<ConfigForm>,
+    _params: web::Query<ConfigForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")

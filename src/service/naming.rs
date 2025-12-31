@@ -2,14 +2,13 @@
 // This module provides in-memory service registry for managing service instances
 
 use std::{
-    collections::HashMap,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use dashmap::DashMap;
 
-use crate::api::naming::model::{Instance, Service, ServiceInfo};
+use crate::api::naming::model::{Instance, Service};
 
 // Service key format: namespace@@groupName@@serviceName
 fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {
@@ -18,7 +17,10 @@ fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> S
 
 // Instance key format: ip#port#clusterName
 fn build_instance_key(instance: &Instance) -> String {
-    format!("{}#{}#{}", instance.ip, instance.port, instance.cluster_name)
+    format!(
+        "{}#{}#{}",
+        instance.ip, instance.port, instance.cluster_name
+    )
 }
 
 // In-memory service registry for managing services and instances
@@ -56,10 +58,7 @@ impl NamingService {
         instance.service_name = service_name.to_string();
 
         // Get or create service entry
-        let instances = self
-            .services
-            .entry(service_key)
-            .or_insert_with(DashMap::new);
+        let instances = self.services.entry(service_key).or_default();
 
         instances.insert(instance_key, instance);
         true
@@ -122,7 +121,8 @@ impl NamingService {
         cluster: &str,
         healthy_only: bool,
     ) -> Service {
-        let instances = self.get_instances(namespace, group_name, service_name, cluster, healthy_only);
+        let instances =
+            self.get_instances(namespace, group_name, service_name, cluster, healthy_only);
         let all_instances = self.get_instances(namespace, group_name, service_name, cluster, false);
 
         let now = SystemTime::now()
@@ -198,7 +198,7 @@ impl NamingService {
 
         self.subscribers
             .entry(connection_id.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(service_key);
     }
 
@@ -218,7 +218,12 @@ impl NamingService {
     }
 
     // Get subscribers for a service
-    pub fn get_subscribers(&self, namespace: &str, group_name: &str, service_name: &str) -> Vec<String> {
+    pub fn get_subscribers(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Vec<String> {
         let service_key = build_service_key(namespace, group_name, service_name);
 
         self.subscribers
@@ -265,5 +270,175 @@ impl NamingService {
 impl Default for NamingService {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_instance(ip: &str, port: i32) -> Instance {
+        Instance {
+            instance_id: format!("{}#{}#DEFAULT", ip, port),
+            ip: ip.to_string(),
+            port,
+            weight: 1.0,
+            healthy: true,
+            enabled: true,
+            ephemeral: true,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "test-service".to_string(),
+            metadata: std::collections::HashMap::new(),
+            instance_heart_beat_interval: 5000,
+            instance_heart_beat_time_out: 15000,
+            ip_delete_timeout: 30000,
+            instance_id_generator: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_build_service_key() {
+        let key = build_service_key("public", "DEFAULT_GROUP", "test-service");
+        assert_eq!(key, "public@@DEFAULT_GROUP@@test-service");
+    }
+
+    #[test]
+    fn test_build_instance_key() {
+        let instance = create_test_instance("127.0.0.1", 8080);
+        let key = build_instance_key(&instance);
+        assert_eq!(key, "127.0.0.1#8080#DEFAULT");
+    }
+
+    #[test]
+    fn test_register_instance() {
+        let naming = NamingService::new();
+        let instance = create_test_instance("127.0.0.1", 8080);
+
+        let result = naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance);
+        assert!(result);
+
+        let instances = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].ip, "127.0.0.1");
+    }
+
+    #[test]
+    fn test_deregister_instance() {
+        let naming = NamingService::new();
+        let instance = create_test_instance("127.0.0.1", 8080);
+
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance.clone());
+
+        let result =
+            naming.deregister_instance("public", "DEFAULT_GROUP", "test-service", &instance);
+        assert!(result);
+
+        let instances = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
+        assert!(instances.is_empty());
+    }
+
+    #[test]
+    fn test_get_instances_healthy_only() {
+        let naming = NamingService::new();
+
+        let healthy_instance = create_test_instance("127.0.0.1", 8080);
+        let mut unhealthy_instance = create_test_instance("127.0.0.2", 8081);
+        unhealthy_instance.healthy = false;
+
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", healthy_instance);
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            unhealthy_instance,
+        );
+
+        let all_instances =
+            naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
+        assert_eq!(all_instances.len(), 2);
+
+        let healthy_instances =
+            naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", true);
+        assert_eq!(healthy_instances.len(), 1);
+        assert_eq!(healthy_instances[0].ip, "127.0.0.1");
+    }
+
+    #[test]
+    fn test_subscribe_and_get_subscribers() {
+        let naming = NamingService::new();
+
+        naming.subscribe("conn-1", "public", "DEFAULT_GROUP", "test-service");
+        naming.subscribe("conn-2", "public", "DEFAULT_GROUP", "test-service");
+
+        let subscribers = naming.get_subscribers("public", "DEFAULT_GROUP", "test-service");
+        assert_eq!(subscribers.len(), 2);
+        assert!(subscribers.contains(&"conn-1".to_string()));
+        assert!(subscribers.contains(&"conn-2".to_string()));
+    }
+
+    #[test]
+    fn test_unsubscribe() {
+        let naming = NamingService::new();
+
+        naming.subscribe("conn-1", "public", "DEFAULT_GROUP", "test-service");
+        naming.unsubscribe("conn-1", "public", "DEFAULT_GROUP", "test-service");
+
+        let subscribers = naming.get_subscribers("public", "DEFAULT_GROUP", "test-service");
+        assert!(subscribers.is_empty());
+    }
+
+    #[test]
+    fn test_remove_subscriber() {
+        let naming = NamingService::new();
+
+        naming.subscribe("conn-1", "public", "DEFAULT_GROUP", "service-a");
+        naming.subscribe("conn-1", "public", "DEFAULT_GROUP", "service-b");
+
+        naming.remove_subscriber("conn-1");
+
+        let subs_a = naming.get_subscribers("public", "DEFAULT_GROUP", "service-a");
+        let subs_b = naming.get_subscribers("public", "DEFAULT_GROUP", "service-b");
+        assert!(subs_a.is_empty());
+        assert!(subs_b.is_empty());
+    }
+
+    #[test]
+    fn test_batch_register_instances() {
+        let naming = NamingService::new();
+
+        let instances = vec![
+            create_test_instance("127.0.0.1", 8080),
+            create_test_instance("127.0.0.2", 8081),
+            create_test_instance("127.0.0.3", 8082),
+        ];
+
+        let result =
+            naming.batch_register_instances("public", "DEFAULT_GROUP", "test-service", instances);
+        assert!(result);
+
+        let registered = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
+        assert_eq!(registered.len(), 3);
+    }
+
+    #[test]
+    fn test_list_services() {
+        let naming = NamingService::new();
+
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "service-a",
+            create_test_instance("127.0.0.1", 8080),
+        );
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "service-b",
+            create_test_instance("127.0.0.2", 8081),
+        );
+
+        let (count, services) = naming.list_services("public", "DEFAULT_GROUP", 1, 10);
+        assert_eq!(count, 2);
+        assert_eq!(services.len(), 2);
     }
 }

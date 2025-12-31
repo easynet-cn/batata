@@ -10,9 +10,9 @@ use crate::{
     model::{common::DEFAULT_NAMESPACE_ID, naming::Namespace},
 };
 
-const DEFAULT_NAMESPACE: &'static str = "public";
-const DEFAULT_CREATE_SOURCE: &'static str = "nacos";
-const DEFAULT_KP: &'static str = "1";
+const DEFAULT_NAMESPACE: &str = "public";
+const DEFAULT_CREATE_SOURCE: &str = "nacos";
+const DEFAULT_KP: &str = "1";
 
 // Find all namespaces
 
@@ -93,15 +93,15 @@ pub async fn get_by_namespace_id(
             namespace.config_count = config_count.1;
         }
 
-        return Ok(namespace);
+        Ok(namespace)
     } else {
-        return Err(BatataError::ApiError(
+        Err(BatataError::ApiError(
             StatusCode::NOT_FOUND.as_u16() as i32,
             error::NAMESPACE_NOT_EXIST.code,
             error::NAMESPACE_NOT_EXIST.message.to_string(),
             format!("namespaceId [{}] not exist", namespace_id),
         )
-        .into());
+        .into())
     }
 }
 

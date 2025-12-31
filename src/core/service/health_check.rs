@@ -9,7 +9,7 @@ use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
 use crate::api::{
-    grpc::{request_client::RequestClient, Metadata, Payload},
+    grpc::{Metadata, Payload, request_client::RequestClient},
     model::{Member, NodeState},
     remote::model::{HealthCheckRequest, RequestTrait},
 };
@@ -183,7 +183,10 @@ impl MemberHealthChecker {
     ) {
         // Initialize health status if not exists
         if !health_status.contains_key(address) {
-            health_status.insert(address.to_string(), MemberHealthStatus::new(address.to_string()));
+            health_status.insert(
+                address.to_string(),
+                MemberHealthStatus::new(address.to_string()),
+            );
         }
 
         let check_result = Self::perform_health_check(address, config).await;
@@ -303,7 +306,10 @@ impl MemberHealthChecker {
 
     /// Get all health statuses
     pub fn get_all_health_status(&self) -> Vec<MemberHealthStatus> {
-        self.health_status.iter().map(|e| e.value().clone()).collect()
+        self.health_status
+            .iter()
+            .map(|e| e.value().clone())
+            .collect()
     }
 
     /// Check if a member is healthy

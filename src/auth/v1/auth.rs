@@ -59,24 +59,31 @@ async fn login(
         return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
-    let user_option = auth::service::user::find_by_username(&data.database_connection, &username)
-        .await
-        .unwrap();
+    let user_option =
+        match auth::service::user::find_by_username(&data.database_connection, &username).await {
+            Ok(user) => user,
+            Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+        };
 
-    if user_option.is_none() {
-        return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
-    }
+    let user = match user_option {
+        Some(u) => u,
+        None => return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE),
+    };
 
     let token_secret_key = data.configuration.token_secret_key();
 
-    let user = user_option.unwrap();
-    let bcrypt_result = bcrypt::verify(password, &user.password).unwrap();
+    let bcrypt_result = bcrypt::verify(password, &user.password).unwrap_or(false);
 
     if bcrypt_result {
         let token_expire_seconds = data.configuration.auth_token_expire_seconds();
 
         let access_token =
-            encode_jwt_token(&username, token_secret_key.as_str(), token_expire_seconds).unwrap();
+            match encode_jwt_token(&username, token_secret_key.as_str(), token_expire_seconds) {
+                Ok(token) => token,
+                Err(_) => {
+                    return HttpResponse::InternalServerError().body("Failed to generate token");
+                }
+            };
 
         let global_admin = auth::service::role::has_global_admin_role_by_username(
             &data.database_connection,
@@ -89,7 +96,7 @@ async fn login(
         let login_result = LoginResult {
             access_token: access_token.clone(),
             token_ttl: token_expire_seconds,
-            global_admin: global_admin,
+            global_admin,
             username: user.username,
         };
 
@@ -101,5 +108,5 @@ async fn login(
             .json(login_result);
     }
 
-    return HttpResponse::Forbidden().body("USER_NOT_FOUND_MESSAGE");
+    HttpResponse::Forbidden().body("USER_NOT_FOUND_MESSAGE")
 }

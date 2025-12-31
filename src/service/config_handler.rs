@@ -12,13 +12,13 @@ use crate::{
             ConfigChangeBatchListenResponse, ConfigChangeClusterSyncRequest,
             ConfigChangeClusterSyncResponse, ConfigChangeNotifyRequest, ConfigChangeNotifyResponse,
             ConfigContext, ConfigFuzzyWatchChangeNotifyRequest,
-            ConfigFuzzyWatchChangeNotifyResponse, ConfigFuzzyWatchRequest, ConfigFuzzyWatchResponse,
-            ConfigFuzzyWatchSyncRequest, ConfigFuzzyWatchSyncResponse, ConfigPublishRequest,
-            ConfigPublishResponse, ConfigQueryRequest, ConfigQueryResponse, ConfigRemoveRequest,
-            ConfigRemoveResponse,
+            ConfigFuzzyWatchChangeNotifyResponse, ConfigFuzzyWatchRequest,
+            ConfigFuzzyWatchResponse, ConfigFuzzyWatchSyncRequest, ConfigFuzzyWatchSyncResponse,
+            ConfigPublishRequest, ConfigPublishResponse, ConfigQueryRequest, ConfigQueryResponse,
+            ConfigRemoveRequest, ConfigRemoveResponse,
         },
         grpc::{Metadata, Payload},
-        remote::model::{RequestTrait, Response, ResponseCode, ResponseTrait},
+        remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
     core::model::Connection,
     model::common::AppState,
@@ -33,7 +33,7 @@ pub struct ConfigQueryHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigQueryHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigQueryRequest::from(payload);
         let request_id = request.request_id();
 
@@ -231,7 +231,7 @@ impl PayloadHandler for ConfigRemoveHandler {
         let data_id = &request.config_request.data_id;
         let group = &request.config_request.group;
         let tenant = &request.config_request.tenant;
-        let tag = &request.tag;
+        let _tag = &request.tag;
 
         let src_user = connection.meta_info.app_name.as_str();
         let src_ip = connection.meta_info.client_ip.as_str();
@@ -281,7 +281,7 @@ pub struct ConfigBatchListenHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigBatchListenHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigBatchListenRequest::from(payload);
         let request_id = request.request_id();
 
@@ -343,7 +343,7 @@ pub struct ConfigChangeNotifyHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigChangeNotifyHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigChangeNotifyRequest::from(payload);
         let request_id = request.request_id();
 
@@ -373,13 +373,13 @@ pub struct ConfigChangeClusterSyncHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigChangeClusterSyncHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigChangeClusterSyncRequest::from(payload);
         let request_id = request.request_id();
 
-        let data_id = &request.config_request.data_id;
-        let group = &request.config_request.group;
-        let tenant = &request.config_request.tenant;
+        let _data_id = &request.config_request.data_id;
+        let _group = &request.config_request.group;
+        let _tenant = &request.config_request.tenant;
         let _last_modified = request.last_modified;
         let _gray_name = &request.gray_name;
 
@@ -409,7 +409,7 @@ pub struct ConfigFuzzyWatchHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigFuzzyWatchHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigFuzzyWatchRequest::from(payload);
         let request_id = request.request_id();
 
@@ -439,7 +439,7 @@ pub struct ConfigFuzzyWatchChangeNotifyHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigFuzzyWatchChangeNotifyHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigFuzzyWatchChangeNotifyRequest::from(payload);
         let request_id = request.request_id();
 
@@ -467,7 +467,7 @@ pub struct ConfigFuzzyWatchSyncHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigFuzzyWatchSyncRequest::from(payload);
         let request_id = request.request_id();
 
@@ -495,7 +495,7 @@ pub struct ClientConfigMetricHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ClientConfigMetricHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ClientConfigMetricRequest::from(payload);
         let request_id = request.request_id();
 

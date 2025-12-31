@@ -68,7 +68,7 @@ async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<St
 async fn announcement(params: web::Query<LanguageParam>) -> web::Json<common::Result<String>> {
     let file = format!(
         "conf/{}_{}.conf",
-        ANNOUNCEMENT_FILE[0..ANNOUNCEMENT_FILE.len() - 5].to_string(),
+        &ANNOUNCEMENT_FILE[0..ANNOUNCEMENT_FILE.len() - 5],
         params.language
     );
 
@@ -81,7 +81,7 @@ async fn announcement(params: web::Query<LanguageParam>) -> web::Json<common::Re
 
 #[get("/guide")]
 async fn guide() -> web::Json<common::Result<String>> {
-    let file = format!("conf/{}", GUIDE_FILE.to_string());
+    let file = format!("conf/{}", GUIDE_FILE);
 
     if let Ok(content) = fs::read_to_string(file) {
         web::Json(common::Result::<String>::success(content))

@@ -10,9 +10,9 @@ use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
 use crate::api::{
-    grpc::{request_client::RequestClient, Metadata, Payload},
+    grpc::{Metadata, Payload, request_client::RequestClient},
     model::Member,
-    remote::model::{RequestTrait, LABEL_SOURCE, LABEL_SOURCE_CLUSTER},
+    remote::model::{LABEL_SOURCE, LABEL_SOURCE_CLUSTER, RequestTrait},
 };
 use prost_types::Any;
 
@@ -130,7 +130,8 @@ impl ClusterClientManager {
             last_used: RwLock::new(chrono::Utc::now().timestamp_millis()),
         });
 
-        self.connections.insert(address.to_string(), connection.clone());
+        self.connections
+            .insert(address.to_string(), connection.clone());
 
         Ok(connection)
     }

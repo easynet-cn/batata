@@ -15,4 +15,4 @@ pub use config::RaftConfig;
 pub use grpc_service::{RaftGrpcService, RaftManagementGrpcService};
 pub use node::{RaftNode, RaftNodeBuilder};
 pub use request::{RaftRequest, RaftResponse};
-pub use types::{calculate_node_id, NodeId, Raft, RaftMetrics, ServerState, TypeConfig};
+pub use types::{NodeId, Raft, RaftMetrics, ServerState, TypeConfig, calculate_node_id};

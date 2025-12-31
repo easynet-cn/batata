@@ -16,7 +16,6 @@ use futures::future::LocalBoxFuture;
 use crate::{
     auth::{self, model::AuthContext},
     model::common::AppState,
-    service,
 };
 
 const ACCESS_TOKEN: &str = "accessToken";
@@ -64,33 +63,31 @@ where
             authenticate_pass = true;
         }
 
-        if !authenticate_pass {
-            if let Some(authen_header) = req.headers().get(ACCESS_TOKEN) {
-                let mut auth_context = AuthContext::default();
+        if !authenticate_pass && let Some(authen_header) = req.headers().get(ACCESS_TOKEN) {
+            let mut auth_context = AuthContext::default();
 
-                if let Ok(authen_str) = authen_header.to_str() {
-                    let token = authen_str.trim();
-                    let secret_key = req
-                        .app_data::<Data<AppState>>()
-                        .unwrap()
-                        .configuration
-                        .token_secret_key()
-                        .clone();
+            if let Ok(authen_str) = authen_header.to_str() {
+                let token = authen_str.trim();
+                let secret_key = req
+                    .app_data::<Data<AppState>>()
+                    .unwrap()
+                    .configuration
+                    .token_secret_key()
+                    .clone();
 
-                    let decode_result = auth::service::auth::decode_jwt_token(token, &secret_key);
+                let decode_result = auth::service::auth::decode_jwt_token(token, &secret_key);
 
-                    match decode_result {
-                        Ok(token_data) => {
-                            auth_context.username = token_data.claims.sub;
-                        }
-                        Err(err) => {
-                            auth_context.jwt_error = Some(err);
-                        }
+                match decode_result {
+                    Ok(token_data) => {
+                        auth_context.username = token_data.claims.sub;
+                    }
+                    Err(err) => {
+                        auth_context.jwt_error = Some(err);
                     }
                 }
-
-                req.extensions_mut().insert(auth_context);
             }
+
+            req.extensions_mut().insert(auth_context);
         }
 
         let res = self.service.call(req);

@@ -130,12 +130,10 @@ async fn delete(
 
     match result {
         Ok(()) => common::Result::<String>::http_success("delete permission ok!"),
-        Err(err) => {
-            return HttpResponse::InternalServerError().json(common::Result::<String> {
-                code: 500,
-                message: err.to_string(),
-                data: err.to_string(),
-            });
-        }
+        Err(err) => HttpResponse::InternalServerError().json(common::Result::<String> {
+            code: 500,
+            message: err.to_string(),
+            data: err.to_string(),
+        }),
     }
 }

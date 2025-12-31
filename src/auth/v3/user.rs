@@ -47,14 +47,14 @@ async fn search_page(
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
 
-    if username.starts_with("*") {
-        username = username.strip_prefix("*").unwrap().to_string();
+    if let Some(stripped) = username.strip_prefix("*") {
+        username = stripped.to_string();
     }
-    if username.ends_with("*") {
-        username = username.strip_suffix("*").unwrap().to_string();
+    if let Some(stripped) = username.strip_suffix("*") {
+        username = stripped.to_string();
     }
 
-    let result = auth::service::user::search_page(
+    let result = match auth::service::user::search_page(
         &data.database_connection,
         &username,
         params.page_no,
@@ -62,7 +62,10 @@ async fn search_page(
         accurate,
     )
     .await
-    .unwrap();
+    {
+        Ok(page) => page,
+        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+    };
 
     common::Result::<Page<User>>::http_success(result)
 }
@@ -79,9 +82,11 @@ async fn search(
             .build()
     );
 
-    let result = auth::service::user::search(&data.database_connection, &params.username)
-        .await
-        .unwrap();
+    let result =
+        match auth::service::user::search(&data.database_connection, &params.username).await {
+            Ok(users) => users,
+            Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+        };
 
     common::Result::<Vec<String>>::http_success(result)
 }
@@ -104,9 +109,13 @@ async fn create(
         );
     }
 
-    let user = auth::service::user::find_by_username(&data.database_connection, &params.username)
-        .await
-        .unwrap();
+    let user =
+        match auth::service::user::find_by_username(&data.database_connection, &params.username)
+            .await
+        {
+            Ok(u) => u,
+            Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+        };
 
     if user.is_some() {
         return model::common::ConsoleExecption::handle_illegal_argument_exectpion(format!(
@@ -115,7 +124,10 @@ async fn create(
         ));
     }
 
-    let password = bcrypt::hash(params.password.clone(), 10u32).ok().unwrap();
+    let password = match bcrypt::hash(params.password.clone(), 10u32) {
+        Ok(hash) => hash,
+        Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
+    };
 
     let result =
         auth::service::user::create(&data.database_connection, &params.username, &password).await;
@@ -161,7 +173,7 @@ async fn update(
             };
 
             HttpResponse::InternalServerError().json(common::Result::<String> {
-                code: code,
+                code,
                 message: err.to_string(),
                 data: err.to_string(),
             })
@@ -184,8 +196,7 @@ async fn delete(
     let global_admin =
         auth::service::role::find_by_username(&data.database_connection, &params.username)
             .await
-            .ok()
-            .unwrap()
+            .unwrap_or_default()
             .iter()
             .any(|role| role.role == GLOBAL_ADMIN_ROLE);
 
@@ -208,7 +219,7 @@ async fn delete(
             };
 
             HttpResponse::InternalServerError().json(common::Result::<String> {
-                code: code,
+                code,
                 message: err.to_string(),
                 data: err.to_string(),
             })

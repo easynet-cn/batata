@@ -59,7 +59,7 @@ pub async fn search_page(
         ));
     }
 
-    return Ok(Page::<PermissionInfo>::default());
+    Ok(Page::<PermissionInfo>::default())
 }
 
 pub async fn find_by_roles(

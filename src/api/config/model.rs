@@ -226,7 +226,9 @@ impl ConfigListenerInfo {
     pub const QUERY_TYPE_IP: &str = "ip";
 }
 
+#[derive(Default)]
 pub enum SameConfigPolicy {
+    #[default]
     Abort,
     Skip,
     Overwrite,
@@ -248,12 +250,6 @@ impl SameConfigPolicy {
             "OVERWRITE" => Ok(SameConfigPolicy::Overwrite),
             _ => Err(format!("Invalid same config policy: {}", s)),
         }
-    }
-}
-
-impl Default for SameConfigPolicy {
-    fn default() -> Self {
-        SameConfigPolicy::Abort
     }
 }
 
@@ -835,9 +831,9 @@ impl ResponseTrait for ConfigChangeBatchListenResponse {
     }
 }
 
-impl Into<Any> for ConfigChangeBatchListenResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigChangeBatchListenResponse> for Any {
+    fn from(val: ConfigChangeBatchListenResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -873,9 +869,9 @@ impl ResponseTrait for ConfigPublishResponse {
     }
 }
 
-impl Into<Any> for ConfigPublishResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigPublishResponse> for Any {
+    fn from(val: ConfigPublishResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -925,9 +921,9 @@ impl ResponseTrait for ConfigQueryResponse {
     }
 }
 
-impl Into<Any> for ConfigQueryResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigQueryResponse> for Any {
+    fn from(val: ConfigQueryResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -964,9 +960,9 @@ impl ResponseTrait for ConfigRemoveResponse {
     }
 }
 
-impl Into<Any> for ConfigRemoveResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigRemoveResponse> for Any {
+    fn from(val: ConfigRemoveResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -1003,9 +999,9 @@ impl ResponseTrait for ConfigFuzzyWatchChangeNotifyResponse {
     }
 }
 
-impl Into<Any> for ConfigFuzzyWatchChangeNotifyResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigFuzzyWatchChangeNotifyResponse> for Any {
+    fn from(val: ConfigFuzzyWatchChangeNotifyResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -1042,9 +1038,9 @@ impl ResponseTrait for ConfigFuzzyWatchSyncResponse {
     }
 }
 
-impl Into<Any> for ConfigFuzzyWatchSyncResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigFuzzyWatchSyncResponse> for Any {
+    fn from(val: ConfigFuzzyWatchSyncResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -1082,9 +1078,9 @@ impl ResponseTrait for ClientConfigMetricResponse {
     }
 }
 
-impl Into<Any> for ClientConfigMetricResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ClientConfigMetricResponse> for Any {
+    fn from(val: ClientConfigMetricResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -1120,9 +1116,9 @@ impl ResponseTrait for ConfigChangeNotifyResponse {
     }
 }
 
-impl Into<Any> for ConfigChangeNotifyResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigChangeNotifyResponse> for Any {
+    fn from(val: ConfigChangeNotifyResponse) -> Self {
+        val.into_any()
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1157,9 +1153,9 @@ impl ResponseTrait for ConfigFuzzyWatchResponse {
     }
 }
 
-impl Into<Any> for ConfigFuzzyWatchResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigFuzzyWatchResponse> for Any {
+    fn from(val: ConfigFuzzyWatchResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -1195,8 +1191,8 @@ impl ResponseTrait for ConfigChangeClusterSyncResponse {
     }
 }
 
-impl Into<Any> for ConfigChangeClusterSyncResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConfigChangeClusterSyncResponse> for Any {
+    fn from(val: ConfigChangeClusterSyncResponse) -> Self {
+        val.into_any()
     }
 }

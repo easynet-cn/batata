@@ -9,13 +9,13 @@ use crate::{
     api::{
         grpc::{Metadata, Payload},
         naming::model::{
-            BatchInstanceRequest, BatchInstanceResponse, InstanceRequest, InstanceResponse,
-            NamingFuzzyWatchChangeNotifyRequest, NamingFuzzyWatchChangeNotifyResponse,
-            NamingFuzzyWatchRequest, NamingFuzzyWatchResponse, NamingFuzzyWatchSyncRequest,
-            NamingFuzzyWatchSyncResponse, NotifySubscriberRequest, NotifySubscriberResponse,
-            PersistentInstanceRequest, QueryServiceResponse, ServiceListRequest,
-            ServiceListResponse, ServiceQueryRequest, SubscribeServiceRequest,
-            SubscribeServiceResponse, DE_REGISTER_INSTANCE, REGISTER_INSTANCE,
+            BatchInstanceRequest, BatchInstanceResponse, DE_REGISTER_INSTANCE, InstanceRequest,
+            InstanceResponse, NamingFuzzyWatchChangeNotifyRequest,
+            NamingFuzzyWatchChangeNotifyResponse, NamingFuzzyWatchRequest,
+            NamingFuzzyWatchResponse, NamingFuzzyWatchSyncRequest, NamingFuzzyWatchSyncResponse,
+            NotifySubscriberRequest, NotifySubscriberResponse, PersistentInstanceRequest,
+            QueryServiceResponse, REGISTER_INSTANCE, ServiceListRequest, ServiceListResponse,
+            ServiceQueryRequest, SubscribeServiceRequest, SubscribeServiceResponse,
         },
         remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
@@ -31,7 +31,7 @@ pub struct InstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for InstanceRequestHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = InstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -83,7 +83,7 @@ pub struct BatchInstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for BatchInstanceRequestHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = BatchInstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -94,11 +94,19 @@ impl PayloadHandler for BatchInstanceRequestHandler {
         let req_type = &request.r#type;
 
         let result = if req_type == REGISTER_INSTANCE {
-            self.naming_service
-                .batch_register_instances(namespace, group_name, service_name, instances)
+            self.naming_service.batch_register_instances(
+                namespace,
+                group_name,
+                service_name,
+                instances,
+            )
         } else if req_type == DE_REGISTER_INSTANCE {
-            self.naming_service
-                .batch_deregister_instances(namespace, group_name, service_name, &instances)
+            self.naming_service.batch_deregister_instances(
+                namespace,
+                group_name,
+                service_name,
+                &instances,
+            )
         } else {
             false
         };
@@ -135,7 +143,7 @@ pub struct ServiceListRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ServiceListRequestHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ServiceListRequest::from(payload);
         let request_id = request.request_id();
 
@@ -144,9 +152,9 @@ impl PayloadHandler for ServiceListRequestHandler {
         let page_no = request.page_no.max(1);
         let page_size = request.page_size.max(10);
 
-        let (count, service_names) =
-            self.naming_service
-                .list_services(namespace, group_name, page_no, page_size);
+        let (count, service_names) = self
+            .naming_service
+            .list_services(namespace, group_name, page_no, page_size);
 
         let mut response = ServiceListResponse::new();
         response.response.request_id = request_id;
@@ -174,7 +182,7 @@ pub struct ServiceQueryRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ServiceQueryRequestHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ServiceQueryRequest::from(payload);
         let request_id = request.request_id();
 
@@ -184,9 +192,13 @@ impl PayloadHandler for ServiceQueryRequestHandler {
         let cluster = &request.cluster;
         let healthy_only = request.healthy_only;
 
-        let service_info =
-            self.naming_service
-                .get_service(namespace, group_name, service_name, cluster, healthy_only);
+        let service_info = self.naming_service.get_service(
+            namespace,
+            group_name,
+            service_name,
+            cluster,
+            healthy_only,
+        );
 
         let mut response = QueryServiceResponse::new();
         response.response.request_id = request_id;
@@ -263,7 +275,7 @@ pub struct PersistentInstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for PersistentInstanceRequestHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = PersistentInstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -319,7 +331,7 @@ pub struct NotifySubscriberHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NotifySubscriberHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NotifySubscriberRequest::from(payload);
         let request_id = request.request_id();
 
@@ -349,7 +361,7 @@ pub struct NamingFuzzyWatchHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchRequest::from(payload);
         let request_id = request.request_id();
 
@@ -378,7 +390,7 @@ pub struct NamingFuzzyWatchChangeNotifyHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchChangeNotifyHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchChangeNotifyRequest::from(payload);
         let request_id = request.request_id();
 
@@ -406,7 +418,7 @@ pub struct NamingFuzzyWatchSyncHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchSyncHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchSyncRequest::from(payload);
         let request_id = request.request_id();
 

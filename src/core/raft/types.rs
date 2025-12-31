@@ -3,7 +3,6 @@
 
 use std::io::Cursor;
 
-use openraft::BasicNode;
 use serde::{Deserialize, Serialize};
 
 use super::request::{RaftRequest, RaftResponse};

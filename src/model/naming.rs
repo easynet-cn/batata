@@ -14,7 +14,9 @@ pub const NAMING_REQUEST_TIMEOUT: &str = "namingRequestTimeout";
 const DEFAULT_NAMESPACE_QUOTA: i32 = 200;
 const DEFAULT_NAMESPACE_SHOW_NAME: &str = "public";
 const DEFAULT_NAMESPACE_DESCRIPTION: &str = "Default Namespace";
+#[allow(dead_code)]
 const DEFAULT_CREATE_SOURCE: &str = "nacos";
+#[allow(dead_code)]
 const DEFAULT_KP: &str = "1";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

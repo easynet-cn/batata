@@ -214,7 +214,7 @@ impl DistroProtocol {
         let running = self.running.clone();
         let client_manager = self.client_manager.clone();
         let config = self.config.clone();
-        let local_address = self.local_address.clone();
+        let _local_address = self.local_address.clone();
 
         tokio::spawn(async move {
             loop {
@@ -235,7 +235,8 @@ impl DistroProtocol {
                     .collect();
 
                 for task in ready_tasks {
-                    let task_key = format!("{}:{}:{}", task.data_type, task.key, task.target_address);
+                    let task_key =
+                        format!("{}:{}:{}", task.data_type, task.key, task.target_address);
 
                     // Get data from handler
                     if let Some(handler) = handlers.get(&task.data_type) {
@@ -316,10 +317,7 @@ impl DistroProtocol {
 
                 // For each member, log verification (actual implementation would send verify requests)
                 for member_address in &other_members {
-                    debug!(
-                        "Verifying distro data with {}",
-                        member_address
-                    );
+                    debug!("Verifying distro data with {}", member_address);
                 }
             }
         });
@@ -327,7 +325,7 @@ impl DistroProtocol {
 
     /// Send sync data to a target node
     async fn send_sync_data(
-        client_manager: &Arc<ClusterClientManager>,
+        _client_manager: &Arc<ClusterClientManager>,
         target: &str,
         data: DistroData,
     ) -> Result<(), String> {
@@ -368,6 +366,7 @@ impl DistroProtocol {
 
 /// Default implementation for naming instance data
 pub struct NamingInstanceDistroHandler {
+    #[allow(dead_code)]
     local_address: String,
     // In a real implementation, this would hold a reference to NamingService
 }
@@ -389,21 +388,18 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
         vec![]
     }
 
-    async fn get_data(&self, key: &str) -> Option<DistroData> {
+    async fn get_data(&self, _key: &str) -> Option<DistroData> {
         // Would return the specific instance data
         None
     }
 
     async fn process_sync_data(&self, data: DistroData) -> Result<(), String> {
         // Would update local instance data
-        debug!(
-            "Processing naming instance sync data: key={}",
-            data.key
-        );
+        debug!("Processing naming instance sync data: key={}", data.key);
         Ok(())
     }
 
-    async fn process_verify_data(&self, data: &DistroData) -> Result<bool, String> {
+    async fn process_verify_data(&self, _data: &DistroData) -> Result<bool, String> {
         // Would verify data integrity
         Ok(true)
     }
@@ -420,7 +416,10 @@ mod tests {
 
     #[test]
     fn test_distro_data_type_display() {
-        assert_eq!(DistroDataType::NamingInstance.to_string(), "naming_instance");
+        assert_eq!(
+            DistroDataType::NamingInstance.to_string(),
+            "naming_instance"
+        );
         assert_eq!(
             DistroDataType::Custom("test".to_string()).to_string(),
             "custom_test"

@@ -4,25 +4,23 @@
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, warn};
 
 use crate::api::raft::{
-    raft_management_service_server::RaftManagementService,
-    raft_service_server::RaftService,
     AddLearnerRequest, AddLearnerResponse, AppendEntriesRequest as ProtoAppendEntriesRequest,
     AppendEntriesResponse as ProtoAppendEntriesResponse, ChangeMembershipRequest,
     ChangeMembershipResponse, ClientWriteRequest, ClientWriteResponse, Entry as ProtoEntry,
     GetMetricsRequest, GetMetricsResponse, InstallSnapshotRequest as ProtoInstallSnapshotRequest,
     InstallSnapshotResponse as ProtoInstallSnapshotResponse, LogId as ProtoLogId,
     RaftNodeInfo as ProtoRaftNodeInfo, Vote as ProtoVote, VoteRequest as ProtoVoteRequest,
-    VoteResponse as ProtoVoteResponse,
+    VoteResponse as ProtoVoteResponse, raft_management_service_server::RaftManagementService,
+    raft_service_server::RaftService,
 };
 
 use super::node::RaftNode;
 use super::request::RaftRequest;
-use super::types::{NodeId, Raft, TypeConfig};
+use super::types::{NodeId, TypeConfig};
 
 /// gRPC service for Raft consensus protocol
 pub struct RaftGrpcService {
@@ -154,10 +152,15 @@ impl RaftService for RaftGrpcService {
         let (success, conflict) = match response {
             openraft::raft::AppendEntriesResponse::Success => (true, None),
             openraft::raft::AppendEntriesResponse::PartialSuccess(log_id) => {
-                let match_log = log_id.map(|l| ProtoLogId { term: l.leader_id.term, index: l.index });
+                let match_log = log_id.map(|l| ProtoLogId {
+                    term: l.leader_id.term,
+                    index: l.index,
+                });
                 (true, match_log)
             }
-            openraft::raft::AppendEntriesResponse::Conflict => (false, Some(ProtoLogId { term: 0, index: 0 })),
+            openraft::raft::AppendEntriesResponse::Conflict => {
+                (false, Some(ProtoLogId { term: 0, index: 0 }))
+            }
             openraft::raft::AppendEntriesResponse::HigherVote(_) => (false, None),
         };
 
@@ -207,7 +210,7 @@ impl RaftService for RaftGrpcService {
         request: Request<Streaming<ProtoInstallSnapshotRequest>>,
     ) -> Result<Response<ProtoInstallSnapshotResponse>, Status> {
         let raft_node = self.get_raft().await?;
-        let mut stream = request.into_inner();
+        let _stream = request.into_inner();
 
         // TODO: Implement streaming snapshot installation
         // For now, return a placeholder response
@@ -215,9 +218,7 @@ impl RaftService for RaftGrpcService {
 
         // Get the current vote
         let metrics = raft_node.metrics();
-        let vote = metrics
-            .vote
-            .clone();
+        let vote = metrics.vote;
 
         Ok(Response::new(ProtoInstallSnapshotResponse {
             term: vote.leader_id().term,

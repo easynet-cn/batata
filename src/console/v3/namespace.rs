@@ -27,6 +27,7 @@ struct GetParam {
 #[serde(rename_all = "camelCase")]
 struct CreateFormData {
     custom_namespace_id: Option<String>,
+    #[allow(dead_code)]
     namespace_id: Option<String>,
     namespace_name: String,
     namespace_desc: Option<String>,

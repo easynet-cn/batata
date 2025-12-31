@@ -12,11 +12,21 @@ use crate::model::common;
 #[derive(thiserror::Error, Debug)]
 pub enum BatataError {
     #[error("caused: {0}")]
-    IllegalArgument(String),      // Invalid input parameter
+    IllegalArgument(String), // Invalid input parameter
     #[error("user '{0}' not exist!")]
-    UserNotExist(String),         // User not found
+    UserNotExist(String), // User not found
     #[error("{2}")]
     ApiError(i32, i32, String, String), // API error with status, code, message, and data
+    #[error("network error: {0}")]
+    NetworkError(String), // Network-related errors
+    #[error("database error: {0}")]
+    DatabaseError(String), // Database operation errors
+    #[error("authentication error: {0}")]
+    AuthError(String), // Authentication failures
+    #[error("configuration error: {0}")]
+    ConfigError(String), // Configuration issues
+    #[error("internal error: {0}")]
+    InternalError(String), // Internal server errors
 }
 
 // Wrapper for application errors to implement actix-web error handling
@@ -27,7 +37,7 @@ pub struct AppError {
 
 impl Display for AppError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.inner.to_string())
+        write!(f, "{}", self.inner)
     }
 }
 
@@ -54,6 +64,21 @@ impl actix_web::error::ResponseError for AppError {
                         message.to_string(),
                         data.to_string(),
                     )
+                }
+                BatataError::NetworkError(message) => {
+                    HttpResponse::ServiceUnavailable().body(message.to_string())
+                }
+                BatataError::DatabaseError(message) => {
+                    HttpResponse::InternalServerError().body(message.to_string())
+                }
+                BatataError::AuthError(message) => {
+                    HttpResponse::Unauthorized().body(message.to_string())
+                }
+                BatataError::ConfigError(message) => {
+                    HttpResponse::BadRequest().body(message.to_string())
+                }
+                BatataError::InternalError(message) => {
+                    HttpResponse::InternalServerError().body(message.to_string())
                 }
             }
         } else {

@@ -655,9 +655,9 @@ impl ResponseTrait for InstanceResponse {
     }
 }
 
-impl Into<Any> for InstanceResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<InstanceResponse> for Any {
+    fn from(val: InstanceResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -697,9 +697,9 @@ impl ResponseTrait for BatchInstanceResponse {
     }
 }
 
-impl Into<Any> for BatchInstanceResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<BatchInstanceResponse> for Any {
+    fn from(val: BatchInstanceResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -740,9 +740,9 @@ impl ResponseTrait for ServiceListResponse {
     }
 }
 
-impl Into<Any> for ServiceListResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ServiceListResponse> for Any {
+    fn from(val: ServiceListResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -782,9 +782,9 @@ impl ResponseTrait for QueryServiceResponse {
     }
 }
 
-impl Into<Any> for QueryServiceResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<QueryServiceResponse> for Any {
+    fn from(val: QueryServiceResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -824,9 +824,9 @@ impl ResponseTrait for SubscribeServiceResponse {
     }
 }
 
-impl Into<Any> for SubscribeServiceResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<SubscribeServiceResponse> for Any {
+    fn from(val: SubscribeServiceResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -864,9 +864,9 @@ impl ResponseTrait for NotifySubscriberResponse {
     }
 }
 
-impl Into<Any> for NotifySubscriberResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<NotifySubscriberResponse> for Any {
+    fn from(val: NotifySubscriberResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -904,9 +904,9 @@ impl ResponseTrait for NamingFuzzyWatchResponse {
     }
 }
 
-impl Into<Any> for NamingFuzzyWatchResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<NamingFuzzyWatchResponse> for Any {
+    fn from(val: NamingFuzzyWatchResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -944,9 +944,9 @@ impl ResponseTrait for NamingFuzzyWatchChangeNotifyResponse {
     }
 }
 
-impl Into<Any> for NamingFuzzyWatchChangeNotifyResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<NamingFuzzyWatchChangeNotifyResponse> for Any {
+    fn from(val: NamingFuzzyWatchChangeNotifyResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -984,8 +984,8 @@ impl ResponseTrait for NamingFuzzyWatchSyncResponse {
     }
 }
 
-impl Into<Any> for NamingFuzzyWatchSyncResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<NamingFuzzyWatchSyncResponse> for Any {
+    fn from(val: NamingFuzzyWatchSyncResponse) -> Self {
+        val.into_any()
     }
 }

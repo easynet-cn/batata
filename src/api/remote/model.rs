@@ -93,12 +93,12 @@ pub trait ConfigRequestTrait {
     fn data_id(&self) -> String {
         String::default()
     }
-    
+
     // Get configuration group name
     fn group_name(&self) -> String {
         String::default()
     }
-    
+
     // Get configuration namespace identifier
     fn namespace_id(&self) -> String {
         String::default()
@@ -116,7 +116,7 @@ pub struct ClientAbilities {}
 pub struct Request {
     #[serde(skip)]
     pub headers: HashMap<String, String>, // Request headers (not serialized)
-    pub request_id: String,                // Unique request identifier
+    pub request_id: String, // Unique request identifier
 }
 
 impl Request {
@@ -233,8 +233,8 @@ impl From<&Payload> for HealthCheckRequest {
 pub struct ConnectResetRequest {
     #[serde(flatten)]
     pub internal_request: InternalRequest, // Internal request wrapper
-    pub server_ip: String,                 // Target server IP address
-    pub server_port: String,                // Target server port
+    pub server_ip: String,   // Target server IP address
+    pub server_port: String, // Target server port
 }
 
 impl ConnectResetRequest {
@@ -317,11 +317,11 @@ impl From<&Payload> for ServerCheckRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionSetupRequest {
     #[serde(flatten)]
-    pub internal_request: InternalRequest,           // Internal request wrapper
-    pub client_version: String,                       // Client version information
-    pub tenant: String,                              // Namespace/tenant identifier
-    pub labels: HashMap<String, String>,             // Client metadata labels
-    pub client_abilities: ClientAbilities,            // Client capabilities
+    pub internal_request: InternalRequest, // Internal request wrapper
+    pub client_version: String,            // Client version information
+    pub tenant: String,                    // Namespace/tenant identifier
+    pub labels: HashMap<String, String>,   // Client metadata labels
+    pub client_abilities: ClientAbilities, // Client capabilities
 }
 
 impl ConnectionSetupRequest {
@@ -591,7 +591,7 @@ pub trait ResponseTrait {
         Self: Serialize,
     {
         Payload {
-            metadata: metadata,
+            metadata,
             body: Some(self.into_any()),
         }
     }
@@ -623,11 +623,11 @@ impl ResponseCode {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Response {
-    pub result_code: i32,           // Operation result code
-    pub error_code: i32,             // Error code if failed
-    pub success: bool,               // Success flag
-    pub message: String,             // Response message
-    pub request_id: String,          // Correlation request ID
+    pub result_code: i32,   // Operation result code
+    pub error_code: i32,    // Error code if failed
+    pub success: bool,      // Success flag
+    pub message: String,    // Response message
+    pub request_id: String, // Correlation request ID
 }
 
 impl Response {
@@ -694,9 +694,9 @@ impl ResponseTrait for HealthCheckResponse {
     }
 }
 
-impl Into<Any> for HealthCheckResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<HealthCheckResponse> for Any {
+    fn from(val: HealthCheckResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -705,8 +705,8 @@ impl Into<Any> for HealthCheckResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ServerCheckResponse {
     #[serde(flatten)]
-    pub response: Response,              // Base response fields
-    pub connection_id: String,           // Assigned connection ID
+    pub response: Response, // Base response fields
+    pub connection_id: String,             // Assigned connection ID
     pub support_ability_negotiation: bool, // Whether ability negotiation is supported
 }
 
@@ -728,9 +728,9 @@ impl ResponseTrait for ServerCheckResponse {
     }
 }
 
-impl Into<Any> for ServerCheckResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ServerCheckResponse> for Any {
+    fn from(val: ServerCheckResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -768,9 +768,9 @@ impl ResponseTrait for ClientDetectionResponse {
     }
 }
 
-impl Into<Any> for ClientDetectionResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ClientDetectionResponse> for Any {
+    fn from(val: ClientDetectionResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -810,9 +810,9 @@ impl ResponseTrait for ServerLoaderInfoResponse {
     }
 }
 
-impl Into<Any> for ServerLoaderInfoResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ServerLoaderInfoResponse> for Any {
+    fn from(val: ServerLoaderInfoResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -850,9 +850,9 @@ impl ResponseTrait for ServerReloadResponse {
     }
 }
 
-impl Into<Any> for ServerReloadResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ServerReloadResponse> for Any {
+    fn from(val: ServerReloadResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -890,9 +890,9 @@ impl ResponseTrait for ConnectResetResponse {
     }
 }
 
-impl Into<Any> for ConnectResetResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<ConnectResetResponse> for Any {
+    fn from(val: ConnectResetResponse) -> Self {
+        val.into_any()
     }
 }
 
@@ -930,9 +930,9 @@ impl ResponseTrait for SetupAckResponse {
     }
 }
 
-impl Into<Any> for SetupAckResponse {
-    fn into(self) -> Any {
-        self.into_any()
+impl From<SetupAckResponse> for Any {
+    fn from(val: SetupAckResponse) -> Self {
+        val.into_any()
     }
 }
 

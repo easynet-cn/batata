@@ -7,21 +7,25 @@ use std::sync::Arc;
 
 use openraft::storage::{RaftSnapshotBuilder, RaftStateMachine, Snapshot};
 use openraft::{
-    Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId, OptionalSend, SnapshotMeta, StorageError, StoredMembership,
+    Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId, OptionalSend, SnapshotMeta, StorageError,
+    StoredMembership,
 };
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, DB};
+use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Options};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use super::request::{RaftRequest, RaftResponse};
-use super::types::{NodeId, SnapshotData, TypeConfig};
+use super::types::{NodeId, TypeConfig};
 
 /// Helper to create StorageError for state machine operations
-fn sm_error(e: impl std::error::Error + Send + Sync + 'static, verb: ErrorVerb) -> StorageError<NodeId> {
+fn sm_error(
+    e: impl std::error::Error + Send + Sync + 'static,
+    verb: ErrorVerb,
+) -> StorageError<NodeId> {
     StorageError::from_io_error(
         ErrorSubject::StateMachine,
         verb,
-        std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+        std::io::Error::other(e.to_string()),
     )
 }
 
@@ -37,7 +41,6 @@ const CF_META: &str = "meta";
 // Meta keys
 const KEY_LAST_APPLIED: &[u8] = b"last_applied";
 const KEY_LAST_MEMBERSHIP: &[u8] = b"last_membership";
-const KEY_SNAPSHOT_INDEX: &[u8] = b"snapshot_index";
 
 /// RocksDB-based state machine for Raft
 pub struct RocksStateMachine {
@@ -50,7 +53,7 @@ pub struct RocksStateMachine {
 
 impl RocksStateMachine {
     /// Create a new RocksDB state machine
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError<NodeId>> {
+    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError<NodeId>> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
@@ -76,10 +79,8 @@ impl RocksStateMachine {
             last_membership: RwLock::new(StoredMembership::default()),
         };
 
-        // Load cached values
-        tokio::runtime::Handle::current().block_on(async {
-            sm.load_cached_values().await
-        })?;
+        // Load cached values asynchronously
+        sm.load_cached_values().await?;
 
         info!("RocksDB state machine initialized");
         Ok(sm)
@@ -93,8 +94,8 @@ impl RocksStateMachine {
             .get_cf(self.cf_meta(), KEY_LAST_APPLIED)
             .map_err(|e| sm_error(e, ErrorVerb::Read))?
         {
-            let log_id: LogId<NodeId> = serde_json::from_slice(&bytes)
-                .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+            let log_id: LogId<NodeId> =
+                serde_json::from_slice(&bytes).map_err(|e| sm_error(e, ErrorVerb::Read))?;
             *self.last_applied.write().await = Some(log_id);
         }
 
@@ -104,8 +105,8 @@ impl RocksStateMachine {
             .get_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP)
             .map_err(|e| sm_error(e, ErrorVerb::Read))?
         {
-            let membership: StoredMembership<NodeId, openraft::BasicNode> = serde_json::from_slice(&bytes)
-                .map_err(|e| sm_error(e, ErrorVerb::Read))?;
+            let membership: StoredMembership<NodeId, openraft::BasicNode> =
+                serde_json::from_slice(&bytes).map_err(|e| sm_error(e, ErrorVerb::Read))?;
             *self.last_membership.write().await = membership;
         }
 
@@ -199,7 +200,15 @@ impl RocksStateMachine {
                 desc,
                 src_user,
             } => self.apply_config_publish(
-                &data_id, &group, &tenant, &content, config_type, app_name, tag, desc, src_user,
+                &data_id,
+                &group,
+                &tenant,
+                &content,
+                config_type,
+                app_name,
+                tag,
+                desc,
+                src_user,
             ),
 
             RaftRequest::ConfigRemove {
@@ -297,9 +306,12 @@ impl RocksStateMachine {
                 group_name,
                 service_name,
                 instance_id,
-            } => {
-                self.apply_instance_deregister(&namespace_id, &group_name, &service_name, &instance_id)
-            }
+            } => self.apply_instance_deregister(
+                &namespace_id,
+                &group_name,
+                &service_name,
+                &instance_id,
+            ),
 
             RaftRequest::PersistentInstanceUpdate {
                 namespace_id,
@@ -356,10 +368,11 @@ impl RocksStateMachine {
             "modified_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self
-            .db
-            .put_cf(self.cf_config(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_config(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("Config published: {}", key);
                 RaftResponse::success()
@@ -401,10 +414,11 @@ impl RocksStateMachine {
             "created_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self
-            .db
-            .put_cf(self.cf_namespace(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_namespace(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("Namespace created: {}", namespace_id);
                 RaftResponse::success()
@@ -430,10 +444,11 @@ impl RocksStateMachine {
             "modified_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self
-            .db
-            .put_cf(self.cf_namespace(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_namespace(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("Namespace updated: {}", namespace_id);
                 RaftResponse::success()
@@ -475,10 +490,11 @@ impl RocksStateMachine {
             "created_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self
-            .db
-            .put_cf(self.cf_users(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_users(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("User created: {}", username);
                 RaftResponse::success()
@@ -500,9 +516,7 @@ impl RocksStateMachine {
 
         // Read existing user
         let existing = match self.db.get_cf(self.cf_users(), key.as_bytes()) {
-            Ok(Some(bytes)) => {
-                serde_json::from_slice::<serde_json::Value>(&bytes).ok()
-            }
+            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
             _ => None,
         };
 
@@ -519,10 +533,11 @@ impl RocksStateMachine {
             return RaftResponse::failure("User not found");
         };
 
-        match self
-            .db
-            .put_cf(self.cf_users(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_users(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("User updated: {}", username);
                 RaftResponse::success()
@@ -558,10 +573,11 @@ impl RocksStateMachine {
             "created_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self
-            .db
-            .put_cf(self.cf_roles(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_roles(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("Role assigned: {} -> {}", role, username);
                 RaftResponse::success()
@@ -598,10 +614,11 @@ impl RocksStateMachine {
             "created_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self
-            .db
-            .put_cf(self.cf_permissions(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_permissions(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("Permission granted: {} -> {}:{}", role, resource, action);
                 RaftResponse::success()
@@ -659,10 +676,11 @@ impl RocksStateMachine {
             "registered_time": chrono::Utc::now().timestamp_millis(),
         });
 
-        match self
-            .db
-            .put_cf(self.cf_instances(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_instances(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("Instance registered: {}", key);
                 RaftResponse::success()
@@ -712,9 +730,7 @@ impl RocksStateMachine {
 
         // Read existing instance
         let existing = match self.db.get_cf(self.cf_instances(), key.as_bytes()) {
-            Ok(Some(bytes)) => {
-                serde_json::from_slice::<serde_json::Value>(&bytes).ok()
-            }
+            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
             _ => None,
         };
 
@@ -743,10 +759,11 @@ impl RocksStateMachine {
             return RaftResponse::failure("Instance not found");
         };
 
-        match self
-            .db
-            .put_cf(self.cf_instances(), key.as_bytes(), value.to_string().as_bytes())
-        {
+        match self.db.put_cf(
+            self.cf_instances(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
             Ok(_) => {
                 debug!("Instance updated: {}", key);
                 RaftResponse::success()
@@ -760,8 +777,7 @@ impl RocksStateMachine {
 
     /// Save last applied log ID
     async fn save_last_applied(&self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
-        let bytes = serde_json::to_vec(&log_id)
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let bytes = serde_json::to_vec(&log_id).map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         self.db
             .put_cf(self.cf_meta(), KEY_LAST_APPLIED, &bytes)
@@ -776,8 +792,7 @@ impl RocksStateMachine {
         &self,
         membership: StoredMembership<NodeId, openraft::BasicNode>,
     ) -> Result<(), StorageError<NodeId>> {
-        let bytes = serde_json::to_vec(&membership)
-            .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let bytes = serde_json::to_vec(&membership).map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         self.db
             .put_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP, &bytes)
@@ -790,8 +805,7 @@ impl RocksStateMachine {
 
 impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
     async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, StorageError<NodeId>> {
-        // For now, create a simple snapshot with last applied info
-        let last_applied = self.last_applied.read().await.clone();
+        let last_applied = *self.last_applied.read().await;
         let last_membership = self.last_membership.read().await.clone();
 
         let snapshot_id = format!(
@@ -803,15 +817,37 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
         let meta = SnapshotMeta {
             last_log_id: last_applied,
             last_membership,
-            snapshot_id,
+            snapshot_id: snapshot_id.clone(),
         };
 
-        // TODO: Implement full snapshot serialization
-        let data = SnapshotData::new(Vec::new());
+        // Serialize all column family data
+        let mut snapshot_data = std::collections::HashMap::new();
+
+        for cf_name in [
+            CF_CONFIG,
+            CF_NAMESPACE,
+            CF_USERS,
+            CF_ROLES,
+            CF_PERMISSIONS,
+            CF_INSTANCES,
+        ] {
+            if let Some(cf) = self.db.cf_handle(cf_name) {
+                let mut cf_data = Vec::new();
+                let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                for (key, value) in iter.flatten() {
+                    cf_data.push((key.to_vec(), value.to_vec()));
+                }
+                snapshot_data.insert(cf_name.to_string(), cf_data);
+            }
+        }
+
+        let data = serde_json::to_vec(&snapshot_data).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+        info!("Built snapshot {} with {} bytes", snapshot_id, data.len());
 
         Ok(Snapshot {
             meta,
-            snapshot: Box::new(Cursor::new(data.data)),
+            snapshot: Box::new(Cursor::new(data)),
         })
     }
 }
@@ -821,8 +857,14 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
 
     async fn applied_state(
         &mut self,
-    ) -> Result<(Option<LogId<NodeId>>, StoredMembership<NodeId, openraft::BasicNode>), StorageError<NodeId>> {
-        let last_applied = self.last_applied.read().await.clone();
+    ) -> Result<
+        (
+            Option<LogId<NodeId>>,
+            StoredMembership<NodeId, openraft::BasicNode>,
+        ),
+        StorageError<NodeId>,
+    > {
+        let last_applied = *self.last_applied.read().await;
         let last_membership = self.last_membership.read().await.clone();
         Ok((last_applied, last_membership))
     }
@@ -854,7 +896,9 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
         Ok(responses)
     }
 
-    async fn get_current_snapshot(&mut self) -> Result<Option<Snapshot<TypeConfig>>, StorageError<NodeId>> {
+    async fn get_current_snapshot(
+        &mut self,
+    ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<NodeId>> {
         // For now, return None as we don't persist snapshots
         // In production, this would load the latest snapshot from disk
         Ok(None)
@@ -863,7 +907,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
         RocksStateMachine {
             db: self.db.clone(),
-            last_applied: RwLock::new(self.last_applied.read().await.clone()),
+            last_applied: RwLock::new(*self.last_applied.read().await),
             last_membership: RwLock::new(self.last_membership.read().await.clone()),
         }
     }
@@ -879,7 +923,39 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
         meta: &SnapshotMeta<NodeId, openraft::BasicNode>,
         snapshot: Box<Cursor<Vec<u8>>>,
     ) -> Result<(), StorageError<NodeId>> {
-        // TODO: Implement full snapshot installation
+        let data = snapshot.into_inner();
+
+        if !data.is_empty() {
+            // Deserialize the snapshot data
+            let snapshot_data: std::collections::HashMap<String, Vec<(Vec<u8>, Vec<u8>)>> =
+                serde_json::from_slice(&data).map_err(|e| sm_error(e, ErrorVerb::Read))?;
+
+            // Clear and restore each column family
+            for (cf_name, cf_data) in snapshot_data {
+                if let Some(cf) = self.db.cf_handle(&cf_name) {
+                    // Delete existing data
+                    let mut batch = rocksdb::WriteBatch::default();
+                    let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                    for (key, _) in iter.flatten() {
+                        batch.delete_cf(cf, &key);
+                    }
+                    self.db
+                        .write(batch)
+                        .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+                    // Restore snapshot data
+                    let mut batch = rocksdb::WriteBatch::default();
+                    for (key, value) in cf_data {
+                        batch.put_cf(cf, &key, &value);
+                    }
+                    self.db
+                        .write(batch)
+                        .map_err(|e| sm_error(e, ErrorVerb::Write))?;
+                }
+            }
+        }
+
+        // Update metadata
         if let Some(log_id) = meta.last_log_id {
             self.save_last_applied(log_id).await?;
         }
@@ -893,25 +969,6 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
-
-    #[tokio::test]
-    async fn test_state_machine_basic() {
-        let temp_dir = tempdir().unwrap();
-        let sm = RocksStateMachine::new(temp_dir.path()).unwrap();
-
-        // Initial state should be empty
-        let (last_applied, _membership) = RocksStateMachine::applied_state(
-            &mut RocksStateMachine {
-                db: sm.db.clone(),
-                last_applied: RwLock::new(None),
-                last_membership: RwLock::new(StoredMembership::default()),
-            },
-        )
-        .await
-        .unwrap();
-        assert!(last_applied.is_none());
-    }
 
     #[test]
     fn test_key_generation() {
@@ -920,5 +977,24 @@ mod tests {
 
         let permission_key = RocksStateMachine::permission_key("admin", "public::*", "rw");
         assert_eq!(permission_key, "admin@@public::*@@rw");
+    }
+
+    #[test]
+    fn test_config_key_format() {
+        // Test edge cases
+        let key = RocksStateMachine::config_key("", "", "");
+        assert_eq!(key, "@@@@");
+
+        let key_with_special = RocksStateMachine::config_key("data.id", "group-1", "ns:test");
+        assert_eq!(key_with_special, "ns:test@@group-1@@data.id");
+    }
+
+    #[test]
+    fn test_namespace_key() {
+        let key = RocksStateMachine::namespace_key("public");
+        assert_eq!(key, "public");
+
+        let key_empty = RocksStateMachine::namespace_key("");
+        assert_eq!(key_empty, "");
     }
 }

@@ -8,9 +8,10 @@ use crate::core::model::{Connection, GrpcClient};
 pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Status> {
     let mut connection = Connection::default();
 
-    let remote_addr = request.remote_addr().unwrap();
-    let remote_ip = remote_addr.ip().to_string();
-    let remote_port = remote_addr.port();
+    let (remote_ip, remote_port) = match request.remote_addr() {
+        Some(addr) => (addr.ip().to_string(), addr.port()),
+        None => ("unknown".to_string(), 0),
+    };
 
     connection.meta_info.remote_ip = remote_ip.clone();
     connection.meta_info.remote_port = remote_port;
@@ -21,8 +22,7 @@ pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Sta
         remote_port
     );
 
-    let local_addr = request.local_addr().unwrap();
-    let local_port = local_addr.port();
+    let local_port = request.local_addr().map(|a| a.port()).unwrap_or(0);
 
     connection.meta_info.local_port = local_port;
 
@@ -33,6 +33,12 @@ pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Sta
 
 pub struct ConnectionManager {
     clients: Arc<DashMap<String, GrpcClient>>,
+}
+
+impl Default for ConnectionManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConnectionManager {

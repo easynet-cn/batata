@@ -80,7 +80,7 @@ pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<V
         .map(|user| user.username.to_string())
         .collect();
 
-    return Ok(users);
+    Ok(users)
 }
 
 pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> anyhow::Result<()> {

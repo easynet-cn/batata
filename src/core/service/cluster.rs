@@ -22,7 +22,7 @@ use super::{
         LoggingMemberChangeListener, MemberChangeEvent, MemberChangeEventPublisher,
         MemberChangeListener,
     },
-    member_lookup::{create_member_lookup, MemberLookup},
+    member_lookup::{MemberLookup, create_member_lookup},
 };
 
 /// Server member manager configuration
@@ -97,7 +97,7 @@ impl ServerMemberManager {
         let is_standalone = config.is_standalone();
 
         let server_list = Arc::new(DashMap::new());
-        let mut member = MemberBuilder::new(ip.clone(), port).build();
+        let member = MemberBuilder::new(ip.clone(), port).build();
 
         // Set extended member info
         member.extend_info.write().unwrap().insert(
@@ -128,8 +128,9 @@ impl ServerMemberManager {
         server_list.insert(local_address.clone(), member.clone());
 
         // Create event publisher
-        let event_publisher =
-            Arc::new(MemberChangeEventPublisher::new(manager_config.event_queue_size));
+        let event_publisher = Arc::new(MemberChangeEventPublisher::new(
+            manager_config.event_queue_size,
+        ));
 
         Self {
             port,
@@ -222,7 +223,10 @@ impl ServerMemberManager {
                 *dp_guard = Some(distro);
             }
 
-            info!("Cluster mode started with {} members", self.server_list.len());
+            info!(
+                "Cluster mode started with {} members",
+                self.server_list.len()
+            );
         } else {
             info!("Standalone mode - skipping cluster initialization");
         }
@@ -272,7 +276,8 @@ impl ServerMemberManager {
         for member in members {
             if !current_addresses.contains(&member.address) {
                 info!("Adding new cluster member: {}", member.address);
-                self.server_list.insert(member.address.clone(), member.clone());
+                self.server_list
+                    .insert(member.address.clone(), member.clone());
 
                 // Publish join event
                 self.event_publisher
@@ -283,15 +288,16 @@ impl ServerMemberManager {
 
         // Remove members that are no longer in the list (except self)
         for addr in current_addresses {
-            if addr != self.local_address && !new_addresses.contains(&addr) {
-                if let Some((_, member)) = self.server_list.remove(&addr) {
-                    info!("Removing cluster member: {}", addr);
+            if addr != self.local_address
+                && !new_addresses.contains(&addr)
+                && let Some((_, member)) = self.server_list.remove(&addr)
+            {
+                info!("Removing cluster member: {}", addr);
 
-                    // Publish leave event
-                    self.event_publisher
-                        .publish(MemberChangeEvent::member_leave(member))
-                        .await;
-                }
+                // Publish leave event
+                self.event_publisher
+                    .publish(MemberChangeEvent::member_leave(member))
+                    .await;
             }
         }
     }
@@ -415,7 +421,7 @@ impl ServerMemberManager {
 
     /// Refresh local member's last refresh time
     pub fn refresh_self(&self) {
-        if let Some(mut member) = self.server_list.get_mut(&self.local_address) {
+        if let Some(member) = self.server_list.get_mut(&self.local_address) {
             member.extend_info.write().unwrap().insert(
                 Member::LAST_REFRESH_TIME.to_string(),
                 Value::from(chrono::Utc::now().timestamp_millis()),

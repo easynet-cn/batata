@@ -14,7 +14,10 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::{api::model::{Member, MemberBuilder}, model::common::Configuration};
+use crate::{
+    api::model::{Member, MemberBuilder},
+    model::common::Configuration,
+};
 
 /// Trait for member lookup strategies
 #[tonic::async_trait]
@@ -35,18 +38,13 @@ pub trait MemberLookup: Send + Sync {
 }
 
 /// Lookup type enumeration
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum LookupType {
     /// File-based member lookup using cluster.conf
+    #[default]
     File,
     /// Address server based member lookup
     AddressServer,
-}
-
-impl Default for LookupType {
-    fn default() -> Self {
-        LookupType::File
-    }
 }
 
 impl From<&str> for LookupType {
@@ -150,7 +148,7 @@ impl FileMemberLookup {
             (addr_part.to_string(), default_port)
         };
 
-        let mut member = MemberBuilder::new(ip, port).build();
+        let member = MemberBuilder::new(ip, port).build();
 
         // Parse query parameters (e.g., raft_port=xxx)
         if parts.len() > 1 {
@@ -159,13 +157,13 @@ impl FileMemberLookup {
                 if kv.len() == 2 {
                     let key = kv[0].trim();
                     let value = kv[1].trim();
-                    if key == "raft_port" {
-                        if let Ok(raft_port) = value.parse::<u16>() {
-                            member.extend_info.write().unwrap().insert(
-                                Member::RAFT_PORT.to_string(),
-                                serde_json::Value::from(raft_port),
-                            );
-                        }
+                    if key == "raft_port"
+                        && let Ok(raft_port) = value.parse::<u16>()
+                    {
+                        member.extend_info.write().unwrap().insert(
+                            Member::RAFT_PORT.to_string(),
+                            serde_json::Value::from(raft_port),
+                        );
                     }
                 }
             }
@@ -256,10 +254,7 @@ impl AddressServerMemberLookup {
             .config
             .get_string("address.server.domain")
             .unwrap_or_else(|_| "jmenv.tbsite.net".to_string());
-        let port = config
-            .config
-            .get_int("address.server.port")
-            .unwrap_or(8080) as u16;
+        let port = config.config.get_int("address.server.port").unwrap_or(8080) as u16;
         let path = config
             .config
             .get_string("address.server.url")
@@ -285,11 +280,7 @@ impl AddressServerMemberLookup {
         let response = client.get(&self.address_server_url).send().await?;
 
         if !response.status().is_success() {
-            return Err(format!(
-                "Address server returned status: {}",
-                response.status()
-            )
-            .into());
+            return Err(format!("Address server returned status: {}", response.status()).into());
         }
 
         let body = response.text().await?;
@@ -329,11 +320,11 @@ impl AddressServerMemberLookup {
 
         // Add new members
         for addr in addresses {
-            if let Some(member) = FileMemberLookup::parse_member(&addr, default_port) {
-                if !self.members.contains_key(&member.address) {
-                    info!("Discovered cluster member: {}", member.address);
-                    self.members.insert(member.address.clone(), member);
-                }
+            if let Some(member) = FileMemberLookup::parse_member(&addr, default_port)
+                && !self.members.contains_key(&member.address)
+            {
+                info!("Discovered cluster member: {}", member.address);
+                self.members.insert(member.address.clone(), member);
             }
         }
     }
@@ -402,11 +393,10 @@ impl AddressServerMemberLookup {
                             for addr in addresses {
                                 if let Some(member) =
                                     FileMemberLookup::parse_member(&addr, default_port)
+                                    && !members.contains_key(&member.address)
                                 {
-                                    if !members.contains_key(&member.address) {
-                                        debug!("Discovered cluster member: {}", member.address);
-                                        members.insert(member.address.clone(), member);
-                                    }
+                                    debug!("Discovered cluster member: {}", member.address);
+                                    members.insert(member.address.clone(), member);
                                 }
                             }
                         }
@@ -468,13 +458,10 @@ impl MemberLookup for AddressServerMemberLookup {
             }
         }
 
-        if self.members.is_empty() {
-            if let Some(e) = last_error {
-                warn!(
-                    "Failed to fetch initial members from address server: {}",
-                    e
-                );
-            }
+        if self.members.is_empty()
+            && let Some(e) = last_error
+        {
+            warn!("Failed to fetch initial members from address server: {}", e);
         }
 
         *running = true;
@@ -560,7 +547,10 @@ mod tests {
     #[test]
     fn test_lookup_type_from_str() {
         assert_eq!(LookupType::from("file"), LookupType::File);
-        assert_eq!(LookupType::from("address-server"), LookupType::AddressServer);
+        assert_eq!(
+            LookupType::from("address-server"),
+            LookupType::AddressServer
+        );
         assert_eq!(LookupType::from("AddressServer"), LookupType::AddressServer);
         assert_eq!(LookupType::from("unknown"), LookupType::File);
     }

@@ -65,9 +65,10 @@ pub struct SelfMemberResponse {
     pub version: String,
 }
 
-// Parameters for member state update
+// Parameters for member state update (reserved for future use)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct UpdateMemberStateParam {
     pub address: String,
     pub state: String,
@@ -93,10 +94,7 @@ async fn get_nodes(
     if let Some(keyword) = &params.keyword
         && !keyword.is_empty()
     {
-        members = members
-            .into_iter()
-            .filter(|e| e.address.contains(keyword))
-            .collect();
+        members.retain(|e| e.address.contains(keyword));
     }
 
     model::common::Result::<Vec<Member>>::http_success(members)
@@ -104,10 +102,7 @@ async fn get_nodes(
 
 /// Get healthy cluster nodes only
 #[get("nodes/healthy")]
-async fn get_healthy_nodes(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-) -> impl Responder {
+async fn get_healthy_nodes(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "/v3/core/cluster")
             .action(ActionTypes::Read)
@@ -122,10 +117,7 @@ async fn get_healthy_nodes(
 
 /// Get cluster health status
 #[get("health")]
-async fn get_health(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-) -> impl Responder {
+async fn get_health(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "/v3/core/cluster")
             .action(ActionTypes::Read)
@@ -149,10 +141,7 @@ async fn get_health(
 
 /// Get self (local) member information
 #[get("self")]
-async fn get_self(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-) -> impl Responder {
+async fn get_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "/v3/core/cluster")
             .action(ActionTypes::Read)
@@ -213,10 +202,7 @@ async fn get_node(
 
 /// Get member count
 #[get("count")]
-async fn get_member_count(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-) -> impl Responder {
+async fn get_member_count(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "/v3/core/cluster")
             .action(ActionTypes::Read)
@@ -231,10 +217,7 @@ async fn get_member_count(
 
 /// Check if running in standalone mode
 #[get("standalone")]
-async fn check_standalone(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-) -> impl Responder {
+async fn check_standalone(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "/v3/core/cluster")
             .action(ActionTypes::Read)
@@ -249,10 +232,7 @@ async fn check_standalone(
 
 /// Trigger refresh of local member
 #[post("self/refresh")]
-async fn refresh_self(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-) -> impl Responder {
+async fn refresh_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "/v3/core/cluster")
             .action(ActionTypes::Write)

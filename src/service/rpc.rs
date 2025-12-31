@@ -23,7 +23,7 @@ use crate::{
 // Trait for handling gRPC payload messages
 #[tonic::async_trait]
 pub trait PayloadHandler: Send + Sync {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let message_type = payload.metadata.clone().unwrap_or_default().r#type;
 
         Err(Status::unimplemented(format!(
@@ -48,6 +48,12 @@ impl PayloadHandler for DefaultHandler {}
 pub struct HandlerRegistry {
     handlers: HashMap<String, Arc<dyn PayloadHandler>>,
     default_handler: Arc<dyn PayloadHandler>,
+}
+
+impl Default for HandlerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HandlerRegistry {
@@ -106,7 +112,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 
             let handler = self.handler_registry.get_handler(message_type);
 
-            return match handler.handle(&connection, &payload).await {
+            return match handler.handle(&connection, payload).await {
                 Ok(reponse_payload) => Ok(Response::new(reponse_payload)),
                 Err(err) => Err(err),
             };
@@ -222,7 +228,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                     }
                 }
             }
-            
+
             // 连接断开时清理资源
             connection_manager.unregister(&connection_id);
         });

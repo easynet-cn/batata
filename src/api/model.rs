@@ -306,10 +306,10 @@ impl<T> Default for Page<T> {
 impl<T> Page<T> {
     pub fn new(total_count: u64, page_number: u64, page_size: u64, page_items: Vec<T>) -> Self {
         Self {
-            total_count: total_count,
-            page_number: page_number,
+            total_count,
+            page_number,
             pages_available: (total_count as f64 / page_size as f64).ceil() as u64,
-            page_items: page_items,
+            page_items,
         }
     }
 }
@@ -317,8 +317,10 @@ impl<T> Page<T> {
 // Node state enumeration for cluster members
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
+#[derive(Default)]
 pub enum NodeState {
     Starting,
+    #[default]
     Up,
     Suspicious,
     Down,
@@ -345,12 +347,6 @@ impl NodeState {
             "htISOLATIONml" => Ok(NodeState::Isolation),
             _ => Err(format!("Invalid node state: {}", s)),
         }
-    }
-}
-
-impl Default for NodeState {
-    fn default() -> Self {
-        NodeState::Up
     }
 }
 
@@ -416,8 +412,8 @@ impl MemberBuilder {
         let map: BTreeMap<String, Value> = BTreeMap::<String, serde_json::Value>::new();
 
         MemberBuilder {
-            ip: ip,
-            port: port,
+            ip,
+            port,
             node_state: NodeState::default(),
             extend_info: Arc::<RwLock<BTreeMap<String, serde_json::Value>>>::new(RwLock::new(map)),
         }

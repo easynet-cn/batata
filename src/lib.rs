@@ -19,21 +19,22 @@ use crate::{
 };
 
 // Module declarations
-pub mod api;      // API handlers and models
-pub mod auth;     // Authentication and authorization
-pub mod config;   // Configuration management
-pub mod console;  // Console web interface
-pub mod core;     // Core business logic
-pub mod entity;   // Database entities
-pub mod error;    // Error handling and types
+pub mod api; // API handlers and models
+pub mod auth; // Authentication and authorization
+pub mod config; // Configuration management
+pub mod console; // Console web interface
+pub mod core; // Core business logic
+pub mod entity; // Database entities
+pub mod error; // Error handling and types
 pub mod middleware; // HTTP middleware
-pub mod model;    // Data models and types
-pub mod service;  // Business services
+pub mod model; // Data models and types
+pub mod service; // Business services
 
 // Action types for permission control
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ActionTypes {
-    Read,  // Read-only access
+    #[default]
+    Read, // Read-only access
     Write, // Write access
 }
 
@@ -56,12 +57,6 @@ impl ActionTypes {
     }
 }
 
-impl Default for ActionTypes {
-    fn default() -> Self {
-        ActionTypes::Read
-    }
-}
-
 impl Display for ActionTypes {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
@@ -77,9 +72,10 @@ impl FromStr for ActionTypes {
 }
 
 // Signature types for different service modules
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SignType {
-    Naming,    // Service discovery module
+    #[default]
+    Naming, // Service discovery module
     Config,    // Configuration management module
     Lock,      // Distributed lock module
     Ai,        // AI services module
@@ -114,12 +110,6 @@ impl SignType {
     }
 }
 
-impl Default for SignType {
-    fn default() -> Self {
-        SignType::Naming
-    }
-}
-
 impl Display for SignType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
@@ -135,11 +125,12 @@ impl FromStr for SignType {
 }
 
 // API access types with different permission levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ApiType {
     AdminApi,   // Administrative API with full access
     ConsoleApi, // Console management API
-    OpenApi,    // Public API for external access
+    #[default]
+    OpenApi, // Public API for external access
     InnerApi,   // Internal service API
 }
 
@@ -166,12 +157,6 @@ impl ApiType {
     }
 }
 
-impl Default for ApiType {
-    fn default() -> Self {
-        ApiType::OpenApi
-    }
-}
-
 impl Display for ApiType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.description())
@@ -189,19 +174,19 @@ impl FromStr for ApiType {
 // Security context for API access control
 #[derive(Debug, Clone)]
 pub struct Secured<'a> {
-    pub req: &'a HttpRequest,           // HTTP request reference
-    pub data: &'a web::Data<AppState>,  // Application state
-    pub action: ActionTypes,             // Requested action type
-    pub resource: &'a str,              // Target resource name
-    pub sign_type: SignType,            // Service module type
-    pub tags: Vec<String>,              // Security tags for permission checking
-    pub api_type: ApiType,              // API access type
+    pub req: &'a HttpRequest,          // HTTP request reference
+    pub data: &'a web::Data<AppState>, // Application state
+    pub action: ActionTypes,           // Requested action type
+    pub resource: &'a str,             // Target resource name
+    pub sign_type: SignType,           // Service module type
+    pub tags: Vec<String>,             // Security tags for permission checking
+    pub api_type: ApiType,             // API access type
 }
 
-impl<'a> Into<Resource> for Secured<'a> {
+impl<'a> From<Secured<'a>> for Resource {
     // Convert security context to authorization resource
-    fn into(self) -> Resource {
-        let properties = self
+    fn from(val: Secured<'a>) -> Self {
+        let properties = val
             .tags
             .iter()
             .map(|e| (e.to_string(), serde_json::Value::from(e.to_string())))
@@ -210,9 +195,9 @@ impl<'a> Into<Resource> for Secured<'a> {
         Resource {
             namespace_id: String::default(),
             group: String::default(),
-            name: self.resource.to_string(),
-            r#type: self.sign_type.as_str().to_string(),
-            properties: properties,
+            name: val.resource.to_string(),
+            r#type: val.sign_type.as_str().to_string(),
+            properties,
         }
     }
 }
@@ -252,10 +237,10 @@ pub struct SecuredBuilder<'a> {
 impl<'a> SecuredBuilder<'a> {
     pub fn new(req: &'a HttpRequest, data: &'a web::Data<AppState>, resource: &'a str) -> Self {
         SecuredBuilder::<'a> {
-            req: req,
-            data: data,
+            req,
+            data,
             action: ActionTypes::default(),
-            resource: resource,
+            resource,
             sign_type: SignType::default(),
             tags: Vec::new(),
             api_type: ApiType::default(),
@@ -308,14 +293,17 @@ impl<'a> SecuredBuilder<'a> {
 #[macro_export]
 macro_rules! secured {
     ($secured: expr) => {
-        if let Some(auth_context) = $secured
-            .req
-            .extensions()
-            .get::<crate::auth::model::AuthContext>()
-            .cloned()
-        {
+        // Extract auth context before any await points to avoid holding RefCell reference
+        let auth_context_opt: Option<$crate::auth::model::AuthContext> = {
+            $secured
+                .req
+                .extensions()
+                .get::<$crate::auth::model::AuthContext>()
+                .cloned()
+        };
+        if let Some(auth_context) = auth_context_opt {
             if auth_context.jwt_error.is_some() {
-                return crate::model::common::ErrorResult::http_response_forbidden(
+                return $crate::model::common::ErrorResult::http_response_forbidden(
                     actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
                     &auth_context.jwt_error_string(),
                     $secured.req.path(),
@@ -323,7 +311,7 @@ macro_rules! secured {
             }
 
             if !$secured.only_identity() && !$secured.has_update_password_permission() {
-                let roles = crate::auth::service::role::find_by_username(
+                let roles = $crate::auth::service::role::find_by_username(
                     &$secured.data.database_connection,
                     &auth_context.username,
                 )
@@ -332,7 +320,7 @@ macro_rules! secured {
                 .unwrap_or_default();
 
                 if roles.is_empty() {
-                    return crate::model::common::ErrorResult::http_response_forbidden(
+                    return $crate::model::common::ErrorResult::http_response_forbidden(
                         actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
                         &auth_context.jwt_error_string(),
                         $secured.req.path(),
@@ -341,14 +329,14 @@ macro_rules! secured {
 
                 let global_admin = roles
                     .iter()
-                    .any(|e| e.role == crate::auth::model::GLOBAL_ADMIN_ROLE);
+                    .any(|e| e.role == $crate::auth::model::GLOBAL_ADMIN_ROLE);
 
                 if !global_admin {
                     if $secured
                         .resource
-                        .starts_with(crate::auth::model::CONSOLE_RESOURCE_NAME_PREFIX)
+                        .starts_with($crate::auth::model::CONSOLE_RESOURCE_NAME_PREFIX)
                     {
-                        return crate::model::common::ErrorResult::http_response_forbidden(
+                        return $crate::model::common::ErrorResult::http_response_forbidden(
                             actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
                             "authorization failed!.",
                             $secured.req.path(),
@@ -359,7 +347,7 @@ macro_rules! secured {
                         .iter()
                         .map(|e| e.role.to_string())
                         .collect::<Vec<String>>();
-                    let permissions = crate::auth::service::permission::find_by_roles(
+                    let permissions = $crate::auth::service::permission::find_by_roles(
                         &$secured.data.database_connection,
                         role_names,
                     )
@@ -367,36 +355,35 @@ macro_rules! secured {
                     .ok()
                     .unwrap_or_default();
 
-                    let mut resource: crate::auth::model::Resource = $secured.into();
+                    let mut resource: $crate::auth::model::Resource = $secured.into();
 
-                    if $secured.sign_type == crate::SignType::Config {
-                        resource = crate::ConfigHttpResourceParser::parse(&$secured.req, &$secured);
+                    if $secured.sign_type == $crate::SignType::Config {
+                        resource =
+                            $crate::ConfigHttpResourceParser::parse(&$secured.req, &$secured);
                     }
 
                     let has_permission = roles.iter().any(|role| {
                         permissions.iter().filter(|e| e.role == role.role).any(|e| {
-                            let regex = regex::Regex::new("\\*").unwrap();
-
-                            let mut permission_resource =
-                                regex.replace_all(&e.resource, ".*").into_owned();
+                            let mut permission_resource = e.resource.replace("*", ".*");
 
                             if permission_resource.starts_with(":") {
                                 permission_resource = format!(
                                     "{}{}",
-                                    crate::model::common::DEFAULT_NAMESPACE_ID,
+                                    $crate::model::common::DEFAULT_NAMESPACE_ID,
                                     permission_resource,
                                 );
                             }
 
-                            let regex = regex::Regex::new(&permission_resource).unwrap();
+                            let regex_match = regex::Regex::new(&permission_resource)
+                                .map(|re| re.is_match(&$crate::join_resource(&resource)))
+                                .unwrap_or(false);
 
-                            e.action.contains($secured.action.as_str())
-                                && regex.is_match(&crate::join_resource(&resource))
+                            e.action.contains($secured.action.as_str()) && regex_match
                         })
                     });
 
                     if !has_permission {
-                        return crate::model::common::ErrorResult::http_response_forbidden(
+                        return $crate::model::common::ErrorResult::http_response_forbidden(
                             actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
                             "authorization failed!.",
                             $secured.req.path(),
@@ -440,39 +427,36 @@ impl ConfigHttpResourceParser {
     pub fn get_namespace_id(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
-            .unwrap()
-            .into_inner();
+            .map(|q| q.into_inner())
+            .unwrap_or_default();
 
         params
             .get(NAMESPACE_ID)
             .or(params.get(TENANT))
-            .unwrap_or(&String::default())
-            .to_string()
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn get_group(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
-            .unwrap()
-            .into_inner();
+            .map(|q| q.into_inner())
+            .unwrap_or_default();
 
         params
             .get(GROUP_NAME)
             .or(params.get(GROUP))
-            .unwrap_or(&String::default())
-            .to_string()
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub fn get_resource_name(req: &HttpRequest) -> String {
         let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
             .ok()
-            .unwrap()
-            .into_inner();
+            .map(|q| q.into_inner())
+            .unwrap_or_default();
 
-        params
-            .get(DATA_ID)
-            .unwrap_or(&String::default())
-            .to_string()
+        params.get(DATA_ID).cloned().unwrap_or_default()
     }
 }
 
@@ -495,7 +479,7 @@ fn join_resource(resource: &Resource) -> String {
 
     if group.is_empty() {
         result.push_str(Resource::SPLITTER);
-        result.push_str("*");
+        result.push('*');
     } else {
         result.push_str(Resource::SPLITTER);
         result.push_str(&group);
@@ -510,28 +494,33 @@ fn join_resource(resource: &Resource) -> String {
     } else {
         result.push_str(Resource::SPLITTER);
         result.push_str(&resource.r#type.to_lowercase());
-        result.push_str("/");
+        result.push('/');
         result.push_str(&name);
     }
 
     result
 }
 
-pub fn is_valid(str: &str) -> bool {
-    let regex = regex::Regex::new("^[a-zA-Z0-9_.:-]*$").unwrap();
+use std::sync::LazyLock;
 
-    regex.is_match(str)
+static VALID_PATTERN: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new("^[a-zA-Z0-9_.:-]*$").expect("Invalid regex pattern"));
+
+pub fn is_valid(str: &str) -> bool {
+    VALID_PATTERN.is_match(str)
 }
 
 pub fn local_ip() -> String {
     if_addrs::get_if_addrs()
         .ok()
-        .unwrap()
-        .into_iter()
-        .find(|iface| !iface.is_loopback() && matches!(iface.addr, IfAddr::V4(_)))
-        .and_then(|iface| match iface.addr {
-            IfAddr::V4(addr) => Some(addr.ip.to_string()),
-            _ => Some("127.0.0.1".to_string()),
+        .and_then(|addrs| {
+            addrs
+                .into_iter()
+                .find(|iface| !iface.is_loopback() && matches!(iface.addr, IfAddr::V4(_)))
+                .and_then(|iface| match iface.addr {
+                    IfAddr::V4(addr) => Some(addr.ip.to_string()),
+                    _ => None,
+                })
         })
-        .unwrap()
+        .unwrap_or_else(|| "127.0.0.1".to_string())
 }

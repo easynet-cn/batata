@@ -494,36 +494,38 @@ pub const FUNCTION_MODE_NAMING: &str = "naming";
  */
 pub const NACOS_HOME_KEY: &str = "nacos.home";
 
+// Reserved configuration constants for Nacos compatibility
+#[allow(dead_code)]
 const FILE_PREFIX: &str = "file:";
-
+#[allow(dead_code)]
 const SERVER_PORT_PROPERTY: &str = "nacos.server.main.port";
-
+#[allow(dead_code)]
 const DEFAULT_SERVER_PORT: i32 = 8849;
-
+#[allow(dead_code)]
 const DEFAULT_WEB_CONTEXT_PATH: &str = "/nacos";
-
+#[allow(dead_code)]
 const MEMBER_LIST_PROPERTY: &str = "nacos.member.list";
-
+#[allow(dead_code)]
 const NACOS_HOME_PROPERTY: &str = "user.home";
-
+#[allow(dead_code)]
 const CUSTOM_CONFIG_LOCATION_PROPERTY: &str = "spring.config.additional-location";
-
+#[allow(dead_code)]
 const DEFAULT_CONFIG_LOCATION: &str = "application.properties";
-
+#[allow(dead_code)]
 const DEFAULT_RESOURCE_PATH: &str = "/application.properties";
-
+#[allow(dead_code)]
 const DEFAULT_ADDITIONAL_PATH: &str = "conf";
-
+#[allow(dead_code)]
 const DEFAULT_ADDITIONAL_FILE: &str = "cluster.conf";
-
+#[allow(dead_code)]
 const NACOS_HOME_ADDITIONAL_FILEPATH: &str = "nacos";
-
+#[allow(dead_code)]
 const NACOS_TEMP_DIR_1: &str = "data";
-
+#[allow(dead_code)]
 const NACOS_TEMP_DIR_2: &str = "tmp";
-
+#[allow(dead_code)]
 const NACOS_CUSTOM_ENVIRONMENT_ENABLED: &str = "nacos.custom.environment.enabled";
-
+#[allow(dead_code)]
 const NACOS_CUSTOM_CONFIG_NAME: &str = "customFirstNacosConfig";
 
 pub const NACOS_SERVER_CONTEXT: &str = "/nacos";
@@ -552,9 +554,9 @@ pub struct Result<T> {
 impl<T> Result<T> {
     pub fn new(code: i32, message: String, data: T) -> Self {
         Result::<T> {
-            code: code,
-            message: message,
-            data: data,
+            code,
+            message,
+            data,
         }
     }
 
@@ -736,11 +738,7 @@ impl Configuration {
     }
 
     pub fn function_mode(&self) -> Option<String> {
-        if let Ok(v) = self.config.get_string(FUNCTION_MODE_PROPERTY_NAME) {
-            Some(v)
-        } else {
-            None
-        }
+        self.config.get_string(FUNCTION_MODE_PROPERTY_NAME).ok()
     }
 
     pub fn version(&self) -> String {
@@ -1003,10 +1001,10 @@ impl ErrorResult {
     pub fn new(status: i32, error: String, message: String, path: String) -> Self {
         ErrorResult {
             timestamp: chrono::Utc::now().to_rfc3339(),
-            status: status,
-            error: error,
-            message: message,
-            path: path,
+            status,
+            error,
+            message,
+            path,
         }
     }
 

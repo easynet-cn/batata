@@ -58,37 +58,58 @@ impl RaftConfig {
         let mut raft_config = Self::default();
 
         // Election timeout
-        if let Ok(val) = config.config.get_int("nacos.core.protocol.raft.data.election_timeout_ms") {
+        if let Ok(val) = config
+            .config
+            .get_int("nacos.core.protocol.raft.data.election_timeout_ms")
+        {
             raft_config.election_timeout_ms = val as u64;
         }
 
         // Heartbeat interval
-        if let Ok(val) = config.config.get_int("nacos.core.protocol.raft.data.heartbeat_interval_ms") {
+        if let Ok(val) = config
+            .config
+            .get_int("nacos.core.protocol.raft.data.heartbeat_interval_ms")
+        {
             raft_config.heartbeat_interval_ms = val as u64;
         }
 
         // Snapshot interval
-        if let Ok(val) = config.config.get_int("nacos.core.protocol.raft.data.snapshot_interval_secs") {
+        if let Ok(val) = config
+            .config
+            .get_int("nacos.core.protocol.raft.data.snapshot_interval_secs")
+        {
             raft_config.snapshot_interval_secs = val as u64;
         }
 
         // Snapshot threshold
-        if let Ok(val) = config.config.get_int("nacos.core.protocol.raft.data.snapshot_threshold") {
+        if let Ok(val) = config
+            .config
+            .get_int("nacos.core.protocol.raft.data.snapshot_threshold")
+        {
             raft_config.snapshot_threshold = val as u64;
         }
 
         // RPC timeout
-        if let Ok(val) = config.config.get_int("nacos.core.protocol.raft.data.rpc_request_timeout_ms") {
+        if let Ok(val) = config
+            .config
+            .get_int("nacos.core.protocol.raft.data.rpc_request_timeout_ms")
+        {
             raft_config.rpc_request_timeout_ms = val as u64;
         }
 
         // Max payload entries
-        if let Ok(val) = config.config.get_int("nacos.core.protocol.raft.data.max_payload_entries") {
+        if let Ok(val) = config
+            .config
+            .get_int("nacos.core.protocol.raft.data.max_payload_entries")
+        {
             raft_config.max_payload_entries = val as u64;
         }
 
         // Data directory
-        if let Ok(val) = config.config.get_string("nacos.core.protocol.raft.data.dir") {
+        if let Ok(val) = config
+            .config
+            .get_string("nacos.core.protocol.raft.data.dir")
+        {
             raft_config.data_dir = PathBuf::from(val);
         }
 

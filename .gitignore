@@ -23,7 +23,7 @@ go.work
 
 # Added by cargo
 
-/target
+target/
 
 .DS_Store
 .vscode/*

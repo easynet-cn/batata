@@ -4,9 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use openraft::{BasicNode, Config, Raft};
-use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use openraft::{BasicNode, Raft};
+use tracing::{debug, info};
 
 use super::config::RaftConfig;
 use super::log_store::RocksLogStore;
@@ -26,7 +25,8 @@ pub struct RaftNode {
     /// The underlying Raft instance
     raft: Raft<TypeConfig>,
 
-    /// Configuration
+    /// Configuration (reserved for future dynamic reconfiguration)
+    #[allow(dead_code)]
     config: RaftConfig,
 }
 
@@ -46,10 +46,10 @@ impl RaftNode {
         config.ensure_dirs()?;
 
         // Create log store
-        let log_store = RocksLogStore::new(config.log_dir())?;
+        let log_store = RocksLogStore::new(config.log_dir()).await?;
 
         // Create state machine
-        let state_machine = RocksStateMachine::new(config.state_machine_dir())?;
+        let state_machine = RocksStateMachine::new(config.state_machine_dir()).await?;
 
         // Create network factory
         let network_factory = BatataRaftNetworkFactory::new();

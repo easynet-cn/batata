@@ -11,14 +11,14 @@ use batata::{
         cluster::ServerMemberManager,
         remote::{ConnectionManager, context_interceptor},
     },
-    middleware::auth::Authentication,
+    middleware::{auth::Authentication, rate_limit::RateLimiter},
     model::{self, common::AppState},
     service::{
         config_handler::{
             ClientConfigMetricHandler, ConfigBatchListenHandler, ConfigChangeClusterSyncHandler,
-            ConfigChangeNotifyHandler, ConfigFuzzyWatchChangeNotifyHandler, ConfigFuzzyWatchHandler,
-            ConfigFuzzyWatchSyncHandler, ConfigPublishHandler, ConfigQueryHandler,
-            ConfigRemoveHandler,
+            ConfigChangeNotifyHandler, ConfigFuzzyWatchChangeNotifyHandler,
+            ConfigFuzzyWatchHandler, ConfigFuzzyWatchSyncHandler, ConfigPublishHandler,
+            ConfigQueryHandler, ConfigRemoveHandler,
         },
         handler::{
             ClientDetectionHandler, ConnectResetHandler, ConnectionSetupHandler,
@@ -36,12 +36,47 @@ use batata::{
     },
 };
 
+use tokio::signal;
+use tokio::sync::broadcast;
 use tonic::service::InterceptorLayer;
 use tower::ServiceBuilder;
-use tracing::{Subscriber, subscriber::set_global_default};
+use tracing::{Subscriber, info, subscriber::set_global_default};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Registry, fmt::MakeWriter, layer::SubscriberExt};
+
+/// Create a shutdown signal listener (reserved for graceful shutdown feature)
+#[allow(dead_code)]
+async fn shutdown_signal(mut shutdown_rx: broadcast::Receiver<()>) {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            info!("Received Ctrl+C, initiating graceful shutdown...");
+        },
+        _ = terminate => {
+            info!("Received SIGTERM, initiating graceful shutdown...");
+        },
+        _ = shutdown_rx.recv() => {
+            info!("Received shutdown signal from broadcast channel");
+        },
+    }
+}
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -71,7 +106,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = AppState {
         configuration,
         database_connection,
-        server_member_manager: server_member_manager,
+        server_member_manager,
     };
 
     let server_app_state = app_state.clone();
@@ -235,7 +270,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 console_context_path,
                 console_server_address,
                 console_server_port,
-            )
+            )?
             .await?;
         }
         model::common::NACOS_DEPLOYMENT_TYPE_SERVER => {
@@ -244,24 +279,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 server_context_path,
                 server_address,
                 server_main_port,
-            )
+            )?
             .await?;
         }
         _ => {
-            tokio::try_join!(
-                console_server(
-                    app_state,
-                    console_context_path,
-                    console_server_address,
-                    console_server_port,
-                ),
-                main_server(
-                    server_app_state,
-                    server_context_path,
-                    server_address,
-                    server_main_port,
-                )
+            let console = console_server(
+                app_state,
+                console_context_path,
+                console_server_address,
+                console_server_port,
             )?;
+            let main = main_server(
+                server_app_state,
+                server_context_path,
+                server_address,
+                server_main_port,
+            )?;
+            tokio::try_join!(console, main)?;
         }
     }
 
@@ -273,10 +307,11 @@ pub fn console_server(
     context_path: String,
     address: String,
     port: u16,
-) -> Server {
-    HttpServer::new(move || {
+) -> Result<Server, std::io::Error> {
+    Ok(HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
+            .wrap(RateLimiter::with_defaults())
             .wrap(Authentication)
             .app_data(web::Data::new(app_state.clone()))
             .service(
@@ -285,9 +320,8 @@ pub fn console_server(
                     .service(console::v3::route::routes()),
             )
     })
-    .bind((address, port))
-    .unwrap()
-    .run()
+    .bind((address, port))?
+    .run())
 }
 
 pub fn main_server(
@@ -295,10 +329,11 @@ pub fn main_server(
     context_path: String,
     address: String,
     port: u16,
-) -> Server {
-    HttpServer::new(move || {
+) -> Result<Server, std::io::Error> {
+    Ok(HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
+            .wrap(RateLimiter::with_defaults())
             .wrap(Authentication)
             .app_data(web::Data::new(app_state.clone()))
             .service(
@@ -307,9 +342,8 @@ pub fn main_server(
                     .service(console::v3::route::routes()),
             )
     })
-    .bind((address, port))
-    .unwrap()
-    .run()
+    .bind((address, port))?
+    .run())
 }
 
 pub fn get_subscriber(

@@ -258,7 +258,6 @@ pub async fn create_or_update(
 
             let new_tags = config_tags
                 .split(",")
-                .into_iter()
                 .filter(|e| !e.is_empty())
                 .map(|e| e.to_string())
                 .collect::<Vec<String>>()
@@ -287,7 +286,6 @@ pub async fn create_or_update(
 
                 let tags = new_tags
                     .split(",")
-                    .into_iter()
                     .map(|e| config_tags_relation::ActiveModel {
                         id: Set(entity_c.id),
                         tag_name: Set(e.to_string()),
@@ -399,7 +397,6 @@ pub async fn create_or_update(
 
             let tags_str = config_tags
                 .split(",")
-                .into_iter()
                 .filter(|e| !e.is_empty())
                 .map(|e| e.to_string())
                 .collect::<Vec<String>>()
@@ -408,7 +405,6 @@ pub async fn create_or_update(
             if !tags_str.is_empty() {
                 let tags = tags_str
                     .split(",")
-                    .into_iter()
                     .map(|e| config_tags_relation::ActiveModel {
                         id: Set(last_insert_id),
                         tag_name: Set(e.to_string()),
@@ -488,7 +484,7 @@ pub async fn delete(
     gray_name: &str,
     client_ip: &str,
     src_user: &str,
-    src_type: &str,
+    _src_type: &str,
 ) -> anyhow::Result<bool> {
     if let Some(entity) = config_info::Entity::find()
         .filter(config_info::Column::DataId.eq(data_id))
@@ -612,4 +608,33 @@ pub async fn find_gray_one(
 
 fn md5_digest(content: &str) -> String {
     format!("{:x}", md5::compute(content))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_md5_digest() {
+        let content = "test content";
+        let digest = md5_digest(content);
+        assert_eq!(digest.len(), 32);
+        assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_md5_digest_empty() {
+        let content = "";
+        let digest = md5_digest(content);
+        // MD5 of empty string is d41d8cd98f00b204e9800998ecf8427e
+        assert_eq!(digest, "d41d8cd98f00b204e9800998ecf8427e");
+    }
+
+    #[test]
+    fn test_md5_digest_consistency() {
+        let content = "consistent";
+        let digest1 = md5_digest(content);
+        let digest2 = md5_digest(content);
+        assert_eq!(digest1, digest2);
+    }
 }

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{debug, info};
 
 use crate::api::model::{Member, NodeState};
@@ -112,16 +112,14 @@ impl MemberChangeEventPublisher {
     /// Create a new event publisher
     pub fn new(queue_size: usize) -> Self {
         let (broadcast_tx, _) = broadcast::channel(queue_size);
-        let (event_tx, event_rx) = mpsc::channel(queue_size);
+        let (event_tx, _event_rx) = mpsc::channel(queue_size);
 
-        let publisher = Self {
+        Self {
             broadcast_tx,
             event_tx,
             listeners: Arc::new(RwLock::new(Vec::new())),
             running: Arc::new(RwLock::new(false)),
-        };
-
-        publisher
+        }
     }
 
     /// Start the event publisher
@@ -145,7 +143,10 @@ impl MemberChangeEventPublisher {
     pub async fn register_listener(&self, listener: Arc<dyn MemberChangeListener>) {
         let mut listeners = self.listeners.write().await;
         listeners.push(listener);
-        debug!("Registered member change listener, total: {}", listeners.len());
+        debug!(
+            "Registered member change listener, total: {}",
+            listeners.len()
+        );
     }
 
     /// Publish a member change event

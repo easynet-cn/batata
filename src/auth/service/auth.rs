@@ -7,11 +7,8 @@ pub fn decode_jwt_token(
     token: &str,
     secret_key: &str,
 ) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<NacosJwtPayload>> {
-    decode::<NacosJwtPayload>(
-        token,
-        &DecodingKey::from_base64_secret(secret_key).unwrap(),
-        &Validation::default(),
-    )
+    let decoding_key = DecodingKey::from_base64_secret(secret_key)?;
+    decode::<NacosJwtPayload>(token, &decoding_key, &Validation::default())
 }
 
 pub fn encode_jwt_token(
@@ -21,7 +18,7 @@ pub fn encode_jwt_token(
 ) -> jsonwebtoken::errors::Result<String> {
     let exp = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::seconds(expire_seconds))
-        .expect("valid timestamp")
+        .unwrap_or_else(chrono::Utc::now)
         .timestamp();
 
     let payload = NacosJwtPayload {
@@ -42,9 +39,6 @@ pub fn encode_jwt_token(
         x5t_s256: None,
     };
 
-    encode(
-        &header,
-        &payload,
-        &EncodingKey::from_base64_secret(secret_key).unwrap(),
-    )
+    let encoding_key = EncodingKey::from_base64_secret(secret_key)?;
+    encode(&header, &payload, &encoding_key)
 }

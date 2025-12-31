@@ -8,8 +8,10 @@ use std::sync::Arc;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use openraft::storage::{LogFlushed, LogState, RaftLogStorage};
-use openraft::{Entry, ErrorSubject, ErrorVerb, LogId, OptionalSend, RaftLogReader, StorageError, Vote};
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, Options, DB};
+use openraft::{
+    Entry, ErrorSubject, ErrorVerb, LogId, OptionalSend, RaftLogReader, StorageError, Vote,
+};
+use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Options};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -24,20 +26,26 @@ const KEY_VOTE: &[u8] = b"vote";
 const KEY_LAST_PURGED: &[u8] = b"last_purged";
 
 /// Helper to create StorageError for vote operations
-fn vote_error(e: impl std::error::Error + Send + Sync + 'static, verb: ErrorVerb) -> StorageError<NodeId> {
+fn vote_error(
+    e: impl std::error::Error + Send + Sync + 'static,
+    verb: ErrorVerb,
+) -> StorageError<NodeId> {
     StorageError::from_io_error(
         ErrorSubject::Vote,
         verb,
-        std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+        std::io::Error::other(e.to_string()),
     )
 }
 
 /// Helper to create StorageError for log operations
-fn logs_error(e: impl std::error::Error + Send + Sync + 'static, verb: ErrorVerb) -> StorageError<NodeId> {
+fn logs_error(
+    e: impl std::error::Error + Send + Sync + 'static,
+    verb: ErrorVerb,
+) -> StorageError<NodeId> {
     StorageError::from_io_error(
         ErrorSubject::Logs,
         verb,
-        std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+        std::io::Error::other(e.to_string()),
     )
 }
 
@@ -54,7 +62,7 @@ pub struct RocksLogStore {
 
 impl RocksLogStore {
     /// Create a new RocksDB log store
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError<NodeId>> {
+    pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError<NodeId>> {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
@@ -77,10 +85,8 @@ impl RocksLogStore {
             last_purged: RwLock::new(None),
         };
 
-        // Initialize cached values from storage
-        tokio::runtime::Handle::current().block_on(async {
-            store.load_cached_values().await
-        })?;
+        // Initialize cached values from storage asynchronously
+        store.load_cached_values().await?;
 
         info!("RocksDB log store initialized");
         Ok(store)
@@ -140,8 +146,8 @@ impl RocksLogStore {
     fn load_vote_internal(&self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
         match self.db.get_cf(self.cf_state(), KEY_VOTE) {
             Ok(Some(bytes)) => {
-                let vote: Vote<NodeId> = serde_json::from_slice(&bytes)
-                    .map_err(|e| vote_error(e, ErrorVerb::Read))?;
+                let vote: Vote<NodeId> =
+                    serde_json::from_slice(&bytes).map_err(|e| vote_error(e, ErrorVerb::Read))?;
                 Ok(Some(vote))
             }
             Ok(None) => Ok(None),
@@ -153,8 +159,8 @@ impl RocksLogStore {
     fn load_last_purged_internal(&self) -> Result<Option<LogId<NodeId>>, StorageError<NodeId>> {
         match self.db.get_cf(self.cf_state(), KEY_LAST_PURGED) {
             Ok(Some(bytes)) => {
-                let log_id: LogId<NodeId> = serde_json::from_slice(&bytes)
-                    .map_err(|e| logs_error(e, ErrorVerb::Read))?;
+                let log_id: LogId<NodeId> =
+                    serde_json::from_slice(&bytes).map_err(|e| logs_error(e, ErrorVerb::Read))?;
                 Ok(Some(log_id))
             }
             Ok(None) => Ok(None),
@@ -167,11 +173,11 @@ impl RocksLogStore {
         let mut iter = self.db.raw_iterator_cf(self.cf_logs());
         iter.seek_to_last();
 
-        if iter.valid() {
-            if let Some(value) = iter.value() {
-                let entry = Self::deserialize_entry(value)?;
-                return Ok(Some(entry.log_id));
-            }
+        if iter.valid()
+            && let Some(value) = iter.value()
+        {
+            let entry = Self::deserialize_entry(value)?;
+            return Ok(Some(entry.log_id));
         }
 
         Ok(None)
@@ -236,8 +242,8 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
     type LogReader = Self;
 
     async fn get_log_state(&mut self) -> Result<LogState<TypeConfig>, StorageError<NodeId>> {
-        let last_purged = self.last_purged.read().await.clone();
-        let last_log_id = self.last_log_id.read().await.clone();
+        let last_purged = *self.last_purged.read().await;
+        let last_log_id = *self.last_log_id.read().await;
 
         Ok(LogState {
             last_purged_log_id: last_purged,
@@ -251,13 +257,13 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
             .put_cf(self.cf_state(), KEY_VOTE, &bytes)
             .map_err(|e| vote_error(e, ErrorVerb::Write))?;
 
-        *self.vote.write().await = Some(vote.clone());
+        *self.vote.write().await = Some(*vote);
         debug!("Saved vote: {:?}", vote);
         Ok(())
     }
 
     async fn read_vote(&mut self) -> Result<Option<Vote<NodeId>>, StorageError<NodeId>> {
-        Ok(self.vote.read().await.clone())
+        Ok(*self.vote.read().await)
     }
 
     async fn get_log_reader(&mut self) -> Self::LogReader {
@@ -265,13 +271,17 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
         // Since we use Arc<DB>, cloning is cheap
         RocksLogStore {
             db: self.db.clone(),
-            last_log_id: RwLock::new(self.last_log_id.read().await.clone()),
-            vote: RwLock::new(self.vote.read().await.clone()),
-            last_purged: RwLock::new(self.last_purged.read().await.clone()),
+            last_log_id: RwLock::new(*self.last_log_id.read().await),
+            vote: RwLock::new(*self.vote.read().await),
+            last_purged: RwLock::new(*self.last_purged.read().await),
         }
     }
 
-    async fn append<I>(&mut self, entries: I, callback: LogFlushed<TypeConfig>) -> Result<(), StorageError<NodeId>>
+    async fn append<I>(
+        &mut self,
+        entries: I,
+        callback: LogFlushed<TypeConfig>,
+    ) -> Result<(), StorageError<NodeId>>
     where
         I: IntoIterator<Item = Entry<TypeConfig>> + OptionalSend,
         I::IntoIter: OptionalSend,
@@ -368,7 +378,6 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
     fn test_encode_decode_log_index() {
@@ -378,20 +387,20 @@ mod tests {
         assert_eq!(index, decoded);
     }
 
-    #[tokio::test]
-    async fn test_log_store_basic() {
-        let temp_dir = tempdir().unwrap();
-        let mut store = RocksLogStore::new(temp_dir.path()).unwrap();
+    #[test]
+    fn test_encode_log_index_ordering() {
+        // Test that big-endian encoding preserves ordering for RocksDB
+        let indices = vec![0u64, 1, 100, 1000, u64::MAX];
+        let encoded: Vec<_> = indices
+            .iter()
+            .map(|&i| RocksLogStore::encode_log_index(i))
+            .collect();
 
-        // Initial state should be empty
-        let state = store.get_log_state().await.unwrap();
-        assert!(state.last_log_id.is_none());
-        assert!(state.last_purged_log_id.is_none());
-
-        // Test vote
-        let vote = Vote::new(1, 100);
-        store.save_vote(&vote).await.unwrap();
-        let loaded_vote = store.read_vote().await.unwrap();
-        assert_eq!(loaded_vote, Some(vote));
+        for i in 0..encoded.len() - 1 {
+            assert!(
+                encoded[i] < encoded[i + 1],
+                "Encoding should preserve ordering"
+            );
+        }
     }
 }

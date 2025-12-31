@@ -20,7 +20,11 @@ pub struct HealthCheckHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for HealthCheckHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        _payload: &Payload,
+    ) -> Result<Payload, Status> {
         let response = HealthCheckResponse {
             response: Response::new(),
         };
@@ -72,7 +76,7 @@ pub struct ConnectionSetupHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for ConnectionSetupHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         // Connection setup is handled in the bi-stream service
         // Just return the payload as acknowledgment
         Ok(payload.clone())
@@ -89,7 +93,11 @@ pub struct ClientDetectionHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for ClientDetectionHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        _payload: &Payload,
+    ) -> Result<Payload, Status> {
         let response = ClientDetectionResponse::new();
 
         let metadata = Metadata {
@@ -111,7 +119,11 @@ pub struct ServerLoaderInfoHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for ServerLoaderInfoHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        _payload: &Payload,
+    ) -> Result<Payload, Status> {
         let mut response = ServerLoaderInfoResponse::new();
 
         // Add basic server metrics
@@ -141,7 +153,11 @@ pub struct ServerReloadHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for ServerReloadHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        _payload: &Payload,
+    ) -> Result<Payload, Status> {
         // In a real implementation, this would trigger configuration reload
         let response = ServerReloadResponse::new();
 
@@ -164,7 +180,11 @@ pub struct ConnectResetHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for ConnectResetHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        _payload: &Payload,
+    ) -> Result<Payload, Status> {
         // In a real implementation, this would reset the connection
         let response = ConnectResetResponse::new();
 
@@ -187,7 +207,11 @@ pub struct SetupAckHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for SetupAckHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        _connection: &Connection,
+        _payload: &Payload,
+    ) -> Result<Payload, Status> {
         let response = SetupAckResponse::new();
 
         let metadata = Metadata {
@@ -209,7 +233,7 @@ pub struct PushAckHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for PushAckHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         // PushAck doesn't require a response, just acknowledge
         Ok(payload.clone())
     }
