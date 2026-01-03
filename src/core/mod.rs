@@ -9,6 +9,7 @@ pub mod raft;
 
 // Core service implementations
 pub mod service {
+    pub mod circuit_breaker; // Circuit breaker pattern for resilient remote calls
     pub mod cluster; // Cluster management and coordination
     pub mod cluster_client; // Cluster gRPC client for inter-node communication
     pub mod distro; // Distro protocol for ephemeral data sync

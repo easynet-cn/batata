@@ -55,12 +55,21 @@ async fn find_one(
             .build()
     );
 
-    let result = service::history::find_by_id(&data.database_connection, params.nid)
-        .await
-        .unwrap()
-        .map(ConfigHistoryDetailInfo::from);
-
-    model::common::Result::<Option<ConfigHistoryDetailInfo>>::http_success(result)
+    match service::history::find_by_id(&data.database_connection, params.nid).await {
+        Ok(result) => {
+            let config_info = result.map(ConfigHistoryDetailInfo::from);
+            model::common::Result::<Option<ConfigHistoryDetailInfo>>::http_success(config_info)
+        }
+        Err(e) => {
+            tracing::error!("Failed to find history by id: {}", e);
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find history: {}", e),
+                String::new(),
+            )
+        }
+    }
 }
 
 #[get("list")]
@@ -88,7 +97,7 @@ async fn search(
             .unwrap_or(DEFAULT_NAMESPACE_ID.to_string());
     }
 
-    let result = service::history::search_page(
+    match service::history::search_page(
         &data.database_connection,
         data_id,
         group_name,
@@ -97,20 +106,30 @@ async fn search(
         params.page_size,
     )
     .await
-    .unwrap();
-
-    let page_result = Page::<ConfigHistoryBasicInfo>::new(
-        result.total_count,
-        result.page_number,
-        result.pages_available,
-        result
-            .page_items
-            .into_iter()
-            .map(ConfigHistoryBasicInfo::from)
-            .collect(),
-    );
-
-    model::common::Result::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
+    {
+        Ok(result) => {
+            let page_result = Page::<ConfigHistoryBasicInfo>::new(
+                result.total_count,
+                result.page_number,
+                result.pages_available,
+                result
+                    .page_items
+                    .into_iter()
+                    .map(ConfigHistoryBasicInfo::from)
+                    .collect(),
+            );
+            model::common::Result::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
+        }
+        Err(e) => {
+            tracing::error!("Failed to search history: {}", e);
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to search history: {}", e),
+                String::new(),
+            )
+        }
+    }
 }
 
 #[get("configs")]
@@ -127,17 +146,29 @@ async fn find_configs_by_namespace_id(
             .build()
     );
 
-    let config_infos = service::history::find_configs_by_namespace_id(
+    match service::history::find_configs_by_namespace_id(
         &data.database_connection,
         &params.namespace_id,
     )
     .await
-    .unwrap()
-    .into_iter()
-    .map(ConfigBasicInfo::from)
-    .collect::<Vec<ConfigBasicInfo>>();
-
-    model::common::Result::<Vec<ConfigBasicInfo>>::http_success(config_infos)
+    {
+        Ok(result) => {
+            let config_infos = result
+                .into_iter()
+                .map(ConfigBasicInfo::from)
+                .collect::<Vec<ConfigBasicInfo>>();
+            model::common::Result::<Vec<ConfigBasicInfo>>::http_success(config_infos)
+        }
+        Err(e) => {
+            tracing::error!("Failed to find configs by namespace: {}", e);
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find configs: {}", e),
+                String::new(),
+            )
+        }
+    }
 }
 
 pub fn routes() -> Scope {

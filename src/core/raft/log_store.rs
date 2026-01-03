@@ -11,7 +11,7 @@ use openraft::storage::{LogFlushed, LogState, RaftLogStorage};
 use openraft::{
     Entry, ErrorSubject, ErrorVerb, LogId, OptionalSend, RaftLogReader, StorageError, Vote,
 };
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Options};
+use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -67,8 +67,27 @@ impl RocksLogStore {
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
 
-        // Column family options
-        let cf_opts = Options::default();
+        // Performance optimizations
+        // Write buffer size: 64MB for better write throughput
+        db_opts.set_write_buffer_size(64 * 1024 * 1024);
+        // Max write buffer number for write stall prevention
+        db_opts.set_max_write_buffer_number(3);
+        // Enable compression for storage efficiency
+        db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+
+        // Block-based table options with block cache for read performance
+        let mut block_opts = BlockBasedOptions::default();
+        // 256MB block cache for read optimization
+        let cache = rocksdb::Cache::new_lru_cache(256 * 1024 * 1024);
+        block_opts.set_block_cache(&cache);
+        // Bloom filter for faster lookups
+        block_opts.set_bloom_filter(10.0, false);
+
+        // Column family options with same optimizations
+        let mut cf_opts = Options::default();
+        cf_opts.set_write_buffer_size(64 * 1024 * 1024);
+        cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        cf_opts.set_block_based_table_factory(&block_opts);
 
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_LOGS, cf_opts.clone()),
@@ -109,27 +128,41 @@ impl RocksLogStore {
         Ok(())
     }
 
-    /// Get column family handle
+    /// Get column family handle for logs
+    /// Panics are acceptable here since column families are created during DB initialization.
+    /// If they don't exist, it indicates a severe DB corruption that cannot be recovered.
     fn cf_logs(&self) -> &ColumnFamily {
-        self.db.cf_handle(CF_LOGS).expect("CF_LOGS must exist")
+        self.db
+            .cf_handle(CF_LOGS)
+            .expect("CF_LOGS must exist - database may be corrupted")
     }
 
+    /// Get column family handle for state
     fn cf_state(&self) -> &ColumnFamily {
-        self.db.cf_handle(CF_STATE).expect("CF_STATE must exist")
+        self.db
+            .cf_handle(CF_STATE)
+            .expect("CF_STATE must exist - database may be corrupted")
     }
 
     /// Encode log index to bytes (big-endian for proper ordering)
+    /// This operation is infallible since we're writing to a pre-allocated Vec
     fn encode_log_index(index: u64) -> Vec<u8> {
         let mut buf = Vec::with_capacity(8);
-        buf.write_u64::<BigEndian>(index).unwrap();
+        // Safe: writing to a Vec with sufficient capacity always succeeds
+        buf.write_u64::<BigEndian>(index)
+            .expect("Writing to Vec should never fail");
         buf
     }
 
     /// Decode log index from bytes
+    /// Returns 0 if bytes are invalid (defensive fallback)
     #[allow(dead_code)]
     fn decode_log_index(bytes: &[u8]) -> u64 {
         let mut cursor = std::io::Cursor::new(bytes);
-        cursor.read_u64::<BigEndian>().unwrap()
+        cursor.read_u64::<BigEndian>().unwrap_or_else(|e| {
+            tracing::error!("Failed to decode log index: {}", e);
+            0
+        })
     }
 
     /// Serialize an entry

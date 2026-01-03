@@ -1,3 +1,7 @@
+use std::sync::LazyLock;
+use std::time::Duration;
+
+use moka::sync::Cache;
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::{
@@ -7,11 +11,19 @@ use crate::{
     error::BatataError,
 };
 
+// Cache for user roles with 5-minute TTL
+// Key: username, Value: Vec<RoleInfo>
+static ROLES_CACHE: LazyLock<Cache<String, Vec<RoleInfo>>> = LazyLock::new(|| {
+    Cache::builder()
+        .max_capacity(10_000)
+        .time_to_live(Duration::from_secs(300)) // 5 minutes TTL
+        .build()
+});
+
 pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> {
     let roles = roles::Entity::find()
         .all(db)
-        .await
-        .unwrap()
+        .await?
         .iter()
         .map(RoleInfo::from)
         .collect();
@@ -23,16 +35,34 @@ pub async fn find_by_username(
     db: &DatabaseConnection,
     username: &str,
 ) -> anyhow::Result<Vec<RoleInfo>> {
-    let roles = roles::Entity::find()
+    // Check cache first
+    if let Some(cached_roles) = ROLES_CACHE.get(&username.to_string()) {
+        return Ok(cached_roles);
+    }
+
+    // Cache miss - query database
+    let roles: Vec<RoleInfo> = roles::Entity::find()
         .filter(roles::Column::Username.eq(username))
         .all(db)
-        .await
-        .unwrap()
+        .await?
         .iter()
         .map(RoleInfo::from)
         .collect();
 
+    // Store in cache
+    ROLES_CACHE.insert(username.to_string(), roles.clone());
+
     Ok(roles)
+}
+
+/// Invalidate roles cache for a specific user
+pub fn invalidate_roles_cache(username: &str) {
+    ROLES_CACHE.invalidate(&username.to_string());
+}
+
+/// Invalidate all roles cache
+pub fn invalidate_all_roles_cache() {
+    ROLES_CACHE.invalidate_all();
 }
 
 pub async fn search_page(
@@ -138,6 +168,9 @@ pub async fn create(db: &DatabaseConnection, role: &str, username: &str) -> anyh
 
     roles::Entity::insert(entity).exec(db).await?;
 
+    // Invalidate cache for this user
+    invalidate_roles_cache(username);
+
     Ok(())
 }
 
@@ -156,10 +189,14 @@ pub async fn delete(db: &DatabaseConnection, role: &str, username: &str) -> anyh
             .filter(roles::Column::Role.ne(GLOBAL_ADMIN_ROLE))
             .exec(db)
             .await?;
+        // Invalidate all caches since multiple users may be affected
+        invalidate_all_roles_cache();
     } else {
         roles::Entity::delete_by_id((role.to_string(), username.to_string()))
             .exec(db)
             .await?;
+        // Invalidate cache for this specific user
+        invalidate_roles_cache(username);
     }
 
     Ok(())

@@ -10,7 +10,7 @@ use openraft::{
     Entry, EntryPayload, ErrorSubject, ErrorVerb, LogId, OptionalSend, SnapshotMeta, StorageError,
     StoredMembership,
 };
-use rocksdb::{ColumnFamily, ColumnFamilyDescriptor, DB, Options};
+use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
@@ -58,7 +58,27 @@ impl RocksStateMachine {
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
 
-        let cf_opts = Options::default();
+        // Performance optimizations
+        // Write buffer size: 64MB for better write throughput
+        db_opts.set_write_buffer_size(64 * 1024 * 1024);
+        // Max write buffer number for write stall prevention
+        db_opts.set_max_write_buffer_number(3);
+        // Enable compression for storage efficiency
+        db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+
+        // Block-based table options with block cache for read performance
+        let mut block_opts = BlockBasedOptions::default();
+        // 256MB block cache for read optimization
+        let cache = rocksdb::Cache::new_lru_cache(256 * 1024 * 1024);
+        block_opts.set_block_cache(&cache);
+        // Bloom filter for faster lookups
+        block_opts.set_bloom_filter(10.0, false);
+
+        // Column family options with same optimizations
+        let mut cf_opts = Options::default();
+        cf_opts.set_write_buffer_size(64 * 1024 * 1024);
+        cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        cf_opts.set_block_based_table_factory(&block_opts);
 
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_CONFIG, cf_opts.clone()),
@@ -114,38 +134,50 @@ impl RocksStateMachine {
     }
 
     /// Get column family handles
+    /// These expect() calls are acceptable because:
+    /// 1. Column families are created during DB initialization
+    /// 2. If they don't exist, it indicates severe DB corruption that cannot be recovered
+    /// 3. The application cannot function without these column families
     fn cf_config(&self) -> &ColumnFamily {
-        self.db.cf_handle(CF_CONFIG).expect("CF_CONFIG must exist")
+        self.db
+            .cf_handle(CF_CONFIG)
+            .expect("CF_CONFIG must exist - database may be corrupted")
     }
 
     fn cf_namespace(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_NAMESPACE)
-            .expect("CF_NAMESPACE must exist")
+            .expect("CF_NAMESPACE must exist - database may be corrupted")
     }
 
     fn cf_users(&self) -> &ColumnFamily {
-        self.db.cf_handle(CF_USERS).expect("CF_USERS must exist")
+        self.db
+            .cf_handle(CF_USERS)
+            .expect("CF_USERS must exist - database may be corrupted")
     }
 
     fn cf_roles(&self) -> &ColumnFamily {
-        self.db.cf_handle(CF_ROLES).expect("CF_ROLES must exist")
+        self.db
+            .cf_handle(CF_ROLES)
+            .expect("CF_ROLES must exist - database may be corrupted")
     }
 
     fn cf_permissions(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_PERMISSIONS)
-            .expect("CF_PERMISSIONS must exist")
+            .expect("CF_PERMISSIONS must exist - database may be corrupted")
     }
 
     fn cf_instances(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_INSTANCES)
-            .expect("CF_INSTANCES must exist")
+            .expect("CF_INSTANCES must exist - database may be corrupted")
     }
 
     fn cf_meta(&self) -> &ColumnFamily {
-        self.db.cf_handle(CF_META).expect("CF_META must exist")
+        self.db
+            .cf_handle(CF_META)
+            .expect("CF_META must exist - database may be corrupted")
     }
 
     /// Generate config key

@@ -243,6 +243,219 @@ where
     }
 }
 
+// ============================================================================
+// Authentication Rate Limiter
+// Specialized rate limiter for login attempts to prevent brute force attacks
+// ============================================================================
+
+/// Authentication rate limiter configuration
+#[derive(Clone)]
+pub struct AuthRateLimitConfig {
+    /// Maximum login attempts per window
+    pub max_attempts: u32,
+    /// Time window duration for attempt counting
+    pub window_duration: Duration,
+    /// Lockout duration after exceeding max attempts
+    pub lockout_duration: Duration,
+    /// Whether auth rate limiting is enabled
+    pub enabled: bool,
+}
+
+impl Default for AuthRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 5,
+            window_duration: Duration::from_secs(60),
+            lockout_duration: Duration::from_secs(300), // 5 minutes lockout
+            enabled: true,
+        }
+    }
+}
+
+/// Entry tracking login attempts
+struct AuthAttemptEntry {
+    attempts: u32,
+    first_attempt: Instant,
+    locked_until: Option<Instant>,
+}
+
+impl AuthAttemptEntry {
+    fn new() -> Self {
+        Self {
+            attempts: 0,
+            first_attempt: Instant::now(),
+            locked_until: None,
+        }
+    }
+
+    fn is_locked(&self) -> bool {
+        if let Some(locked_until) = self.locked_until {
+            Instant::now() < locked_until
+        } else {
+            false
+        }
+    }
+
+    fn remaining_lockout_secs(&self) -> u64 {
+        if let Some(locked_until) = self.locked_until {
+            let now = Instant::now();
+            if now < locked_until {
+                return (locked_until - now).as_secs();
+            }
+        }
+        0
+    }
+}
+
+/// Authentication rate limiter for protecting login endpoints
+pub struct AuthRateLimiter {
+    entries: Mutex<HashMap<String, AuthAttemptEntry>>,
+    config: AuthRateLimitConfig,
+}
+
+impl AuthRateLimiter {
+    pub fn new(config: AuthRateLimitConfig) -> Self {
+        Self {
+            entries: Mutex::new(HashMap::new()),
+            config,
+        }
+    }
+
+    pub fn with_defaults() -> Self {
+        Self::new(AuthRateLimitConfig::default())
+    }
+
+    /// Check if a login attempt is allowed for the given key (IP or username)
+    /// Returns (allowed, remaining_attempts, lockout_secs)
+    pub fn check_attempt(&self, key: &str) -> (bool, u32, u64) {
+        if !self.config.enabled {
+            return (true, self.config.max_attempts, 0);
+        }
+
+        let mut entries = match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        let entry = entries
+            .entry(key.to_string())
+            .or_insert_with(AuthAttemptEntry::new);
+
+        // Check if currently locked out
+        if entry.is_locked() {
+            return (false, 0, entry.remaining_lockout_secs());
+        }
+
+        // Reset if window has passed
+        let now = Instant::now();
+        if now.duration_since(entry.first_attempt) >= self.config.window_duration {
+            entry.attempts = 0;
+            entry.first_attempt = now;
+            entry.locked_until = None;
+        }
+
+        let remaining = self.config.max_attempts.saturating_sub(entry.attempts);
+        (remaining > 0, remaining, 0)
+    }
+
+    /// Record a login attempt (call this BEFORE validation)
+    /// Returns (allowed, remaining_attempts, lockout_secs)
+    pub fn record_attempt(&self, key: &str) -> (bool, u32, u64) {
+        if !self.config.enabled {
+            return (true, self.config.max_attempts, 0);
+        }
+
+        let mut entries = match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        let entry = entries
+            .entry(key.to_string())
+            .or_insert_with(AuthAttemptEntry::new);
+
+        // Check if currently locked out
+        if entry.is_locked() {
+            return (false, 0, entry.remaining_lockout_secs());
+        }
+
+        // Reset if window has passed
+        let now = Instant::now();
+        if now.duration_since(entry.first_attempt) >= self.config.window_duration {
+            entry.attempts = 0;
+            entry.first_attempt = now;
+            entry.locked_until = None;
+        }
+
+        entry.attempts += 1;
+
+        // Check if we've exceeded max attempts
+        if entry.attempts >= self.config.max_attempts {
+            entry.locked_until = Some(now + self.config.lockout_duration);
+            tracing::warn!(
+                "Auth rate limit exceeded for key '{}', locked for {} seconds",
+                key,
+                self.config.lockout_duration.as_secs()
+            );
+            return (false, 0, self.config.lockout_duration.as_secs());
+        }
+
+        let remaining = self.config.max_attempts.saturating_sub(entry.attempts);
+        (true, remaining, 0)
+    }
+
+    /// Record a successful login (resets the attempt counter)
+    pub fn record_success(&self, key: &str) {
+        if !self.config.enabled {
+            return;
+        }
+
+        let mut entries = match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        entries.remove(key);
+    }
+
+    /// Clean up old entries
+    pub fn cleanup(&self) {
+        let mut entries = match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+
+        let now = Instant::now();
+        let max_age = self.config.window_duration + self.config.lockout_duration;
+
+        entries.retain(|_, entry| {
+            // Keep if locked or within window
+            entry.is_locked() || now.duration_since(entry.first_attempt) < max_age
+        });
+    }
+}
+
+// Global auth rate limiter instance
+use std::sync::LazyLock;
+
+pub static AUTH_RATE_LIMITER: LazyLock<AuthRateLimiter> =
+    LazyLock::new(AuthRateLimiter::with_defaults);
+
+/// Check if login attempt is allowed for the given IP/username
+pub fn check_auth_rate_limit(key: &str) -> (bool, u32, u64) {
+    AUTH_RATE_LIMITER.check_attempt(key)
+}
+
+/// Record a login attempt
+pub fn record_auth_attempt(key: &str) -> (bool, u32, u64) {
+    AUTH_RATE_LIMITER.record_attempt(key)
+}
+
+/// Record a successful login
+pub fn record_auth_success(key: &str) {
+    AUTH_RATE_LIMITER.record_success(key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +505,75 @@ mod tests {
         // Should allow unlimited requests when disabled
         for _ in 0..10 {
             let (allowed, _) = state.check_rate_limit("test-ip");
+            assert!(allowed);
+        }
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_basic() {
+        let config = AuthRateLimitConfig {
+            max_attempts: 3,
+            window_duration: Duration::from_secs(60),
+            lockout_duration: Duration::from_secs(300),
+            enabled: true,
+        };
+        let limiter = AuthRateLimiter::new(config);
+
+        // First 3 attempts should be allowed
+        for i in 0..3 {
+            let (allowed, remaining, _) = limiter.record_attempt("test-user");
+            if i < 2 {
+                assert!(allowed, "Attempt {} should be allowed", i + 1);
+                assert_eq!(remaining, 2 - i as u32);
+            } else {
+                // 3rd attempt triggers lockout
+                assert!(!allowed, "3rd attempt should trigger lockout");
+            }
+        }
+
+        // 4th attempt should be denied due to lockout
+        let (allowed, remaining, lockout_secs) = limiter.record_attempt("test-user");
+        assert!(!allowed);
+        assert_eq!(remaining, 0);
+        assert!(lockout_secs > 0);
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_success_resets() {
+        let config = AuthRateLimitConfig {
+            max_attempts: 3,
+            window_duration: Duration::from_secs(60),
+            lockout_duration: Duration::from_secs(300),
+            enabled: true,
+        };
+        let limiter = AuthRateLimiter::new(config);
+
+        // Make 2 failed attempts
+        limiter.record_attempt("test-user");
+        limiter.record_attempt("test-user");
+
+        // Successful login should reset
+        limiter.record_success("test-user");
+
+        // Should have full attempts again
+        let (allowed, remaining, _) = limiter.check_attempt("test-user");
+        assert!(allowed);
+        assert_eq!(remaining, 3);
+    }
+
+    #[test]
+    fn test_auth_rate_limiter_disabled() {
+        let config = AuthRateLimitConfig {
+            max_attempts: 1,
+            window_duration: Duration::from_secs(60),
+            lockout_duration: Duration::from_secs(300),
+            enabled: false,
+        };
+        let limiter = AuthRateLimiter::new(config);
+
+        // Should allow unlimited attempts when disabled
+        for _ in 0..10 {
+            let (allowed, _, _) = limiter.record_attempt("test-user");
             assert!(allowed);
         }
     }

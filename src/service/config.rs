@@ -187,17 +187,14 @@ pub async fn find_all(
         .one(db)
         .await?;
 
-    let config_all_info = config_all_info_result
-        .map(|entity| {
+    match config_all_info_result {
+        Some(entity) => {
             let mut m = ConfigAllInfo::from(entity.clone());
-
             m.config_tags = tags.join(",");
-
-            m
-        })
-        .unwrap();
-
-    Ok(config_all_info)
+            Ok(m)
+        }
+        None => Err(anyhow::anyhow!("Config not found for data_id: {}, group: {}, tenant: {}", data_id, group, tenant)),
+    }
 }
 
 pub async fn create_or_update(
@@ -350,8 +347,8 @@ pub async fn create_or_update(
                     app_name: Set(entity_c.app_name),
                     content: Set(entity_c.content.unwrap_or_default()),
                     md5: Set(Some(entity_c.md5.unwrap_or_default())),
-                    gmt_create: Set(entity_c.gmt_create.unwrap()),
-                    gmt_modified: Set(entity_c.gmt_modified.unwrap()),
+                    gmt_create: Set(entity_c.gmt_create.unwrap_or(now)),
+                    gmt_modified: Set(entity_c.gmt_modified.unwrap_or(now)),
                     src_user: Set(Some(entity_c.src_user.unwrap_or_default())),
                     src_ip: Set(Some(entity_c.src_ip.unwrap_or_default())),
                     op_type: Set(Some(String::from("U"))),

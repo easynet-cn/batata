@@ -30,17 +30,24 @@ async fn exist(
             .build()
     );
 
-    let exist = auth::service::permission::find_by_id(
+    match auth::service::permission::find_by_id(
         &data.database_connection,
         &params.role,
         &params.resource,
         &params.action,
     )
     .await
-    .unwrap()
-    .is_some();
-
-    common::Result::<bool>::http_success(exist)
+    {
+        Ok(result) => common::Result::<bool>::http_success(result.is_some()),
+        Err(e) => {
+            tracing::error!("Failed to check permission: {}", e);
+            HttpResponse::InternalServerError().json(common::Result::<bool> {
+                code: 500,
+                message: e.to_string(),
+                data: false,
+            })
+        }
+    }
 }
 
 #[get("/permission/list")]
@@ -65,7 +72,7 @@ async fn search_page(
         role = role.strip_suffix("*").unwrap().to_string();
     }
 
-    let result = auth::service::permission::search_page(
+    match auth::service::permission::search_page(
         &data.database_connection,
         &role,
         params.page_no,
@@ -73,9 +80,17 @@ async fn search_page(
         accurate,
     )
     .await
-    .unwrap();
-
-    common::Result::<Page<PermissionInfo>>::http_success(result)
+    {
+        Ok(result) => common::Result::<Page<PermissionInfo>>::http_success(result),
+        Err(e) => {
+            tracing::error!("Failed to search permissions: {}", e);
+            HttpResponse::InternalServerError().json(common::Result::<Page<PermissionInfo>> {
+                code: 500,
+                message: e.to_string(),
+                data: Page::default(),
+            })
+        }
+    }
 }
 
 #[post("/permission")]

@@ -1,6 +1,26 @@
+use std::sync::LazyLock;
+use std::time::Duration;
+
+use moka::sync::Cache;
 use sea_orm::*;
 
 use crate::{api::model::Page, auth::model::PermissionInfo, entity::permissions};
+
+// Cache for permissions by roles with 5-minute TTL
+// Key: sorted comma-joined role names, Value: Vec<PermissionInfo>
+static PERMISSIONS_CACHE: LazyLock<Cache<String, Vec<PermissionInfo>>> = LazyLock::new(|| {
+    Cache::builder()
+        .max_capacity(5_000)
+        .time_to_live(Duration::from_secs(300)) // 5 minutes TTL
+        .build()
+});
+
+/// Generate cache key from roles
+fn make_cache_key(roles: &[String]) -> String {
+    let mut sorted_roles = roles.to_vec();
+    sorted_roles.sort();
+    sorted_roles.join(",")
+}
 
 pub async fn find_by_id(
     db: &DatabaseConnection,
@@ -70,7 +90,14 @@ pub async fn find_by_roles(
         return Ok(vec![]);
     }
 
-    let permissions = permissions::Entity::find()
+    // Check cache first
+    let cache_key = make_cache_key(&roles);
+    if let Some(cached_permissions) = PERMISSIONS_CACHE.get(&cache_key) {
+        return Ok(cached_permissions);
+    }
+
+    // Cache miss - query database
+    let permissions: Vec<PermissionInfo> = permissions::Entity::find()
         .filter(permissions::Column::Role.is_in(roles))
         .all(db)
         .await?
@@ -78,7 +105,15 @@ pub async fn find_by_roles(
         .map(PermissionInfo::from)
         .collect();
 
+    // Store in cache
+    PERMISSIONS_CACHE.insert(cache_key, permissions.clone());
+
     Ok(permissions)
+}
+
+/// Invalidate all permissions cache
+pub fn invalidate_all_permissions_cache() {
+    PERMISSIONS_CACHE.invalidate_all();
 }
 
 pub async fn create(
@@ -95,6 +130,9 @@ pub async fn create(
 
     permissions::Entity::insert(entity).exec(db).await?;
 
+    // Invalidate cache since permissions changed
+    invalidate_all_permissions_cache();
+
     Ok(())
 }
 
@@ -107,6 +145,9 @@ pub async fn delete(
     permissions::Entity::delete_by_id((role.to_string(), resource.to_string(), action.to_string()))
         .exec(db)
         .await?;
+
+    // Invalidate cache since permissions changed
+    invalidate_all_permissions_cache();
 
     Ok(())
 }

@@ -26,7 +26,10 @@ async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<St
     let auth_enabled = data.configuration.auth_enabled();
     let global_admin = auth::service::role::has_global_admin_role(&data.database_connection)
         .await
-        .unwrap();
+        .unwrap_or_else(|e| {
+            tracing::error!("Failed to check global admin role: {}", e);
+            false
+        });
 
     let auth_state = data.auth_state(auth_enabled && !global_admin);
 

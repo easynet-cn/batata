@@ -49,17 +49,21 @@ use tracing_subscriber::{EnvFilter, Registry, fmt::MakeWriter, layer::Subscriber
 #[allow(dead_code)]
 async fn shutdown_signal(mut shutdown_rx: broadcast::Receiver<()>) {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        if let Err(e) = signal::ctrl_c().await {
+            tracing::error!("Failed to install Ctrl+C handler: {}", e);
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(e) => {
+                tracing::error!("Failed to install signal handler: {}", e);
+            }
+        }
     };
 
     #[cfg(not(unix))]
@@ -85,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let subscriber = get_subscriber("nacos", "info", std::io::stdout);
 
-    init_subscriber(subscriber);
+    init_subscriber(subscriber)?;
 
     // Extract configuration parameters
     let depolyment_type = configuration.deployment_type();
@@ -102,14 +106,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize server member management
     let server_member_manager = Arc::new(ServerMemberManager::new(&configuration));
 
-    // Create application state
-    let app_state = AppState {
+    // Create application state wrapped in Arc for efficient sharing
+    let app_state = Arc::new(AppState {
         configuration,
         database_connection,
         server_member_manager,
-    };
+    });
 
-    let server_app_state = app_state.clone();
+    // Clone Arc references (cheap - just atomic increment)
+    let server_app_state = (*app_state).clone();
+    let app_state_arc = app_state.clone();
 
     // Setup gRPC interceptor layer
     let layer = ServiceBuilder::new()
@@ -119,8 +125,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize gRPC handlers
     let mut handler_registry = HandlerRegistry::new();
-
-    let app_state_arc = Arc::new(app_state.clone());
 
     // Internal handlers
     let health_check_handler = Arc::new(HealthCheckHandler {});
@@ -266,7 +270,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match depolyment_type.as_str() {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
             console_server(
-                app_state,
+                (*app_state).clone(),
                 console_context_path,
                 console_server_address,
                 console_server_port,
@@ -275,7 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         model::common::NACOS_DEPLOYMENT_TYPE_SERVER => {
             main_server(
-                app_state,
+                (*app_state).clone(),
                 server_context_path,
                 server_address,
                 server_main_port,
@@ -284,7 +288,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             let console = console_server(
-                app_state,
+                (*app_state).clone(),
                 console_context_path,
                 console_server_address,
                 console_server_port,
@@ -361,7 +365,8 @@ pub fn get_subscriber(
         .with(formatting_layer)
 }
 
-pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) {
-    LogTracer::init().expect("Failed to set logger");
-    set_global_default(subscriber).expect("Failed to set subscriber");
+pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) -> Result<(), Box<dyn std::error::Error>> {
+    LogTracer::init().map_err(|e| format!("Failed to set logger: {}", e))?;
+    set_global_default(subscriber).map_err(|e| format!("Failed to set subscriber: {}", e))?;
+    Ok(())
 }

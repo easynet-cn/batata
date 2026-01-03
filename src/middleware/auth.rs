@@ -68,22 +68,22 @@ where
 
             if let Ok(authen_str) = authen_header.to_str() {
                 let token = authen_str.trim();
-                let secret_key = req
-                    .app_data::<Data<AppState>>()
-                    .unwrap()
-                    .configuration
-                    .token_secret_key()
-                    .clone();
 
-                let decode_result = auth::service::auth::decode_jwt_token(token, &secret_key);
+                if let Some(app_state) = req.app_data::<Data<AppState>>() {
+                    let secret_key = app_state.configuration.token_secret_key().clone();
+                    // Use cached token validation for better performance
+                    let decode_result = auth::service::auth::decode_jwt_token_cached(token, &secret_key);
 
-                match decode_result {
-                    Ok(token_data) => {
-                        auth_context.username = token_data.claims.sub;
+                    match decode_result {
+                        Ok(token_data) => {
+                            auth_context.username = token_data.claims.sub;
+                        }
+                        Err(err) => {
+                            auth_context.jwt_error = Some(err);
+                        }
                     }
-                    Err(err) => {
-                        auth_context.jwt_error = Some(err);
-                    }
+                } else {
+                    tracing::error!("AppState not found in request app_data");
                 }
             }
 

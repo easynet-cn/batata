@@ -104,7 +104,9 @@ pub async fn update(
         Some(entity) => {
             let mut user: users::ActiveModel = entity.into();
 
-            user.password = Set(bcrypt::hash(new_password, 10u32).ok().unwrap());
+            let hashed_password = bcrypt::hash(new_password, 10u32)
+                .map_err(|e| anyhow::anyhow!("Failed to hash password: {}", e))?;
+            user.password = Set(hashed_password);
 
             user.update(db).await?;
 

@@ -17,11 +17,17 @@ const DEFAULT_KP: &str = "1";
 // Find all namespaces
 
 pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
-    let tenant_infos: Vec<tenant_info::Model> = tenant_info::Entity::find()
+    let tenant_infos: Vec<tenant_info::Model> = match tenant_info::Entity::find()
         .filter(tenant_info::Column::Kp.eq(DEFAULT_KP))
         .all(db)
         .await
-        .unwrap();
+    {
+        std::result::Result::Ok(infos) => infos,
+        std::result::Result::Err(e) => {
+            tracing::error!("Failed to fetch tenant infos: {}", e);
+            return vec![Namespace::default()];
+        }
+    };
 
     let mut tenant_ids: Vec<String> = Vec::new();
     let mut namespaces: Vec<Namespace> = tenant_infos
@@ -37,7 +43,7 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
 
     tenant_ids.push("".to_string());
 
-    let config_infos = config_info::Entity::find()
+    let config_infos = match config_info::Entity::find()
         .select_only()
         .column(config_info::Column::TenantId)
         .column_as(config_info::Column::Id.count(), "count")
@@ -47,10 +53,15 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
         .into_tuple::<(String, i32)>()
         .all(db)
         .await
-        .unwrap()
-        .iter()
-        .map(|x| (x.0.to_string(), x.1))
-        .collect::<HashMap<String, i32>>();
+    {
+        std::result::Result::Ok(infos) => {
+            infos.iter().map(|x| (x.0.to_string(), x.1)).collect::<HashMap<String, i32>>()
+        }
+        std::result::Result::Err(e) => {
+            tracing::error!("Failed to fetch config counts: {}", e);
+            HashMap::new()
+        }
+    };
 
     namespaces.iter_mut().for_each(|namespace| {
         if let Some(count) = config_infos.get(&namespace.namespace) {

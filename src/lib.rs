@@ -26,6 +26,7 @@ pub mod console; // Console web interface
 pub mod core; // Core business logic
 pub mod entity; // Database entities
 pub mod error; // Error handling and types
+pub mod metrics; // Metrics and observability
 pub mod middleware; // HTTP middleware
 pub mod model; // Data models and types
 pub mod service; // Business services

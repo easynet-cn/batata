@@ -17,6 +17,9 @@ use crate::{
     secured, service,
 };
 
+static NAMESPACE_ID_REGEX: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"^[\w-]+").expect("Invalid regex pattern"));
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetParam {
@@ -129,9 +132,7 @@ async fn create(
         namespace_id = uuid::Uuid::new_v4().to_string();
     }
 
-    let regex = regex::Regex::new(r"^[\w-]+").unwrap();
-
-    if !regex.is_match(&namespace_id) {
+    if !NAMESPACE_ID_REGEX.is_match(&namespace_id) {
         return common::Result::<String>::http_response(
             StatusCode::NOT_FOUND.as_u16(),
             error::ILLEGAL_NAMESPACE.code,
@@ -215,16 +216,20 @@ async fn update(
 
     let namespace_desc = form.namespace_desc.clone().unwrap_or_default();
 
-    let res = service::namespace::update(
+    match service::namespace::update(
         &data.database_connection,
         &form.namespace_id,
         &form.namespace_name,
         &namespace_desc,
     )
     .await
-    .unwrap();
-
-    common::Result::<bool>::http_success(res)
+    {
+        Ok(res) => common::Result::<bool>::http_success(res),
+        Err(e) => {
+            tracing::error!("Failed to update namespace: {}", e);
+            HttpResponse::InternalServerError().body(e.to_string())
+        }
+    }
 }
 
 #[delete("")]
@@ -287,7 +292,7 @@ async fn exist(
 
 fn namespace_name_check(namespace_name: &str) -> bool {
     static RE: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"^[^@#$%^&*]+$").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"^[^@#$%^&*]+$").expect("Invalid regex pattern"));
 
     RE.is_match(namespace_name)
 }
