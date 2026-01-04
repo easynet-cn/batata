@@ -1,9 +1,11 @@
 use std::{collections::HashMap, str::FromStr};
 
+use actix_multipart::Multipart;
 use actix_web::{
     HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, http::StatusCode, post,
     web,
 };
+use futures::StreamExt;
 use serde::Deserialize;
 
 use chrono::Utc;
@@ -15,7 +17,10 @@ use crate::{
         model::Page,
     },
     auth::model::AuthContext,
-    config::model::{ConfigAllInfo, ConfigForm, ConfigType},
+    config::{
+        export_model::{ExportRequest, ImportRequest, ImportResult},
+        model::{ConfigAllInfo, ConfigForm, ConfigType},
+    },
     error, is_valid,
     model::{
         self,
@@ -357,6 +362,168 @@ async fn find_listeners(
     })
 }
 
+#[get("export")]
+async fn export_configs(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ExportRequest>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    // Parse data_ids if provided
+    let data_ids = params.data_ids.as_ref().map(|ids| {
+        ids.split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim().to_string())
+            .collect::<Vec<String>>()
+    });
+
+    // Find configs for export
+    let configs = match service::config_export::find_configs_for_export(
+        &data.database_connection,
+        &namespace_id,
+        params.group.as_deref(),
+        data_ids,
+        params.app_name.as_deref(),
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    if configs.is_empty() {
+        return HttpResponse::NotFound().body("No configurations found to export");
+    }
+
+    // Create ZIP file
+    let zip_data = match service::config_export::create_nacos_export_zip(configs) {
+        Ok(z) => z,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    let filename = format!("nacos_config_export_{}.zip", Utc::now().format("%Y%m%d%H%M%S"));
+
+    HttpResponse::Ok()
+        .content_type("application/zip")
+        .insert_header(("Content-Disposition", format!("attachment; filename=\"{}\"", filename)))
+        .body(zip_data)
+}
+
+#[post("import")]
+async fn import_configs(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ImportRequest>,
+    mut payload: Multipart,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let policy = params.get_policy();
+
+    // Get user info
+    let auth_context = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
+
+    let src_user = auth_context.username;
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    // Read file from multipart
+    let mut file_data: Vec<u8> = Vec::new();
+    while let Some(Ok(mut field)) = payload.next().await {
+        if let Some(content_disposition) = field.content_disposition() {
+            if content_disposition
+                .get_name()
+                .map(|n| n == "file")
+                .unwrap_or(false)
+            {
+                while let Some(Ok(chunk)) = field.next().await {
+                    file_data.extend_from_slice(&chunk);
+                }
+                break;
+            }
+        }
+    }
+
+    if file_data.is_empty() {
+        return model::common::Result::<ImportResult>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "No file uploaded",
+        );
+    }
+
+    // Parse ZIP file
+    let items = match service::config_import::parse_nacos_import_zip(&file_data) {
+        Ok(i) => i,
+        Err(e) => {
+            return model::common::Result::<ImportResult>::http_response(
+                StatusCode::BAD_REQUEST.as_u16(),
+                error::PARAMETER_VALIDATE_ERROR.code,
+                error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+                format!("Invalid ZIP file: {}", e),
+            );
+        }
+    };
+
+    if items.is_empty() {
+        return model::common::Result::<ImportResult>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::DATA_EMPTY.code,
+            error::DATA_EMPTY.message.to_string(),
+            "No configurations found in ZIP file",
+        );
+    }
+
+    // Import configs
+    let result = match service::config_import::import_nacos_items(
+        &data.database_connection,
+        items,
+        &namespace_id,
+        policy,
+        &src_user,
+        &src_ip,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    model::common::Result::<ImportResult>::http_success(result)
+}
+
 pub fn routes() -> Scope {
     web::scope("/cs/config")
         .service(find_one)
@@ -365,4 +532,6 @@ pub fn routes() -> Scope {
         .service(delete)
         .service(find_beta_one)
         .service(find_listeners)
+        .service(export_configs)
+        .service(import_configs)
 }

@@ -65,6 +65,9 @@ pub fn consul_health_routes() -> actix_web::Scope {
 /// Returns a scope configured with all key-value store endpoints
 pub fn consul_kv_routes() -> actix_web::Scope {
     web::scope("/v1")
+        // Export/Import - must be before wildcard routes
+        .route("/kv/export", web::get().to(kv::export_kv))
+        .route("/kv/import", web::put().to(kv::import_kv))
         // KV Store - use wildcard for nested keys
         .route("/kv/{key:.*}", web::get().to(kv::get_kv))
         .route("/kv/{key:.*}", web::put().to(kv::put_kv))

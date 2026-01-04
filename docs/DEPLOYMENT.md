@@ -10,6 +10,9 @@ Batata 是一个 Rust 实现的 Nacos 兼容服务，提供服务发现、配置
 - [配置](#配置)
 - [部署模式](#部署模式)
 - [API 参考](#api-参考)
+  - [Nacos API](#nacos-api)
+  - [Consul 兼容 API](#consul-兼容-api)
+  - [配置导入导出](#配置导入导出)
 - [监控与指标](#监控与指标)
 - [客户端集成](#客户端集成)
 - [故障排除](#故障排除)
@@ -436,6 +439,8 @@ spec:
 | `/nacos/v1/cs/configs/listener` | POST | 监听配置变更 |
 | `/nacos/v3/cs/config` | GET | 获取配置（v3） |
 | `/nacos/v3/cs/config` | POST | 发布配置（v3） |
+| `/nacos/v3/cs/config/export` | GET | 导出配置（ZIP 格式） |
+| `/nacos/v3/cs/config/import` | POST | 导入配置（multipart/form-data） |
 
 #### 服务发现
 
@@ -501,6 +506,8 @@ spec:
 | `/v1/kv/{key}` | GET | 获取键值 |
 | `/v1/kv/{key}` | PUT | 设置键值 |
 | `/v1/kv/{key}` | DELETE | 删除键值 |
+| `/v1/kv/export` | GET | 导出 KV（JSON 格式） |
+| `/v1/kv/import` | PUT | 导入 KV（JSON 格式） |
 | `/v1/txn` | PUT | 事务操作 |
 
 ### gRPC API
@@ -516,6 +523,179 @@ service BiRequestStream {
   rpc requestBiStream(stream Payload) returns (stream Payload);
 }
 ```
+
+### 配置导入导出
+
+#### Nacos 格式导出
+
+导出配置为 ZIP 文件，包含配置内容和元数据：
+
+```bash
+# 导出指定命名空间的所有配置
+curl -O "http://localhost:8848/nacos/v3/console/cs/config/export?namespaceId=public"
+
+# 导出指定 Group 的配置
+curl -O "http://localhost:8848/nacos/v3/console/cs/config/export?namespaceId=public&group=DEFAULT_GROUP"
+
+# 导出指定 dataIds 的配置（逗号分隔）
+curl -O "http://localhost:8848/nacos/v3/console/cs/config/export?namespaceId=public&dataIds=app.yaml,db.properties"
+
+# 按应用名称过滤
+curl -O "http://localhost:8848/nacos/v3/console/cs/config/export?namespaceId=public&appName=my-app"
+```
+
+**ZIP 文件结构**：
+```
+export.zip
+├── DEFAULT_GROUP/
+│   ├── app.yaml           # 配置内容
+│   ├── app.yaml.meta      # 元数据 (YAML)
+│   ├── db.properties
+│   └── db.properties.meta
+└── MY_GROUP/
+    ├── service.json
+    └── service.json.meta
+```
+
+**元数据文件格式 (.meta)**：
+```yaml
+dataId: app.yaml
+group: DEFAULT_GROUP
+namespaceId: public
+contentType: yaml
+appName: my-app
+desc: 应用配置
+configTags: env:prod,team:backend
+md5: abc123def456
+createTime: 1704067200000
+modifyTime: 1704067200000
+```
+
+#### Nacos 格式导入
+
+导入 ZIP 格式的配置文件：
+
+```bash
+# 基本导入（遇到冲突跳过）
+curl -X POST "http://localhost:8848/nacos/v3/console/cs/config/import?namespaceId=public" \
+  -F "file=@export.zip"
+
+# 覆盖已存在的配置
+curl -X POST "http://localhost:8848/nacos/v3/console/cs/config/import?namespaceId=public&policy=OVERWRITE" \
+  -F "file=@export.zip"
+
+# 遇到冲突立即停止
+curl -X POST "http://localhost:8848/nacos/v3/console/cs/config/import?namespaceId=public&policy=ABORT" \
+  -F "file=@export.zip"
+```
+
+**冲突策略（policy 参数）**：
+
+| 策略 | 描述 |
+|------|------|
+| `SKIP` | 跳过已存在的配置（默认） |
+| `OVERWRITE` | 覆盖已存在的配置 |
+| `ABORT` | 遇到冲突立即停止导入 |
+
+**响应示例**：
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "successCount": 10,
+    "skipCount": 2,
+    "failCount": 0,
+    "failData": []
+  }
+}
+```
+
+#### Consul 格式导出
+
+导出配置为 JSON 数组格式（值为 Base64 编码）：
+
+```bash
+# 导出所有配置
+curl "http://localhost:8848/v1/kv/export"
+
+# 按命名空间过滤
+curl "http://localhost:8848/v1/kv/export?namespaceId=public"
+
+# 按前缀过滤
+curl "http://localhost:8848/v1/kv/export?prefix=public/DEFAULT_GROUP"
+```
+
+**响应格式**：
+```json
+[
+  {
+    "Key": "public/DEFAULT_GROUP/app.yaml",
+    "Flags": 0,
+    "Value": "c2VydmVyOgogIHBvcnQ6IDgwODA="
+  },
+  {
+    "Key": "public/DEFAULT_GROUP/db.properties",
+    "Flags": 0,
+    "Value": "aG9zdD1sb2NhbGhvc3QKcG9ydD0zMzA2"
+  }
+]
+```
+
+**Key 路径映射**：
+```
+Key: namespace/group/dataId
+示例: public/DEFAULT_GROUP/app.yaml
+  → namespace_id: public
+  → group: DEFAULT_GROUP
+  → data_id: app.yaml
+```
+
+#### Consul 格式导入
+
+导入 Consul 格式的 JSON 配置：
+
+```bash
+# 基本导入
+curl -X PUT "http://localhost:8848/v1/kv/import" \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"Key": "public/DEFAULT_GROUP/app.yaml", "Flags": 0, "Value": "c2VydmVyOgogIHBvcnQ6IDgwODA="},
+    {"Key": "public/DEFAULT_GROUP/db.properties", "Flags": 0, "Value": "aG9zdD1sb2NhbGhvc3Q="}
+  ]'
+
+# 指定目标命名空间（覆盖 Key 中的命名空间）
+curl -X PUT "http://localhost:8848/v1/kv/import?namespaceId=dev" \
+  -H "Content-Type: application/json" \
+  -d @configs.json
+
+# 使用冲突策略
+curl -X PUT "http://localhost:8848/v1/kv/import?policy=OVERWRITE" \
+  -H "Content-Type: application/json" \
+  -d @configs.json
+```
+
+**响应示例**：
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "successCount": 5,
+    "skipCount": 1,
+    "failCount": 0,
+    "failData": []
+  }
+}
+```
+
+#### 导入导出使用场景
+
+1. **环境迁移**：从开发环境导出配置，导入到测试/生产环境
+2. **备份恢复**：定期导出配置作为备份，故障时快速恢复
+3. **版本管理**：将导出的配置纳入 Git 版本控制
+4. **批量更新**：修改导出文件后重新导入
+5. **跨系统迁移**：Nacos 与 Consul 之间的配置迁移
 
 ---
 

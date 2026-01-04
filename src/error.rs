@@ -361,6 +361,27 @@ pub const FUZZY_WATCH_PATTERN_MATCH_COUNT_OVER_LIMIT: ErrorCode<'static> = Error
     message: "fuzzy watch pattern matched count over limit",
 };
 
+// Import/Export error codes
+pub const IMPORT_FILE_EMPTY: ErrorCode<'static> = ErrorCode {
+    code: 100010,
+    message: "Import file is empty",
+};
+
+pub const IMPORT_FILE_INVALID: ErrorCode<'static> = ErrorCode {
+    code: 100011,
+    message: "Import file format is invalid",
+};
+
+pub const IMPORT_CONFLICT_ABORT: ErrorCode<'static> = ErrorCode {
+    code: 100012,
+    message: "Import aborted due to conflict",
+};
+
+pub const EXPORT_NO_DATA: ErrorCode<'static> = ErrorCode {
+    code: 100013,
+    message: "No configurations found to export",
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
