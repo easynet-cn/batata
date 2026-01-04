@@ -99,30 +99,24 @@ impl ServerMemberManager {
         let server_list = Arc::new(DashMap::new());
         let member = MemberBuilder::new(ip.clone(), port).build();
 
-        // Set extended member info
-        member.extend_info.write().unwrap().insert(
-            Member::RAFT_PORT.to_string(),
-            Value::from(member.calculate_raft_port()),
-        );
-        member
-            .extend_info
-            .write()
-            .unwrap()
-            .insert(Member::READY_TO_UPGRADE.to_string(), Value::from(true));
-        member
-            .extend_info
-            .write()
-            .unwrap()
-            .insert(Member::VERSION.to_string(), Value::from(config.version()));
-        member
-            .extend_info
-            .write()
-            .unwrap()
-            .insert(Member::SUPPORT_GRAY_MODEL.to_string(), Value::from(true));
-        member.extend_info.write().unwrap().insert(
-            Member::LAST_REFRESH_TIME.to_string(),
-            Value::from(chrono::Utc::now().timestamp_millis()),
-        );
+        // Set extended member info (acquire write lock once for all inserts)
+        {
+            let mut extend_info = member
+                .extend_info
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            extend_info.insert(
+                Member::RAFT_PORT.to_string(),
+                Value::from(member.calculate_raft_port()),
+            );
+            extend_info.insert(Member::READY_TO_UPGRADE.to_string(), Value::from(true));
+            extend_info.insert(Member::VERSION.to_string(), Value::from(config.version()));
+            extend_info.insert(Member::SUPPORT_GRAY_MODEL.to_string(), Value::from(true));
+            extend_info.insert(
+                Member::LAST_REFRESH_TIME.to_string(),
+                Value::from(chrono::Utc::now().timestamp_millis()),
+            );
+        }
 
         // Add self to server list
         server_list.insert(local_address.clone(), member.clone());
@@ -421,8 +415,10 @@ impl ServerMemberManager {
 
     /// Refresh local member's last refresh time
     pub fn refresh_self(&self) {
-        if let Some(member) = self.server_list.get_mut(&self.local_address) {
-            member.extend_info.write().unwrap().insert(
+        if let Some(member) = self.server_list.get_mut(&self.local_address)
+            && let Ok(mut extend_info) = member.extend_info.write()
+        {
+            extend_info.insert(
                 Member::LAST_REFRESH_TIME.to_string(),
                 Value::from(chrono::Utc::now().timestamp_millis()),
             );

@@ -1,6 +1,9 @@
 // Core business logic module
 // This module contains the core functionality and business logic of the application
 
+// Unified abstraction layer for multi-registry support (Nacos, Consul)
+pub mod abstraction;
+
 // Core data models and structures
 pub mod model;
 

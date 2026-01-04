@@ -16,29 +16,27 @@ pub async fn find_one(
     group: &str,
     namespace_id: &str,
 ) -> anyhow::Result<Option<ConfigAllInfo>> {
-    if let Some(mut config_all_info) = config_info::Entity::find()
-        .filter(config_info::Column::DataId.eq(data_id))
-        .filter(config_info::Column::GroupId.eq(group))
-        .filter(config_info::Column::TenantId.eq(namespace_id))
-        .one(db)
-        .await?
-        .map(ConfigAllInfo::from)
-    {
-        let config_tags = config_tags_relation::Entity::find()
+    // Execute both queries concurrently to reduce latency
+    // config_tags_relation has data_id, group_id, tenant_id columns allowing parallel query
+    let (config_result, tags_result) = tokio::join!(
+        config_info::Entity::find()
+            .filter(config_info::Column::DataId.eq(data_id))
+            .filter(config_info::Column::GroupId.eq(group))
+            .filter(config_info::Column::TenantId.eq(namespace_id))
+            .one(db),
+        config_tags_relation::Entity::find()
             .select_only()
             .column(config_tags_relation::Column::TagName)
-            .filter(
-                config_tags_relation::Column::Id
-                    .eq(config_all_info.config_info.config_info_base.id),
-            )
-            .order_by_asc(config_tags_relation::Column::Id)
+            .filter(config_tags_relation::Column::DataId.eq(data_id))
+            .filter(config_tags_relation::Column::GroupId.eq(group))
+            .filter(config_tags_relation::Column::TenantId.eq(namespace_id))
+            .order_by_asc(config_tags_relation::Column::Nid)
             .into_tuple::<String>()
             .all(db)
-            .await?
-            .join(",");
+    );
 
-        config_all_info.config_tags = config_tags;
-
+    if let Some(mut config_all_info) = config_result?.map(ConfigAllInfo::from) {
+        config_all_info.config_tags = tags_result?.join(",");
         Ok(Some(config_all_info))
     } else {
         Ok(None)
@@ -168,32 +166,36 @@ pub async fn find_all(
     group: &str,
     tenant: &str,
 ) -> anyhow::Result<ConfigAllInfo> {
-    let tags_result = config_tags_relation::Entity::find()
-        .select_only()
-        .column(config_tags_relation::Column::TagName)
-        .filter(config_tags_relation::Column::DataId.eq(data_id))
-        .filter(config_tags_relation::Column::GroupId.eq(group))
-        .filter(config_tags_relation::Column::TenantId.eq(tenant))
-        .all(db)
-        .await?;
-    let tags: Vec<String> = tags_result
-        .iter()
-        .map(|entity| entity.tag_name.clone())
-        .collect();
-    let config_all_info_result = config_info::Entity::find()
-        .filter(config_info::Column::DataId.eq(data_id))
-        .filter(config_info::Column::GroupId.eq(group))
-        .filter(config_info::Column::TenantId.eq(tenant))
-        .one(db)
-        .await?;
+    // Execute both queries concurrently to reduce latency
+    let (config_result, tags_result) = tokio::join!(
+        config_info::Entity::find()
+            .filter(config_info::Column::DataId.eq(data_id))
+            .filter(config_info::Column::GroupId.eq(group))
+            .filter(config_info::Column::TenantId.eq(tenant))
+            .one(db),
+        config_tags_relation::Entity::find()
+            .select_only()
+            .column(config_tags_relation::Column::TagName)
+            .filter(config_tags_relation::Column::DataId.eq(data_id))
+            .filter(config_tags_relation::Column::GroupId.eq(group))
+            .filter(config_tags_relation::Column::TenantId.eq(tenant))
+            .order_by_asc(config_tags_relation::Column::Nid)
+            .into_tuple::<String>()
+            .all(db)
+    );
 
-    match config_all_info_result {
+    match config_result? {
         Some(entity) => {
-            let mut m = ConfigAllInfo::from(entity.clone());
-            m.config_tags = tags.join(",");
+            let mut m = ConfigAllInfo::from(entity);
+            m.config_tags = tags_result?.join(",");
             Ok(m)
         }
-        None => Err(anyhow::anyhow!("Config not found for data_id: {}, group: {}, tenant: {}", data_id, group, tenant)),
+        None => Err(anyhow::anyhow!(
+            "Config not found for data_id: {}, group: {}, tenant: {}",
+            data_id,
+            group,
+            tenant
+        )),
     }
 }
 
@@ -579,22 +581,29 @@ pub async fn find_gray_one(
     group: &str,
     namespace_id: &str,
 ) -> anyhow::Result<Option<ConfigInfoGrayWrapper>> {
-    if let Some(mut config_gray) = config_info_gray::Entity::find()
-        .filter(config_info_gray::Column::DataId.eq(data_id))
-        .filter(config_info_gray::Column::GroupId.eq(group))
-        .filter(config_info_gray::Column::TenantId.eq(namespace_id))
-        .one(db)
-        .await?
-        .map(ConfigInfoGrayWrapper::from)
-    {
-        if let Some(config_info) = config_info::Entity::find()
+    // Execute both queries concurrently to reduce latency
+    let (gray_result, config_result) = tokio::join!(
+        config_info_gray::Entity::find()
+            .filter(config_info_gray::Column::DataId.eq(data_id))
+            .filter(config_info_gray::Column::GroupId.eq(group))
+            .filter(config_info_gray::Column::TenantId.eq(namespace_id))
+            .one(db),
+        config_info::Entity::find()
+            .select_only()
+            .column(config_info::Column::Type)
             .filter(config_info::Column::DataId.eq(data_id))
             .filter(config_info::Column::GroupId.eq(group))
             .filter(config_info::Column::TenantId.eq(namespace_id))
+            .into_tuple::<Option<String>>()
             .one(db)
-            .await?
-        {
-            config_gray.config_info.r#type = config_info.r#type.unwrap_or_default();
+    );
+
+    if let Some(gray_entity) = gray_result? {
+        let mut config_gray = ConfigInfoGrayWrapper::from(gray_entity);
+
+        // Apply type from config_info if available
+        if let std::result::Result::Ok(Some(Some(config_type))) = config_result {
+            config_gray.config_info.r#type = config_type;
         }
 
         Ok(Some(config_gray))

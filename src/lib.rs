@@ -47,15 +47,6 @@ impl ActionTypes {
             ActionTypes::Write => "w",
         }
     }
-
-    // Parse string to action type
-    pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "r" => Ok(ActionTypes::Read),
-            "w" => Ok(ActionTypes::Write),
-            _ => Err(format!("Invalid action: {}", s)),
-        }
-    }
 }
 
 impl Display for ActionTypes {
@@ -68,7 +59,11 @@ impl FromStr for ActionTypes {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        ActionTypes::from_str(s)
+        match s {
+            "r" => Ok(ActionTypes::Read),
+            "w" => Ok(ActionTypes::Write),
+            _ => Err(format!("Invalid action: {}", s)),
+        }
     }
 }
 
@@ -96,19 +91,6 @@ impl SignType {
             SignType::Specified => "specified",
         }
     }
-
-    // Parse string to sign type
-    pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "naming" => Ok(SignType::Naming),
-            "config" => Ok(SignType::Config),
-            "lock" => Ok(SignType::Lock),
-            "ai" => Ok(SignType::Ai),
-            "console" => Ok(SignType::Console),
-            "specified" => Ok(SignType::Specified),
-            _ => Err(format!("Invalid sign type: {}", s)),
-        }
-    }
 }
 
 impl Display for SignType {
@@ -121,7 +103,15 @@ impl FromStr for SignType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        SignType::from_str(s)
+        match s {
+            "naming" => Ok(SignType::Naming),
+            "config" => Ok(SignType::Config),
+            "lock" => Ok(SignType::Lock),
+            "ai" => Ok(SignType::Ai),
+            "console" => Ok(SignType::Console),
+            "specified" => Ok(SignType::Specified),
+            _ => Err(format!("Invalid sign type: {}", s)),
+        }
     }
 }
 
@@ -145,17 +135,6 @@ impl ApiType {
             ApiType::InnerApi => "INNER_API",
         }
     }
-
-    // Parse string to API type
-    pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "ADMIN_API" => Ok(ApiType::AdminApi),
-            "CONSOLE_API" => Ok(ApiType::ConsoleApi),
-            "OPEN_API" => Ok(ApiType::OpenApi),
-            "INNER_API" => Ok(ApiType::InnerApi),
-            _ => Err(format!("Invalid API type: {}", s)),
-        }
-    }
 }
 
 impl Display for ApiType {
@@ -168,7 +147,13 @@ impl FromStr for ApiType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        ApiType::from_str(s)
+        match s {
+            "ADMIN_API" => Ok(ApiType::AdminApi),
+            "CONSOLE_API" => Ok(ApiType::ConsoleApi),
+            "OPEN_API" => Ok(ApiType::OpenApi),
+            "INNER_API" => Ok(ApiType::InnerApi),
+            _ => Err(format!("Invalid API type: {}", s)),
+        }
     }
 }
 
@@ -524,4 +509,198 @@ pub fn local_ip() -> String {
                 })
         })
         .unwrap_or_else(|| "127.0.0.1".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ActionTypes tests
+    #[test]
+    fn test_action_types_default() {
+        assert_eq!(ActionTypes::default(), ActionTypes::Read);
+    }
+
+    #[test]
+    fn test_action_types_as_str() {
+        assert_eq!(ActionTypes::Read.as_str(), "r");
+        assert_eq!(ActionTypes::Write.as_str(), "w");
+    }
+
+    #[test]
+    fn test_action_types_display() {
+        assert_eq!(format!("{}", ActionTypes::Read), "r");
+        assert_eq!(format!("{}", ActionTypes::Write), "w");
+    }
+
+    #[test]
+    fn test_action_types_from_str() {
+        assert_eq!("r".parse::<ActionTypes>().unwrap(), ActionTypes::Read);
+        assert_eq!("w".parse::<ActionTypes>().unwrap(), ActionTypes::Write);
+        assert!("invalid".parse::<ActionTypes>().is_err());
+    }
+
+    // SignType tests
+    #[test]
+    fn test_sign_type_default() {
+        assert_eq!(SignType::default(), SignType::Naming);
+    }
+
+    #[test]
+    fn test_sign_type_as_str() {
+        assert_eq!(SignType::Naming.as_str(), "naming");
+        assert_eq!(SignType::Config.as_str(), "config");
+        assert_eq!(SignType::Lock.as_str(), "lock");
+        assert_eq!(SignType::Ai.as_str(), "ai");
+        assert_eq!(SignType::Console.as_str(), "console");
+        assert_eq!(SignType::Specified.as_str(), "specified");
+    }
+
+    #[test]
+    fn test_sign_type_display() {
+        assert_eq!(format!("{}", SignType::Naming), "naming");
+        assert_eq!(format!("{}", SignType::Config), "config");
+    }
+
+    #[test]
+    fn test_sign_type_from_str() {
+        assert_eq!("naming".parse::<SignType>().unwrap(), SignType::Naming);
+        assert_eq!("config".parse::<SignType>().unwrap(), SignType::Config);
+        assert_eq!("lock".parse::<SignType>().unwrap(), SignType::Lock);
+        assert_eq!("ai".parse::<SignType>().unwrap(), SignType::Ai);
+        assert_eq!("console".parse::<SignType>().unwrap(), SignType::Console);
+        assert_eq!(
+            "specified".parse::<SignType>().unwrap(),
+            SignType::Specified
+        );
+        assert!("invalid".parse::<SignType>().is_err());
+    }
+
+    // ApiType tests
+    #[test]
+    fn test_api_type_default() {
+        assert_eq!(ApiType::default(), ApiType::OpenApi);
+    }
+
+    #[test]
+    fn test_api_type_description() {
+        assert_eq!(ApiType::AdminApi.description(), "ADMIN_API");
+        assert_eq!(ApiType::ConsoleApi.description(), "CONSOLE_API");
+        assert_eq!(ApiType::OpenApi.description(), "OPEN_API");
+        assert_eq!(ApiType::InnerApi.description(), "INNER_API");
+    }
+
+    #[test]
+    fn test_api_type_display() {
+        assert_eq!(format!("{}", ApiType::AdminApi), "ADMIN_API");
+        assert_eq!(format!("{}", ApiType::OpenApi), "OPEN_API");
+    }
+
+    #[test]
+    fn test_api_type_from_str() {
+        assert_eq!("ADMIN_API".parse::<ApiType>().unwrap(), ApiType::AdminApi);
+        assert_eq!(
+            "CONSOLE_API".parse::<ApiType>().unwrap(),
+            ApiType::ConsoleApi
+        );
+        assert_eq!("OPEN_API".parse::<ApiType>().unwrap(), ApiType::OpenApi);
+        assert_eq!("INNER_API".parse::<ApiType>().unwrap(), ApiType::InnerApi);
+        assert!("invalid".parse::<ApiType>().is_err());
+    }
+
+    // is_valid tests
+    #[test]
+    fn test_is_valid_alphanumeric() {
+        assert!(is_valid("abc123"));
+        assert!(is_valid("ABC123"));
+        assert!(is_valid("test_value"));
+        assert!(is_valid("test-value"));
+        assert!(is_valid("test.value"));
+        assert!(is_valid("test:value"));
+    }
+
+    #[test]
+    fn test_is_valid_empty() {
+        assert!(is_valid(""));
+    }
+
+    #[test]
+    fn test_is_valid_invalid_chars() {
+        assert!(!is_valid("test value")); // space
+        assert!(!is_valid("test@value")); // @
+        assert!(!is_valid("test#value")); // #
+        assert!(!is_valid("test$value")); // $
+        assert!(!is_valid("test/value")); // /
+    }
+
+    // join_resource tests
+    #[test]
+    fn test_join_resource_specified_type() {
+        let resource = auth::model::Resource {
+            namespace_id: "ns".to_string(),
+            group: "grp".to_string(),
+            name: "custom_resource".to_string(),
+            r#type: "specified".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(join_resource(&resource), "custom_resource");
+    }
+
+    #[test]
+    fn test_join_resource_with_all_fields() {
+        let resource = auth::model::Resource {
+            namespace_id: "namespace1".to_string(),
+            group: "group1".to_string(),
+            name: "config1".to_string(),
+            r#type: "config".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(join_resource(&resource), "namespace1:group1:config/config1");
+    }
+
+    #[test]
+    fn test_join_resource_empty_namespace() {
+        let resource = auth::model::Resource {
+            namespace_id: String::new(),
+            group: "group1".to_string(),
+            name: "config1".to_string(),
+            r#type: "config".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(join_resource(&resource), "public:group1:config/config1");
+    }
+
+    #[test]
+    fn test_join_resource_empty_group() {
+        let resource = auth::model::Resource {
+            namespace_id: "ns1".to_string(),
+            group: String::new(),
+            name: "config1".to_string(),
+            r#type: "config".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(join_resource(&resource), "ns1:*:config/config1");
+    }
+
+    #[test]
+    fn test_join_resource_empty_name() {
+        let resource = auth::model::Resource {
+            namespace_id: "ns1".to_string(),
+            group: "group1".to_string(),
+            name: String::new(),
+            r#type: "naming".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(join_resource(&resource), "ns1:group1:naming/*");
+    }
+
+    // local_ip tests
+    #[test]
+    fn test_local_ip_returns_valid_ip() {
+        let ip = local_ip();
+        // Should either be a valid IP or fallback to 127.0.0.1
+        assert!(
+            ip == "127.0.0.1" || ip.split('.').filter_map(|s| s.parse::<u8>().ok()).count() == 4
+        );
+    }
 }

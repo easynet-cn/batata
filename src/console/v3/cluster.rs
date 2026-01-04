@@ -154,11 +154,13 @@ async fn get_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
     let version = self_member
         .extend_info
         .read()
-        .unwrap()
-        .get(Member::VERSION)
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+        .ok()
+        .and_then(|info| {
+            info.get(Member::VERSION)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default();
 
     let response = SelfMemberResponse {
         ip: self_member.ip.clone(),

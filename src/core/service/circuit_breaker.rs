@@ -1,8 +1,8 @@
 // Circuit Breaker pattern implementation for resilient remote calls
 // Provides protection against cascading failures in distributed systems
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Circuit breaker states
@@ -77,11 +77,10 @@ impl CircuitBreaker {
             CircuitState::Open => {
                 // Check if we should transition to half-open
                 if let Some(opened_at) = *self.opened_at.read().unwrap_or_else(|e| e.into_inner())
+                    && opened_at.elapsed() >= self.config.reset_timeout
                 {
-                    if opened_at.elapsed() >= self.config.reset_timeout {
-                        self.transition_to_half_open();
-                        return true;
-                    }
+                    self.transition_to_half_open();
+                    return true;
                 }
                 false
             }
@@ -121,9 +120,8 @@ impl CircuitBreaker {
 
                 // Reset count if outside failure window
                 if last_failure > 0 {
-                    let elapsed = Duration::from_millis(
-                        now.elapsed().as_millis() as u64 - last_failure,
-                    );
+                    let elapsed =
+                        Duration::from_millis(now.elapsed().as_millis() as u64 - last_failure);
                     if elapsed > self.config.failure_window {
                         self.failure_count.store(0, Ordering::SeqCst);
                     }

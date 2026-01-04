@@ -55,20 +55,20 @@ async fn search_page(
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut username = params.username.clone().unwrap_or_default();
 
-    if username.starts_with("*") {
-        username = username.strip_prefix("*").unwrap().to_string();
+    if let Some(stripped) = username.strip_prefix('*') {
+        username = stripped.to_string();
     }
-    if username.ends_with("*") {
-        username = username.strip_suffix("*").unwrap().to_string();
+    if let Some(stripped) = username.strip_suffix('*') {
+        username = stripped.to_string();
     }
 
     let mut role = params.role.clone().unwrap_or_default();
 
-    if role.starts_with("*") {
-        role = role.strip_prefix("*").unwrap().to_string();
+    if let Some(stripped) = role.strip_prefix('*') {
+        role = stripped.to_string();
     }
-    if role.ends_with("*") {
-        role = role.strip_suffix("*").unwrap().to_string();
+    if let Some(stripped) = role.strip_suffix('*') {
+        role = stripped.to_string();
     }
 
     let result = auth::service::role::search_page(
@@ -79,10 +79,16 @@ async fn search_page(
         params.page_size,
         accurate,
     )
-    .await
-    .unwrap();
+    .await;
 
-    common::Result::<Page<RoleInfo>>::http_success(result)
+    match result {
+        Ok(page) => common::Result::<Page<RoleInfo>>::http_success(page),
+        Err(e) => HttpResponse::InternalServerError().json(common::Result::<Page<RoleInfo>> {
+            code: 500,
+            message: e.to_string(),
+            data: Page::default(),
+        }),
+    }
 }
 
 #[get("/role/search")]
@@ -97,11 +103,16 @@ async fn search(
             .build()
     );
 
-    let result = auth::service::role::search(&data.database_connection, &params.role)
-        .await
-        .unwrap();
+    let result = auth::service::role::search(&data.database_connection, &params.role).await;
 
-    common::Result::<Vec<String>>::http_success(result)
+    match result {
+        Ok(roles) => common::Result::<Vec<String>>::http_success(roles),
+        Err(e) => HttpResponse::InternalServerError().json(common::Result::<Vec<String>> {
+            code: 500,
+            message: e.to_string(),
+            data: Vec::new(),
+        }),
+    }
 }
 
 #[post("role")]

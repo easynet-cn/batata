@@ -17,11 +17,22 @@ const DEFAULT_KP: &str = "1";
 // Find all namespaces
 
 pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
-    let tenant_infos: Vec<tenant_info::Model> = match tenant_info::Entity::find()
-        .filter(tenant_info::Column::Kp.eq(DEFAULT_KP))
-        .all(db)
-        .await
-    {
+    // Execute both queries concurrently to reduce latency
+    let (tenant_result, config_counts_result) = tokio::join!(
+        tenant_info::Entity::find()
+            .filter(tenant_info::Column::Kp.eq(DEFAULT_KP))
+            .all(db),
+        config_info::Entity::find()
+            .select_only()
+            .column(config_info::Column::TenantId)
+            .column_as(config_info::Column::Id.count(), "count")
+            .filter(config_info::Column::TenantId.is_not_null())
+            .group_by(config_info::Column::TenantId)
+            .into_tuple::<(String, i32)>()
+            .all(db)
+    );
+
+    let tenant_infos: Vec<tenant_info::Model> = match tenant_result {
         std::result::Result::Ok(infos) => infos,
         std::result::Result::Err(e) => {
             tracing::error!("Failed to fetch tenant infos: {}", e);
@@ -29,45 +40,32 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
         }
     };
 
-    let mut tenant_ids: Vec<String> = Vec::new();
-    let mut namespaces: Vec<Namespace> = tenant_infos
-        .iter()
-        .map(|tenant_info| {
-            tenant_ids.push(tenant_info.tenant_id.clone().unwrap_or_default());
-
-            Namespace::from(tenant_info.clone())
-        })
-        .collect();
-
-    namespaces.insert(0, Namespace::default());
-
-    tenant_ids.push("".to_string());
-
-    let config_infos = match config_info::Entity::find()
-        .select_only()
-        .column(config_info::Column::TenantId)
-        .column_as(config_info::Column::Id.count(), "count")
-        .filter(config_info::Column::TenantId.is_in(tenant_ids))
-        .filter(config_info::Column::TenantId.is_not_null())
-        .group_by(config_info::Column::TenantId)
-        .into_tuple::<(String, i32)>()
-        .all(db)
-        .await
-    {
-        std::result::Result::Ok(infos) => {
-            infos.iter().map(|x| (x.0.to_string(), x.1)).collect::<HashMap<String, i32>>()
-        }
+    let config_infos: HashMap<String, i32> = match config_counts_result {
+        std::result::Result::Ok(infos) => infos.into_iter().collect(),
         std::result::Result::Err(e) => {
             tracing::error!("Failed to fetch config counts: {}", e);
             HashMap::new()
         }
     };
 
-    namespaces.iter_mut().for_each(|namespace| {
-        if let Some(count) = config_infos.get(&namespace.namespace) {
-            namespace.config_count = *count;
-        }
-    });
+    let mut namespaces: Vec<Namespace> = tenant_infos
+        .into_iter()
+        .map(|tenant_info| {
+            let mut ns = Namespace::from(tenant_info.clone());
+            let tenant_id = tenant_info.tenant_id.unwrap_or_default();
+            if let Some(&count) = config_infos.get(&tenant_id) {
+                ns.config_count = count;
+            }
+            ns
+        })
+        .collect();
+
+    // Insert default namespace at the beginning
+    let mut default_ns = Namespace::default();
+    if let Some(&count) = config_infos.get("") {
+        default_ns.config_count = count;
+    }
+    namespaces.insert(0, default_ns);
 
     namespaces
 }
@@ -81,28 +79,24 @@ pub async fn get_by_namespace_id(
         return Ok(Namespace::default());
     }
 
-    if let Some(tenant_info) = tenant_info::Entity::find()
-        .filter(tenant_info::Column::TenantId.eq(namespace_id))
-        .filter(tenant_info::Column::Kp.eq(namespace_type))
-        .one(db)
-        .await?
-    {
-        let mut namespace = Namespace::from(tenant_info);
-
-        namespace.type_ = namespace_type.parse::<i32>().unwrap_or_default();
-
-        if let Some(config_count) = config_info::Entity::find()
-            .column(config_info::Column::TenantId)
+    // Execute both queries concurrently to reduce latency
+    let (tenant_result, config_count_result) = tokio::join!(
+        tenant_info::Entity::find()
+            .filter(tenant_info::Column::TenantId.eq(namespace_id))
+            .filter(tenant_info::Column::Kp.eq(namespace_type))
+            .one(db),
+        config_info::Entity::find()
+            .select_only()
             .column_as(config_info::Column::Id.count(), "count")
             .filter(config_info::Column::TenantId.eq(namespace_id))
-            .filter(config_info::Column::TenantId.is_not_null())
-            .group_by(config_info::Column::TenantId)
-            .into_tuple::<(String, i32)>()
+            .into_tuple::<i32>()
             .one(db)
-            .await?
-        {
-            namespace.config_count = config_count.1;
-        }
+    );
+
+    if let Some(tenant_info) = tenant_result? {
+        let mut namespace = Namespace::from(tenant_info);
+        namespace.type_ = namespace_type.parse::<i32>().unwrap_or_default();
+        namespace.config_count = config_count_result.ok().flatten().unwrap_or(0);
 
         Ok(namespace)
     } else {

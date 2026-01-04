@@ -65,11 +65,11 @@ async fn search_page(
     let accurate = params.search.clone().unwrap_or_default() == "accurate";
     let mut role = params.role.clone().unwrap_or_default();
 
-    if role.starts_with("*") {
-        role = role.strip_prefix("*").unwrap().to_string();
+    if let Some(stripped) = role.strip_prefix('*') {
+        role = stripped.to_string();
     }
-    if role.ends_with("*") {
-        role = role.strip_suffix("*").unwrap().to_string();
+    if let Some(stripped) = role.strip_suffix('*') {
+        role = stripped.to_string();
     }
 
     match auth::service::permission::search_page(

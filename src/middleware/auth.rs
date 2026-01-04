@@ -72,7 +72,8 @@ where
                 if let Some(app_state) = req.app_data::<Data<AppState>>() {
                     let secret_key = app_state.configuration.token_secret_key().clone();
                     // Use cached token validation for better performance
-                    let decode_result = auth::service::auth::decode_jwt_token_cached(token, &secret_key);
+                    let decode_result =
+                        auth::service::auth::decode_jwt_token_cached(token, &secret_key);
 
                     match decode_result {
                         Ok(token_data) => {

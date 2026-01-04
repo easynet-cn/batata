@@ -192,7 +192,8 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
                                 let connection_id = con.meta_info.connection_id.clone();
 
-                                let client = GrpcClient::new(con.clone(), tx.clone());
+                                // Move con instead of cloning - con is not used after this
+                                let client = GrpcClient::new(con, tx.clone());
 
                                 connection_manager.register(&connection_id, client);
                             }

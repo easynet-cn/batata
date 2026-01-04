@@ -103,15 +103,13 @@ impl FileMemberLookup {
         let reader = BufReader::new(file);
         let mut addresses = Vec::new();
 
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                let line = line.trim();
-                // Skip empty lines and comments
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                addresses.push(line.to_string());
+        for line in reader.lines().map_while(Result::ok) {
+            let line = line.trim();
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with('#') {
+                continue;
             }
+            addresses.push(line.to_string());
         }
 
         addresses
@@ -159,8 +157,9 @@ impl FileMemberLookup {
                     let value = kv[1].trim();
                     if key == "raft_port"
                         && let Ok(raft_port) = value.parse::<u16>()
+                        && let Ok(mut extend_info) = member.extend_info.write()
                     {
-                        member.extend_info.write().unwrap().insert(
+                        extend_info.insert(
                             Member::RAFT_PORT.to_string(),
                             serde_json::Value::from(raft_port),
                         );
@@ -170,13 +169,14 @@ impl FileMemberLookup {
         }
 
         // Set default raft port if not specified
-        if !member
+        let has_raft_port = member
             .extend_info
             .read()
-            .unwrap()
-            .contains_key(Member::RAFT_PORT)
-        {
-            member.extend_info.write().unwrap().insert(
+            .map(|info| info.contains_key(Member::RAFT_PORT))
+            .unwrap_or(false);
+
+        if !has_raft_port && let Ok(mut extend_info) = member.extend_info.write() {
+            extend_info.insert(
                 Member::RAFT_PORT.to_string(),
                 serde_json::Value::from(member.calculate_raft_port()),
             );

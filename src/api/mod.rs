@@ -6,6 +6,9 @@ pub mod config {
     pub mod model;
 }
 
+// Consul-compatible API implementation
+pub mod consul;
+
 // gRPC service definitions and implementations
 #[path = "grpc/_.rs"]
 pub mod grpc;

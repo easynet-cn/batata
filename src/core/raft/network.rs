@@ -76,7 +76,13 @@ impl RaftNetworkConnection {
             self.client = Some(RaftServiceClient::new(channel));
         }
 
-        Ok(self.client.as_mut().unwrap())
+        // Safe: client is guaranteed to be Some after the above block
+        self.client.as_mut().ok_or_else(|| {
+            NetworkError::new(&std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Client connection failed unexpectedly",
+            ))
+        })
     }
 
     /// Convert openraft LogId to proto LogId
@@ -310,7 +316,7 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
             .into_inner();
 
         Ok(VoteResponse {
-            vote: Self::from_proto_vote(response.vote).unwrap_or_else(|| req.vote),
+            vote: Self::from_proto_vote(response.vote).unwrap_or(req.vote),
             vote_granted: response.vote_granted,
             last_log_id: Self::from_proto_log_id(response.last_log_id),
         })

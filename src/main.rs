@@ -5,7 +5,13 @@ use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 use batata::{
-    api::grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
+    api::{
+        consul::{
+            AclService, agent::ConsulAgentService, catalog::ConsulCatalogService,
+            health::ConsulHealthService, kv::ConsulKVService, route::consul_routes,
+        },
+        grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
+    },
     auth, console,
     core::service::{
         cluster::ServerMemberManager,
@@ -114,7 +120,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Clone Arc references (cheap - just atomic increment)
-    let server_app_state = (*app_state).clone();
     let app_state_arc = app_state.clone();
 
     // Setup gRPC interceptor layer
@@ -267,10 +272,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::spawn(grpc_cluster_server);
 
+    // Create Consul service adapters
+    let consul_agent_service = ConsulAgentService::new(naming_service.clone());
+    let consul_health_service = ConsulHealthService::new(naming_service.clone());
+    let consul_kv_service = ConsulKVService::new();
+    let consul_catalog_service = ConsulCatalogService::new(naming_service.clone());
+    let consul_acl_service = AclService::new();
+
     match depolyment_type.as_str() {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
             console_server(
-                (*app_state).clone(),
+                app_state.clone(),
                 console_context_path,
                 console_server_address,
                 console_server_port,
@@ -279,7 +291,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         model::common::NACOS_DEPLOYMENT_TYPE_SERVER => {
             main_server(
-                (*app_state).clone(),
+                app_state.clone(),
+                naming_service.clone(),
+                consul_agent_service.clone(),
+                consul_health_service.clone(),
+                consul_kv_service.clone(),
+                consul_catalog_service.clone(),
+                consul_acl_service.clone(),
                 server_context_path,
                 server_address,
                 server_main_port,
@@ -288,13 +306,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             let console = console_server(
-                (*app_state).clone(),
+                app_state.clone(),
                 console_context_path,
                 console_server_address,
                 console_server_port,
             )?;
             let main = main_server(
-                server_app_state,
+                app_state,
+                naming_service,
+                consul_agent_service,
+                consul_health_service,
+                consul_kv_service,
+                consul_catalog_service,
+                consul_acl_service,
                 server_context_path,
                 server_address,
                 server_main_port,
@@ -307,7 +331,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub fn console_server(
-    app_state: AppState,
+    app_state: Arc<AppState>,
     context_path: String,
     address: String,
     port: u16,
@@ -317,7 +341,7 @@ pub fn console_server(
             .wrap(Logger::default())
             .wrap(RateLimiter::with_defaults())
             .wrap(Authentication)
-            .app_data(web::Data::new(app_state.clone()))
+            .app_data(web::Data::from(app_state.clone()))
             .service(
                 web::scope(&context_path)
                     .service(auth::v3::route::routes())
@@ -329,7 +353,13 @@ pub fn console_server(
 }
 
 pub fn main_server(
-    app_state: AppState,
+    app_state: Arc<AppState>,
+    naming_service: Arc<NamingService>,
+    consul_agent_service: ConsulAgentService,
+    consul_health_service: ConsulHealthService,
+    consul_kv_service: ConsulKVService,
+    consul_catalog_service: ConsulCatalogService,
+    consul_acl_service: AclService,
     context_path: String,
     address: String,
     port: u16,
@@ -339,12 +369,20 @@ pub fn main_server(
             .wrap(Logger::default())
             .wrap(RateLimiter::with_defaults())
             .wrap(Authentication)
-            .app_data(web::Data::new(app_state.clone()))
+            .app_data(web::Data::from(app_state.clone()))
+            .app_data(web::Data::new(naming_service.clone()))
+            .app_data(web::Data::new(consul_agent_service.clone()))
+            .app_data(web::Data::new(consul_health_service.clone()))
+            .app_data(web::Data::new(consul_kv_service.clone()))
+            .app_data(web::Data::new(consul_catalog_service.clone()))
+            .app_data(web::Data::new(consul_acl_service.clone()))
             .service(
                 web::scope(&context_path)
                     .service(auth::v1::route::routes())
                     .service(console::v3::route::routes()),
             )
+            // Consul API routes (outside of Nacos context path)
+            .service(consul_routes())
     })
     .bind((address, port))?
     .run())
@@ -365,7 +403,9 @@ pub fn get_subscriber(
         .with(formatting_layer)
 }
 
-pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) -> Result<(), Box<dyn std::error::Error>> {
+pub fn init_subscriber(
+    subscriber: impl Subscriber + Send + Sync,
+) -> Result<(), Box<dyn std::error::Error>> {
     LogTracer::init().map_err(|e| format!("Failed to set logger: {}", e))?;
     set_global_default(subscriber).map_err(|e| format!("Failed to set subscriber: {}", e))?;
     Ok(())

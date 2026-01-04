@@ -360,3 +360,98 @@ pub const FUZZY_WATCH_PATTERN_MATCH_COUNT_OVER_LIMIT: ErrorCode<'static> = Error
     code: 50311,
     message: "fuzzy watch pattern matched count over limit",
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_batata_error_display() {
+        let err = BatataError::IllegalArgument("invalid param".to_string());
+        assert_eq!(format!("{}", err), "caused: invalid param");
+
+        let err = BatataError::UserNotExist("testuser".to_string());
+        assert_eq!(format!("{}", err), "user 'testuser' not exist!");
+
+        let err = BatataError::NetworkError("connection timeout".to_string());
+        assert_eq!(format!("{}", err), "network error: connection timeout");
+
+        let err = BatataError::DatabaseError("query failed".to_string());
+        assert_eq!(format!("{}", err), "database error: query failed");
+
+        let err = BatataError::AuthError("invalid token".to_string());
+        assert_eq!(format!("{}", err), "authentication error: invalid token");
+
+        let err = BatataError::ConfigError("missing key".to_string());
+        assert_eq!(format!("{}", err), "configuration error: missing key");
+
+        let err = BatataError::InternalError("unexpected".to_string());
+        assert_eq!(format!("{}", err), "internal error: unexpected");
+    }
+
+    #[test]
+    fn test_batata_error_api_error() {
+        let err = BatataError::ApiError(400, 10000, "bad request".to_string(), "{}".to_string());
+        assert_eq!(format!("{}", err), "bad request");
+    }
+
+    #[test]
+    fn test_app_error_from_anyhow() {
+        let anyhow_err = anyhow::anyhow!("test error");
+        let app_err = AppError::from(anyhow_err);
+        assert_eq!(format!("{}", app_err), "test error");
+    }
+
+    #[test]
+    fn test_error_code_constants() {
+        assert_eq!(SUCCESS.code, 0);
+        assert_eq!(SUCCESS.message, "success");
+
+        assert_eq!(PARAMETER_MISSING.code, 10000);
+        assert_eq!(ACCESS_DENIED.code, 10001);
+        assert_eq!(DATA_ACCESS_ERROR.code, 10002);
+
+        assert_eq!(TENANT_PARAM_ERROR.code, 20001);
+        assert_eq!(PARAMETER_VALIDATE_ERROR.code, 20002);
+        assert_eq!(RESOURCE_NOT_FOUND.code, 20004);
+        assert_eq!(RESOURCE_CONFLICT.code, 20005);
+    }
+
+    #[test]
+    fn test_error_code_service_errors() {
+        assert_eq!(SERVICE_NAME_ERROR.code, 21000);
+        assert_eq!(WEIGHT_ERROR.code, 21001);
+        assert_eq!(INSTANCE_NOT_FOUND.code, 21003);
+        assert_eq!(SERVICE_ALREADY_EXIST.code, 21007);
+        assert_eq!(SERVICE_NOT_EXIST.code, 21008);
+    }
+
+    #[test]
+    fn test_error_code_namespace_errors() {
+        assert_eq!(ILLEGAL_NAMESPACE.code, 22000);
+        assert_eq!(NAMESPACE_NOT_EXIST.code, 22001);
+        assert_eq!(NAMESPACE_ALREADY_EXIST.code, 22002);
+    }
+
+    #[test]
+    fn test_error_code_server_errors() {
+        assert_eq!(SERVER_ERROR.code, 30000);
+        assert_eq!(API_DEPRECATED.code, 40000);
+        assert_eq!(API_FUNCTION_DISABLED.code, 40001);
+    }
+
+    #[test]
+    fn test_error_code_default() {
+        let default_code = ErrorCode::default();
+        assert_eq!(default_code.code, 0);
+        assert_eq!(default_code.message, "");
+    }
+
+    #[test]
+    fn test_error_code_clone() {
+        let original = PARAMETER_MISSING;
+        let cloned = original.clone();
+        assert_eq!(original.code, cloned.code);
+        assert_eq!(original.message, cloned.message);
+    }
+}

@@ -242,8 +242,12 @@ impl SameConfigPolicy {
             SameConfigPolicy::Overwrite => "OVERWRITE",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, String> {
+impl std::str::FromStr for SameConfigPolicy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "ABORT" => Ok(SameConfigPolicy::Abort),
             "SKIP" => Ok(SameConfigPolicy::Skip),
@@ -937,7 +941,6 @@ impl ConfigRemoveResponse {
     pub fn new() -> Self {
         Self {
             response: Response::new(),
-            ..Default::default()
         }
     }
 }
@@ -976,7 +979,6 @@ impl ConfigFuzzyWatchChangeNotifyResponse {
     pub fn new() -> Self {
         Self {
             response: Response::new(),
-            ..Default::default()
         }
     }
 }
@@ -1015,7 +1017,6 @@ impl ConfigFuzzyWatchSyncResponse {
     pub fn new() -> Self {
         Self {
             response: Response::new(),
-            ..Default::default()
         }
     }
 }

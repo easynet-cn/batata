@@ -615,20 +615,22 @@ impl Configuration {
         if let Some(v) = args.mode {
             config_builder = config_builder
                 .set_override("nacos.standalone", v == "standalone")
-                .unwrap();
+                .expect("Failed to set standalone mode override");
         }
         if let Some(v) = args.function_mode {
             config_builder = config_builder
                 .set_override("nacos.function.mode", v)
-                .unwrap();
+                .expect("Failed to set function mode override");
         }
         if let Some(v) = args.deployment {
             config_builder = config_builder
                 .set_override(NACOS_DEPLOYMENT_TYPE, v)
-                .unwrap();
+                .expect("Failed to set deployment type override");
         }
 
-        let app_config = config_builder.build().unwrap();
+        let app_config = config_builder
+            .build()
+            .expect("Failed to build configuration - check conf/application.yml");
 
         Configuration { config: app_config }
     }

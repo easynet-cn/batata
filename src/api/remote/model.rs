@@ -371,7 +371,6 @@ impl ServerLoaderInfoRequest {
     pub fn new() -> Self {
         Self {
             internal_request: InternalRequest::new(),
-            ..Default::default()
         }
     }
 }
@@ -413,7 +412,6 @@ impl ServerReloadRequest {
     pub fn new() -> Self {
         Self {
             internal_request: InternalRequest::new(),
-            ..Default::default()
         }
     }
 }

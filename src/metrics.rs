@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use metrics::{counter, gauge, histogram, describe_counter, describe_gauge, describe_histogram};
+use metrics::{counter, describe_counter, describe_gauge, describe_histogram, gauge, histogram};
 
 /// Initialize all metric descriptions
 /// Should be called once at application startup
@@ -28,7 +28,10 @@ pub fn init_metrics() {
         "Database query duration in seconds"
     );
     describe_counter!("db_queries_total", "Total number of database queries");
-    describe_counter!("db_query_errors_total", "Total number of database query errors");
+    describe_counter!(
+        "db_query_errors_total",
+        "Total number of database query errors"
+    );
 
     // Cache metrics
     describe_counter!("cache_hits_total", "Total number of cache hits");
@@ -66,7 +69,10 @@ pub fn init_metrics() {
         "naming_instances_total",
         "Total number of registered instances"
     );
-    describe_gauge!("naming_services_total", "Total number of registered services");
+    describe_gauge!(
+        "naming_services_total",
+        "Total number of registered services"
+    );
     describe_counter!(
         "naming_heartbeats_total",
         "Total number of instance heartbeats"

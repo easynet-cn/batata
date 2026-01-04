@@ -15,6 +15,8 @@ use crate::api::{
 };
 use prost_types::Any;
 
+use super::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig, CircuitState};
+
 /// Health check configuration
 #[derive(Clone, Debug)]
 pub struct HealthCheckConfig {
@@ -81,6 +83,8 @@ pub struct MemberHealthChecker {
     config: HealthCheckConfig,
     members: Arc<DashMap<String, Member>>,
     health_status: Arc<DashMap<String, MemberHealthStatus>>,
+    /// Circuit breakers per member address for resilient health checks
+    circuit_breakers: Arc<DashMap<String, CircuitBreaker>>,
     running: Arc<RwLock<bool>>,
     local_address: String,
 }
@@ -95,6 +99,7 @@ impl MemberHealthChecker {
             config,
             members,
             health_status: Arc::new(DashMap::new()),
+            circuit_breakers: Arc::new(DashMap::new()),
             running: Arc::new(RwLock::new(false)),
             local_address,
         }
@@ -109,16 +114,25 @@ impl MemberHealthChecker {
         *running = true;
         drop(running);
 
-        info!("Starting member health checker");
+        info!("Starting member health checker with circuit breaker protection");
 
         let members = self.members.clone();
         let health_status = self.health_status.clone();
+        let circuit_breakers = self.circuit_breakers.clone();
         let running = self.running.clone();
         let config = self.config.clone();
         let local_address = self.local_address.clone();
 
         tokio::spawn(async move {
-            Self::health_check_loop(members, health_status, running, config, local_address).await;
+            Self::health_check_loop(
+                members,
+                health_status,
+                circuit_breakers,
+                running,
+                config,
+                local_address,
+            )
+            .await;
         });
     }
 
@@ -133,6 +147,7 @@ impl MemberHealthChecker {
     async fn health_check_loop(
         members: Arc<DashMap<String, Member>>,
         health_status: Arc<DashMap<String, MemberHealthStatus>>,
+        circuit_breakers: Arc<DashMap<String, CircuitBreaker>>,
         running: Arc<RwLock<bool>>,
         config: HealthCheckConfig,
         local_address: String,
@@ -156,11 +171,12 @@ impl MemberHealthChecker {
             let mut handles = Vec::new();
             for address in member_addresses {
                 let health_status = health_status.clone();
+                let circuit_breakers = circuit_breakers.clone();
                 let members = members.clone();
                 let config = config.clone();
 
                 let handle = tokio::spawn(async move {
-                    Self::check_member(&address, &health_status, &members, &config).await;
+                    Self::check_member(&address, &health_status, &circuit_breakers, &members, &config).await;
                 });
                 handles.push(handle);
             }
@@ -174,10 +190,11 @@ impl MemberHealthChecker {
         }
     }
 
-    /// Check a single member's health
+    /// Check a single member's health with circuit breaker protection
     async fn check_member(
         address: &str,
         health_status: &Arc<DashMap<String, MemberHealthStatus>>,
+        circuit_breakers: &Arc<DashMap<String, CircuitBreaker>>,
         members: &Arc<DashMap<String, Member>>,
         config: &HealthCheckConfig,
     ) {
@@ -189,7 +206,48 @@ impl MemberHealthChecker {
             );
         }
 
+        // Get or create circuit breaker for this member
+        if !circuit_breakers.contains_key(address) {
+            let cb_config = CircuitBreakerConfig {
+                failure_threshold: config.max_fail_count as u32,
+                reset_timeout: Duration::from_secs(60),
+                success_threshold: 2,
+                failure_window: Duration::from_secs(120),
+            };
+            circuit_breakers.insert(address.to_string(), CircuitBreaker::with_config(cb_config));
+        }
+
+        // Check circuit breaker state
+        let cb = circuit_breakers.get(address).unwrap();
+        if !cb.allow_request() {
+            debug!(
+                "Circuit breaker open for member: {}, skipping health check",
+                address
+            );
+            // Still update status to reflect circuit is open
+            if let Some(mut status) = health_status.get_mut(address) {
+                status.last_check_time = chrono::Utc::now().timestamp_millis();
+            }
+            return;
+        }
+        drop(cb); // Release the lock before async operation
+
         let check_result = Self::perform_health_check(address, config).await;
+
+        // Update circuit breaker
+        if let Some(cb) = circuit_breakers.get(address) {
+            if check_result {
+                cb.record_success();
+            } else {
+                cb.record_failure();
+                if cb.state() == CircuitState::Open {
+                    warn!(
+                        "Circuit breaker opened for member: {}, will skip checks for recovery period",
+                        address
+                    );
+                }
+            }
+        }
 
         // Update health status
         if let Some(mut status) = health_status.get_mut(address) {
@@ -239,14 +297,15 @@ impl MemberHealthChecker {
         let grpc_address = format!("http://{}:{}", ip, grpc_port);
 
         // Create gRPC channel with timeout
-        let channel = match tokio::time::timeout(
-            config.check_timeout,
-            Channel::from_shared(grpc_address.clone())
-                .unwrap()
-                .connect(),
-        )
-        .await
-        {
+        let endpoint = match Channel::from_shared(grpc_address.clone()) {
+            Ok(ep) => ep,
+            Err(e) => {
+                debug!("Invalid gRPC address {}: {}", grpc_address, e);
+                return false;
+            }
+        };
+
+        let channel = match tokio::time::timeout(config.check_timeout, endpoint.connect()).await {
             Ok(Ok(channel)) => channel,
             Ok(Err(e)) => {
                 debug!("Failed to connect to {}: {}", grpc_address, e);
@@ -318,6 +377,27 @@ impl MemberHealthChecker {
             .get(address)
             .map(|e| matches!(e.state, NodeState::Up))
             .unwrap_or(false)
+    }
+
+    /// Get circuit breaker state for a member
+    pub fn get_circuit_breaker_state(&self, address: &str) -> Option<CircuitState> {
+        self.circuit_breakers.get(address).map(|cb| cb.state())
+    }
+
+    /// Get all circuit breaker states for monitoring
+    pub fn get_all_circuit_breaker_states(&self) -> Vec<(String, CircuitState, u32)> {
+        self.circuit_breakers
+            .iter()
+            .map(|e| (e.key().clone(), e.state(), e.failure_count()))
+            .collect()
+    }
+
+    /// Reset circuit breaker for a specific member (for manual recovery)
+    pub fn reset_circuit_breaker(&self, address: &str) {
+        if let Some(cb) = self.circuit_breakers.get(address) {
+            cb.reset();
+            info!("Circuit breaker manually reset for member: {}", address);
+        }
     }
 }
 

@@ -180,3 +180,151 @@ impl AuthContext {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_user_creation() {
+        let user = User {
+            username: "testuser".to_string(),
+            password: "password123".to_string(),
+        };
+        assert_eq!(user.username, "testuser");
+        assert_eq!(user.password, "password123");
+    }
+
+    #[test]
+    fn test_nacos_user_creation() {
+        let user = NacosUser {
+            username: "admin".to_string(),
+            password: "admin123".to_string(),
+            token: "jwt_token".to_string(),
+            global_admin: true,
+        };
+        assert_eq!(user.username, "admin");
+        assert!(user.global_admin);
+    }
+
+    #[test]
+    fn test_nacos_jwt_payload() {
+        let payload = NacosJwtPayload {
+            sub: "testuser".to_string(),
+            exp: 1234567890,
+        };
+        assert_eq!(payload.sub, "testuser");
+        assert_eq!(payload.exp, 1234567890);
+    }
+
+    #[test]
+    fn test_role_info() {
+        let role = RoleInfo {
+            role: GLOBAL_ADMIN_ROLE.to_string(),
+            username: "admin".to_string(),
+        };
+        assert_eq!(role.role, "ROLE_ADMIN");
+        assert_eq!(role.username, "admin");
+    }
+
+    #[test]
+    fn test_permission_info() {
+        let perm = PermissionInfo {
+            role: "developer".to_string(),
+            resource: "config/*".to_string(),
+            action: "rw".to_string(),
+        };
+        assert_eq!(perm.role, "developer");
+        assert_eq!(perm.resource, "config/*");
+        assert_eq!(perm.action, "rw");
+    }
+
+    #[test]
+    fn test_resource_default() {
+        let resource = Resource::default();
+        assert!(resource.namespace_id.is_empty());
+        assert!(resource.group.is_empty());
+        assert!(resource.name.is_empty());
+        assert!(resource.r#type.is_empty());
+        assert!(resource.properties.is_empty());
+    }
+
+    #[test]
+    fn test_resource_constants() {
+        assert_eq!(Resource::SPLITTER, ":");
+        assert_eq!(Resource::ANY, "*");
+        assert_eq!(Resource::ACTION, "action");
+        assert_eq!(Resource::REQUEST_CLASS, "requestClass");
+    }
+
+    #[test]
+    fn test_resource_with_properties() {
+        let mut props = HashMap::new();
+        props.insert("key".to_string(), serde_json::json!("value"));
+
+        let resource = Resource {
+            namespace_id: "ns1".to_string(),
+            group: "DEFAULT_GROUP".to_string(),
+            name: "my-config".to_string(),
+            r#type: "config".to_string(),
+            properties: props,
+        };
+
+        assert_eq!(resource.namespace_id, "ns1");
+        assert_eq!(resource.group, "DEFAULT_GROUP");
+        assert_eq!(resource.properties.get("key").unwrap(), "value");
+    }
+
+    #[test]
+    fn test_auth_context_default() {
+        let ctx = AuthContext::default();
+        assert!(ctx.username.is_empty());
+        assert!(ctx.jwt_error.is_none());
+    }
+
+    #[test]
+    fn test_auth_context_with_username() {
+        let ctx = AuthContext {
+            username: "testuser".to_string(),
+            jwt_error: None,
+        };
+        assert_eq!(ctx.username, "testuser");
+        assert_eq!(ctx.jwt_error_string(), "");
+    }
+
+    #[test]
+    fn test_auth_constants() {
+        assert_eq!(GLOBAL_ADMIN_ROLE, "ROLE_ADMIN");
+        assert_eq!(AUTHORIZATION_HEADER, "Authorization");
+        assert_eq!(TOKEN_PREFIX, "Bearer ");
+        assert_eq!(DEFAULT_USER, "nacos");
+        assert_eq!(PARAM_USERNAME, "username");
+        assert_eq!(PARAM_PASSWORD, "password");
+        assert_eq!(DEFAULT_TOKEN_EXPIRE_SECONDS, 18000);
+        assert_eq!(MAX_PASSWORD_LENGTH, 72);
+    }
+
+    #[test]
+    fn test_nacos_user_serialization() {
+        let user = NacosUser {
+            username: "test".to_string(),
+            password: "pass".to_string(),
+            token: "tok".to_string(),
+            global_admin: false,
+        };
+        let json = serde_json::to_string(&user).unwrap();
+        assert!(json.contains("globalAdmin"));
+        assert!(json.contains("\"globalAdmin\":false"));
+    }
+
+    #[test]
+    fn test_role_info_serialization() {
+        let role = RoleInfo {
+            role: "admin".to_string(),
+            username: "user1".to_string(),
+        };
+        let json = serde_json::to_string(&role).unwrap();
+        assert!(json.contains("\"role\":\"admin\""));
+        assert!(json.contains("\"username\":\"user1\""));
+    }
+}
