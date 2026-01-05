@@ -191,6 +191,17 @@ nacos.console.contextPath:
 ### Nacos Server context path, which link to nacos server `nacos.server.contextPath`, works when deployment type is `console`
 nacos.console.remote.server.context-path: /nacos
 
+### Console mode: "local" (direct database access) or "remote" (HTTP calls to Server)
+### Default is "local". Use "remote" when console is deployed separately without database access.
+nacos.console.mode: local
+
+### Remote Server configurations (used when nacos.console.mode=remote)
+### Server address for remote console mode
+#nacos.console.remote.server_addr: http://127.0.0.1:8848
+### Authentication credentials for remote server
+#nacos.console.remote.username: nacos
+#nacos.console.remote.password: nacos
+
 #************** Console UI Configuration ***************#
 
 ### Turn on/off the nacos console ui.
@@ -291,5 +302,26 @@ nacos.k8s.sync.enabled: false
 #nacos.k8s.sync.outsideCluster=false
 #nacos.k8s.sync.kubeConfig=/.kube/config
 
+#--------------- Nacos Cluster Configurations ---------------#
+
+#*************** Cluster Mode Related Configurations ***************#
+### Standalone mode (default: true)
+### Set to false to enable cluster mode
 nacos.standalone: true
+
+### Member list for cluster mode (alternative to cluster.conf file)
+### Format: comma-separated list of ip:port or ip:port?raft_port=xxx
+#nacos.member.list: "192.168.1.10:8848,192.168.1.11:8848,192.168.1.12:8848"
+
+### Member lookup type: file (default) or address-server
+#nacos.core.member.lookup.type: file
+
+### Address server configuration (when lookup.type=address-server)
+#address.server.domain: jmenv.tbsite.net
+#address.server.port: 8080
+#address.server.url: /nacos/serverlist
+
+### Maximum retries for address server on startup
+#nacos.core.address-server.retry: 5
+
 nacos.version: 3.1.0

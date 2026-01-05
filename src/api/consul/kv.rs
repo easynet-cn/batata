@@ -630,7 +630,7 @@ pub async fn export_kv(
 
     // Find configs for export
     let configs = match config_export::find_configs_for_export(
-        &data.database_connection,
+        data.db(),
         &namespace_id,
         None,
         None,
@@ -701,7 +701,7 @@ pub async fn import_kv(
 
     // Import configs with overwrite policy (Consul behavior)
     let result = match config_import::import_configs(
-        &data.database_connection,
+        data.db(),
         config_items,
         &namespace_id,
         crate::config::export_model::SameConfigPolicy::Overwrite,

@@ -67,7 +67,7 @@ async fn get(
     );
 
     match service::namespace::get_by_namespace_id(
-        &data.database_connection,
+        data.db(),
         &params.namespace_id,
         "1",
     )
@@ -100,7 +100,7 @@ async fn find_all(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
             .build()
     );
 
-    let namespaces: Vec<Namespace> = service::namespace::find_all(&data.database_connection).await;
+    let namespaces: Vec<Namespace> = service::namespace::find_all(data.db()).await;
 
     common::Result::<Vec<Namespace>>::http_success(namespaces)
 }
@@ -160,7 +160,7 @@ async fn create(
     }
 
     let res = service::namespace::create(
-        &data.database_connection,
+        data.db(),
         &namespace_id,
         &namespace_name,
         &namespace_desc,
@@ -217,7 +217,7 @@ async fn update(
     let namespace_desc = form.namespace_desc.clone().unwrap_or_default();
 
     match service::namespace::update(
-        &data.database_connection,
+        data.db(),
         &form.namespace_id,
         &form.namespace_name,
         &namespace_desc,
@@ -246,7 +246,7 @@ async fn delete(
             .build()
     );
 
-    let res = service::namespace::delete(&data.database_connection, &form.namespace_id).await;
+    let res = service::namespace::delete(data.db(), &form.namespace_id).await;
 
     common::Result::<bool>::http_success(res.unwrap_or_default())
 }
@@ -271,7 +271,7 @@ async fn exist(
     }
 
     let result =
-        service::namespace::check(&data.database_connection, &params.custom_namespace_id).await;
+        service::namespace::check(data.db(), &params.custom_namespace_id).await;
 
     match result {
         Ok(e) => common::Result::<bool>::http_success(e),

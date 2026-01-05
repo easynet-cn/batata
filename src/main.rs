@@ -13,6 +13,7 @@ use batata::{
         grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
     },
     auth, console,
+    console::datasource,
     core::service::{
         cluster::ServerMemberManager,
         remote::{ConnectionManager, context_interceptor},
@@ -99,7 +100,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Extract configuration parameters
     let depolyment_type = configuration.deployment_type();
-    let database_connection = configuration.database_connection().await?;
+    let is_console_remote = depolyment_type == model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE
+        && configuration.is_console_remote_mode();
+
     let server_address = configuration.server_address();
     let console_server_address = server_address.clone();
     let console_server_port = configuration.console_server_port();
@@ -109,15 +112,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sdk_server_port = configuration.sdk_server_port();
     let cluster_server_port = configuration.cluster_server_port();
 
-    // Initialize server member management
-    let server_member_manager = Arc::new(ServerMemberManager::new(&configuration));
+    // Initialize database and server member manager based on deployment mode
+    let (database_connection, server_member_manager) = if is_console_remote {
+        // Console remote mode: no database, no cluster management
+        info!("Starting in console remote mode - connecting to remote server");
+        (None, None)
+    } else {
+        // Local mode: initialize database and cluster management
+        let db = configuration.database_connection().await?;
+        let smm = Arc::new(ServerMemberManager::new(&configuration));
+        (Some(db), Some(smm))
+    };
+
+    // Create console datasource based on mode
+    let console_datasource = datasource::create_datasource(
+        &configuration,
+        database_connection.clone(),
+        server_member_manager.clone(),
+    )
+    .await?;
 
     // Create application state wrapped in Arc for efficient sharing
     let app_state = Arc::new(AppState {
         configuration,
         database_connection,
         server_member_manager,
+        console_datasource,
     });
+
+    // For console remote mode, only start console server
+    if is_console_remote {
+        info!("Starting console server in remote mode on port {}", console_server_port);
+        console_server(
+            app_state.clone(),
+            console_context_path,
+            console_server_address,
+            console_server_port,
+        )?
+        .await?;
+        return Ok(());
+    }
 
     // Clone Arc references (cheap - just atomic increment)
     let app_state_arc = app_state.clone();
@@ -272,6 +306,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::spawn(grpc_cluster_server);
 
+    // Start cluster manager if in cluster mode (not standalone)
+    if let Some(ref smm) = app_state.server_member_manager {
+        let startup_mode = app_state.configuration.startup_mode();
+        info!("Starting in {} mode", startup_mode);
+
+        if !app_state.configuration.is_standalone() {
+            info!("Initializing cluster management...");
+            if let Err(e) = smm.start().await {
+                tracing::error!("Failed to start cluster manager: {}", e);
+                return Err(e.to_string().into());
+            }
+            info!("Cluster management started successfully");
+        }
+    }
+
     // Create Consul service adapters
     let consul_agent_service = ConsulAgentService::new(naming_service.clone());
     let consul_health_service = ConsulHealthService::new(naming_service.clone());
@@ -281,6 +330,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match depolyment_type.as_str() {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
+            // Console with local mode (direct DB access)
             console_server(
                 app_state.clone(),
                 console_context_path,

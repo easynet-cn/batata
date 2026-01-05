@@ -41,7 +41,7 @@ impl PayloadHandler for ConfigQueryHandler {
         let group = &request.config_request.group;
         let tenant = &request.config_request.tenant;
 
-        let db = &self.app_state.database_connection;
+        let db = self.app_state.db();
 
         match config::find_one(db, data_id, group, tenant).await {
             Ok(Some(config_info)) => {
@@ -161,7 +161,7 @@ impl PayloadHandler for ConfigPublishHandler {
         let src_user = connection.meta_info.app_name.as_str();
         let src_ip = connection.meta_info.client_ip.as_str();
 
-        let db = &self.app_state.database_connection;
+        let db = self.app_state.db();
 
         match config::create_or_update(
             db,
@@ -236,7 +236,7 @@ impl PayloadHandler for ConfigRemoveHandler {
         let src_user = connection.meta_info.app_name.as_str();
         let src_ip = connection.meta_info.client_ip.as_str();
 
-        let db = &self.app_state.database_connection;
+        let db = self.app_state.db();
 
         match config::delete(db, data_id, group, tenant, "", src_ip, src_user, "rpc").await {
             Ok(_) => {
@@ -285,7 +285,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
         let request = ConfigBatchListenRequest::from(payload);
         let request_id = request.request_id();
 
-        let db = &self.app_state.database_connection;
+        let db = self.app_state.db();
         let mut changed_configs = Vec::new();
 
         // Check each config in the listen list for changes

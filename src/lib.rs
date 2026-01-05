@@ -298,7 +298,7 @@ macro_rules! secured {
 
             if !$secured.only_identity() && !$secured.has_update_password_permission() {
                 let roles = $crate::auth::service::role::find_by_username(
-                    &$secured.data.database_connection,
+                    $secured.data.db(),
                     &auth_context.username,
                 )
                 .await
@@ -334,7 +334,7 @@ macro_rules! secured {
                         .map(|e| e.role.to_string())
                         .collect::<Vec<String>>();
                     let permissions = $crate::auth::service::permission::find_by_roles(
-                        &$secured.data.database_connection,
+                        $secured.data.db(),
                         role_names,
                     )
                     .await

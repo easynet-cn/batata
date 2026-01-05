@@ -1,5 +1,5 @@
 #
-# Copyright 1999-2021 Alibaba Group Holding Ltd.
+# Copyright 1999-2025 Alibaba Group Holding Ltd.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,8 +14,38 @@
 # limitations under the License.
 #
 
-#it is ip
-#example
-192.168.16.101:8847
-192.168.16.102
-192.168.16.103
+#
+# Cluster Configuration File
+#
+# This file defines the cluster members for Nacos cluster mode.
+# Each line should contain one member address in the following format:
+#
+#   ip:port
+#   ip:port?raft_port=xxx
+#
+# Lines starting with '#' are comments and will be ignored.
+# Empty lines are also ignored.
+#
+# Port Conventions:
+#   - Main HTTP port: 8848 (configurable)
+#   - SDK gRPC port: main_port + 1000 (e.g., 9848)
+#   - Cluster gRPC port: main_port + 1001 (e.g., 9849)
+#   - Raft port: main_port - 1000 (e.g., 7848)
+#
+# To enable cluster mode:
+# 1. Set nacos.standalone=false in application.yml
+# 2. Copy this file to conf/cluster.conf
+# 3. Add your cluster member addresses below
+# 4. Start all nodes with the same configuration
+#
+# Example 3-node cluster:
+#
+#192.168.1.10:8848
+#192.168.1.11:8848
+#192.168.1.12:8848
+#
+# Example with custom raft port:
+#
+#192.168.1.10:8848?raft_port=7848
+#192.168.1.11:8848?raft_port=7848
+#192.168.1.12:8848?raft_port=7848

@@ -72,7 +72,7 @@ async fn search_page(
     }
 
     let result = auth::service::role::search_page(
-        &data.database_connection,
+        data.db(),
         &username,
         &role,
         params.page_no,
@@ -103,7 +103,7 @@ async fn search(
             .build()
     );
 
-    let result = auth::service::role::search(&data.database_connection, &params.role).await;
+    let result = auth::service::role::search(data.db(), &params.role).await;
 
     match result {
         Ok(roles) => common::Result::<Vec<String>>::http_success(roles),
@@ -128,7 +128,7 @@ async fn create(
     );
 
     let result =
-        auth::service::role::create(&data.database_connection, &params.role, &params.username)
+        auth::service::role::create(data.db(), &params.role, &params.username)
             .await;
 
     match result {
@@ -162,7 +162,7 @@ pub async fn delete(
     );
 
     let result = auth::service::role::delete(
-        &data.database_connection,
+        data.db(),
         &params.role,
         &params.username.clone().unwrap_or_default(),
     )

@@ -55,7 +55,7 @@ async fn login(
     }
 
     let user_option =
-        match auth::service::user::find_by_username(&data.database_connection, &username).await {
+        match auth::service::user::find_by_username(data.db(), &username).await {
             Ok(user) => user,
             Err(_) => return HttpResponse::InternalServerError().body("Database error"),
         };
@@ -81,7 +81,7 @@ async fn login(
             };
 
         let global_admin = auth::service::role::has_global_admin_role_by_username(
-            &data.database_connection,
+            data.db(),
             &user.username,
         )
         .await

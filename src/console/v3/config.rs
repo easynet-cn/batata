@@ -67,7 +67,7 @@ async fn find_one(
     );
 
     let result = match service::config::find_one(
-        &data.database_connection,
+        data.db(),
         &params.data_id,
         &params.group_name,
         &params.namespace_id,
@@ -112,7 +112,7 @@ async fn search(
         .collect::<Vec<String>>();
 
     let result = crate::service::config::search_page(
-        &data.database_connection,
+        data.db(),
         search_param.page_no,
         search_param.page_size,
         &search_param.config_form.namespace_id,
@@ -232,7 +232,7 @@ async fn create_or_update(
         .to_owned();
 
     let _ = service::config::create_or_update(
-        &data.database_connection,
+        data.db(),
         &config_form.data_id,
         &config_form.group_name,
         &config_form.namespace_id,
@@ -296,7 +296,7 @@ async fn delete(
     let src_user = auth_content.username;
 
     if let Err(e) = service::config::delete(
-        &data.database_connection,
+        data.db(),
         &params.data_id,
         &params.group_name,
         &tenant,
@@ -328,7 +328,7 @@ async fn find_beta_one(
     );
 
     let result = match service::config::find_gray_one(
-        &data.database_connection,
+        data.db(),
         &params.data_id,
         &params.group_name,
         &params.namespace_id,
@@ -392,7 +392,7 @@ async fn export_configs(
 
     // Find configs for export
     let configs = match service::config_export::find_configs_for_export(
-        &data.database_connection,
+        data.db(),
         &namespace_id,
         params.group.as_deref(),
         data_ids,
@@ -508,7 +508,7 @@ async fn import_configs(
 
     // Import configs
     let result = match service::config_import::import_nacos_items(
-        &data.database_connection,
+        data.db(),
         items,
         &namespace_id,
         policy,

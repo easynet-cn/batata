@@ -89,7 +89,7 @@ async fn get_nodes(
             .build()
     );
 
-    let mut members = data.server_member_manager.all_members();
+    let mut members = data.member_manager().all_members();
 
     if let Some(keyword) = &params.keyword
         && !keyword.is_empty()
@@ -111,7 +111,7 @@ async fn get_healthy_nodes(req: HttpRequest, data: web::Data<AppState>) -> impl 
             .build()
     );
 
-    let members = data.server_member_manager.healthy_members();
+    let members = data.member_manager().healthy_members();
     model::common::Result::<Vec<Member>>::http_success(members)
 }
 
@@ -126,9 +126,9 @@ async fn get_health(req: HttpRequest, data: web::Data<AppState>) -> impl Respond
             .build()
     );
 
-    let summary = data.server_member_manager.health_summary();
-    let healthy = data.server_member_manager.is_cluster_healthy();
-    let standalone_mode = data.server_member_manager.is_standalone();
+    let summary = data.member_manager().health_summary();
+    let healthy = data.member_manager().is_cluster_healthy();
+    let standalone_mode = data.member_manager().is_standalone();
 
     let response = ClusterHealthResponse {
         is_healthy: healthy,
@@ -150,7 +150,7 @@ async fn get_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
             .build()
     );
 
-    let self_member = data.server_member_manager.get_self();
+    let self_member = data.member_manager().get_self();
     let version = self_member
         .extend_info
         .read()
@@ -167,7 +167,7 @@ async fn get_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
         port: self_member.port,
         address: self_member.address.clone(),
         state: self_member.state.to_string(),
-        is_standalone: data.server_member_manager.is_standalone(),
+        is_standalone: data.member_manager().is_standalone(),
         version,
     };
 
@@ -191,7 +191,7 @@ async fn get_node(
 
     let address = path.into_inner();
 
-    match data.server_member_manager.get_member(&address) {
+    match data.member_manager().get_member(&address) {
         Some(member) => model::common::Result::<Member>::http_success(member),
         None => model::common::Result::<String>::http_response(
             404,
@@ -213,7 +213,7 @@ async fn get_member_count(req: HttpRequest, data: web::Data<AppState>) -> impl R
             .build()
     );
 
-    let count = data.server_member_manager.member_count();
+    let count = data.member_manager().member_count();
     model::common::Result::<usize>::http_success(count)
 }
 
@@ -228,7 +228,7 @@ async fn check_standalone(req: HttpRequest, data: web::Data<AppState>) -> impl R
             .build()
     );
 
-    let standalone_mode = data.server_member_manager.is_standalone();
+    let standalone_mode = data.member_manager().is_standalone();
     model::common::Result::<bool>::http_success(standalone_mode)
 }
 
@@ -243,7 +243,7 @@ async fn refresh_self(req: HttpRequest, data: web::Data<AppState>) -> impl Respo
             .build()
     );
 
-    data.server_member_manager.refresh_self();
+    data.member_manager().refresh_self();
     model::common::Result::<bool>::http_success(true)
 }
 

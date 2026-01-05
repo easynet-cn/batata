@@ -55,7 +55,7 @@ async fn search_page(
     }
 
     let result = match auth::service::user::search_page(
-        &data.database_connection,
+        data.db(),
         &username,
         params.page_no,
         params.page_size,
@@ -83,7 +83,7 @@ async fn search(
     );
 
     let result =
-        match auth::service::user::search(&data.database_connection, &params.username).await {
+        match auth::service::user::search(data.db(), &params.username).await {
             Ok(users) => users,
             Err(_) => return HttpResponse::InternalServerError().body("Database error"),
         };
@@ -110,7 +110,7 @@ async fn create(
     }
 
     let user =
-        match auth::service::user::find_by_username(&data.database_connection, &params.username)
+        match auth::service::user::find_by_username(data.db(), &params.username)
             .await
         {
             Ok(u) => u,
@@ -130,7 +130,7 @@ async fn create(
     };
 
     let result =
-        auth::service::user::create(&data.database_connection, &params.username, &password).await;
+        auth::service::user::create(data.db(), &params.username, &password).await;
 
     match result {
         Ok(()) => model::common::Result::<String>::http_success("create user ok!"),
@@ -158,7 +158,7 @@ async fn update(
     );
 
     let result = auth::service::user::update(
-        &data.database_connection,
+        data.db(),
         &params.username,
         &params.new_password,
     )
@@ -194,7 +194,7 @@ async fn delete(
     );
 
     let global_admin =
-        auth::service::role::find_by_username(&data.database_connection, &params.username)
+        auth::service::role::find_by_username(data.db(), &params.username)
             .await
             .unwrap_or_default()
             .iter()
@@ -208,7 +208,7 @@ async fn delete(
         });
     }
 
-    let result = auth::service::user::delete(&data.database_connection, &params.username).await;
+    let result = auth::service::user::delete(data.db(), &params.username).await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("delete user ok!"),

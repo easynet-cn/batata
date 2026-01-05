@@ -55,7 +55,7 @@ async fn find_one(
             .build()
     );
 
-    match service::history::find_by_id(&data.database_connection, params.nid).await {
+    match service::history::find_by_id(data.db(), params.nid).await {
         Ok(result) => {
             let config_info = result.map(ConfigHistoryDetailInfo::from);
             model::common::Result::<Option<ConfigHistoryDetailInfo>>::http_success(config_info)
@@ -98,7 +98,7 @@ async fn search(
     }
 
     match service::history::search_page(
-        &data.database_connection,
+        data.db(),
         data_id,
         group_name,
         &namespace_id,
@@ -147,7 +147,7 @@ async fn find_configs_by_namespace_id(
     );
 
     match service::history::find_configs_by_namespace_id(
-        &data.database_connection,
+        data.db(),
         &params.namespace_id,
     )
     .await

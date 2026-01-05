@@ -31,7 +31,7 @@ async fn exist(
     );
 
     match auth::service::permission::find_by_id(
-        &data.database_connection,
+        data.db(),
         &params.role,
         &params.resource,
         &params.action,
@@ -73,7 +73,7 @@ async fn search_page(
     }
 
     match auth::service::permission::search_page(
-        &data.database_connection,
+        data.db(),
         &role,
         params.page_no,
         params.page_size,
@@ -106,7 +106,7 @@ async fn create(
     );
 
     let result = auth::service::permission::create(
-        &data.database_connection,
+        data.db(),
         &params.role,
         &params.resource,
         &params.action,
@@ -136,7 +136,7 @@ async fn delete(
     );
 
     let result = auth::service::permission::delete(
-        &data.database_connection,
+        data.db(),
         &params.role,
         &params.resource,
         &params.action,

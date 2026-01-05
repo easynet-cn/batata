@@ -59,11 +59,11 @@ async fn liveness() -> web::Json<Result<String>> {
 
 #[get("/readiness")]
 async fn readiness(data: web::Data<AppState>) -> impl Responder {
-    let db_status = check_database(&data.database_connection).await;
+    let db_status = check_database(data.db()).await;
 
     let cluster_status = ClusterStatus {
         status: "UP".to_string(),
-        member_count: data.server_member_manager.all_members().len(),
+        member_count: data.member_manager().all_members().len(),
         is_leader: true, // Simplified - in production would check Raft leader status
     };
 
@@ -88,11 +88,11 @@ async fn readiness(data: web::Data<AppState>) -> impl Responder {
 
 #[get("")]
 async fn health_check(data: web::Data<AppState>) -> impl Responder {
-    let db_status = check_database(&data.database_connection).await;
+    let db_status = check_database(data.db()).await;
 
     let cluster_status = ClusterStatus {
         status: "UP".to_string(),
-        member_count: data.server_member_manager.all_members().len(),
+        member_count: data.member_manager().all_members().len(),
         is_leader: true, // Simplified - in production would check Raft leader status
     };
 

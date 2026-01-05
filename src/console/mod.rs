@@ -1,6 +1,9 @@
 // Console web interface module
 // This module provides the web console API endpoints for management and monitoring
 
+pub mod client;
+pub mod datasource;
+
 pub mod v3 {
     pub mod cluster; // Cluster management console endpoints
     pub mod config; // Configuration management console endpoints

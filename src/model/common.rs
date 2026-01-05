@@ -201,6 +201,18 @@ pub const NACOS_DEPLOYMENT_TYPE_MERGED: &str = "merged";
 pub const NACOS_DEPLOYMENT_TYPE_SERVER: &str = "server";
 pub const NACOS_DEPLOYMENT_TYPE_CONSOLE: &str = "console";
 pub const NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP: &str = "serverWithMcp";
+
+// Console mode constants
+pub const NACOS_CONSOLE_MODE: &str = "nacos.console.mode";
+pub const NACOS_CONSOLE_MODE_LOCAL: &str = "local";
+pub const NACOS_CONSOLE_MODE_REMOTE: &str = "remote";
+
+// Console remote configuration keys
+pub const NACOS_CONSOLE_REMOTE_SERVER_ADDR: &str = "nacos.console.remote.server_addr";
+pub const NACOS_CONSOLE_REMOTE_USERNAME: &str = "nacos.console.remote.username";
+pub const NACOS_CONSOLE_REMOTE_PASSWORD: &str = "nacos.console.remote.password";
+pub const NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS: &str = "nacos.console.remote.connect_timeout_ms";
+pub const NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS: &str = "nacos.console.remote.read_timeout_ms";
 pub const NACOS_DUPLICATE_BEAN_ENHANCEMENT_ENABLED: &str =
     "nacos.sys.duplicate.bean.enhancement.enabled";
 
@@ -852,13 +864,109 @@ impl Configuration {
     pub fn cluster_server_port(&self) -> u16 {
         self.server_main_port() + CLUSTER_GRPC_PORT_DEFAULT_OFFSET
     }
+
+    pub fn console_mode(&self) -> String {
+        self.config
+            .get_string(NACOS_CONSOLE_MODE)
+            .unwrap_or(NACOS_CONSOLE_MODE_LOCAL.to_string())
+    }
+
+    pub fn is_console_remote_mode(&self) -> bool {
+        self.console_mode() == NACOS_CONSOLE_MODE_REMOTE
+    }
+
+    pub fn console_remote_server_addr(&self) -> String {
+        self.config
+            .get_string(NACOS_CONSOLE_REMOTE_SERVER_ADDR)
+            .unwrap_or("http://127.0.0.1:8848".to_string())
+    }
+
+    pub fn console_remote_username(&self) -> String {
+        self.config
+            .get_string(NACOS_CONSOLE_REMOTE_USERNAME)
+            .unwrap_or("nacos".to_string())
+    }
+
+    pub fn console_remote_password(&self) -> String {
+        self.config
+            .get_string(NACOS_CONSOLE_REMOTE_PASSWORD)
+            .unwrap_or("nacos".to_string())
+    }
+
+    pub fn console_remote_connect_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int(NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS)
+            .unwrap_or(5000) as u64
+    }
+
+    pub fn console_remote_read_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int(NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS)
+            .unwrap_or(30000) as u64
+    }
 }
 
-#[derive(Clone, Debug)]
+use crate::console::datasource::ConsoleDataSource;
+
+/// Application state shared across all handlers
+///
+/// For merged/server deployment:
+/// - database_connection and server_member_manager are Some
+/// - console_datasource uses LocalDataSource (wraps the database)
+///
+/// For console-only remote deployment:
+/// - database_connection and server_member_manager are None
+/// - console_datasource uses RemoteDataSource (HTTP calls to server)
 pub struct AppState {
     pub configuration: Configuration,
-    pub database_connection: DatabaseConnection,
-    pub server_member_manager: Arc<ServerMemberManager>,
+    pub database_connection: Option<DatabaseConnection>,
+    pub server_member_manager: Option<Arc<ServerMemberManager>>,
+    pub console_datasource: Arc<dyn ConsoleDataSource>,
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("configuration", &self.configuration)
+            .field("database_connection", &self.database_connection.is_some())
+            .field("server_member_manager", &self.server_member_manager.is_some())
+            .field("console_datasource", &"<dyn ConsoleDataSource>")
+            .finish()
+    }
+}
+
+impl Clone for AppState {
+    fn clone(&self) -> Self {
+        Self {
+            configuration: self.configuration.clone(),
+            database_connection: self.database_connection.clone(),
+            server_member_manager: self.server_member_manager.clone(),
+            console_datasource: self.console_datasource.clone(),
+        }
+    }
+}
+
+impl AppState {
+    /// Check if this is a remote console deployment (no direct DB access)
+    pub fn is_remote_console(&self) -> bool {
+        self.database_connection.is_none()
+    }
+
+    /// Get database connection (panics if not available)
+    /// Use this only in server endpoints that require database access
+    pub fn db(&self) -> &DatabaseConnection {
+        self.database_connection
+            .as_ref()
+            .expect("Database connection not available in remote console mode")
+    }
+
+    /// Get server member manager (panics if not available)
+    /// Use this only in server endpoints that require cluster management
+    pub fn member_manager(&self) -> &Arc<ServerMemberManager> {
+        self.server_member_manager
+            .as_ref()
+            .expect("Server member manager not available in remote console mode")
+    }
 }
 
 impl AppState {
