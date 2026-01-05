@@ -1,10 +1,10 @@
 // Integration tests for authentication service
 // Tests JWT token encoding, decoding, and caching
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use batata::auth::service::auth::{
     decode_jwt_token, decode_jwt_token_cached, encode_jwt_token, invalidate_token,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 // Generate a valid base64 secret key for testing
 fn test_secret_key() -> String {
@@ -41,7 +41,10 @@ fn test_token_expiration() {
 
     // Should fail to decode expired token immediately
     let decoded = decode_jwt_token(&token, &secret);
-    assert!(decoded.is_err(), "Token expired beyond leeway should fail validation");
+    assert!(
+        decoded.is_err(),
+        "Token expired beyond leeway should fail validation"
+    );
 }
 
 #[test]

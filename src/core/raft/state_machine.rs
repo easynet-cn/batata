@@ -1,6 +1,11 @@
 // Raft state machine implementation
 // Applies committed log entries to the application state using RocksDB
 
+// Allow many arguments for Raft apply operations - parameters are logically coupled
+#![allow(clippy::too_many_arguments)]
+// Allow complex types for snapshot data structures
+#![allow(clippy::type_complexity)]
+
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;

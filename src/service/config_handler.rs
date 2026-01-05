@@ -59,7 +59,7 @@ impl PayloadHandler for ConfigQueryHandler {
                     ..Default::default()
                 };
 
-                Ok(response.into_payload(Some(metadata)))
+                Ok(response.to_payload(Some(metadata)))
             }
             Ok(None) => {
                 let mut response = ConfigQueryResponse::new();
@@ -74,7 +74,7 @@ impl PayloadHandler for ConfigQueryHandler {
                     ..Default::default()
                 };
 
-                Ok(response.into_payload(Some(metadata)))
+                Ok(response.to_payload(Some(metadata)))
             }
             Err(e) => {
                 let mut response = ConfigQueryResponse::new();
@@ -89,7 +89,7 @@ impl PayloadHandler for ConfigQueryHandler {
                     ..Default::default()
                 };
 
-                Ok(response.into_payload(Some(metadata)))
+                Ok(response.to_payload(Some(metadata)))
             }
         }
     }
@@ -191,7 +191,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     ..Default::default()
                 };
 
-                Ok(response.into_payload(Some(metadata)))
+                Ok(response.to_payload(Some(metadata)))
             }
             Err(e) => {
                 let mut response = ConfigPublishResponse::new();
@@ -206,7 +206,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     ..Default::default()
                 };
 
-                Ok(response.into_payload(Some(metadata)))
+                Ok(response.to_payload(Some(metadata)))
             }
         }
     }
@@ -248,7 +248,7 @@ impl PayloadHandler for ConfigRemoveHandler {
                     ..Default::default()
                 };
 
-                Ok(response.into_payload(Some(metadata)))
+                Ok(response.to_payload(Some(metadata)))
             }
             Err(e) => {
                 let mut response = ConfigRemoveResponse::new();
@@ -263,7 +263,7 @@ impl PayloadHandler for ConfigRemoveHandler {
                     ..Default::default()
                 };
 
-                Ok(response.into_payload(Some(metadata)))
+                Ok(response.to_payload(Some(metadata)))
             }
         }
     }
@@ -326,7 +326,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -357,7 +357,7 @@ impl PayloadHandler for ConfigChangeNotifyHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -393,7 +393,7 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -423,7 +423,7 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -451,7 +451,7 @@ impl PayloadHandler for ConfigFuzzyWatchChangeNotifyHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -479,7 +479,7 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -508,7 +508,7 @@ impl PayloadHandler for ClientConfigMetricHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {

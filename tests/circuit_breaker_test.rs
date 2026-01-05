@@ -152,19 +152,24 @@ async fn test_with_circuit_breaker_failure() {
     let cb = CircuitBreaker::with_config(config);
 
     // First failure
-    let result1: Result<i32, CircuitBreakerError<std::io::Error>> = with_circuit_breaker(&cb, async {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
-    })
-    .await;
+    let result1: Result<i32, CircuitBreakerError<std::io::Error>> =
+        with_circuit_breaker(&cb, async {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
+        })
+        .await;
 
-    assert!(matches!(result1, Err(CircuitBreakerError::OperationFailed(_))));
+    assert!(matches!(
+        result1,
+        Err(CircuitBreakerError::OperationFailed(_))
+    ));
     assert_eq!(cb.failure_count(), 1);
 
     // Second failure opens circuit
-    let _result2: Result<i32, CircuitBreakerError<std::io::Error>> = with_circuit_breaker(&cb, async {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
-    })
-    .await;
+    let _result2: Result<i32, CircuitBreakerError<std::io::Error>> =
+        with_circuit_breaker(&cb, async {
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
+        })
+        .await;
 
     assert_eq!(cb.state(), CircuitState::Open);
 }

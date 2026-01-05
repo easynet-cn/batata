@@ -142,7 +142,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // For console remote mode, only start console server
     if is_console_remote {
-        info!("Starting console server in remote mode on port {}", console_server_port);
+        info!(
+            "Starting console server in remote mode on port {}",
+            console_server_port
+        );
         console_server(
             app_state.clone(),
             console_context_path,
@@ -402,6 +405,7 @@ pub fn console_server(
     .run())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn main_server(
     app_state: Arc<AppState>,
     naming_service: Arc<NamingService>,

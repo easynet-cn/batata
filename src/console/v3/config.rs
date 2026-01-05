@@ -414,11 +414,17 @@ async fn export_configs(
         Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
     };
 
-    let filename = format!("nacos_config_export_{}.zip", Utc::now().format("%Y%m%d%H%M%S"));
+    let filename = format!(
+        "nacos_config_export_{}.zip",
+        Utc::now().format("%Y%m%d%H%M%S")
+    );
 
     HttpResponse::Ok()
         .content_type("application/zip")
-        .insert_header(("Content-Disposition", format!("attachment; filename=\"{}\"", filename)))
+        .insert_header((
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", filename),
+        ))
         .body(zip_data)
 }
 
@@ -461,17 +467,16 @@ async fn import_configs(
     // Read file from multipart
     let mut file_data: Vec<u8> = Vec::new();
     while let Some(Ok(mut field)) = payload.next().await {
-        if let Some(content_disposition) = field.content_disposition() {
-            if content_disposition
+        if let Some(content_disposition) = field.content_disposition()
+            && content_disposition
                 .get_name()
                 .map(|n| n == "file")
                 .unwrap_or(false)
-            {
-                while let Some(Ok(chunk)) = field.next().await {
-                    file_data.extend_from_slice(&chunk);
-                }
-                break;
+        {
+            while let Some(Ok(chunk)) = field.next().await {
+                file_data.extend_from_slice(&chunk);
             }
+            break;
         }
     }
 

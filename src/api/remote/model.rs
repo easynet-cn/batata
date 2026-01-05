@@ -573,7 +573,7 @@ pub trait ResponseTrait {
     }
 
     // Convert response to protobuf Any type
-    fn into_any(&self) -> Any
+    fn to_any(&self) -> Any
     where
         Self: Serialize,
     {
@@ -584,13 +584,13 @@ pub trait ResponseTrait {
     }
 
     // Convert response to gRPC payload
-    fn into_payload(&self, metadata: Option<Metadata>) -> Payload
+    fn to_payload(&self, metadata: Option<Metadata>) -> Payload
     where
         Self: Serialize,
     {
         Payload {
             metadata,
-            body: Some(self.into_any()),
+            body: Some(self.to_any()),
         }
     }
 }
@@ -694,7 +694,7 @@ impl ResponseTrait for HealthCheckResponse {
 
 impl From<HealthCheckResponse> for Any {
     fn from(val: HealthCheckResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -728,7 +728,7 @@ impl ResponseTrait for ServerCheckResponse {
 
 impl From<ServerCheckResponse> for Any {
     fn from(val: ServerCheckResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -768,7 +768,7 @@ impl ResponseTrait for ClientDetectionResponse {
 
 impl From<ClientDetectionResponse> for Any {
     fn from(val: ClientDetectionResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -810,7 +810,7 @@ impl ResponseTrait for ServerLoaderInfoResponse {
 
 impl From<ServerLoaderInfoResponse> for Any {
     fn from(val: ServerLoaderInfoResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -850,7 +850,7 @@ impl ResponseTrait for ServerReloadResponse {
 
 impl From<ServerReloadResponse> for Any {
     fn from(val: ServerReloadResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -890,7 +890,7 @@ impl ResponseTrait for ConnectResetResponse {
 
 impl From<ConnectResetResponse> for Any {
     fn from(val: ConnectResetResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -930,7 +930,7 @@ impl ResponseTrait for SetupAckResponse {
 
 impl From<SetupAckResponse> for Any {
     fn from(val: SetupAckResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 

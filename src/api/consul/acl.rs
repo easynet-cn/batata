@@ -27,7 +27,7 @@ static MEMORY_TOKENS: LazyLock<DashMap<String, AclToken>> = LazyLock::new(DashMa
 static MEMORY_POLICIES: LazyLock<DashMap<String, AclPolicy>> = LazyLock::new(DashMap::new);
 
 /// ACL Token structure
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct AclToken {
     pub accessor_id: String,
@@ -41,22 +41,6 @@ pub struct AclToken {
     pub expiration_time: Option<String>,
     pub create_time: String,
     pub modify_time: String,
-}
-
-impl Default for AclToken {
-    fn default() -> Self {
-        Self {
-            accessor_id: String::new(),
-            secret_id: None,
-            description: String::new(),
-            policies: Vec::new(),
-            roles: Vec::new(),
-            local: false,
-            expiration_time: None,
-            create_time: String::new(),
-            modify_time: String::new(),
-        }
-    }
 }
 
 /// Policy link in token
@@ -118,16 +102,20 @@ pub enum RulePolicy {
     Deny,
 }
 
-impl RulePolicy {
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl std::str::FromStr for RulePolicy {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "read" => RulePolicy::Read,
             "write" => RulePolicy::Write,
             "deny" => RulePolicy::Deny,
             _ => RulePolicy::Deny,
-        }
+        })
     }
+}
 
+impl RulePolicy {
     pub fn allows_read(&self) -> bool {
         matches!(self, RulePolicy::Read | RulePolicy::Write)
     }
@@ -250,10 +238,10 @@ query_prefix "" { policy = "write" }
     /// Extract token from request
     pub fn extract_token(req: &HttpRequest) -> Option<String> {
         // First check header
-        if let Some(token) = req.headers().get(X_CONSUL_TOKEN) {
-            if let Ok(token_str) = token.to_str() {
-                return Some(token_str.to_string());
-            }
+        if let Some(token) = req.headers().get(X_CONSUL_TOKEN)
+            && let Ok(token_str) = token.to_str()
+        {
+            return Some(token_str.to_string());
         }
 
         // Then check query parameter
@@ -393,26 +381,31 @@ query_prefix "" { policy = "write" }
                 let policy_part = policy_part.trim().trim_end_matches('}').trim();
 
                 // Extract prefix
-                let (resource_type, prefix) = if let Some(rest) = resource_part.strip_prefix("agent_prefix") {
-                    ("agent", rest.trim().trim_matches('"'))
-                } else if let Some(rest) = resource_part.strip_prefix("key_prefix") {
-                    ("key", rest.trim().trim_matches('"'))
-                } else if let Some(rest) = resource_part.strip_prefix("node_prefix") {
-                    ("node", rest.trim().trim_matches('"'))
-                } else if let Some(rest) = resource_part.strip_prefix("service_prefix") {
-                    ("service", rest.trim().trim_matches('"'))
-                } else if let Some(rest) = resource_part.strip_prefix("session_prefix") {
-                    ("session", rest.trim().trim_matches('"'))
-                } else if let Some(rest) = resource_part.strip_prefix("query_prefix") {
-                    ("query", rest.trim().trim_matches('"'))
-                } else {
-                    continue;
-                };
+                let (resource_type, prefix) =
+                    if let Some(rest) = resource_part.strip_prefix("agent_prefix") {
+                        ("agent", rest.trim().trim_matches('"'))
+                    } else if let Some(rest) = resource_part.strip_prefix("key_prefix") {
+                        ("key", rest.trim().trim_matches('"'))
+                    } else if let Some(rest) = resource_part.strip_prefix("node_prefix") {
+                        ("node", rest.trim().trim_matches('"'))
+                    } else if let Some(rest) = resource_part.strip_prefix("service_prefix") {
+                        ("service", rest.trim().trim_matches('"'))
+                    } else if let Some(rest) = resource_part.strip_prefix("session_prefix") {
+                        ("session", rest.trim().trim_matches('"'))
+                    } else if let Some(rest) = resource_part.strip_prefix("query_prefix") {
+                        ("query", rest.trim().trim_matches('"'))
+                    } else {
+                        continue;
+                    };
 
                 // Extract policy
                 let policy = if let Some(policy_str) = policy_part.strip_prefix("policy") {
-                    let policy_str = policy_str.trim().trim_start_matches('=').trim().trim_matches('"');
-                    RulePolicy::from_str(policy_str)
+                    let policy_str = policy_str
+                        .trim()
+                        .trim_start_matches('=')
+                        .trim()
+                        .trim_matches('"');
+                    policy_str.parse::<RulePolicy>().unwrap_or(RulePolicy::Deny)
                 } else {
                     continue;
                 };
@@ -600,10 +593,7 @@ pub async fn create_token(
         .map(|p| p.iter().map(|pl| pl.name.clone()).collect())
         .unwrap_or_default();
 
-    let token = acl_service.create_token(
-        body.description.as_deref().unwrap_or(""),
-        policies,
-    );
+    let token = acl_service.create_token(body.description.as_deref().unwrap_or(""), policies);
 
     HttpResponse::Ok().json(token)
 }

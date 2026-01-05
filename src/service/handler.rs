@@ -34,7 +34,7 @@ impl PayloadHandler for HealthCheckHandler {
             ..Default::default()
         };
 
-        let response_payload = response.into_payload(Some(metadata));
+        let response_payload = response.to_payload(Some(metadata));
 
         Ok(response_payload)
     }
@@ -61,7 +61,7 @@ impl PayloadHandler for ServerCheckHanlder {
             ..Default::default()
         };
 
-        let response_payload = response.into_payload(Some(metadata));
+        let response_payload = response.to_payload(Some(metadata));
 
         Ok(response_payload)
     }
@@ -105,7 +105,7 @@ impl PayloadHandler for ClientDetectionHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -139,7 +139,7 @@ impl PayloadHandler for ServerLoaderInfoHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -166,7 +166,7 @@ impl PayloadHandler for ServerReloadHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -193,7 +193,7 @@ impl PayloadHandler for ConnectResetHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -219,7 +219,7 @@ impl PayloadHandler for SetupAckHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {

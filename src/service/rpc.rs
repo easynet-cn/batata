@@ -209,7 +209,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     }
                                 }
                                 Err(e) => {
-                                    eprintln!("Handler error: {}", e);
+                                    tracing::error!("Handler error: {}", e);
                                     if let Err(send_err) = tx.send(Err(e)).await {
                                         tracing::error!(
                                             "Failed to send error response: {}",

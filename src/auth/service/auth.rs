@@ -7,10 +7,16 @@ use moka::sync::Cache;
 
 use crate::auth::model::NacosJwtPayload;
 
+/// Cached token data containing the full payload
+#[derive(Clone)]
+struct CachedTokenData {
+    claims: NacosJwtPayload,
+}
+
 /// JWT Token cache to avoid repeated validation of the same token
 /// Cache key: token string
-/// Cache value: validated username from token claims
-static TOKEN_CACHE: LazyLock<Cache<String, String>> = LazyLock::new(|| {
+/// Cache value: full token claims (including real expiration time)
+static TOKEN_CACHE: LazyLock<Cache<String, CachedTokenData>> = LazyLock::new(|| {
     Cache::builder()
         .max_capacity(10_000)
         .time_to_live(Duration::from_secs(300)) // 5 minutes TTL
@@ -24,24 +30,29 @@ pub fn decode_jwt_token_cached(
     secret_key: &str,
 ) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<NacosJwtPayload>> {
     // Check cache first
-    if let Some(username) = TOKEN_CACHE.get(&token.to_string()) {
-        // Return a reconstructed TokenData from cache
-        // Note: We only cache valid tokens, so exp should still be valid within TTL
-        let payload = NacosJwtPayload {
-            sub: username,
-            exp: chrono::Utc::now().timestamp() + 300, // Approximate exp
-        };
-        return Ok(jsonwebtoken::TokenData {
-            header: jsonwebtoken::Header::default(),
-            claims: payload,
-        });
+    if let Some(cached) = TOKEN_CACHE.get(&token.to_string()) {
+        // Verify token hasn't expired (even if cached)
+        let now = chrono::Utc::now().timestamp();
+        if cached.claims.exp > now {
+            return Ok(jsonwebtoken::TokenData {
+                header: jsonwebtoken::Header::default(),
+                claims: cached.claims,
+            });
+        }
+        // Token expired, remove from cache
+        TOKEN_CACHE.invalidate(&token.to_string());
     }
 
-    // Cache miss - perform actual validation
+    // Cache miss or expired - perform actual validation
     let result = decode_jwt_token(token, secret_key)?;
 
-    // Cache the successful result
-    TOKEN_CACHE.insert(token.to_string(), result.claims.sub.clone());
+    // Cache the successful result with full claims
+    TOKEN_CACHE.insert(
+        token.to_string(),
+        CachedTokenData {
+            claims: result.claims.clone(),
+        },
+    );
 
     Ok(result)
 }

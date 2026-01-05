@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     api::{
-        config::model::{ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo},
+        config::model::{
+            ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+        },
         model::{Member, Page},
     },
     config::model::ConfigAllInfo,
@@ -23,6 +25,7 @@ pub struct ConsoleApiClient {
 // Generic API response wrapper
 #[derive(Debug, Deserialize)]
 struct ApiResponse<T> {
+    #[allow(dead_code)]
     pub code: i32,
     #[allow(dead_code)]
     pub message: String,
@@ -44,10 +47,7 @@ impl ConsoleApiClient {
         Ok(response.data)
     }
 
-    pub async fn namespace_get_by_id(
-        &self,
-        namespace_id: &str,
-    ) -> anyhow::Result<Namespace> {
+    pub async fn namespace_get_by_id(&self, namespace_id: &str) -> anyhow::Result<Namespace> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
@@ -450,10 +450,7 @@ impl ConsoleApiClient {
 
         let response: ApiResponse<Vec<ConfigBasicInfo>> = self
             .http_client
-            .get_with_query(
-                "/v3/console/cs/history/configs",
-                &Query { namespace_id },
-            )
+            .get_with_query("/v3/console/cs/history/configs", &Query { namespace_id })
             .await?;
         Ok(response.data)
     }

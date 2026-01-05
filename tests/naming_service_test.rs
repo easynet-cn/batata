@@ -1,8 +1,8 @@
 // Integration tests for NamingService
 // Tests service registration, discovery, and subscription functionality
 
-use batata::service::naming::NamingService;
 use batata::api::naming::model::Instance;
+use batata::service::naming::NamingService;
 use std::collections::HashMap;
 
 fn create_test_instance(ip: &str, port: i32, cluster: &str) -> Instance {
@@ -42,10 +42,17 @@ fn test_register_and_get_instances() {
     assert_eq!(all.len(), 3);
 
     // Get instances by cluster
-    let default_cluster = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "DEFAULT", false);
+    let default_cluster =
+        naming.get_instances("public", "DEFAULT_GROUP", "test-service", "DEFAULT", false);
     assert_eq!(default_cluster.len(), 2);
 
-    let cluster_a = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "CLUSTER_A", false);
+    let cluster_a = naming.get_instances(
+        "public",
+        "DEFAULT_GROUP",
+        "test-service",
+        "CLUSTER_A",
+        false,
+    );
     assert_eq!(cluster_a.len(), 1);
 }
 
@@ -118,7 +125,12 @@ fn test_list_services_pagination() {
     // Register 5 services
     for i in 1..=5 {
         let instance = create_test_instance("192.168.1.1", 8080 + i, "DEFAULT");
-        naming.register_instance("public", "DEFAULT_GROUP", &format!("service-{}", i), instance);
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            &format!("service-{}", i),
+            instance,
+        );
     }
 
     // Test pagination
@@ -181,7 +193,12 @@ fn test_namespace_isolation() {
 
     let instance = create_test_instance("192.168.1.1", 8080, "DEFAULT");
 
-    naming.register_instance("namespace-a", "DEFAULT_GROUP", "test-service", instance.clone());
+    naming.register_instance(
+        "namespace-a",
+        "DEFAULT_GROUP",
+        "test-service",
+        instance.clone(),
+    );
     naming.register_instance("namespace-b", "DEFAULT_GROUP", "test-service", instance);
 
     let ns_a = naming.get_instances("namespace-a", "DEFAULT_GROUP", "test-service", "", false);

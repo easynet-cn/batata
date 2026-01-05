@@ -146,12 +146,7 @@ async fn find_configs_by_namespace_id(
             .build()
     );
 
-    match service::history::find_configs_by_namespace_id(
-        data.db(),
-        &params.namespace_id,
-    )
-    .await
-    {
+    match service::history::find_configs_by_namespace_id(data.db(), &params.namespace_id).await {
         Ok(result) => {
             let config_infos = result
                 .into_iter()

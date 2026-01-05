@@ -607,7 +607,9 @@ pub async fn txn(
 // ============================================================================
 
 use crate::{
-    config::export_model::{ConsulExportRequest, ConsulImportRequest, ConsulKVExportItem, ImportResult},
+    config::export_model::{
+        ConsulExportRequest, ConsulImportRequest, ConsulKVExportItem, ImportResult,
+    },
     model::common::AppState,
     service::{config_export, config_import},
 };
@@ -626,21 +628,21 @@ pub async fn export_kv(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let namespace_id = query.namespace_id.clone().unwrap_or_else(|| "public".to_string());
+    let namespace_id = query
+        .namespace_id
+        .clone()
+        .unwrap_or_else(|| "public".to_string());
 
     // Find configs for export
-    let configs = match config_export::find_configs_for_export(
-        data.db(),
-        &namespace_id,
-        None,
-        None,
-        None,
-    )
-    .await
-    {
-        Ok(c) => c,
-        Err(e) => return HttpResponse::InternalServerError().json(ConsulError::new(&e.to_string())),
-    };
+    let configs =
+        match config_export::find_configs_for_export(data.db(), &namespace_id, None, None, None)
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string()));
+            }
+        };
 
     if configs.is_empty() {
         return HttpResponse::Ok().json(Vec::<ConsulKVExportItem>::new());
@@ -649,7 +651,7 @@ pub async fn export_kv(
     // Create Consul JSON
     let json_data = match config_export::create_consul_export_json(configs, &namespace_id) {
         Ok(j) => j,
-        Err(e) => return HttpResponse::InternalServerError().json(ConsulError::new(&e.to_string())),
+        Err(e) => return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string())),
     };
 
     HttpResponse::Ok()
@@ -672,7 +674,10 @@ pub async fn import_kv(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let namespace_id = query.namespace_id.clone().unwrap_or_else(|| "public".to_string());
+    let namespace_id = query
+        .namespace_id
+        .clone()
+        .unwrap_or_else(|| "public".to_string());
     let items = body.into_inner();
 
     if items.is_empty() {
@@ -682,13 +687,13 @@ pub async fn import_kv(
     // Serialize items back to JSON for parsing
     let json_data = match serde_json::to_vec(&items) {
         Ok(j) => j,
-        Err(e) => return HttpResponse::BadRequest().json(ConsulError::new(&e.to_string())),
+        Err(e) => return HttpResponse::BadRequest().json(ConsulError::new(e.to_string())),
     };
 
     // Parse Consul JSON to config items
     let config_items = match config_import::parse_consul_import_json(&json_data, &namespace_id) {
         Ok(i) => i,
-        Err(e) => return HttpResponse::BadRequest().json(ConsulError::new(&e.to_string())),
+        Err(e) => return HttpResponse::BadRequest().json(ConsulError::new(e.to_string())),
     };
 
     // Get user info from connection (Consul API doesn't have auth context like Nacos)
@@ -711,7 +716,7 @@ pub async fn import_kv(
     .await
     {
         Ok(r) => r,
-        Err(e) => return HttpResponse::InternalServerError().json(ConsulError::new(&e.to_string())),
+        Err(e) => return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string())),
     };
 
     HttpResponse::Ok().json(result)

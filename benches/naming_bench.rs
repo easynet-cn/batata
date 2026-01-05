@@ -1,9 +1,9 @@
 // Benchmarks for NamingService performance
 // Measures registration, lookup, and subscription operations
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use batata::service::naming::NamingService;
 use batata::api::naming::model::Instance;
+use batata::service::naming::NamingService;
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::collections::HashMap;
 
 fn create_test_instance(ip: &str, port: i32) -> Instance {
@@ -93,7 +93,13 @@ fn bench_get_instances_by_cluster(c: &mut Criterion) {
 
     // Pre-populate with instances in different clusters
     for i in 0..1000 {
-        let cluster = if i % 3 == 0 { "CLUSTER_A" } else if i % 3 == 1 { "CLUSTER_B" } else { "CLUSTER_C" };
+        let cluster = if i % 3 == 0 {
+            "CLUSTER_A"
+        } else if i % 3 == 1 {
+            "CLUSTER_B"
+        } else {
+            "CLUSTER_C"
+        };
         let mut instance = create_test_instance("192.168.1.1", 8000 + i);
         instance.cluster_name = cluster.to_string();
         naming.register_instance("public", "DEFAULT_GROUP", "bench-service", instance);
@@ -134,7 +140,12 @@ fn bench_get_subscribers(c: &mut Criterion) {
 
     // Pre-populate with subscribers
     for i in 0..1000 {
-        naming.subscribe(&format!("conn-{}", i), "public", "DEFAULT_GROUP", "bench-service");
+        naming.subscribe(
+            &format!("conn-{}", i),
+            "public",
+            "DEFAULT_GROUP",
+            "bench-service",
+        );
     }
 
     c.bench_function("get_subscribers_1000", |b| {
@@ -154,7 +165,12 @@ fn bench_list_services(c: &mut Criterion) {
     // Pre-populate with many services
     for i in 0..100 {
         let instance = create_test_instance("192.168.1.1", 8000 + i);
-        naming.register_instance("public", "DEFAULT_GROUP", &format!("service-{}", i), instance);
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            &format!("service-{}", i),
+            instance,
+        );
     }
 
     c.bench_function("list_services_100", |b| {
@@ -175,7 +191,12 @@ fn bench_deregister_instance(c: &mut Criterion) {
             || {
                 let naming = NamingService::new();
                 let instance = create_test_instance("192.168.1.1", 8080);
-                naming.register_instance("public", "DEFAULT_GROUP", "bench-service", instance.clone());
+                naming.register_instance(
+                    "public",
+                    "DEFAULT_GROUP",
+                    "bench-service",
+                    instance.clone(),
+                );
                 (naming, instance)
             },
             |(naming, instance)| {

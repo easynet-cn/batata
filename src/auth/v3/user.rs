@@ -82,11 +82,10 @@ async fn search(
             .build()
     );
 
-    let result =
-        match auth::service::user::search(data.db(), &params.username).await {
-            Ok(users) => users,
-            Err(_) => return HttpResponse::InternalServerError().body("Database error"),
-        };
+    let result = match auth::service::user::search(data.db(), &params.username).await {
+        Ok(users) => users,
+        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+    };
 
     common::Result::<Vec<String>>::http_success(result)
 }
@@ -109,13 +108,10 @@ async fn create(
         );
     }
 
-    let user =
-        match auth::service::user::find_by_username(data.db(), &params.username)
-            .await
-        {
-            Ok(u) => u,
-            Err(_) => return HttpResponse::InternalServerError().body("Database error"),
-        };
+    let user = match auth::service::user::find_by_username(data.db(), &params.username).await {
+        Ok(u) => u,
+        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+    };
 
     if user.is_some() {
         return model::common::ConsoleExecption::handle_illegal_argument_exectpion(format!(
@@ -129,8 +125,7 @@ async fn create(
         Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
     };
 
-    let result =
-        auth::service::user::create(data.db(), &params.username, &password).await;
+    let result = auth::service::user::create(data.db(), &params.username, &password).await;
 
     match result {
         Ok(()) => model::common::Result::<String>::http_success("create user ok!"),
@@ -157,12 +152,8 @@ async fn update(
             .build()
     );
 
-    let result = auth::service::user::update(
-        data.db(),
-        &params.username,
-        &params.new_password,
-    )
-    .await;
+    let result =
+        auth::service::user::update(data.db(), &params.username, &params.new_password).await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("update user ok!"),
@@ -193,12 +184,11 @@ async fn delete(
             .build()
     );
 
-    let global_admin =
-        auth::service::role::find_by_username(data.db(), &params.username)
-            .await
-            .unwrap_or_default()
-            .iter()
-            .any(|role| role.role == GLOBAL_ADMIN_ROLE);
+    let global_admin = auth::service::role::find_by_username(data.db(), &params.username)
+        .await
+        .unwrap_or_default()
+        .iter()
+        .any(|role| role.role == GLOBAL_ADMIN_ROLE);
 
     if global_admin {
         return HttpResponse::BadRequest().json(common::Result::<String> {

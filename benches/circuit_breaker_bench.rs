@@ -1,19 +1,17 @@
 // Benchmarks for CircuitBreaker performance
 // Measures state transitions and request handling throughput
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use batata::core::service::circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, with_circuit_breaker,
 };
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 
 fn bench_allow_request_closed(c: &mut Criterion) {
     let cb = CircuitBreaker::new();
 
     c.bench_function("allow_request_closed", |b| {
-        b.iter(|| {
-            black_box(cb.allow_request())
-        })
+        b.iter(|| black_box(cb.allow_request()))
     });
 }
 
@@ -27,20 +25,14 @@ fn bench_allow_request_open(c: &mut Criterion) {
     cb.record_failure(); // Open the circuit
 
     c.bench_function("allow_request_open", |b| {
-        b.iter(|| {
-            black_box(cb.allow_request())
-        })
+        b.iter(|| black_box(cb.allow_request()))
     });
 }
 
 fn bench_record_success(c: &mut Criterion) {
     let cb = CircuitBreaker::new();
 
-    c.bench_function("record_success", |b| {
-        b.iter(|| {
-            cb.record_success()
-        })
-    });
+    c.bench_function("record_success", |b| b.iter(|| cb.record_success()));
 }
 
 fn bench_record_failure(c: &mut Criterion) {
@@ -50,11 +42,7 @@ fn bench_record_failure(c: &mut Criterion) {
     };
     let cb = CircuitBreaker::with_config(config);
 
-    c.bench_function("record_failure", |b| {
-        b.iter(|| {
-            cb.record_failure()
-        })
-    });
+    c.bench_function("record_failure", |b| b.iter(|| cb.record_failure()));
 }
 
 fn bench_state_transition_cycle(c: &mut Criterion) {
@@ -98,9 +86,7 @@ fn bench_reset(c: &mut Criterion) {
                 cb.record_failure(); // Open it
                 cb
             },
-            |cb| {
-                cb.reset()
-            },
+            |cb| cb.reset(),
             criterion::BatchSize::SmallInput,
         )
     });
@@ -109,11 +95,7 @@ fn bench_reset(c: &mut Criterion) {
 fn bench_get_state(c: &mut Criterion) {
     let cb = CircuitBreaker::new();
 
-    c.bench_function("get_state", |b| {
-        b.iter(|| {
-            black_box(cb.state())
-        })
-    });
+    c.bench_function("get_state", |b| b.iter(|| black_box(cb.state())));
 }
 
 fn bench_get_failure_count(c: &mut Criterion) {
@@ -123,9 +105,7 @@ fn bench_get_failure_count(c: &mut Criterion) {
     }
 
     c.bench_function("get_failure_count", |b| {
-        b.iter(|| {
-            black_box(cb.failure_count())
-        })
+        b.iter(|| black_box(cb.failure_count()))
     });
 }
 
@@ -168,8 +148,10 @@ fn bench_with_circuit_breaker_success(c: &mut Criterion) {
 
     c.bench_function("with_circuit_breaker_success", |b| {
         b.to_async(&rt).iter(|| async {
-            let result: Result<i32, batata::core::service::circuit_breaker::CircuitBreakerError<std::io::Error>> =
-                with_circuit_breaker(&cb, async { Ok(42) }).await;
+            let result: Result<
+                i32,
+                batata::core::service::circuit_breaker::CircuitBreakerError<std::io::Error>,
+            > = with_circuit_breaker(&cb, async { Ok(42) }).await;
             black_box(result)
         })
     });
@@ -185,10 +167,13 @@ fn bench_with_circuit_breaker_failure(c: &mut Criterion) {
 
     c.bench_function("with_circuit_breaker_failure", |b| {
         b.to_async(&rt).iter(|| async {
-            let result: Result<i32, batata::core::service::circuit_breaker::CircuitBreakerError<std::io::Error>> =
-                with_circuit_breaker(&cb, async {
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, "error"))
-                }).await;
+            let result: Result<
+                i32,
+                batata::core::service::circuit_breaker::CircuitBreakerError<std::io::Error>,
+            > = with_circuit_breaker(&cb, async {
+                Err(std::io::Error::new(std::io::ErrorKind::Other, "error"))
+            })
+            .await;
             black_box(result)
         })
     });
@@ -206,8 +191,10 @@ fn bench_with_circuit_breaker_rejected(c: &mut Criterion) {
 
     c.bench_function("with_circuit_breaker_rejected", |b| {
         b.to_async(&rt).iter(|| async {
-            let result: Result<i32, batata::core::service::circuit_breaker::CircuitBreakerError<std::io::Error>> =
-                with_circuit_breaker(&cb, async { Ok(42) }).await;
+            let result: Result<
+                i32,
+                batata::core::service::circuit_breaker::CircuitBreakerError<std::io::Error>,
+            > = with_circuit_breaker(&cb, async { Ok(42) }).await;
             black_box(result)
         })
     });
@@ -217,20 +204,26 @@ fn bench_failure_threshold_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("failure_threshold_scaling");
 
     for threshold in [5, 10, 50, 100].iter() {
-        group.bench_with_input(BenchmarkId::from_parameter(threshold), threshold, |b, &threshold| {
-            b.iter_batched(
-                || CircuitBreaker::with_config(CircuitBreakerConfig {
-                    failure_threshold: threshold,
-                    ..Default::default()
-                }),
-                |cb| {
-                    for _ in 0..threshold {
-                        cb.record_failure();
-                    }
-                },
-                criterion::BatchSize::SmallInput,
-            )
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(threshold),
+            threshold,
+            |b, &threshold| {
+                b.iter_batched(
+                    || {
+                        CircuitBreaker::with_config(CircuitBreakerConfig {
+                            failure_threshold: threshold,
+                            ..Default::default()
+                        })
+                    },
+                    |cb| {
+                        for _ in 0..threshold {
+                            cb.record_failure();
+                        }
+                    },
+                    criterion::BatchSize::SmallInput,
+                )
+            },
+        );
     }
 
     group.finish();

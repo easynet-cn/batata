@@ -1,6 +1,9 @@
 // RocksDB-based log storage for Raft
 // Implements openraft's storage traits using RocksDB for persistence
 
+// Allow large error types - StorageError is from openraft and follows their design patterns
+#![allow(clippy::result_large_err)]
+
 use std::fmt::Debug;
 use std::ops::RangeBounds;
 use std::path::Path;

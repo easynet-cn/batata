@@ -1,11 +1,11 @@
 // Benchmarks for authentication service performance
 // Measures JWT token encoding, decoding, and caching performance
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use batata::auth::service::auth::{
-    decode_jwt_token, decode_jwt_token_cached, encode_jwt_token, clear_token_cache,
-};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use batata::auth::service::auth::{
+    clear_token_cache, decode_jwt_token, decode_jwt_token_cached, encode_jwt_token,
+};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 
 fn test_secret_key() -> String {
     STANDARD.encode("benchmark-secret-key-that-is-long-enough-for-hs256")
@@ -30,9 +30,7 @@ fn bench_decode_jwt_token(c: &mut Criterion) {
     let token = encode_jwt_token("benchmark_user", &secret, 3600).unwrap();
 
     c.bench_function("decode_jwt_token", |b| {
-        b.iter(|| {
-            decode_jwt_token(black_box(&token), black_box(&secret))
-        })
+        b.iter(|| decode_jwt_token(black_box(&token), black_box(&secret)))
     });
 }
 
@@ -46,9 +44,7 @@ fn bench_decode_jwt_token_cached_miss(c: &mut Criterion) {
                 clear_token_cache();
                 encode_jwt_token("benchmark_user", &secret, 3600).unwrap()
             },
-            |token| {
-                decode_jwt_token_cached(black_box(&token), black_box(&secret))
-            },
+            |token| decode_jwt_token_cached(black_box(&token), black_box(&secret)),
             criterion::BatchSize::SmallInput,
         )
     });
@@ -62,9 +58,7 @@ fn bench_decode_jwt_token_cached_hit(c: &mut Criterion) {
     let _ = decode_jwt_token_cached(&token, &secret);
 
     c.bench_function("decode_jwt_token_cached_hit", |b| {
-        b.iter(|| {
-            decode_jwt_token_cached(black_box(&token), black_box(&secret))
-        })
+        b.iter(|| decode_jwt_token_cached(black_box(&token), black_box(&secret)))
     });
 }
 
@@ -77,7 +71,8 @@ fn bench_encode_decode_roundtrip(c: &mut Criterion) {
                 black_box("roundtrip_user"),
                 black_box(&secret),
                 black_box(3600),
-            ).unwrap();
+            )
+            .unwrap();
             decode_jwt_token(black_box(&token), black_box(&secret))
         })
     });
@@ -112,16 +107,18 @@ fn bench_username_length_impact(c: &mut Criterion) {
     for len in [8, 32, 128, 512].iter() {
         let username: String = (0..*len).map(|_| 'a').collect();
 
-        group.bench_with_input(BenchmarkId::from_parameter(len), &username, |b, username| {
-            b.iter(|| {
-                let token = encode_jwt_token(
-                    black_box(username),
-                    black_box(&secret),
-                    black_box(3600),
-                ).unwrap();
-                decode_jwt_token(black_box(&token), black_box(&secret))
-            })
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(len),
+            &username,
+            |b, username| {
+                b.iter(|| {
+                    let token =
+                        encode_jwt_token(black_box(username), black_box(&secret), black_box(3600))
+                            .unwrap();
+                    decode_jwt_token(black_box(&token), black_box(&secret))
+                })
+            },
+        );
     }
 
     group.finish();

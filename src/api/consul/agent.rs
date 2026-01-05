@@ -154,7 +154,7 @@ pub async fn list_services(
     let authz = acl_service.authorize_request(
         &req,
         ResourceType::Service,
-        "", // empty prefix means all services
+        "",    // empty prefix means all services
         false, // read access only
     );
     if !authz.allowed {

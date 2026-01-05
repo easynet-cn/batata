@@ -3,7 +3,7 @@
 
 use std::io::{Cursor, Read};
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use zip::ZipArchive;
 
@@ -21,7 +21,8 @@ pub fn parse_nacos_import_zip(data: &[u8]) -> anyhow::Result<Vec<NacosExportItem
     let cursor = Cursor::new(data);
     let mut archive = ZipArchive::new(cursor)?;
     let mut items: Vec<NacosExportItem> = Vec::new();
-    let mut content_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut content_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     let mut meta_map: std::collections::HashMap<String, NacosConfigMetadata> =
         std::collections::HashMap::new();
 
@@ -191,10 +192,10 @@ pub async fn import_configs(
             src_ip,
             &item.config_tags,
             &item.desc,
-            "",     // use
-            "",     // effect
+            "", // use
+            "", // effect
             &item.config_type,
-            "",     // schema
+            "", // schema
             &item.encrypted_data_key,
         )
         .await
@@ -226,16 +227,20 @@ pub async fn import_nacos_items(
     src_ip: &str,
 ) -> anyhow::Result<ImportResult> {
     let config_items: Vec<ConfigImportItem> = items.into_iter().map(|i| i.into()).collect();
-    import_configs(db, config_items, target_namespace_id, policy, src_user, src_ip).await
+    import_configs(
+        db,
+        config_items,
+        target_namespace_id,
+        policy,
+        src_user,
+        src_ip,
+    )
+    .await
 }
 
 /// Infer configuration type from file extension
 fn infer_config_type(filename: &str) -> String {
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
 
     match ext.as_str() {
         "properties" => "properties".to_string(),
@@ -310,7 +315,7 @@ mod tests {
     #[test]
     fn test_parse_nacos_import_zip() {
         use std::io::Write;
-        use zip::{write::SimpleFileOptions, ZipWriter};
+        use zip::{ZipWriter, write::SimpleFileOptions};
 
         // Create a test ZIP in memory
         let mut buffer = Cursor::new(Vec::new());
@@ -334,7 +339,8 @@ md5: abc123
 encryptedDataKey: ""
 createTime: 1704067200000
 modifyTime: 1704067200000"#;
-            zip.start_file("DEFAULT_GROUP/app.yaml.meta", options).unwrap();
+            zip.start_file("DEFAULT_GROUP/app.yaml.meta", options)
+                .unwrap();
             zip.write_all(meta.as_bytes()).unwrap();
 
             zip.finish().unwrap();
@@ -353,7 +359,7 @@ modifyTime: 1704067200000"#;
     #[test]
     fn test_parse_nacos_import_zip_without_meta() {
         use std::io::Write;
-        use zip::{write::SimpleFileOptions, ZipWriter};
+        use zip::{ZipWriter, write::SimpleFileOptions};
 
         let mut buffer = Cursor::new(Vec::new());
         {
@@ -361,7 +367,8 @@ modifyTime: 1704067200000"#;
             let options = SimpleFileOptions::default();
 
             // Only add config content, no metadata
-            zip.start_file("MY_GROUP/config.properties", options).unwrap();
+            zip.start_file("MY_GROUP/config.properties", options)
+                .unwrap();
             zip.write_all(b"key=value").unwrap();
 
             zip.finish().unwrap();

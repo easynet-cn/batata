@@ -176,7 +176,14 @@ impl MemberHealthChecker {
                 let config = config.clone();
 
                 let handle = tokio::spawn(async move {
-                    Self::check_member(&address, &health_status, &circuit_breakers, &members, &config).await;
+                    Self::check_member(
+                        &address,
+                        &health_status,
+                        &circuit_breakers,
+                        &members,
+                        &config,
+                    )
+                    .await;
                 });
                 handles.push(handle);
             }

@@ -127,9 +127,7 @@ async fn create(
             .build()
     );
 
-    let result =
-        auth::service::role::create(data.db(), &params.role, &params.username)
-            .await;
+    let result = auth::service::role::create(data.db(), &params.role, &params.username).await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("add role ok!"),

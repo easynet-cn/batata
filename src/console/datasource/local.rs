@@ -7,14 +7,18 @@ use std::sync::Arc;
 
 use crate::{
     api::{
-        config::model::{ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo},
+        config::model::{
+            ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+        },
         model::{Member, Page},
     },
+    config::export_model::{ImportResult, SameConfigPolicy},
     config::model::ConfigAllInfo,
-    console::v3::cluster::{ClusterHealthResponse, ClusterHealthSummaryResponse, SelfMemberResponse},
+    console::v3::cluster::{
+        ClusterHealthResponse, ClusterHealthSummaryResponse, SelfMemberResponse,
+    },
     core::service::cluster::ServerMemberManager,
     model::{common::Configuration, naming::Namespace},
-    config::export_model::{ImportResult, SameConfigPolicy},
     service,
 };
 
@@ -24,6 +28,7 @@ use super::ConsoleDataSource;
 pub struct LocalDataSource {
     database_connection: DatabaseConnection,
     server_member_manager: Arc<ServerMemberManager>,
+    #[allow(dead_code)]
     configuration: Configuration,
 }
 
@@ -264,7 +269,10 @@ impl ConsoleDataSource for LocalDataSource {
 
     // ============== History Operations ==============
 
-    async fn history_find_by_id(&self, nid: u64) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
+    async fn history_find_by_id(
+        &self,
+        nid: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
         let result = service::history::find_by_id(&self.database_connection, nid).await?;
         Ok(result.map(ConfigHistoryDetailInfo::from))
     }
@@ -303,11 +311,9 @@ impl ConsoleDataSource for LocalDataSource {
         &self,
         namespace_id: &str,
     ) -> anyhow::Result<Vec<ConfigBasicInfo>> {
-        let result = service::history::find_configs_by_namespace_id(
-            &self.database_connection,
-            namespace_id,
-        )
-        .await?;
+        let result =
+            service::history::find_configs_by_namespace_id(&self.database_connection, namespace_id)
+                .await?;
 
         Ok(result.into_iter().map(ConfigBasicInfo::from).collect())
     }

@@ -67,7 +67,7 @@ impl PayloadHandler for InstanceRequestHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -127,7 +127,7 @@ impl PayloadHandler for BatchInstanceRequestHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -166,7 +166,7 @@ impl PayloadHandler for ServiceListRequestHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -209,7 +209,7 @@ impl PayloadHandler for ServiceQueryRequestHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -259,7 +259,7 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -314,7 +314,7 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -345,7 +345,7 @@ impl PayloadHandler for NotifySubscriberHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -374,7 +374,7 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -402,7 +402,7 @@ impl PayloadHandler for NamingFuzzyWatchChangeNotifyHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {
@@ -430,7 +430,7 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
             ..Default::default()
         };
 
-        Ok(response.into_payload(Some(metadata)))
+        Ok(response.to_payload(Some(metadata)))
     }
 
     fn can_handle(&self) -> &'static str {

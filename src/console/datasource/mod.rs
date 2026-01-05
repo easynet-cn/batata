@@ -9,7 +9,9 @@ use sea_orm::DatabaseConnection;
 
 use crate::{
     api::{
-        config::model::{ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo},
+        config::model::{
+            ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+        },
         model::{Member, Page},
     },
     config::{
@@ -148,7 +150,8 @@ pub trait ConsoleDataSource: Send + Sync {
     // ============== History Operations ==============
 
     /// Find history by ID
-    async fn history_find_by_id(&self, nid: u64) -> anyhow::Result<Option<ConfigHistoryDetailInfo>>;
+    async fn history_find_by_id(&self, nid: u64)
+    -> anyhow::Result<Option<ConfigHistoryDetailInfo>>;
 
     /// Search history with pagination
     async fn history_search_page(

@@ -929,7 +929,10 @@ impl std::fmt::Debug for AppState {
         f.debug_struct("AppState")
             .field("configuration", &self.configuration)
             .field("database_connection", &self.database_connection.is_some())
-            .field("server_member_manager", &self.server_member_manager.is_some())
+            .field(
+                "server_member_manager",
+                &self.server_member_manager.is_some(),
+            )
             .field("console_datasource", &"<dyn ConsoleDataSource>")
             .finish()
     }
@@ -952,12 +955,24 @@ impl AppState {
         self.database_connection.is_none()
     }
 
+    /// Try to get database connection, returns None if not available
+    /// Use this in code that needs to handle remote console mode gracefully
+    pub fn try_db(&self) -> Option<&DatabaseConnection> {
+        self.database_connection.as_ref()
+    }
+
     /// Get database connection (panics if not available)
     /// Use this only in server endpoints that require database access
     pub fn db(&self) -> &DatabaseConnection {
         self.database_connection
             .as_ref()
             .expect("Database connection not available in remote console mode")
+    }
+
+    /// Try to get server member manager, returns None if not available
+    /// Use this in code that needs to handle remote console mode gracefully
+    pub fn try_member_manager(&self) -> Option<&Arc<ServerMemberManager>> {
+        self.server_member_manager.as_ref()
     }
 
     /// Get server member manager (panics if not available)

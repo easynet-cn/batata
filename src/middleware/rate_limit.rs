@@ -1,7 +1,6 @@
 // Rate limiting middleware for API protection
 // Uses token bucket algorithm with configurable limits per IP
 
-use std::collections::HashMap;
 use std::future::{Future, Ready, ready};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -13,8 +12,8 @@ use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     http::StatusCode,
 };
+use dashmap::DashMap;
 use serde::Serialize;
-use std::sync::Mutex;
 
 /// Rate limiter configuration
 #[derive(Clone)]
@@ -81,14 +80,14 @@ impl TokenBucket {
 
 /// Rate limiter state shared across requests
 pub struct RateLimiterState {
-    buckets: Mutex<HashMap<String, TokenBucket>>,
+    buckets: DashMap<String, TokenBucket>,
     config: RateLimitConfig,
 }
 
 impl RateLimiterState {
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
-            buckets: Mutex::new(HashMap::new()),
+            buckets: DashMap::new(),
             config,
         }
     }
@@ -98,11 +97,7 @@ impl RateLimiterState {
             return (true, self.config.max_requests);
         }
 
-        let mut buckets = match self.buckets.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        let bucket = buckets.entry(key.to_string()).or_insert_with(|| {
+        let mut bucket = self.buckets.entry(key.to_string()).or_insert_with(|| {
             TokenBucket::new(self.config.max_requests, self.config.window_duration)
         });
 
@@ -113,12 +108,8 @@ impl RateLimiterState {
 
     /// Clean up old entries periodically
     pub fn cleanup(&self) {
-        let mut buckets = match self.buckets.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
         let now = Instant::now();
-        buckets.retain(|_, bucket| {
+        self.buckets.retain(|_, bucket| {
             now.duration_since(bucket.last_refill) < self.config.window_duration * 2
         });
     }
@@ -309,14 +300,14 @@ impl AuthAttemptEntry {
 
 /// Authentication rate limiter for protecting login endpoints
 pub struct AuthRateLimiter {
-    entries: Mutex<HashMap<String, AuthAttemptEntry>>,
+    entries: DashMap<String, AuthAttemptEntry>,
     config: AuthRateLimitConfig,
 }
 
 impl AuthRateLimiter {
     pub fn new(config: AuthRateLimitConfig) -> Self {
         Self {
-            entries: Mutex::new(HashMap::new()),
+            entries: DashMap::new(),
             config,
         }
     }
@@ -332,12 +323,8 @@ impl AuthRateLimiter {
             return (true, self.config.max_attempts, 0);
         }
 
-        let mut entries = match self.entries.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-
-        let entry = entries
+        let mut entry = self
+            .entries
             .entry(key.to_string())
             .or_insert_with(AuthAttemptEntry::new);
 
@@ -365,12 +352,8 @@ impl AuthRateLimiter {
             return (true, self.config.max_attempts, 0);
         }
 
-        let mut entries = match self.entries.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-
-        let entry = entries
+        let mut entry = self
+            .entries
             .entry(key.to_string())
             .or_insert_with(AuthAttemptEntry::new);
 
@@ -410,25 +393,15 @@ impl AuthRateLimiter {
             return;
         }
 
-        let mut entries = match self.entries.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-
-        entries.remove(key);
+        self.entries.remove(key);
     }
 
     /// Clean up old entries
     pub fn cleanup(&self) {
-        let mut entries = match self.entries.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-
         let now = Instant::now();
         let max_age = self.config.window_duration + self.config.lockout_duration;
 
-        entries.retain(|_, entry| {
+        self.entries.retain(|_, entry| {
             // Keep if locked or within window
             entry.is_locked() || now.duration_since(entry.first_attempt) < max_age
         });

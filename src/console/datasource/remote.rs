@@ -8,16 +8,18 @@ use tracing::warn;
 
 use crate::{
     api::{
-        config::model::{ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo},
+        config::model::{
+            ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+        },
         model::{Member, Page},
     },
+    config::export_model::{ImportResult, SameConfigPolicy},
     config::model::ConfigAllInfo,
     console::{
         client::{ConsoleApiClient, ConsoleHttpClient, http_client::RemoteConsoleConfig},
         v3::cluster::{ClusterHealthResponse, ClusterHealthSummaryResponse, SelfMemberResponse},
     },
     core::service::cluster::ServerMemberManager,
-    config::export_model::{ImportResult, SameConfigPolicy},
     model::{common::Configuration, naming::Namespace},
 };
 
@@ -55,19 +57,25 @@ impl RemoteDataSource {
     async fn refresh_cluster_cache(&self) {
         // Fetch members
         if let Ok(members) = self.api_client.cluster_all_members().await {
-            let mut cache = self.cached_members.write().unwrap();
+            let mut cache = self
+                .cached_members
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             *cache = members;
         }
 
         // Fetch health
         if let Ok(health) = self.api_client.cluster_get_health().await {
-            let mut cache = self.cached_health.write().unwrap();
+            let mut cache = self
+                .cached_health
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             *cache = Some(health);
         }
 
         // Fetch self
         if let Ok(self_member) = self.api_client.cluster_get_self().await {
-            let mut cache = self.cached_self.write().unwrap();
+            let mut cache = self.cached_self.write().unwrap_or_else(|e| e.into_inner());
             *cache = Some(self_member);
         }
     }
@@ -262,12 +270,13 @@ impl ConsoleDataSource for RemoteDataSource {
 
     // ============== History Operations ==============
 
-    async fn history_find_by_id(&self, nid: u64) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
+    async fn history_find_by_id(
+        &self,
+        nid: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
         // The remote API requires data_id, group_name, namespace_id
         // For now, we'll pass empty strings and let the API handle it by nid
-        self.api_client
-            .history_find_by_id(nid, "", "", "")
-            .await
+        self.api_client.history_find_by_id(nid, "", "", "").await
     }
 
     async fn history_search_page(
@@ -295,13 +304,16 @@ impl ConsoleDataSource for RemoteDataSource {
     // ============== Cluster Operations ==============
 
     fn cluster_all_members(&self) -> Vec<Member> {
-        self.cached_members.read().unwrap().clone()
+        self.cached_members
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn cluster_healthy_members(&self) -> Vec<Member> {
         self.cached_members
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|m| m.state.to_string() == "UP")
             .cloned()
@@ -311,7 +323,7 @@ impl ConsoleDataSource for RemoteDataSource {
     fn cluster_get_health(&self) -> ClusterHealthResponse {
         self.cached_health
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
             .unwrap_or(ClusterHealthResponse {
                 is_healthy: false,
@@ -330,7 +342,7 @@ impl ConsoleDataSource for RemoteDataSource {
     fn cluster_get_self(&self) -> SelfMemberResponse {
         self.cached_self
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
             .unwrap_or(SelfMemberResponse {
                 ip: "unknown".to_string(),
@@ -345,20 +357,23 @@ impl ConsoleDataSource for RemoteDataSource {
     fn cluster_get_member(&self, address: &str) -> Option<Member> {
         self.cached_members
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .find(|m| m.address == address)
             .cloned()
     }
 
     fn cluster_member_count(&self) -> usize {
-        self.cached_members.read().unwrap().len()
+        self.cached_members
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     fn cluster_is_standalone(&self) -> bool {
         self.cached_health
             .read()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|h| h.standalone)
             .unwrap_or(true)

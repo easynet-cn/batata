@@ -381,12 +381,7 @@ pub async fn get_node_checks(
     let node = path.into_inner();
 
     // Check ACL authorization for node read
-    let authz = acl_service.authorize_request(
-        &req,
-        ResourceType::Node,
-        &node,
-        false,
-    );
+    let authz = acl_service.authorize_request(&req, ResourceType::Node, &node, false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }

@@ -66,13 +66,7 @@ async fn get(
             .build()
     );
 
-    match service::namespace::get_by_namespace_id(
-        data.db(),
-        &params.namespace_id,
-        "1",
-    )
-    .await
-    {
+    match service::namespace::get_by_namespace_id(data.db(), &params.namespace_id, "1").await {
         Ok(namespace) => common::Result::<Namespace>::http_success(namespace),
         Err(err) => {
             if let Some(BatataError::ApiError(status, code, message, data)) = err.downcast_ref() {
@@ -159,13 +153,9 @@ async fn create(
         );
     }
 
-    let res = service::namespace::create(
-        data.db(),
-        &namespace_id,
-        &namespace_name,
-        &namespace_desc,
-    )
-    .await;
+    let res =
+        service::namespace::create(data.db(), &namespace_id, &namespace_name, &namespace_desc)
+            .await;
 
     common::Result::<bool>::http_success(res.is_ok())
 }
@@ -270,8 +260,7 @@ async fn exist(
         return common::Result::<bool>::http_success(false);
     }
 
-    let result =
-        service::namespace::check(data.db(), &params.custom_namespace_id).await;
+    let result = service::namespace::check(data.db(), &params.custom_namespace_id).await;
 
     match result {
         Ok(e) => common::Result::<bool>::http_success(e),

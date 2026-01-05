@@ -92,7 +92,10 @@ impl FromStr for SameConfigPolicy {
             "ABORT" => Ok(SameConfigPolicy::Abort),
             "SKIP" => Ok(SameConfigPolicy::Skip),
             "OVERWRITE" => Ok(SameConfigPolicy::Overwrite),
-            _ => Err(format!("Invalid policy: {}. Valid values: ABORT, SKIP, OVERWRITE", s)),
+            _ => Err(format!(
+                "Invalid policy: {}. Valid values: ABORT, SKIP, OVERWRITE",
+                s
+            )),
         }
     }
 }

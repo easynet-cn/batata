@@ -59,11 +59,10 @@ async fn login(
         return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
-    let user_option =
-        match auth::service::user::find_by_username(data.db(), &username).await {
-            Ok(user) => user,
-            Err(_) => return HttpResponse::InternalServerError().body("Database error"),
-        };
+    let user_option = match auth::service::user::find_by_username(data.db(), &username).await {
+        Ok(user) => user,
+        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+    };
 
     let user = match user_option {
         Some(u) => u,
@@ -85,13 +84,11 @@ async fn login(
                 }
             };
 
-        let global_admin = auth::service::role::has_global_admin_role_by_username(
-            data.db(),
-            &user.username,
-        )
-        .await
-        .ok()
-        .unwrap_or_default();
+        let global_admin =
+            auth::service::role::has_global_admin_role_by_username(data.db(), &user.username)
+                .await
+                .ok()
+                .unwrap_or_default();
 
         let login_result = LoginResult {
             access_token: access_token.clone(),

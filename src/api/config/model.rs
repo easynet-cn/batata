@@ -837,7 +837,7 @@ impl ResponseTrait for ConfigChangeBatchListenResponse {
 
 impl From<ConfigChangeBatchListenResponse> for Any {
     fn from(val: ConfigChangeBatchListenResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -875,7 +875,7 @@ impl ResponseTrait for ConfigPublishResponse {
 
 impl From<ConfigPublishResponse> for Any {
     fn from(val: ConfigPublishResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -927,7 +927,7 @@ impl ResponseTrait for ConfigQueryResponse {
 
 impl From<ConfigQueryResponse> for Any {
     fn from(val: ConfigQueryResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -965,7 +965,7 @@ impl ResponseTrait for ConfigRemoveResponse {
 
 impl From<ConfigRemoveResponse> for Any {
     fn from(val: ConfigRemoveResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -1003,7 +1003,7 @@ impl ResponseTrait for ConfigFuzzyWatchChangeNotifyResponse {
 
 impl From<ConfigFuzzyWatchChangeNotifyResponse> for Any {
     fn from(val: ConfigFuzzyWatchChangeNotifyResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -1041,7 +1041,7 @@ impl ResponseTrait for ConfigFuzzyWatchSyncResponse {
 
 impl From<ConfigFuzzyWatchSyncResponse> for Any {
     fn from(val: ConfigFuzzyWatchSyncResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -1081,7 +1081,7 @@ impl ResponseTrait for ClientConfigMetricResponse {
 
 impl From<ClientConfigMetricResponse> for Any {
     fn from(val: ClientConfigMetricResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -1119,7 +1119,7 @@ impl ResponseTrait for ConfigChangeNotifyResponse {
 
 impl From<ConfigChangeNotifyResponse> for Any {
     fn from(val: ConfigChangeNotifyResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -1156,7 +1156,7 @@ impl ResponseTrait for ConfigFuzzyWatchResponse {
 
 impl From<ConfigFuzzyWatchResponse> for Any {
     fn from(val: ConfigFuzzyWatchResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }
 
@@ -1194,6 +1194,6 @@ impl ResponseTrait for ConfigChangeClusterSyncResponse {
 
 impl From<ConfigChangeClusterSyncResponse> for Any {
     fn from(val: ConfigChangeClusterSyncResponse) -> Self {
-        val.into_any()
+        val.to_any()
     }
 }

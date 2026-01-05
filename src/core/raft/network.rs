@@ -78,8 +78,7 @@ impl RaftNetworkConnection {
 
         // Safe: client is guaranteed to be Some after the above block
         self.client.as_mut().ok_or_else(|| {
-            NetworkError::new(&std::io::Error::new(
-                std::io::ErrorKind::Other,
+            NetworkError::new(&std::io::Error::other(
                 "Client connection failed unexpectedly",
             ))
         })

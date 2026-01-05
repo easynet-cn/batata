@@ -3,9 +3,9 @@
 
 use std::io::{Cursor, Write};
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
-use zip::{write::SimpleFileOptions, ZipWriter};
+use zip::{ZipWriter, write::SimpleFileOptions};
 
 use crate::{
     config::{
@@ -28,22 +28,22 @@ pub async fn find_configs_for_export(
         .order_by_asc(config_info::Column::GroupId)
         .order_by_asc(config_info::Column::DataId);
 
-    if let Some(g) = group {
-        if !g.is_empty() {
-            query = query.filter(config_info::Column::GroupId.eq(g));
-        }
+    if let Some(g) = group
+        && !g.is_empty()
+    {
+        query = query.filter(config_info::Column::GroupId.eq(g));
     }
 
-    if let Some(ref ids) = data_ids {
-        if !ids.is_empty() {
-            query = query.filter(config_info::Column::DataId.is_in(ids.clone()));
-        }
+    if let Some(ref ids) = data_ids
+        && !ids.is_empty()
+    {
+        query = query.filter(config_info::Column::DataId.is_in(ids.clone()));
     }
 
-    if let Some(app) = app_name {
-        if !app.is_empty() {
-            query = query.filter(config_info::Column::AppName.eq(app));
-        }
+    if let Some(app) = app_name
+        && !app.is_empty()
+    {
+        query = query.filter(config_info::Column::AppName.eq(app));
     }
 
     let configs = query.all(db).await?;
@@ -63,22 +63,17 @@ pub async fn find_configs_for_export(
     };
 
     // Group tags by config id
-    let mut tags_map: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+    let mut tags_map: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
     for tag in tags {
-        tags_map
-            .entry(tag.id)
-            .or_default()
-            .push(tag.tag_name);
+        tags_map.entry(tag.id).or_default().push(tag.tag_name);
     }
 
     // Build ConfigAllInfo with tags
     let result: Vec<ConfigAllInfo> = configs
         .into_iter()
         .map(|c| {
-            let config_tags = tags_map
-                .get(&c.id)
-                .map(|t| t.join(","))
-                .unwrap_or_default();
+            let config_tags = tags_map.get(&c.id).map(|t| t.join(",")).unwrap_or_default();
             let mut info = ConfigAllInfo::from(c);
             info.config_tags = config_tags;
             info
@@ -117,7 +112,11 @@ pub fn create_nacos_export_zip(configs: Vec<ConfigAllInfo>) -> anyhow::Result<Ve
             desc: config.desc.clone(),
             config_tags: config.config_tags.clone(),
             md5: config.config_info.config_info_base.md5.clone(),
-            encrypted_data_key: config.config_info.config_info_base.encrypted_data_key.clone(),
+            encrypted_data_key: config
+                .config_info
+                .config_info_base
+                .encrypted_data_key
+                .clone(),
             create_time: config.create_time,
             modify_time: config.modify_time,
         };
@@ -267,7 +266,9 @@ mod tests {
 
         // Check meta file
         {
-            let meta_file = archive.by_name("DEFAULT_GROUP/app.properties.meta").unwrap();
+            let meta_file = archive
+                .by_name("DEFAULT_GROUP/app.properties.meta")
+                .unwrap();
             assert!(meta_file.size() > 0);
         }
     }

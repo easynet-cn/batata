@@ -1,3 +1,6 @@
+// Allow many arguments for config service operations - parameters match Nacos API
+#![allow(clippy::too_many_arguments)]
+
 use std::collections::HashMap;
 
 use anyhow::Ok;

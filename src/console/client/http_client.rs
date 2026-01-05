@@ -2,11 +2,8 @@
 // Handles authentication, retries, and failover
 
 use reqwest::{Client, Response, StatusCode};
-use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    sync::RwLock,
-    time::Duration,
-};
+use serde::{Serialize, de::DeserializeOwned};
+use std::{sync::RwLock, time::Duration};
 use tracing::{debug, error, warn};
 
 use crate::model::common::Configuration;
@@ -80,13 +77,19 @@ impl ConsoleHttpClient {
 
     /// Get the current server URL
     fn current_server(&self) -> String {
-        let index = *self.current_server_index.read().unwrap();
+        let index = *self
+            .current_server_index
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         self.config.server_addrs[index].clone()
     }
 
     /// Switch to the next server (for failover)
     fn switch_to_next_server(&self) {
-        let mut index = self.current_server_index.write().unwrap();
+        let mut index = self
+            .current_server_index
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         *index = (*index + 1) % self.config.server_addrs.len();
         debug!("Switched to server index: {}", *index);
     }
@@ -99,27 +102,32 @@ impl ConsoleHttpClient {
         if context_path.is_empty() {
             format!("{}{}", base_url, path)
         } else {
-            format!("{}/{}{}", base_url, context_path.trim_start_matches('/'), path)
+            format!(
+                "{}/{}{}",
+                base_url,
+                context_path.trim_start_matches('/'),
+                path
+            )
         }
     }
 
     /// Get the current access token
     fn get_token(&self) -> Option<String> {
-        let token_guard = self.token.read().unwrap();
-        token_guard.as_ref().map(|t| {
+        let token_guard = self.token.read().unwrap_or_else(|e| e.into_inner());
+        token_guard.as_ref().and_then(|t| {
             // Check if token is still valid (with 5 minute buffer)
             if t.expires_at > std::time::Instant::now() + Duration::from_secs(300) {
                 Some(t.access_token.clone())
             } else {
                 None
             }
-        }).flatten()
+        })
     }
 
     /// Set the access token
     fn set_token(&self, access_token: String, ttl_seconds: i64) {
         let expires_at = std::time::Instant::now() + Duration::from_secs(ttl_seconds as u64);
-        let mut token_guard = self.token.write().unwrap();
+        let mut token_guard = self.token.write().unwrap_or_else(|e| e.into_inner());
         *token_guard = Some(TokenInfo {
             access_token,
             expires_at,
@@ -152,7 +160,10 @@ impl ConsoleHttpClient {
                     .unwrap_or(18000);
 
                 self.set_token(access_token.to_string(), ttl);
-                debug!("Authentication successful, token expires in {} seconds", ttl);
+                debug!(
+                    "Authentication successful, token expires in {} seconds",
+                    ttl
+                );
                 return Ok(());
             }
         }
@@ -175,13 +186,13 @@ impl ConsoleHttpClient {
 
     /// Make a GET request
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
-        self.request_with_retry(|client, url, token| async move {
-            client
-                .get(&url)
-                .header("accessToken", &token)
-                .send()
-                .await
-        }, path).await
+        self.request_with_retry(
+            |client, url, token| async move {
+                client.get(&url).header("accessToken", &token).send().await
+            },
+            path,
+        )
+        .await
     }
 
     /// Make a GET request with query parameters
@@ -190,14 +201,18 @@ impl ConsoleHttpClient {
         path: &str,
         query: &Q,
     ) -> anyhow::Result<T> {
-        self.request_with_retry(|client, url, token| async move {
-            client
-                .get(&url)
-                .header("accessToken", &token)
-                .query(query)
-                .send()
-                .await
-        }, path).await
+        self.request_with_retry(
+            |client, url, token| async move {
+                client
+                    .get(&url)
+                    .header("accessToken", &token)
+                    .query(query)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
     }
 
     /// Make a POST request with form data
@@ -206,14 +221,18 @@ impl ConsoleHttpClient {
         path: &str,
         form: &F,
     ) -> anyhow::Result<T> {
-        self.request_with_retry(|client, url, token| async move {
-            client
-                .post(&url)
-                .header("accessToken", &token)
-                .form(form)
-                .send()
-                .await
-        }, path).await
+        self.request_with_retry(
+            |client, url, token| async move {
+                client
+                    .post(&url)
+                    .header("accessToken", &token)
+                    .form(form)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
     }
 
     /// Make a POST request with JSON body
@@ -222,14 +241,18 @@ impl ConsoleHttpClient {
         path: &str,
         body: &B,
     ) -> anyhow::Result<T> {
-        self.request_with_retry(|client, url, token| async move {
-            client
-                .post(&url)
-                .header("accessToken", &token)
-                .json(body)
-                .send()
-                .await
-        }, path).await
+        self.request_with_retry(
+            |client, url, token| async move {
+                client
+                    .post(&url)
+                    .header("accessToken", &token)
+                    .json(body)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
     }
 
     /// Make a DELETE request with query parameters
@@ -238,14 +261,18 @@ impl ConsoleHttpClient {
         path: &str,
         query: &Q,
     ) -> anyhow::Result<T> {
-        self.request_with_retry(|client, url, token| async move {
-            client
-                .delete(&url)
-                .header("accessToken", &token)
-                .query(query)
-                .send()
-                .await
-        }, path).await
+        self.request_with_retry(
+            |client, url, token| async move {
+                client
+                    .delete(&url)
+                    .header("accessToken", &token)
+                    .query(query)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
     }
 
     /// Make a PUT request with form data
@@ -254,14 +281,18 @@ impl ConsoleHttpClient {
         path: &str,
         form: &F,
     ) -> anyhow::Result<T> {
-        self.request_with_retry(|client, url, token| async move {
-            client
-                .put(&url)
-                .header("accessToken", &token)
-                .form(form)
-                .send()
-                .await
-        }, path).await
+        self.request_with_retry(
+            |client, url, token| async move {
+                client
+                    .put(&url)
+                    .header("accessToken", &token)
+                    .form(form)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
     }
 
     /// Make a GET request and return raw bytes
@@ -273,7 +304,8 @@ impl ConsoleHttpClient {
             let url = self.build_url(path);
             let token = self.ensure_token().await?;
 
-            match self.client
+            match self
+                .client
                 .get(&url)
                 .header("accessToken", &token)
                 .send()
@@ -307,13 +339,8 @@ impl ConsoleHttpClient {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All servers failed")))
     }
 
-
     /// Generic request with retry logic
-    async fn request_with_retry<T, F, Fut>(
-        &self,
-        request_fn: F,
-        path: &str,
-    ) -> anyhow::Result<T>
+    async fn request_with_retry<T, F, Fut>(&self, request_fn: F, path: &str) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
         F: Fn(Client, String, String) -> Fut,
