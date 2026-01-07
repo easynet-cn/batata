@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{debug, info};
 
-use crate::api::model::{Member, NodeState};
+use batata_api::model::{Member, NodeState};
 
 /// Type of member change event
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -219,6 +219,7 @@ impl MemberChangeListener for LoggingMemberChangeListener {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batata_api::model::MemberBuilder;
 
     #[tokio::test]
     async fn test_event_publisher() {
@@ -227,7 +228,7 @@ mod tests {
 
         let mut receiver = publisher.subscribe();
 
-        let member = crate::api::model::MemberBuilder::new("127.0.0.1".to_string(), 8848).build();
+        let member = MemberBuilder::new("127.0.0.1".to_string(), 8848).build();
         let event = MemberChangeEvent::member_join(member);
 
         publisher.publish(event.clone()).await;
@@ -239,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_event_creation() {
-        let member = crate::api::model::MemberBuilder::new("127.0.0.1".to_string(), 8848).build();
+        let member = MemberBuilder::new("127.0.0.1".to_string(), 8848).build();
 
         let join_event = MemberChangeEvent::member_join(member.clone());
         assert_eq!(join_event.change_type, MemberChangeType::MemberJoin);

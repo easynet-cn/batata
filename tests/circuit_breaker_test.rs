@@ -1,7 +1,7 @@
 // Integration tests for CircuitBreaker
 // Tests circuit breaker state transitions and protection patterns
 
-use batata::core::service::circuit_breaker::{
+use batata_core::service::circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError, CircuitState, with_circuit_breaker,
 };
 use std::time::Duration;
@@ -154,7 +154,7 @@ async fn test_with_circuit_breaker_failure() {
     // First failure
     let result1: Result<i32, CircuitBreakerError<std::io::Error>> =
         with_circuit_breaker(&cb, async {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
+            Err(std::io::Error::other("test error"))
         })
         .await;
 
@@ -167,7 +167,7 @@ async fn test_with_circuit_breaker_failure() {
     // Second failure opens circuit
     let _result2: Result<i32, CircuitBreakerError<std::io::Error>> =
         with_circuit_breaker(&cb, async {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "test error"))
+            Err(std::io::Error::other("test error"))
         })
         .await;
 

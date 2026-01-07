@@ -1,0 +1,17 @@
+[package]
+name = "batata-plugin"
+version = "0.1.0"
+authors = ["Tianyu Liang <124244236@qq.com>"]
+edition = "2024"
+description = "Plugin SPI definitions for Batata"
+license = "Apache-2.0"
+repository = "https://github.com/easynet-cn/batata"
+
+[dependencies]
+batata-common = { path = "../batata-common" }
+
+# Async
+async-trait = "0.1"
+
+# Error handling
+anyhow = "1.0"

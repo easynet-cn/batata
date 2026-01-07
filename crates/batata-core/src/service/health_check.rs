@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
-use crate::api::{
+use batata_api::{
     grpc::{Metadata, Payload, request_client::RequestClient},
     model::{Member, NodeState},
     remote::model::{HealthCheckRequest, RequestTrait},

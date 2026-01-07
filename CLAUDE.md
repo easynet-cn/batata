@@ -30,14 +30,35 @@ cargo clippy
 
 ## Database Setup
 
-Initialize the MySQL database using the schema file:
+Batata supports both MySQL and PostgreSQL databases.
+
+### MySQL Setup
 ```bash
 mysql -u user -p database < conf/mysql-schema.sql
 ```
 
-Generate SeaORM entities:
+### PostgreSQL Setup
 ```bash
+psql -U user -d batata -f conf/postgresql-schema.sql
+```
+
+### Configuration
+Set the database URL in `conf/application.yml`:
+```yaml
+# For MySQL:
+db.url: mysql://user:password@localhost:3306/batata
+
+# For PostgreSQL:
+db.url: postgres://user:password@localhost:5432/batata
+```
+
+### Generate SeaORM Entities
+```bash
+# For MySQL:
 sea-orm-cli generate entity -u "mysql://user:pass@localhost:3306/batata" -o ./src/entity --with-serde both
+
+# For PostgreSQL:
+sea-orm-cli generate entity -u "postgres://user:pass@localhost:5432/batata" -o ./src/entity --with-serde both
 ```
 
 ## Architecture
@@ -95,7 +116,7 @@ Main config: `conf/application.yml`
 Key settings:
 - `nacos.server.main.port`: Main HTTP port (default 8848)
 - `nacos.console.port`: Console port (default 8081)
-- `db.url`: MySQL connection URL
+- `db.url`: Database connection URL (MySQL or PostgreSQL)
 - `nacos.core.auth.plugin.nacos.token.secret.key`: JWT secret (Base64)
 
 ## Protocol Buffers
@@ -106,6 +127,6 @@ gRPC definitions in `proto/nacos_grpc_service.proto`. Build script (`build.rs`) 
 
 - **Error handling**: Custom `BatataError` enum with `AppError` wrapper for actix compatibility
 - **Async**: Tokio runtime with `pin-project-lite` for futures
-- **Database**: SeaORM for async MySQL access
+- **Database**: SeaORM for async database access (MySQL/PostgreSQL)
 - **Concurrency**: `Arc<DashMap>` for thread-safe shared state
 - **Logging**: Structured logging via `tracing` with Bunyan JSON formatter

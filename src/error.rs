@@ -311,7 +311,7 @@ pub const MCP_SERVER_NOT_FOUND: ErrorCode<'static> = ErrorCode {
     message: "MCP server not found",
 };
 
-pub const MCP_SERVER_MCP_SEVER_VERSION_NOT_FOUNDNOT_FOUND: ErrorCode<'static> = ErrorCode {
+pub const MCP_SERVER_VERSION_NOT_FOUND: ErrorCode<'static> = ErrorCode {
     code: 50001,
     message: "MCP server version not found",
 };

@@ -1,72 +1,189 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/batata-common",
+    "crates/batata-api",
+    "crates/batata-persistence",
+    "crates/batata-auth",
+    "crates/batata-consistency",
+    "crates/batata-core",
+    "crates/batata-config",
+    "crates/batata-naming",
+    "crates/batata-plugin",
+    "crates/batata-plugin-consul",
+    "crates/batata-console",
+    "crates/batata-client",
+    "crates/batata-server",
+]
+
+# Keep the original package as a separate member for backward compatibility
+# This allows gradual migration without breaking existing builds
+[workspace.package]
+version = "0.1.0"
+authors = ["Tianyu Liang <124244236@qq.com>"]
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/easynet-cn/batata"
+
+[workspace.dependencies]
+# Internal crates
+batata-common = { path = "crates/batata-common" }
+batata-api = { path = "crates/batata-api" }
+batata-persistence = { path = "crates/batata-persistence" }
+batata-auth = { path = "crates/batata-auth" }
+batata-consistency = { path = "crates/batata-consistency" }
+batata-core = { path = "crates/batata-core" }
+batata-config = { path = "crates/batata-config" }
+batata-naming = { path = "crates/batata-naming" }
+batata-plugin = { path = "crates/batata-plugin" }
+batata-plugin-consul = { path = "crates/batata-plugin-consul" }
+batata-console = { path = "crates/batata-console" }
+batata-client = { path = "crates/batata-client" }
+
+# Async runtime
+tokio = { version = "1.49", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# Web frameworks
+actix-web = "4"
+actix-rt = "2"
+actix-multipart = "0.7"
+tonic = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+
+# Database (supports both MySQL and PostgreSQL)
+sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Auth
+jsonwebtoken = "9"
+bcrypt = "0.17"
+
+# Consensus
+openraft = { version = "0.9", features = ["serde", "storage-v2"] }
+rocksdb = "0.24"
+
+# Caching
+moka = { version = "0.12", features = ["future", "sync"] }
+dashmap = "6.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
+tracing-bunyan-formatter = "0.3"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Utils
+chrono = "0.4"
+uuid = { version = "1.19", features = ["v4"] }
+regex = "1.11"
+base64 = "0.22"
+md5 = "0.8"
+bytes = "1.11"
+byteorder = "1.5"
+zip = "2.2"
+if-addrs = "0.14"
+
+# Configuration
+config = "0.15"
+clap = { version = "4.5", features = ["derive", "env"] }
+
+# Metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+
+# Additional workspace dependencies for root package
+actix-service = "2.0"
+actix-utils = "3.0"
+htmlescape = "0.3"
+pin-project-lite = "0.2"
+tokio-stream = "0.1"
+tonic-prost = "0.14"
+tower = "0.5"
+tracing-log = "0.2"
+serde_urlencoded = "0.7"
+serde_with = "3.16"
+
+# ============================================
+# Original package configuration (for backward compatibility)
+# This section keeps the original monolithic build working
+# ============================================
+
 [package]
 name = "batata"
 version = "0.1.0"
 authors = ["Tianyu Liang <124244236@qq.com>"]
 edition = "2024"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-actix-macros = "0.2.4"
-actix-service = "2.0.3"
-actix-utils = "3.0.1"
-actix-web = { version = "4.12.1" }
-anyhow = "1.0.100"
-base64 = "0.22.1"
-bcrypt = "0.17.1"
-bytes = "1.11.0"
-chrono = "0.4.42"
-clap = { version = "4.5.54", features = ["derive", "env"] }
-config = "0.15.19"
-dashmap = "6.1.0"
-env_logger = "0.11.8"
-futures = "0.3.31"
-htmlescape = "0.3.1"
-if-addrs = "0.14.0"
-jsonwebtoken = "9.3.1"
-md5 = "0.8.0"
-pin-project-lite = "0.2.16"
-prost = "0.14.1"
-prost-types = "0.14.1"
-regex = "1.11.3"
-reqwest = { version = "0.12.26", features = ["json"] }
-sea-orm = { version = "1.1.19", features = ["sqlx-mysql", "runtime-tokio"] }
-serde = "1.0.228"
-serde_json = "1.0.148"
-serde_with = "3.16.1"
-thiserror = "2.0.17"
-time = "0.3.44"
-tokio = { version = "1.49.0", features = ["full"] }
-tokio-stream = "0.1.17"
-tonic = "0.14.2"
-tonic-prost = "0.14.2"
-tower = "0.5.2"
-tracing = { version = "0.1.44", features = ["log"] }
-tracing-bunyan-formatter = "0.3.10"
-tracing-log = "0.2.0"
-tracing-subscriber = { version = "0.3.19", features = ["registry", "env-filter"] }
-uuid = { version = "1.19.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
+# Use workspace dependencies where possible
+actix-web.workspace = true
+actix-multipart.workspace = true
+actix-service.workspace = true
+actix-utils.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bcrypt.workspace = true
+byteorder.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+clap.workspace = true
+config.workspace = true
+dashmap.workspace = true
+futures.workspace = true
+htmlescape.workspace = true
+if-addrs.workspace = true
+jsonwebtoken.workspace = true
+md5.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+moka.workspace = true
+openraft.workspace = true
+pin-project-lite.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+rocksdb.workspace = true
+sea-orm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+serde_with.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tower.workspace = true
+tracing.workspace = true
+tracing-bunyan-formatter.workspace = true
+tracing-log.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+zip.workspace = true
 
-# Raft consensus
-openraft = { version = "0.9.21", features = ["serde", "storage-v2"] }
-rocksdb = "0.24.0"
-byteorder = "1.5.0"
-
-# Caching
-moka = { version = "0.12", features = ["future", "sync"] }
-
-# Metrics and observability
-metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
-
-# Async traits
-async-trait = "0.1"
-
-# Config import/export
-zip = "2.2"
-actix-multipart = "0.7"
-serde_yaml = "0.9"
-serde_urlencoded = "0.7.1"
+# Internal crates
+batata-api.workspace = true
+batata-client.workspace = true
+batata-config.workspace = true
+batata-console.workspace = true
+batata-core.workspace = true
+batata-persistence.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
@@ -87,11 +204,11 @@ harness = false
 tonic-prost-build = "0.14.2"
 
 [profile.dev]
-incremental = true # Compile your binary in smaller steps.
+incremental = true
 
 [profile.release]
-codegen-units = 1 # Allows LLVM to perform better optimization.
-lto = true # Enables link-time-optimizations.
-opt-level = "s" # Prioritizes small binary size. Use `3` if you prefer speed.
-panic = "abort" # Higher performance by disabling panic handlers.
-strip = true # Ensures debug symbols are removed.
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

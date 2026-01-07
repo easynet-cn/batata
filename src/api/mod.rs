@@ -10,6 +10,8 @@ pub mod config {
 pub mod consul;
 
 // gRPC service definitions and implementations
+// Allow non_camel_case_types for generated protobuf code (requestBiStream -> requestBiStreamStream)
+#[allow(non_camel_case_types)]
 #[path = "grpc/_.rs"]
 pub mod grpc;
 

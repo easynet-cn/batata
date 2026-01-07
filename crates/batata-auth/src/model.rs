@@ -1,0 +1,208 @@
+//! Authentication and authorization models
+//!
+//! This file defines data structures for users, roles, permissions, and JWT tokens
+
+use std::collections::HashMap;
+
+use jsonwebtoken::errors::ErrorKind;
+use serde::{Deserialize, Serialize};
+
+use batata_persistence::entity::{permissions, roles, users};
+
+// Auth configuration keys
+pub const NACOS_CORE_AUTH_ENABLED: &str = "nacos.core.auth.enabled";
+pub const NACOS_CORE_AUTH_CONSOLE_ENABLED: &str = "nacos.core.auth.console.enabled";
+pub const NACOS_CORE_AUTH_ADMIN_ENABLED: &str = "nacos.core.auth.admin.enabled";
+pub const NACOS_CORE_AUTH_SYSTEM_TYPE: &str = "nacos.core.auth.system.type";
+pub const NACOS_CORE_AUTH_CACHING_ENABLED: &str = "nacos.core.auth.caching.enabled";
+pub const NACOS_CORE_AUTH_SERVER_IDENTITY_KEY: &str = "nacos.core.auth.server.identity.key";
+pub const NACOS_CORE_AUTH_SERVER_IDENTITY_VALUE: &str = "nacos.core.auth.server.identity.value";
+
+pub const AUTH_PLUGIN_TYPE: &str = "nacos";
+pub const LDAP_AUTH_PLUGIN_TYPE: &str = "ldap";
+pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
+pub const AUTHORIZATION_HEADER: &str = "Authorization";
+pub const TOKEN_PREFIX: &str = "Bearer ";
+pub const DEFAULT_USER: &str = "nacos";
+pub const PARAM_USERNAME: &str = "username";
+pub const PARAM_PASSWORD: &str = "password";
+pub const CONSOLE_RESOURCE_NAME_PREFIX: &str = "console/";
+pub const UPDATE_PASSWORD_ENTRY_POINT: &str = "console/user/password";
+pub const LOCK_OPERATOR_POINT: &str = "grpc/lock";
+pub const NACOS_USER_KEY: &str = "nacosuser";
+pub const TOKEN_SECRET_KEY: &str = "nacos.core.auth.plugin.nacos.token.secret.key";
+pub const DEFAULT_TOKEN_SECRET_KEY: &str = "";
+pub const TOKEN_EXPIRE_SECONDS: &str = "nacos.core.auth.plugin.nacos.token.expire.seconds";
+pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 18000;
+pub const MAX_PASSWORD_LENGTH: i32 = 72;
+pub const USER_PATH: &str = "/v3/auth/user";
+pub const ROLE_PATH: &str = "/v3/auth/role";
+pub const PERMISSION_PATH: &str = "/v3/auth/permission";
+pub const USER_NOT_FOUND_MESSAGE: &str =
+    "User not found! Please check user exist or password is right!";
+pub const ONLY_IDENTITY: &str = "only_identity";
+
+/// Basic user information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub username: String,
+    pub password: String,
+}
+
+impl From<users::Model> for User {
+    fn from(value: users::Model) -> Self {
+        Self {
+            username: value.username,
+            password: value.password,
+        }
+    }
+}
+
+impl From<&users::Model> for User {
+    fn from(value: &users::Model) -> Self {
+        Self {
+            username: value.username.to_string(),
+            password: value.password.to_string(),
+        }
+    }
+}
+
+/// Nacos user with authentication token
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NacosUser {
+    pub username: String,
+    pub password: String,
+    pub token: String,
+    pub global_admin: bool,
+}
+
+/// JWT payload for Nacos authentication
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NacosJwtPayload {
+    pub sub: String,
+    pub exp: i64,
+}
+
+/// Role information
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleInfo {
+    pub role: String,
+    pub username: String,
+}
+
+impl From<roles::Model> for RoleInfo {
+    fn from(value: roles::Model) -> Self {
+        Self {
+            username: value.username,
+            role: value.role,
+        }
+    }
+}
+
+impl From<&roles::Model> for RoleInfo {
+    fn from(value: &roles::Model) -> Self {
+        Self {
+            username: value.username.to_string(),
+            role: value.role.to_string(),
+        }
+    }
+}
+
+/// Permission information
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionInfo {
+    pub role: String,
+    pub resource: String,
+    pub action: String,
+}
+
+impl From<permissions::Model> for PermissionInfo {
+    fn from(value: permissions::Model) -> Self {
+        Self {
+            role: value.role,
+            resource: value.resource,
+            action: value.action,
+        }
+    }
+}
+
+impl From<&permissions::Model> for PermissionInfo {
+    fn from(value: &permissions::Model) -> Self {
+        Self {
+            role: value.role.to_string(),
+            resource: value.resource.to_string(),
+            action: value.action.to_string(),
+        }
+    }
+}
+
+/// Resource for permission checking
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resource {
+    pub namespace_id: String,
+    pub group: String,
+    pub name: String,
+    pub r#type: String,
+    pub properties: HashMap<String, serde_json::Value>,
+}
+
+impl Resource {
+    pub const SPLITTER: &str = ":";
+    pub const ANY: &str = "*";
+    pub const ACTION: &str = "action";
+    pub const REQUEST_CLASS: &str = "requestClass";
+}
+
+/// Auth context passed through request extensions
+#[derive(Debug, Default, Clone)]
+pub struct AuthContext {
+    pub username: String,
+    pub jwt_error: Option<jsonwebtoken::errors::Error>,
+}
+
+impl AuthContext {
+    pub fn jwt_error_string(&self) -> String {
+        if let Some(e) = &self.jwt_error {
+            match e.kind() {
+                ErrorKind::ExpiredSignature => "token expired!".to_string(),
+                _ => e.to_string(),
+            }
+        } else {
+            String::default()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_auth_constants() {
+        assert_eq!(GLOBAL_ADMIN_ROLE, "ROLE_ADMIN");
+        assert_eq!(AUTHORIZATION_HEADER, "Authorization");
+        assert_eq!(TOKEN_PREFIX, "Bearer ");
+        assert_eq!(DEFAULT_USER, "nacos");
+        assert_eq!(DEFAULT_TOKEN_EXPIRE_SECONDS, 18000);
+    }
+
+    #[test]
+    fn test_resource_constants() {
+        assert_eq!(Resource::SPLITTER, ":");
+        assert_eq!(Resource::ANY, "*");
+        assert_eq!(Resource::ACTION, "action");
+    }
+
+    #[test]
+    fn test_auth_context_default() {
+        let ctx = AuthContext::default();
+        assert!(ctx.username.is_empty());
+        assert!(ctx.jwt_error.is_none());
+        assert_eq!(ctx.jwt_error_string(), "");
+    }
+}

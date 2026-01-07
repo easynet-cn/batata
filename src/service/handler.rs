@@ -45,10 +45,10 @@ impl PayloadHandler for HealthCheckHandler {
 }
 
 #[derive(Clone)]
-pub struct ServerCheckHanlder {}
+pub struct ServerCheckHandler {}
 
 #[tonic::async_trait]
-impl PayloadHandler for ServerCheckHanlder {
+impl PayloadHandler for ServerCheckHandler {
     async fn handle(&self, connection: &Connection, _: &Payload) -> Result<Payload, Status> {
         let response = ServerCheckResponse {
             response: Response::new(),

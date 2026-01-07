@@ -1,0 +1,31 @@
+[package]
+name = "batata-api"
+version = "0.1.0"
+authors = ["Tianyu Liang <124244236@qq.com>"]
+edition = "2024"
+description = "API definitions for Batata (gRPC and HTTP models)"
+license = "Apache-2.0"
+repository = "https://github.com/easynet-cn/batata"
+
+[dependencies]
+batata-common = { path = "../batata-common" }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# gRPC
+prost = "0.14"
+prost-types = "0.14"
+tonic = "0.14"
+tonic-prost = "0.14"
+http = "1.2"
+
+# Async
+async-trait = "0.1"
+
+# Utils
+bytes = "1.11"
+
+[build-dependencies]
+tonic-prost-build = "0.14"

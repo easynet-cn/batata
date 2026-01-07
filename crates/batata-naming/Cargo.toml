@@ -1,0 +1,37 @@
+[package]
+name = "batata-naming"
+version = "0.1.0"
+authors = ["Tianyu Liang <124244236@qq.com>"]
+edition = "2024"
+description = "Service discovery for Batata"
+license = "Apache-2.0"
+repository = "https://github.com/easynet-cn/batata"
+
+[dependencies]
+batata-common = { path = "../batata-common" }
+batata-api = { path = "../batata-api" }
+batata-persistence = { path = "../batata-persistence" }
+batata-consistency = { path = "../batata-consistency" }
+
+# Concurrency
+dashmap = "6.1"
+
+# Database
+sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async
+async-trait = "0.1"
+tokio = { version = "1.49", features = ["full"] }
+
+# Logging
+tracing = "0.1"
+
+# Error handling
+anyhow = "1.0"
+
+# Time
+chrono = "0.4"

@@ -7,6 +7,8 @@ pub mod remote;
 use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 
+use batata_core::cluster::ServerMemberManager;
+
 use crate::{
     api::{
         config::model::{
@@ -19,7 +21,6 @@ use crate::{
         model::ConfigAllInfo,
     },
     console::v3::cluster::{ClusterHealthResponse, SelfMemberResponse},
-    core::service::cluster::ServerMemberManager,
     model::{common::Configuration, naming::Namespace},
 };
 use std::sync::Arc;

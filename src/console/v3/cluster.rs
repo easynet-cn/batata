@@ -7,9 +7,13 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
     api::model::Member,
-    core::service::cluster::ClusterHealthSummary,
     model::{self, common::AppState},
     secured,
+};
+
+// Re-export cluster response types from batata_console
+pub use batata_console::model::{
+    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, SelfMemberResponse,
 };
 
 // Parameters for cluster node query
@@ -18,51 +22,6 @@ use crate::{
 struct GetNodesParam {
     pub keyword: Option<String>,
     pub with_health: Option<bool>,
-}
-
-// Response for cluster health status
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClusterHealthResponse {
-    pub is_healthy: bool,
-    pub summary: ClusterHealthSummaryResponse,
-    pub standalone: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClusterHealthSummaryResponse {
-    pub total: usize,
-    pub up: usize,
-    pub down: usize,
-    pub suspicious: usize,
-    pub starting: usize,
-    pub isolation: usize,
-}
-
-impl From<ClusterHealthSummary> for ClusterHealthSummaryResponse {
-    fn from(summary: ClusterHealthSummary) -> Self {
-        Self {
-            total: summary.total,
-            up: summary.up,
-            down: summary.down,
-            suspicious: summary.suspicious,
-            starting: summary.starting,
-            isolation: summary.isolation,
-        }
-    }
-}
-
-// Response for self member info
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelfMemberResponse {
-    pub ip: String,
-    pub port: u16,
-    pub address: String,
-    pub state: String,
-    pub is_standalone: bool,
-    pub version: String,
 }
 
 // Parameters for member state update (reserved for future use)

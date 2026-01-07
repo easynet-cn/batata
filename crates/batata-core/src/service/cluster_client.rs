@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
-use crate::api::{
+use batata_api::{
     grpc::{Metadata, Payload, request_client::RequestClient},
     model::Member,
     remote::model::{LABEL_SOURCE, LABEL_SOURCE_CLUSTER, RequestTrait},
@@ -27,6 +27,8 @@ pub struct ClusterClientConfig {
     pub max_retries: u32,
     /// Retry delay
     pub retry_delay: Duration,
+    /// Idle connection timeout - connections unused for this duration will be removed
+    pub idle_timeout: Duration,
 }
 
 impl Default for ClusterClientConfig {
@@ -36,6 +38,20 @@ impl Default for ClusterClientConfig {
             request_timeout: Duration::from_secs(5),
             max_retries: 3,
             retry_delay: Duration::from_millis(500),
+            idle_timeout: Duration::from_secs(300), // 5 minutes default
+        }
+    }
+}
+
+impl ClusterClientConfig {
+    /// Create a ClusterClientConfig from application Configuration
+    pub fn from_configuration(config: &crate::model::Configuration) -> Self {
+        Self {
+            connect_timeout: Duration::from_millis(config.cluster_connect_timeout_ms()),
+            request_timeout: Duration::from_millis(config.cluster_request_timeout_ms()),
+            max_retries: config.cluster_max_retries(),
+            retry_delay: Duration::from_millis(config.cluster_retry_delay_ms()),
+            idle_timeout: Duration::from_millis(config.cluster_idle_timeout_ms()),
         }
     }
 }
@@ -272,10 +288,61 @@ impl ClusterClientManager {
     pub fn connection_count(&self) -> usize {
         self.connections.len()
     }
+
+    /// Clean up idle connections that haven't been used for longer than idle_timeout
+    pub async fn cleanup_idle_connections(&self) -> usize {
+        let now = chrono::Utc::now().timestamp_millis();
+        let idle_timeout_ms = self.config.idle_timeout.as_millis() as i64;
+        let mut removed = 0;
+
+        // Collect keys to remove (to avoid holding lock during iteration)
+        let keys_to_remove: Vec<String> = {
+            let mut keys = Vec::new();
+            for entry in self.connections.iter() {
+                let last_used = *entry.value().last_used.read().await;
+                if now - last_used > idle_timeout_ms {
+                    keys.push(entry.key().clone());
+                }
+            }
+            keys
+        };
+
+        // Remove stale connections
+        for key in keys_to_remove {
+            self.connections.remove(&key);
+            debug!("Removed idle cluster connection to {} (idle timeout)", key);
+            removed += 1;
+        }
+
+        if removed > 0 {
+            info!(
+                "Cleaned up {} idle cluster connections (threshold: {:?})",
+                removed, self.config.idle_timeout
+            );
+        }
+
+        removed
+    }
+
+    /// Start a background task that periodically cleans up idle connections
+    pub fn start_cleanup_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        let cleanup_interval = self.config.idle_timeout / 2; // Check at half the idle timeout
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(cleanup_interval);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                interval.tick().await;
+                self.cleanup_idle_connections().await;
+            }
+        })
+    }
 }
 
 /// Cluster request sender helper
 pub struct ClusterRequestSender {
+    #[allow(dead_code)] // Will be used once ConfigChangeClusterSyncRequest is migrated
     client_manager: Arc<ClusterClientManager>,
 }
 
@@ -284,45 +351,46 @@ impl ClusterRequestSender {
         Self { client_manager }
     }
 
-    /// Send config change sync to a specific node
-    pub async fn send_config_change_sync(
-        &self,
-        address: &str,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        last_modified: i64,
-    ) -> Result<Payload, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::api::config::model::ConfigChangeClusterSyncRequest;
-
-        let mut request = ConfigChangeClusterSyncRequest::new();
-        request.config_request.data_id = data_id.to_string();
-        request.config_request.group = group.to_string();
-        request.config_request.tenant = tenant.to_string();
-        request.last_modified = last_modified;
-
-        self.client_manager.send_request(address, request).await
-    }
-
-    /// Broadcast config change to all cluster nodes
-    pub async fn broadcast_config_change(
-        &self,
-        members: &[Member],
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-        last_modified: i64,
-    ) -> Vec<(String, Result<Payload, String>)> {
-        use crate::api::config::model::ConfigChangeClusterSyncRequest;
-
-        let mut request = ConfigChangeClusterSyncRequest::new();
-        request.config_request.data_id = data_id.to_string();
-        request.config_request.group = group.to_string();
-        request.config_request.tenant = tenant.to_string();
-        request.last_modified = last_modified;
-
-        self.client_manager.broadcast(members, request).await
-    }
+    // TODO: Re-enable once ConfigChangeClusterSyncRequest is migrated to batata-api
+    // /// Send config change sync to a specific node
+    // pub async fn send_config_change_sync(
+    //     &self,
+    //     address: &str,
+    //     data_id: &str,
+    //     group: &str,
+    //     tenant: &str,
+    //     last_modified: i64,
+    // ) -> Result<Payload, Box<dyn std::error::Error + Send + Sync>> {
+    //     use batata_api::config::model::ConfigChangeClusterSyncRequest;
+    //
+    //     let mut request = ConfigChangeClusterSyncRequest::new();
+    //     request.config_request.data_id = data_id.to_string();
+    //     request.config_request.group = group.to_string();
+    //     request.config_request.tenant = tenant.to_string();
+    //     request.last_modified = last_modified;
+    //
+    //     self.client_manager.send_request(address, request).await
+    // }
+    //
+    // /// Broadcast config change to all cluster nodes
+    // pub async fn broadcast_config_change(
+    //     &self,
+    //     members: &[Member],
+    //     data_id: &str,
+    //     group: &str,
+    //     tenant: &str,
+    //     last_modified: i64,
+    // ) -> Vec<(String, Result<Payload, String>)> {
+    //     use batata_api::config::model::ConfigChangeClusterSyncRequest;
+    //
+    //     let mut request = ConfigChangeClusterSyncRequest::new();
+    //     request.config_request.data_id = data_id.to_string();
+    //     request.config_request.group = group.to_string();
+    //     request.config_request.tenant = tenant.to_string();
+    //     request.last_modified = last_modified;
+    //
+    //     self.client_manager.broadcast(members, request).await
+    // }
 }
 
 #[cfg(test)]
@@ -342,5 +410,42 @@ mod tests {
 
         let addr = ClusterClientManager::get_grpc_address("invalid");
         assert_eq!(addr, None);
+    }
+
+    #[test]
+    fn test_cluster_client_config_default() {
+        let config = ClusterClientConfig::default();
+        assert_eq!(config.connect_timeout, Duration::from_secs(5));
+        assert_eq!(config.request_timeout, Duration::from_secs(5));
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.retry_delay, Duration::from_millis(500));
+        assert_eq!(config.idle_timeout, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn test_cluster_client_manager_new() {
+        let config = ClusterClientConfig::default();
+        let manager = ClusterClientManager::new("127.0.0.1:8848".to_string(), config);
+        assert_eq!(manager.connection_count(), 0);
+        assert!(manager.get_all_connections().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_idle_connections_empty() {
+        let config = ClusterClientConfig::default();
+        let manager = ClusterClientManager::new("127.0.0.1:8848".to_string(), config);
+        let removed = manager.cleanup_idle_connections().await;
+        assert_eq!(removed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cannot_connect_to_self() {
+        let config = ClusterClientConfig::default();
+        let manager = ClusterClientManager::new("127.0.0.1:8848".to_string(), config);
+
+        let result = manager.get_connection("127.0.0.1:8848").await;
+        assert!(result.is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains("Cannot connect to self"));
     }
 }

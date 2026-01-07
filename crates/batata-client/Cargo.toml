@@ -1,0 +1,36 @@
+[package]
+name = "batata-client"
+version = "0.1.0"
+authors = ["Tianyu Liang <124244236@qq.com>"]
+edition = "2024"
+description = "Rust SDK client for Batata/Nacos"
+license = "Apache-2.0"
+repository = "https://github.com/easynet-cn/batata"
+
+[dependencies]
+batata-common = { path = "../batata-common" }
+batata-api = { path = "../batata-api" }
+
+# gRPC
+tonic = "0.14"
+prost = "0.14"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+bytes = "1.10"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_urlencoded = "0.7"
+
+# Async
+async-trait = "0.1"
+tokio = { version = "1.49", features = ["full"] }
+
+# Logging
+tracing = "0.1"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"

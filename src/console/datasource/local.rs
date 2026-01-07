@@ -5,6 +5,8 @@ use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
+use batata_core::cluster::ServerMemberManager;
+
 use crate::{
     api::{
         config::model::{
@@ -17,7 +19,6 @@ use crate::{
     console::v3::cluster::{
         ClusterHealthResponse, ClusterHealthSummaryResponse, SelfMemberResponse,
     },
-    core::service::cluster::ServerMemberManager,
     model::{common::Configuration, naming::Namespace},
     service,
 };

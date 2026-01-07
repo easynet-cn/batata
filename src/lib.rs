@@ -350,7 +350,8 @@ macro_rules! secured {
 
                     let has_permission = roles.iter().any(|role| {
                         permissions.iter().filter(|e| e.role == role.role).any(|e| {
-                            let mut permission_resource = e.resource.replace("*", ".*");
+                            // Escape regex metacharacters first, then convert * wildcard to .*
+                            let mut permission_resource = regex::escape(&e.resource).replace("\\*", ".*");
 
                             if permission_resource.starts_with(":") {
                                 permission_resource = format!(

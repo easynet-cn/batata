@@ -14,10 +14,9 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    api::model::{Member, MemberBuilder},
-    model::common::Configuration,
-};
+use batata_api::model::{Member, MemberBuilder};
+
+use crate::model::Configuration;
 
 /// Trait for member lookup strategies
 #[tonic::async_trait]

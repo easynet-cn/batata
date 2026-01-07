@@ -11,13 +11,8 @@ pub mod model;
 pub mod raft;
 
 // Core service implementations
+// Note: Cluster-related modules (ServerMemberManager, health_check, distro, member_event,
+// member_lookup, cluster_client, circuit_breaker) are now provided by batata_core crate
 pub mod service {
-    pub mod circuit_breaker; // Circuit breaker pattern for resilient remote calls
-    pub mod cluster; // Cluster management and coordination
-    pub mod cluster_client; // Cluster gRPC client for inter-node communication
-    pub mod distro; // Distro protocol for ephemeral data sync
-    pub mod health_check; // Cluster member health check
-    pub mod member_event; // Member change event handling
-    pub mod member_lookup; // Member discovery strategies
     pub mod remote; // Remote connection and communication management
 }

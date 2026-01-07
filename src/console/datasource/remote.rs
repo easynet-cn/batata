@@ -6,6 +6,8 @@ use sea_orm::DatabaseConnection;
 use std::sync::{Arc, RwLock};
 use tracing::warn;
 
+use batata_core::cluster::ServerMemberManager;
+
 use crate::{
     api::{
         config::model::{
@@ -19,7 +21,6 @@ use crate::{
         client::{ConsoleApiClient, ConsoleHttpClient, http_client::RemoteConsoleConfig},
         v3::cluster::{ClusterHealthResponse, ClusterHealthSummaryResponse, SelfMemberResponse},
     },
-    core::service::cluster::ServerMemberManager,
     model::{common::Configuration, naming::Namespace},
 };
 

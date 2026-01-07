@@ -103,7 +103,7 @@ async fn create(
     );
 
     if params.username.is_empty() || params.password.is_empty() {
-        return model::common::ConsoleExecption::handle_illegal_argument_exectpion(
+        return model::common::ConsoleException::handle_illegal_argument_exception(
             "username or password cann't be empty".to_string(),
         );
     }
@@ -114,7 +114,7 @@ async fn create(
     };
 
     if user.is_some() {
-        return model::common::ConsoleExecption::handle_illegal_argument_exectpion(format!(
+        return model::common::ConsoleException::handle_illegal_argument_exception(format!(
             "user '{}' already exist!",
             params.username
         ));
@@ -129,7 +129,7 @@ async fn create(
 
     match result {
         Ok(()) => model::common::Result::<String>::http_success("create user ok!"),
-        Err(err) => model::common::ConsoleExecption::handle_exectpion(
+        Err(err) => model::common::ConsoleException::handle_exception(
             req.uri().path().to_string(),
             err.to_string(),
         ),

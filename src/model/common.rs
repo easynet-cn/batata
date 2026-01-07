@@ -9,10 +9,11 @@ use config::{Config, Environment};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use serde::{Deserialize, Serialize};
 
+use batata_core::cluster::ServerMemberManager;
+
 use crate::{
     api::model::{CLUSTER_GRPC_PORT_DEFAULT_OFFSET, SDK_GRPC_PORT_DEFAULT_OFFSET},
     auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS},
-    core::service::cluster::ServerMemberManager,
 };
 
 // Common constants.
@@ -904,6 +905,11 @@ impl Configuration {
             .get_int(NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS)
             .unwrap_or(30000) as u64
     }
+
+    /// Convert to batata_core Configuration for use with ServerMemberManager
+    pub fn to_core_config(&self) -> batata_core::model::Configuration {
+        batata_core::model::Configuration::from_config(self.config.clone())
+    }
 }
 
 use crate::console::datasource::ConsoleDataSource;
@@ -1155,23 +1161,23 @@ impl ErrorResult {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConsoleExecption {}
+pub struct ConsoleException {}
 
-impl ConsoleExecption {
-    pub fn handle_access_exectpion(message: String) -> HttpResponse {
+impl ConsoleException {
+    pub fn handle_access_exception(message: String) -> HttpResponse {
         HttpResponse::Forbidden().body(message)
     }
 
-    pub fn handle_illegal_argument_exectpion(message: String) -> HttpResponse {
+    pub fn handle_illegal_argument_exception(message: String) -> HttpResponse {
         HttpResponse::BadRequest().body(format!("caused: {}", message))
     }
 
-    pub fn handle_runtime_exectpion(code: u16, message: String) -> HttpResponse {
+    pub fn handle_runtime_exception(code: u16, message: String) -> HttpResponse {
         HttpResponseBuilder::new(StatusCode::from_u16(code).unwrap_or_default())
             .body(format!("caused: {}", message))
     }
 
-    pub fn handle_exectpion(uri: String, message: String) -> HttpResponse {
+    pub fn handle_exception(uri: String, message: String) -> HttpResponse {
         if uri.contains(NACOS_SERVER_VERSION_V2) {
             HttpResponse::InternalServerError().json(Result::new(
                 500,

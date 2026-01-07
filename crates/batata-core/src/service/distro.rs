@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use crate::api::model::Member;
+use batata_api::model::Member;
 
 use super::cluster_client::ClusterClientManager;
 

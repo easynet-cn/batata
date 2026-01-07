@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn test_encode_log_index_ordering() {
         // Test that big-endian encoding preserves ordering for RocksDB
-        let indices = vec![0u64, 1, 100, 1000, u64::MAX];
+        let indices = [0u64, 1, 100, 1000, u64::MAX];
         let encoded: Vec<_> = indices
             .iter()
             .map(|&i| RocksLogStore::encode_log_index(i))

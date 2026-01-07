@@ -29,12 +29,16 @@ nacos.server.main.port: 8848
 
 #*************** Datasource Related Configurations ***************#
 ### nacos.plugin.datasource.log.enabled=true
+### Database platform: mysql or postgresql
 spring.sql.init.platform: mysql
 ### Count of DB:
 # db.num=1
 
 ### Connect URL of DB:
+### For MySQL:
 db.url: mysql://nacos:1._dKHgqf(6tXcIZ@localhost:3306/batata
+### For PostgreSQL (uncomment and modify):
+# db.url: postgres://nacos:password@localhost:5432/batata
 
 #*************** Metrics Related Configurations ***************#
 ### Metrics for prometheus
@@ -131,6 +135,16 @@ management.metrics.export.influx.enabled: false
 #nacos.remote.server.grpc.cluster.keep-alive-timeout=20000
 ### Sets a time(milliseconds) that specify the most aggressive keep-alive time clients are permitted to configure. The typical default is 5 minutes
 #nacos.remote.server.grpc.cluster.permit-keep-alive-time=300000
+### Cluster client connection timeout in milliseconds. Default 5 seconds.
+#nacos.remote.server.grpc.cluster.connect-timeout=5000
+### Cluster client request timeout in milliseconds. Default 5 seconds.
+#nacos.remote.server.grpc.cluster.request-timeout=5000
+### Maximum retry count for cluster client requests. Default 3.
+#nacos.remote.server.grpc.cluster.max-retries=3
+### Retry delay in milliseconds between cluster client request retries. Default 500ms.
+#nacos.remote.server.grpc.cluster.retry-delay=500
+### Idle connection timeout in milliseconds. Connections unused for this duration will be removed. Default 5 minutes.
+#nacos.remote.server.grpc.cluster.idle-timeout=300000
 
 #*************** Config Module Related Configurations ***************#
 

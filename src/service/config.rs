@@ -13,6 +13,15 @@ use crate::{
     entity::{config_info, config_info_gray, config_tags_relation, his_config_info},
 };
 
+/// Escape SQL wildcard characters and convert user wildcards to SQL LIKE pattern.
+/// Escapes % and _ to prevent SQL wildcard injection, then converts * to %.
+fn escape_sql_like_pattern(input: &str) -> String {
+    input
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+        .replace('*', "%")
+}
+
 pub async fn find_one(
     db: &DatabaseConnection,
     data_id: &str,
@@ -64,18 +73,20 @@ pub async fn search_page(
         config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant_id));
 
     if !data_id.is_empty() {
-        if data_id.contains("*") {
-            count_select = count_select.filter(config_info::Column::DataId.like(data_id));
-            query_select = query_select.filter(config_info::Column::DataId.like(data_id));
+        if data_id.contains('*') {
+            let pattern = escape_sql_like_pattern(data_id);
+            count_select = count_select.filter(config_info::Column::DataId.like(&pattern));
+            query_select = query_select.filter(config_info::Column::DataId.like(&pattern));
         } else {
             count_select = count_select.filter(config_info::Column::DataId.contains(data_id));
             query_select = query_select.filter(config_info::Column::DataId.contains(data_id));
         }
     }
     if !group_id.is_empty() {
-        if group_id.contains("*") {
-            count_select = count_select.filter(config_info::Column::GroupId.like(group_id));
-            query_select = query_select.filter(config_info::Column::GroupId.like(group_id));
+        if group_id.contains('*') {
+            let pattern = escape_sql_like_pattern(group_id);
+            count_select = count_select.filter(config_info::Column::GroupId.like(&pattern));
+            query_select = query_select.filter(config_info::Column::GroupId.like(&pattern));
         } else {
             count_select = count_select.filter(config_info::Column::GroupId.eq(group_id));
             query_select = query_select.filter(config_info::Column::GroupId.eq(group_id));
@@ -645,5 +656,35 @@ mod tests {
         let digest1 = md5_digest(content);
         let digest2 = md5_digest(content);
         assert_eq!(digest1, digest2);
+    }
+
+    #[test]
+    fn test_escape_sql_like_pattern_basic() {
+        // Simple wildcard conversion
+        assert_eq!(escape_sql_like_pattern("test*"), "test%");
+        assert_eq!(escape_sql_like_pattern("*test"), "%test");
+        assert_eq!(escape_sql_like_pattern("*test*"), "%test%");
+    }
+
+    #[test]
+    fn test_escape_sql_like_pattern_escapes_sql_wildcards() {
+        // Ensure SQL wildcards are escaped to prevent injection
+        assert_eq!(escape_sql_like_pattern("test%"), "test\\%");
+        assert_eq!(escape_sql_like_pattern("test_"), "test\\_");
+        assert_eq!(escape_sql_like_pattern("test%_"), "test\\%\\_");
+    }
+
+    #[test]
+    fn test_escape_sql_like_pattern_combined() {
+        // User wildcard * with SQL wildcards % and _
+        assert_eq!(escape_sql_like_pattern("*test%value_"), "%test\\%value\\_");
+        assert_eq!(escape_sql_like_pattern("prefix*%_suffix"), "prefix%\\%\\_suffix");
+    }
+
+    #[test]
+    fn test_escape_sql_like_pattern_no_wildcards() {
+        // No wildcards should pass through unchanged
+        assert_eq!(escape_sql_like_pattern("test"), "test");
+        assert_eq!(escape_sql_like_pattern(""), "");
     }
 }

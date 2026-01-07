@@ -1,0 +1,49 @@
+[package]
+name = "batata-core"
+version = "0.1.0"
+authors = ["Tianyu Liang <124244236@qq.com>"]
+edition = "2024"
+description = "Core cluster and connection management for Batata"
+license = "Apache-2.0"
+repository = "https://github.com/easynet-cn/batata"
+
+[dependencies]
+batata-common = { path = "../batata-common" }
+batata-api = { path = "../batata-api" }
+batata-consistency = { path = "../batata-consistency" }
+
+# Concurrency
+dashmap = "6.1"
+tokio = { version = "1.49", features = ["full"] }
+
+# gRPC
+tonic = "0.14"
+prost-types = "0.14"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async
+async-trait = "0.1"
+futures = "0.3"
+
+# Logging
+tracing = "0.1"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Configuration
+config = "0.15"
+
+# Encoding
+base64 = "0.22"
+md5 = "0.8"
+
+# Time
+chrono = "0.4"

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
+use batata_core::cluster::ServerMemberManager;
 use batata::{
     api::{
         consul::{
@@ -14,10 +15,7 @@ use batata::{
     },
     auth, console,
     console::datasource,
-    core::service::{
-        cluster::ServerMemberManager,
-        remote::{ConnectionManager, context_interceptor},
-    },
+    core::service::remote::{ConnectionManager, context_interceptor},
     middleware::{auth::Authentication, rate_limit::RateLimiter},
     model::{self, common::AppState},
     service::{
@@ -29,7 +27,7 @@ use batata::{
         },
         handler::{
             ClientDetectionHandler, ConnectResetHandler, ConnectionSetupHandler,
-            HealthCheckHandler, PushAckHandler, ServerCheckHanlder, ServerLoaderInfoHandler,
+            HealthCheckHandler, PushAckHandler, ServerCheckHandler, ServerLoaderInfoHandler,
             ServerReloadHandler, SetupAckHandler,
         },
         naming::NamingService,
@@ -98,6 +96,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     init_subscriber(subscriber)?;
 
+    // Initialize metrics for observability
+    batata::metrics::init_metrics();
+
     // Extract configuration parameters
     let depolyment_type = configuration.deployment_type();
     let is_console_remote = depolyment_type == model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE
@@ -120,7 +121,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // Local mode: initialize database and cluster management
         let db = configuration.database_connection().await?;
-        let smm = Arc::new(ServerMemberManager::new(&configuration));
+        let core_config = configuration.to_core_config();
+        let smm = Arc::new(ServerMemberManager::new(&core_config));
         (Some(db), Some(smm))
     };
 
@@ -170,7 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Internal handlers
     let health_check_handler = Arc::new(HealthCheckHandler {});
-    let server_check_hanlder = Arc::new(ServerCheckHanlder {});
+    let server_check_handler = Arc::new(ServerCheckHandler {});
     let connection_setup_handler = Arc::new(ConnectionSetupHandler {});
     let client_detection_handler = Arc::new(ClientDetectionHandler {});
     let server_loader_info_handler = Arc::new(ServerLoaderInfoHandler {});
@@ -180,7 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let push_ack_handler = Arc::new(PushAckHandler {});
 
     handler_registry.register_handler(health_check_handler);
-    handler_registry.register_handler(server_check_hanlder);
+    handler_registry.register_handler(server_check_handler);
     handler_registry.register_handler(connection_setup_handler);
     handler_registry.register_handler(client_detection_handler);
     handler_registry.register_handler(server_loader_info_handler);

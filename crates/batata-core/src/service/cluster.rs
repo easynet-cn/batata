@@ -8,11 +8,10 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use crate::{
-    api::model::{Member, MemberBuilder, NodeState},
-    local_ip,
-    model::common::Configuration,
-};
+use batata_api::model::{Member, MemberBuilder, NodeState};
+use batata_common::local_ip;
+
+use crate::model::Configuration;
 
 use super::{
     cluster_client::{ClusterClientConfig, ClusterClientManager},
@@ -69,7 +68,7 @@ pub struct ServerMemberManager {
     member_lookup: Arc<RwLock<Option<Box<dyn MemberLookup>>>>,
     health_checker: Arc<RwLock<Option<MemberHealthChecker>>>,
     event_publisher: Arc<MemberChangeEventPublisher>,
-    client_manager: Arc<RwLock<Option<ClusterClientManager>>>,
+    client_manager: Arc<RwLock<Option<Arc<ClusterClientManager>>>>,
     distro_protocol: Arc<RwLock<Option<DistroProtocol>>>,
     running: Arc<RwLock<bool>>,
 }
@@ -175,19 +174,15 @@ impl ServerMemberManager {
             let mut lookup_guard = self.member_lookup.write().await;
             *lookup_guard = Some(lookup);
 
-            // Initialize cluster client manager
-            let client_manager = ClusterClientManager::new(
+            // Initialize cluster client manager (wrap in Arc for sharing)
+            let client_manager = Arc::new(ClusterClientManager::new(
                 self.local_address.clone(),
                 self.manager_config.cluster_client.clone(),
-            );
-            let client_manager = Arc::new(client_manager);
+            ));
 
             {
                 let mut cm_guard = self.client_manager.write().await;
-                *cm_guard = Some(ClusterClientManager::new(
-                    self.local_address.clone(),
-                    self.manager_config.cluster_client.clone(),
-                ));
+                *cm_guard = Some(client_manager.clone());
             }
 
             // Start health checker if enabled
