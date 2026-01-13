@@ -215,6 +215,7 @@ pub async fn create_datasource(
     configuration: &Configuration,
     database_connection: Option<DatabaseConnection>,
     server_member_manager: Option<Arc<ServerMemberManager>>,
+    config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
 ) -> anyhow::Result<Arc<dyn ConsoleDataSource>> {
     if configuration.is_console_remote_mode() {
         // Remote mode: use HTTP client to connect to server
@@ -228,7 +229,8 @@ pub async fn create_datasource(
         let smm = server_member_manager.ok_or_else(|| {
             anyhow::anyhow!("Server member manager required for local console mode")
         })?;
-        let local_datasource = local::LocalDataSource::new(db, smm, configuration.clone());
+        let local_datasource =
+            local::LocalDataSource::new(db, smm, config_subscriber_manager, configuration.clone());
         Ok(Arc::new(local_datasource))
     }
 }

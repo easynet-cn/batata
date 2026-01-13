@@ -2,7 +2,7 @@
 
 use actix_web::{Scope, web};
 
-use super::{cluster, config, health, history, metrics, namespace, server_state};
+use super::{cluster, config, health, history, instance, metrics, namespace, server_state, service};
 
 /// Create the v3 console routes
 pub fn routes() -> Scope {
@@ -14,4 +14,6 @@ pub fn routes() -> Scope {
         .service(config::routes())
         .service(history::routes())
         .service(namespace::routes())
+        .service(service::routes())
+        .service(instance::routes())
 }

@@ -20,6 +20,7 @@ pub mod cluster {
 
 // Re-export commonly used types
 pub use model::{Configuration, Connection, ConnectionMeta, GrpcClient, PageParam};
+pub use service::{ConfigKey, ConfigSubscriber, ConfigSubscriberManager};
 
 // Re-export common functions
 pub use batata_common::local_ip;

@@ -1,11 +1,16 @@
 // Cluster gRPC client for inter-node communication
 // Provides methods to communicate with other cluster nodes via gRPC
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicI64, Ordering},
+    },
+    time::Duration,
+};
 
 use dashmap::DashMap;
 use serde::Serialize;
-use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
@@ -62,13 +67,19 @@ pub struct ClusterConnection {
     pub grpc_address: String,
     pub client: RequestClient<Channel>,
     pub created_at: i64,
-    pub last_used: RwLock<i64>,
+    /// Last used timestamp - uses AtomicI64 for lock-free access
+    pub last_used: AtomicI64,
 }
 
 impl ClusterConnection {
-    pub async fn update_last_used(&self) {
-        let mut last_used = self.last_used.write().await;
-        *last_used = chrono::Utc::now().timestamp_millis();
+    /// Update the last used timestamp (lock-free)
+    pub fn update_last_used(&self) {
+        self.last_used.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+    }
+
+    /// Get the last used timestamp (lock-free)
+    pub fn get_last_used(&self) -> i64 {
+        self.last_used.load(Ordering::Relaxed)
     }
 }
 
@@ -120,7 +131,7 @@ impl ClusterClientManager {
 
         // Return existing connection if available
         if let Some(conn) = self.connections.get(address) {
-            conn.update_last_used().await;
+            conn.update_last_used();
             return Ok(conn.clone());
         }
 
@@ -143,7 +154,7 @@ impl ClusterClientManager {
             grpc_address,
             client,
             created_at: chrono::Utc::now().timestamp_millis(),
-            last_used: RwLock::new(chrono::Utc::now().timestamp_millis()),
+            last_used: AtomicI64::new(chrono::Utc::now().timestamp_millis()),
         });
 
         self.connections
@@ -223,7 +234,7 @@ impl ClusterClientManager {
         let mut client = connection.client.clone();
         let response = client.request(payload).await?;
 
-        connection.update_last_used().await;
+        connection.update_last_used();
 
         Ok(response.into_inner())
     }
@@ -290,16 +301,17 @@ impl ClusterClientManager {
     }
 
     /// Clean up idle connections that haven't been used for longer than idle_timeout
-    pub async fn cleanup_idle_connections(&self) -> usize {
+    /// This is now lock-free and doesn't require async
+    pub fn cleanup_idle_connections(&self) -> usize {
         let now = chrono::Utc::now().timestamp_millis();
         let idle_timeout_ms = self.config.idle_timeout.as_millis() as i64;
         let mut removed = 0;
 
-        // Collect keys to remove (to avoid holding lock during iteration)
+        // Collect keys to remove (lock-free atomic read)
         let keys_to_remove: Vec<String> = {
             let mut keys = Vec::new();
             for entry in self.connections.iter() {
-                let last_used = *entry.value().last_used.read().await;
+                let last_used = entry.value().get_last_used();
                 if now - last_used > idle_timeout_ms {
                     keys.push(entry.key().clone());
                 }
@@ -334,7 +346,7 @@ impl ClusterClientManager {
 
             loop {
                 interval.tick().await;
-                self.cleanup_idle_connections().await;
+                self.cleanup_idle_connections();
             }
         })
     }
@@ -428,11 +440,11 @@ mod tests {
         assert!(manager.get_all_connections().is_empty());
     }
 
-    #[tokio::test]
-    async fn test_cleanup_idle_connections_empty() {
+    #[test]
+    fn test_cleanup_idle_connections_empty() {
         let config = ClusterClientConfig::default();
         let manager = ClusterClientManager::new("127.0.0.1:8848".to_string(), config);
-        let removed = manager.cleanup_idle_connections().await;
+        let removed = manager.cleanup_idle_connections();
         assert_eq!(removed, 0);
     }
 

@@ -11,6 +11,9 @@ pub use batata_config::service::namespace;
 // Local naming service - uses local api::naming::model types for gRPC compatibility
 pub mod naming;
 
+// Config fuzzy watch manager
+pub mod config_fuzzy_watch;
+
 // Local implementations (gRPC handlers and RPC)
 pub mod config_handler; // Config module gRPC handlers
 pub mod distro_handler; // Distro protocol gRPC handlers

@@ -1,7 +1,10 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use batata_core::model::Connection;
+use batata_core::{model::Connection, service::remote::ConnectionManager};
+use sysinfo::System;
 use tonic::Status;
+use tracing::info;
 
 use crate::{
     api::{
@@ -96,7 +99,9 @@ impl PayloadHandler for ClientDetectionHandler {
 
 // Handler for ServerLoaderInfoRequest - returns server load information
 #[derive(Clone)]
-pub struct ServerLoaderInfoHandler {}
+pub struct ServerLoaderInfoHandler {
+    pub connection_manager: Arc<ConnectionManager>,
+}
 
 #[tonic::async_trait]
 impl PayloadHandler for ServerLoaderInfoHandler {
@@ -107,12 +112,36 @@ impl PayloadHandler for ServerLoaderInfoHandler {
     ) -> Result<Payload, Status> {
         let mut response = ServerLoaderInfoResponse::new();
 
-        // Add basic server metrics
-        let mut metrics = HashMap::new();
-        metrics.insert("sdkConCount".to_string(), "0".to_string());
-        metrics.insert("cpu".to_string(), "0".to_string());
-        metrics.insert("load".to_string(), "0".to_string());
-        metrics.insert("mem".to_string(), "0".to_string());
+        // Get real connection count from ConnectionManager
+        let sdk_con_count = self.connection_manager.connection_count();
+
+        // Get system metrics using sysinfo
+        let mut sys = System::new();
+        sys.refresh_cpu_usage();
+        sys.refresh_memory();
+
+        // Calculate CPU usage (average across all cores)
+        let cpu_usage = sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>()
+            / sys.cpus().len().max(1) as f32;
+
+        // Calculate memory usage percentage
+        let total_memory = sys.total_memory();
+        let used_memory = sys.used_memory();
+        let mem_usage = if total_memory > 0 {
+            (used_memory as f64 / total_memory as f64 * 100.0) as f32
+        } else {
+            0.0
+        };
+
+        // Get system load average (1 minute)
+        let load_avg = System::load_average().one;
+
+        // Build metrics map with real values
+        let mut metrics = HashMap::with_capacity(4);
+        metrics.insert("sdkConCount".to_string(), sdk_con_count.to_string());
+        metrics.insert("cpu".to_string(), format!("{:.1}", cpu_usage));
+        metrics.insert("load".to_string(), format!("{:.2}", load_avg));
+        metrics.insert("mem".to_string(), format!("{:.1}", mem_usage));
         response.loader_metrics = metrics;
 
         Ok(response.build_payload())
@@ -131,10 +160,20 @@ pub struct ServerReloadHandler {}
 impl PayloadHandler for ServerReloadHandler {
     async fn handle(
         &self,
-        _connection: &Connection,
+        connection: &Connection,
         _payload: &Payload,
     ) -> Result<Payload, Status> {
-        // In a real implementation, this would trigger configuration reload
+        // Log the reload request for observability
+        info!(
+            "Server reload requested from client: {} ({}:{})",
+            connection.meta_info.connection_id,
+            connection.meta_info.client_ip,
+            connection.meta_info.remote_port
+        );
+
+        // Note: Full hot-reload of server configuration would require
+        // re-reading conf/application.yml and updating shared state.
+        // Current implementation acknowledges the request for compatibility.
         let response = ServerReloadResponse::new();
 
         Ok(response.build_payload())
@@ -153,10 +192,19 @@ pub struct ConnectResetHandler {}
 impl PayloadHandler for ConnectResetHandler {
     async fn handle(
         &self,
-        _connection: &Connection,
+        connection: &Connection,
         _payload: &Payload,
     ) -> Result<Payload, Status> {
-        // In a real implementation, this would reset the connection
+        // Log the connection reset request
+        info!(
+            "Connection reset requested: {} from {}:{}",
+            connection.meta_info.connection_id,
+            connection.meta_info.client_ip,
+            connection.meta_info.remote_port
+        );
+
+        // Connection cleanup is handled by the bi-stream service when the stream closes.
+        // This handler acknowledges the reset request.
         let response = ConnectResetResponse::new();
 
         Ok(response.build_payload())

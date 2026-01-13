@@ -1,9 +1,8 @@
 // Circuit Breaker pattern implementation for resilient remote calls
 // Provides protection against cascading failures in distributed systems
 
-use std::sync::RwLock;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
+use std::time::Duration;
 
 /// Circuit breaker states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +13,21 @@ pub enum CircuitState {
     Open,
     /// Circuit is half-open, limited requests allowed to test recovery
     HalfOpen,
+}
+
+// Atomic state representation
+const STATE_CLOSED: u8 = 0;
+const STATE_OPEN: u8 = 1;
+const STATE_HALF_OPEN: u8 = 2;
+
+impl CircuitState {
+    fn from_u8(v: u8) -> Self {
+        match v {
+            STATE_OPEN => CircuitState::Open,
+            STATE_HALF_OPEN => CircuitState::HalfOpen,
+            _ => CircuitState::Closed,
+        }
+    }
 }
 
 /// Configuration for the circuit breaker
@@ -41,14 +55,25 @@ impl Default for CircuitBreakerConfig {
 }
 
 /// Circuit breaker for protecting remote calls
+/// Uses lock-free atomics for high-performance concurrent access
 pub struct CircuitBreaker {
     config: CircuitBreakerConfig,
-    state: RwLock<CircuitState>,
+    /// State stored as AtomicU8 for lock-free access
+    state: AtomicU8,
     failure_count: AtomicU32,
     success_count: AtomicU32,
     /// Timestamp of last failure in milliseconds since UNIX epoch
     last_failure_time_ms: AtomicU64,
-    opened_at: RwLock<Option<Instant>>,
+    /// Timestamp when circuit opened in milliseconds since UNIX epoch (0 = not opened)
+    opened_at_ms: AtomicU64,
+}
+
+/// Helper to get current time in milliseconds
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 impl CircuitBreaker {
@@ -61,27 +86,30 @@ impl CircuitBreaker {
     pub fn with_config(config: CircuitBreakerConfig) -> Self {
         Self {
             config,
-            state: RwLock::new(CircuitState::Closed),
+            state: AtomicU8::new(STATE_CLOSED),
             failure_count: AtomicU32::new(0),
             success_count: AtomicU32::new(0),
             last_failure_time_ms: AtomicU64::new(0),
-            opened_at: RwLock::new(None),
+            opened_at_ms: AtomicU64::new(0),
         }
     }
 
-    /// Check if a request should be allowed
+    /// Check if a request should be allowed (lock-free)
     pub fn allow_request(&self) -> bool {
-        let state = *self.state.read().unwrap_or_else(|e| e.into_inner());
+        let state = CircuitState::from_u8(self.state.load(Ordering::SeqCst));
 
         match state {
             CircuitState::Closed => true,
             CircuitState::Open => {
                 // Check if we should transition to half-open
-                if let Some(opened_at) = *self.opened_at.read().unwrap_or_else(|e| e.into_inner())
-                    && opened_at.elapsed() >= self.config.reset_timeout
-                {
-                    self.transition_to_half_open();
-                    return true;
+                let opened_at = self.opened_at_ms.load(Ordering::SeqCst);
+                if opened_at > 0 {
+                    let now = current_time_ms();
+                    let elapsed_ms = now.saturating_sub(opened_at);
+                    if elapsed_ms >= self.config.reset_timeout.as_millis() as u64 {
+                        self.transition_to_half_open();
+                        return true;
+                    }
                 }
                 false
             }
@@ -89,9 +117,9 @@ impl CircuitBreaker {
         }
     }
 
-    /// Record a successful call
+    /// Record a successful call (lock-free)
     pub fn record_success(&self) {
-        let state = *self.state.read().unwrap_or_else(|e| e.into_inner());
+        let state = CircuitState::from_u8(self.state.load(Ordering::SeqCst));
 
         match state {
             CircuitState::Closed => {
@@ -110,16 +138,13 @@ impl CircuitBreaker {
         }
     }
 
-    /// Record a failed call
+    /// Record a failed call (lock-free)
     pub fn record_failure(&self) {
-        let state = *self.state.read().unwrap_or_else(|e| e.into_inner());
+        let state = CircuitState::from_u8(self.state.load(Ordering::SeqCst));
 
         match state {
             CircuitState::Closed => {
-                let now_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
+                let now_ms = current_time_ms();
                 let last_failure_ms = self.last_failure_time_ms.load(Ordering::SeqCst);
 
                 // Reset count if outside failure window
@@ -147,12 +172,12 @@ impl CircuitBreaker {
         }
     }
 
-    /// Get the current state
+    /// Get the current state (lock-free)
     pub fn state(&self) -> CircuitState {
-        *self.state.read().unwrap_or_else(|e| e.into_inner())
+        CircuitState::from_u8(self.state.load(Ordering::SeqCst))
     }
 
-    /// Get failure count
+    /// Get failure count (lock-free)
     pub fn failure_count(&self) -> u32 {
         self.failure_count.load(Ordering::SeqCst)
     }
@@ -163,31 +188,21 @@ impl CircuitBreaker {
     }
 
     fn transition_to_open(&self) {
-        if let Ok(mut state) = self.state.write() {
-            *state = CircuitState::Open;
-        }
-        if let Ok(mut opened_at) = self.opened_at.write() {
-            *opened_at = Some(Instant::now());
-        }
+        self.state.store(STATE_OPEN, Ordering::SeqCst);
+        self.opened_at_ms.store(current_time_ms(), Ordering::SeqCst);
         self.success_count.store(0, Ordering::SeqCst);
         tracing::warn!("Circuit breaker opened");
     }
 
     fn transition_to_half_open(&self) {
-        if let Ok(mut state) = self.state.write() {
-            *state = CircuitState::HalfOpen;
-        }
+        self.state.store(STATE_HALF_OPEN, Ordering::SeqCst);
         self.success_count.store(0, Ordering::SeqCst);
         tracing::info!("Circuit breaker half-open");
     }
 
     fn transition_to_closed(&self) {
-        if let Ok(mut state) = self.state.write() {
-            *state = CircuitState::Closed;
-        }
-        if let Ok(mut opened_at) = self.opened_at.write() {
-            *opened_at = None;
-        }
+        self.state.store(STATE_CLOSED, Ordering::SeqCst);
+        self.opened_at_ms.store(0, Ordering::SeqCst);
         self.failure_count.store(0, Ordering::SeqCst);
         self.success_count.store(0, Ordering::SeqCst);
         tracing::info!("Circuit breaker closed");

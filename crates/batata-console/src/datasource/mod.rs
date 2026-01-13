@@ -15,10 +15,107 @@ use batata_api::Page;
 use batata_config::{
     ConfigAllInfo, ConfigBasicInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
     ImportResult, Namespace, SameConfigPolicy,
+    service::config::CloneResult,
 };
 use batata_core::cluster::ServerMemberManager;
+use batata_naming::Instance;
 
 use crate::model::{ClusterHealthResponse, Member, SelfMemberResponse};
+
+/// Config listener info for API response
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigListenerInfo {
+    pub connection_id: String,
+    pub client_ip: String,
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub md5: String,
+}
+
+/// Service detail for API response
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceDetail {
+    pub namespace_id: String,
+    pub group_name: String,
+    pub service_name: String,
+    pub protect_threshold: f32,
+    pub metadata: std::collections::HashMap<String, String>,
+    pub selector: ServiceSelector,
+    pub clusters: Vec<ClusterInfo>,
+}
+
+/// Service selector
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceSelector {
+    #[serde(rename = "type")]
+    pub selector_type: String,
+    pub expression: String,
+}
+
+/// Cluster info in service detail
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterInfo {
+    pub name: String,
+    pub health_checker: HealthChecker,
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+/// Health checker configuration
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthChecker {
+    #[serde(rename = "type")]
+    pub check_type: String,
+    pub port: i32,
+    pub use_instance_port: bool,
+}
+
+/// Service list item for pagination
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceListItem {
+    pub name: String,
+    pub group_name: String,
+    pub cluster_count: u32,
+    pub ip_count: u32,
+    pub healthy_instance_count: u32,
+    pub trigger_flag: bool,
+    pub metadata: std::collections::HashMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instances: Option<Vec<Instance>>,
+}
+
+/// Subscriber info for API response
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriberInfo {
+    pub address: String,
+    pub agent: String,
+    pub app: String,
+}
+
+/// Instance info for API response
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceInfo {
+    pub ip: String,
+    pub port: i32,
+    pub weight: f64,
+    pub healthy: bool,
+    pub enabled: bool,
+    pub ephemeral: bool,
+    pub cluster_name: String,
+    pub service_name: String,
+    pub metadata: std::collections::HashMap<String, String>,
+    pub instance_heart_beat_interval: i64,
+    pub instance_heart_beat_timeout: i64,
+    pub ip_delete_timeout: i64,
+}
 
 /// Console data source trait - abstracts data access for console operations
 ///
@@ -139,6 +236,156 @@ pub trait ConsoleDataSource: Send + Sync {
         src_user: &str,
         src_ip: &str,
     ) -> anyhow::Result<ImportResult>;
+
+    /// Batch delete configs by IDs
+    async fn config_batch_delete(
+        &self,
+        ids: &[i64],
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<usize>;
+
+    /// Delete gray/beta config
+    async fn config_gray_delete(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Clone configs to another namespace
+    async fn config_clone(
+        &self,
+        ids: &[i64],
+        target_namespace_id: &str,
+        policy: &str,
+        src_user: &str,
+        src_ip: &str,
+    ) -> anyhow::Result<CloneResult>;
+
+    /// Get config listeners (subscriptions)
+    /// Returns a list of (connection_id, client_ip, dataId, group) tuples
+    async fn config_listeners(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigListenerInfo>>;
+
+    /// Get config listeners by client IP
+    async fn config_listeners_by_ip(
+        &self,
+        ip: &str,
+    ) -> anyhow::Result<Vec<ConfigListenerInfo>>;
+
+    // ============== Naming/Service Operations ==============
+
+    /// Create a new service
+    async fn service_create(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Delete a service
+    async fn service_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Update a service
+    async fn service_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Get service detail
+    async fn service_get(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Option<ServiceDetail>>;
+
+    /// List services with pagination
+    async fn service_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name_pattern: &str,
+        page_no: u32,
+        page_size: u32,
+        with_instances: bool,
+    ) -> anyhow::Result<Page<ServiceListItem>>;
+
+    /// Get service subscribers
+    async fn service_subscribers(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<Page<SubscriberInfo>>;
+
+    /// Get selector types
+    fn service_selector_types(&self) -> Vec<String>;
+
+    /// Update cluster metadata
+    async fn service_cluster_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        check_port: i32,
+        use_instance_port: bool,
+        health_check_type: &str,
+        metadata: &str,
+    ) -> anyhow::Result<bool>;
+
+    // ============== Instance Operations ==============
+
+    /// List instances for a service
+    async fn instance_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<Page<InstanceInfo>>;
+
+    /// Update an instance
+    #[allow(clippy::too_many_arguments)]
+    async fn instance_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        ip: &str,
+        port: i32,
+        weight: f64,
+        healthy: bool,
+        enabled: bool,
+        ephemeral: bool,
+        metadata: &str,
+    ) -> anyhow::Result<bool>;
 
     // ============== History Operations ==============
 

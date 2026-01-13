@@ -3,13 +3,56 @@
 //! This module provides in-memory service registry for managing service instances
 
 use std::{
+    collections::{HashMap, HashSet},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use dashmap::DashMap;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 use crate::model::{Instance, Service};
+
+/// Service-level metadata stored separately from instances
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ServiceMetadata {
+    /// Protection threshold (0.0 to 1.0)
+    pub protect_threshold: f32,
+    /// Service metadata key-value pairs
+    pub metadata: HashMap<String, String>,
+    /// Service selector type (e.g., "none", "label")
+    pub selector_type: String,
+    /// Service selector expression
+    pub selector_expression: String,
+}
+
+/// Cluster-level configuration
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClusterConfig {
+    /// Cluster name
+    pub name: String,
+    /// Health checker type (e.g., "TCP", "HTTP", "NONE")
+    pub health_check_type: String,
+    /// Health check port
+    pub check_port: i32,
+    /// Use instance port for health check
+    pub use_instance_port: bool,
+    /// Cluster metadata
+    pub metadata: HashMap<String, String>,
+}
+
+impl Default for ClusterConfig {
+    fn default() -> Self {
+        Self {
+            name: "DEFAULT".to_string(),
+            health_check_type: "TCP".to_string(),
+            check_port: 80,
+            use_instance_port: true,
+            metadata: HashMap::new(),
+        }
+    }
+}
 
 /// Build service key format: namespace@@groupName@@serviceName
 fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {
@@ -24,20 +67,75 @@ fn build_instance_key(instance: &Instance) -> String {
     )
 }
 
+/// Fuzzy watch pattern for service discovery
+#[derive(Clone, Debug)]
+pub struct FuzzyWatchPattern {
+    pub namespace: String,
+    pub group_pattern: String,
+    pub service_pattern: String,
+    pub watch_type: String,
+}
+
+impl FuzzyWatchPattern {
+    /// Check if a service key matches this pattern
+    pub fn matches(&self, namespace: &str, group_name: &str, service_name: &str) -> bool {
+        if self.namespace != namespace {
+            return false;
+        }
+
+        // Convert glob pattern to regex
+        let group_matches = Self::glob_match(&self.group_pattern, group_name);
+        let service_matches = Self::glob_match(&self.service_pattern, service_name);
+
+        group_matches && service_matches
+    }
+
+    /// Simple glob pattern matching (* matches any sequence)
+    fn glob_match(pattern: &str, text: &str) -> bool {
+        if pattern.is_empty() || pattern == "*" {
+            return true;
+        }
+
+        // Convert glob to regex: * -> .*, ? -> .
+        let regex_pattern = format!(
+            "^{}$",
+            regex::escape(pattern).replace("\\*", ".*").replace("\\?", ".")
+        );
+
+        Regex::new(&regex_pattern)
+            .map(|re| re.is_match(text))
+            .unwrap_or(false)
+    }
+}
+
 /// In-memory service registry for managing services and instances
 #[derive(Clone)]
 pub struct NamingService {
     /// Key: service_key (namespace@@group@@service), Value: map of instances
     services: Arc<DashMap<String, DashMap<String, Instance>>>,
-    /// Key: connection_id, Value: list of subscribed service keys
-    subscribers: Arc<DashMap<String, Vec<String>>>,
+    /// Key: service_key, Value: service-level metadata
+    service_metadata: Arc<DashMap<String, ServiceMetadata>>,
+    /// Key: service_key##cluster_name, Value: cluster configuration
+    cluster_configs: Arc<DashMap<String, ClusterConfig>>,
+    /// Key: connection_id, Value: set of subscribed service keys (HashSet for O(1) lookups)
+    subscribers: Arc<DashMap<String, HashSet<String>>>,
+    /// Key: connection_id, Value: list of fuzzy watch patterns
+    fuzzy_watchers: Arc<DashMap<String, Vec<FuzzyWatchPattern>>>,
+}
+
+/// Build cluster config key format: service_key##clusterName
+fn build_cluster_key(service_key: &str, cluster_name: &str) -> String {
+    format!("{}##{}", service_key, cluster_name)
 }
 
 impl NamingService {
     pub fn new() -> Self {
         Self {
             services: Arc::new(DashMap::new()),
+            service_metadata: Arc::new(DashMap::new()),
+            cluster_configs: Arc::new(DashMap::new()),
             subscribers: Arc::new(DashMap::new()),
+            fuzzy_watchers: Arc::new(DashMap::new()),
         }
     }
 
@@ -160,7 +258,14 @@ impl NamingService {
         }
     }
 
+    /// Get all service keys (for distro protocol sync)
+    /// Returns keys in format: namespace@@group@@serviceName
+    pub fn get_all_service_keys(&self) -> Vec<String> {
+        self.services.iter().map(|e| e.key().clone()).collect()
+    }
+
     /// List all services in a namespace
+    /// Uses iterator-based pagination to avoid allocating intermediate Vec for large service counts
     pub fn list_services(
         &self,
         namespace: &str,
@@ -182,21 +287,22 @@ impl NamingService {
                 .unwrap_or_else(|| key.to_string())
         }
 
-        let service_names: Vec<String> = self
+        // Count total matching services (single pass)
+        let total = self
             .services
             .iter()
             .filter(|entry| entry.key().starts_with(&prefix))
-            .map(|entry| extract_service_name(entry.key()))
-            .collect();
+            .count() as i32;
 
-        let total = service_names.len() as i32;
-
-        // Paginate
+        // Paginate directly on iterator to avoid intermediate allocation
         let start = ((page_no - 1) * page_size) as usize;
-        let paginated: Vec<String> = service_names
-            .into_iter()
+        let paginated: Vec<String> = self
+            .services
+            .iter()
+            .filter(|entry| entry.key().starts_with(&prefix))
             .skip(start)
             .take(page_size as usize)
+            .map(|entry| extract_service_name(entry.key()))
             .collect();
 
         (total, paginated)
@@ -215,7 +321,7 @@ impl NamingService {
         self.subscribers
             .entry(connection_id.to_string())
             .or_default()
-            .push(service_key);
+            .insert(service_key);
     }
 
     /// Unsubscribe from a service
@@ -229,7 +335,7 @@ impl NamingService {
         let service_key = build_service_key(namespace, group_name, service_name);
 
         if let Some(mut subs) = self.subscribers.get_mut(connection_id) {
-            subs.retain(|s| s != &service_key);
+            subs.remove(&service_key);
         }
     }
 
@@ -252,6 +358,106 @@ impl NamingService {
     /// Clean up subscriber when connection is closed
     pub fn remove_subscriber(&self, connection_id: &str) {
         self.subscribers.remove(connection_id);
+        self.fuzzy_watchers.remove(connection_id);
+    }
+
+    /// Register a fuzzy watch pattern for a connection
+    pub fn register_fuzzy_watch(
+        &self,
+        connection_id: &str,
+        namespace: &str,
+        group_pattern: &str,
+        service_pattern: &str,
+        watch_type: &str,
+    ) {
+        let pattern = FuzzyWatchPattern {
+            namespace: namespace.to_string(),
+            group_pattern: group_pattern.to_string(),
+            service_pattern: service_pattern.to_string(),
+            watch_type: watch_type.to_string(),
+        };
+
+        self.fuzzy_watchers
+            .entry(connection_id.to_string())
+            .or_default()
+            .push(pattern);
+    }
+
+    /// Unregister fuzzy watch patterns for a connection
+    pub fn unregister_fuzzy_watch(&self, connection_id: &str) {
+        self.fuzzy_watchers.remove(connection_id);
+    }
+
+    /// Get all services matching a fuzzy watch pattern
+    pub fn get_services_by_pattern(
+        &self,
+        namespace: &str,
+        group_pattern: &str,
+        service_pattern: &str,
+    ) -> Vec<String> {
+        let pattern = FuzzyWatchPattern {
+            namespace: namespace.to_string(),
+            group_pattern: group_pattern.to_string(),
+            service_pattern: service_pattern.to_string(),
+            watch_type: String::new(),
+        };
+
+        self.services
+            .iter()
+            .filter_map(|entry| {
+                let key = entry.key();
+                let parts: Vec<&str> = key.split("@@").collect();
+                if parts.len() == 3 {
+                    let (ns, group, service) = (parts[0], parts[1], parts[2]);
+                    if pattern.matches(ns, group, service) {
+                        return Some(key.clone());
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
+    /// Get all service keys that a connection is fuzzy-watching
+    pub fn get_fuzzy_watched_services(&self, connection_id: &str) -> Vec<String> {
+        let Some(patterns) = self.fuzzy_watchers.get(connection_id) else {
+            return vec![];
+        };
+
+        let mut matched_services = HashSet::new();
+
+        for pattern in patterns.iter() {
+            for entry in self.services.iter() {
+                let key = entry.key();
+                let parts: Vec<&str> = key.split("@@").collect();
+                if parts.len() == 3 {
+                    let (ns, group, service) = (parts[0], parts[1], parts[2]);
+                    if pattern.matches(ns, group, service) {
+                        matched_services.insert(key.clone());
+                    }
+                }
+            }
+        }
+
+        matched_services.into_iter().collect()
+    }
+
+    /// Get connections watching a specific service through fuzzy patterns
+    pub fn get_fuzzy_watchers_for_service(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Vec<String> {
+        self.fuzzy_watchers
+            .iter()
+            .filter(|entry| {
+                entry.value().iter().any(|pattern| {
+                    pattern.matches(namespace, group_name, service_name)
+                })
+            })
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Batch register instances
@@ -332,6 +538,204 @@ impl NamingService {
             .get(&service_key)
             .map(|instances| instances.iter().filter(|e| e.value().healthy).count())
             .unwrap_or(0)
+    }
+
+    // ============== Service Metadata Operations ==============
+
+    /// Create or update service metadata
+    pub fn set_service_metadata(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        metadata: ServiceMetadata,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.service_metadata.insert(service_key, metadata);
+    }
+
+    /// Get service metadata
+    pub fn get_service_metadata(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Option<ServiceMetadata> {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.service_metadata.get(&service_key).map(|r| r.clone())
+    }
+
+    /// Update service protection threshold
+    pub fn update_service_protect_threshold(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.service_metadata
+            .entry(service_key)
+            .or_default()
+            .protect_threshold = protect_threshold;
+    }
+
+    /// Update service selector
+    pub fn update_service_selector(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        selector_type: &str,
+        selector_expression: &str,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let mut entry = self.service_metadata.entry(service_key).or_default();
+        entry.selector_type = selector_type.to_string();
+        entry.selector_expression = selector_expression.to_string();
+    }
+
+    /// Update service metadata key-value pairs
+    pub fn update_service_metadata_map(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        metadata: HashMap<String, String>,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.service_metadata
+            .entry(service_key)
+            .or_default()
+            .metadata = metadata;
+    }
+
+    /// Delete service metadata
+    pub fn delete_service_metadata(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.service_metadata.remove(&service_key);
+    }
+
+    // ============== Cluster Config Operations ==============
+
+    /// Set cluster configuration
+    pub fn set_cluster_config(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        config: ClusterConfig,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let cluster_key = build_cluster_key(&service_key, cluster_name);
+        self.cluster_configs.insert(cluster_key, config);
+    }
+
+    /// Get cluster configuration
+    pub fn get_cluster_config(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+    ) -> Option<ClusterConfig> {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let cluster_key = build_cluster_key(&service_key, cluster_name);
+        self.cluster_configs.get(&cluster_key).map(|r| r.clone())
+    }
+
+    /// Get all cluster configs for a service
+    pub fn get_all_cluster_configs(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Vec<ClusterConfig> {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let prefix = format!("{}##", service_key);
+
+        self.cluster_configs
+            .iter()
+            .filter(|entry| entry.key().starts_with(&prefix))
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
+
+    /// Update cluster health check configuration
+    pub fn update_cluster_health_check(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        health_check_type: &str,
+        check_port: i32,
+        use_instance_port: bool,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let cluster_key = build_cluster_key(&service_key, cluster_name);
+
+        let mut entry = self.cluster_configs.entry(cluster_key).or_insert_with(|| {
+            ClusterConfig {
+                name: cluster_name.to_string(),
+                ..Default::default()
+            }
+        });
+        entry.health_check_type = health_check_type.to_string();
+        entry.check_port = check_port;
+        entry.use_instance_port = use_instance_port;
+    }
+
+    /// Update cluster metadata
+    pub fn update_cluster_metadata(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        metadata: HashMap<String, String>,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let cluster_key = build_cluster_key(&service_key, cluster_name);
+
+        self.cluster_configs
+            .entry(cluster_key)
+            .or_insert_with(|| ClusterConfig {
+                name: cluster_name.to_string(),
+                ..Default::default()
+            })
+            .metadata = metadata;
+    }
+
+    /// Delete cluster configuration
+    pub fn delete_cluster_config(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let cluster_key = build_cluster_key(&service_key, cluster_name);
+        self.cluster_configs.remove(&cluster_key);
+    }
+
+    /// Check if a service exists (has metadata or instances)
+    pub fn service_exists(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> bool {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.service_metadata.contains_key(&service_key)
+            || self.services.get(&service_key).is_some_and(|s| !s.is_empty())
     }
 }
 
@@ -908,5 +1312,133 @@ mod tests {
             naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"),
             1
         );
+    }
+
+    // === Fuzzy Watch Tests ===
+
+    #[test]
+    fn test_fuzzy_watch_pattern_matches() {
+        let pattern = FuzzyWatchPattern {
+            namespace: "public".to_string(),
+            group_pattern: "DEFAULT_GROUP".to_string(),
+            service_pattern: "service-*".to_string(),
+            watch_type: "add".to_string(),
+        };
+
+        assert!(pattern.matches("public", "DEFAULT_GROUP", "service-a"));
+        assert!(pattern.matches("public", "DEFAULT_GROUP", "service-test"));
+        assert!(!pattern.matches("public", "DEFAULT_GROUP", "other-service"));
+        assert!(!pattern.matches("private", "DEFAULT_GROUP", "service-a"));
+    }
+
+    #[test]
+    fn test_fuzzy_watch_pattern_wildcard_group() {
+        let pattern = FuzzyWatchPattern {
+            namespace: "public".to_string(),
+            group_pattern: "*".to_string(),
+            service_pattern: "*".to_string(),
+            watch_type: "add".to_string(),
+        };
+
+        assert!(pattern.matches("public", "DEFAULT_GROUP", "any-service"));
+        assert!(pattern.matches("public", "CUSTOM_GROUP", "another-service"));
+        assert!(!pattern.matches("private", "DEFAULT_GROUP", "any-service"));
+    }
+
+    #[test]
+    fn test_register_fuzzy_watch() {
+        let naming = NamingService::new();
+
+        naming.register_fuzzy_watch("conn-1", "public", "DEFAULT_GROUP", "service-*", "add");
+
+        let services = naming.get_fuzzy_watched_services("conn-1");
+        // No services registered yet, so no matches
+        assert!(services.is_empty());
+    }
+
+    #[test]
+    fn test_fuzzy_watch_matches_registered_services() {
+        let naming = NamingService::new();
+
+        // Register services first
+        let instance1 = create_test_instance("127.0.0.1", 8080);
+        let instance2 = create_test_instance("127.0.0.2", 8081);
+
+        naming.register_instance("public", "DEFAULT_GROUP", "service-a", instance1);
+        naming.register_instance("public", "DEFAULT_GROUP", "service-b", instance2);
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "other-service",
+            create_test_instance("127.0.0.3", 8082),
+        );
+
+        // Register fuzzy watch
+        naming.register_fuzzy_watch("conn-1", "public", "DEFAULT_GROUP", "service-*", "add");
+
+        let matched = naming.get_fuzzy_watched_services("conn-1");
+        assert_eq!(matched.len(), 2);
+        assert!(matched.iter().any(|s| s.contains("service-a")));
+        assert!(matched.iter().any(|s| s.contains("service-b")));
+    }
+
+    #[test]
+    fn test_get_fuzzy_watchers_for_service() {
+        let naming = NamingService::new();
+
+        naming.register_fuzzy_watch("conn-1", "public", "DEFAULT_GROUP", "service-*", "add");
+        naming.register_fuzzy_watch("conn-2", "public", "*", "*", "add");
+        naming.register_fuzzy_watch("conn-3", "public", "OTHER_GROUP", "*", "add");
+
+        let watchers = naming.get_fuzzy_watchers_for_service("public", "DEFAULT_GROUP", "service-a");
+        assert_eq!(watchers.len(), 2);
+        assert!(watchers.contains(&"conn-1".to_string()));
+        assert!(watchers.contains(&"conn-2".to_string()));
+    }
+
+    #[test]
+    fn test_unregister_fuzzy_watch() {
+        let naming = NamingService::new();
+
+        naming.register_fuzzy_watch("conn-1", "public", "DEFAULT_GROUP", "*", "add");
+
+        // Unregister
+        naming.unregister_fuzzy_watch("conn-1");
+
+        // Should have no patterns now
+        let matched = naming.get_fuzzy_watched_services("conn-1");
+        assert!(matched.is_empty());
+    }
+
+    #[test]
+    fn test_remove_subscriber_also_removes_fuzzy_watch() {
+        let naming = NamingService::new();
+
+        naming.subscribe("conn-1", "public", "DEFAULT_GROUP", "test-service");
+        naming.register_fuzzy_watch("conn-1", "public", "*", "*", "add");
+
+        // Remove subscriber should also remove fuzzy watch
+        naming.remove_subscriber("conn-1");
+
+        let matched = naming.get_fuzzy_watched_services("conn-1");
+        assert!(matched.is_empty());
+    }
+
+    #[test]
+    fn test_get_services_by_pattern() {
+        let naming = NamingService::new();
+
+        let instance1 = create_test_instance("127.0.0.1", 8080);
+        let instance2 = create_test_instance("127.0.0.2", 8081);
+        let instance3 = create_test_instance("127.0.0.3", 8082);
+
+        naming.register_instance("public", "DEFAULT_GROUP", "app-service", instance1);
+        naming.register_instance("public", "DEFAULT_GROUP", "app-config", instance2);
+        naming.register_instance("public", "DEFAULT_GROUP", "db-service", instance3);
+
+        let matched = naming.get_services_by_pattern("public", "DEFAULT_GROUP", "app-*");
+        assert_eq!(matched.len(), 2);
+        assert!(matched.iter().any(|s| s.contains("app-service")));
+        assert!(matched.iter().any(|s| s.contains("app-config")));
     }
 }

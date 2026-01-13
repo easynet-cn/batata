@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use batata_api::Page;
-use batata_config::{ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper, SameConfigPolicy};
+use batata_config::{ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper, SameConfigPolicy, service::config::CloneResult};
 
-use crate::datasource::ConsoleDataSource;
+use crate::datasource::{ConsoleDataSource, ConfigListenerInfo};
 
 use super::namespace::ApiResult;
 
@@ -95,6 +95,38 @@ impl ImportRequest {
             .map(|p| p.parse().unwrap_or_default())
             .unwrap_or_default()
     }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchDeleteRequest {
+    pub ids: String,
+    #[serde(default)]
+    pub namespace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneRequest {
+    pub ids: String,
+    pub target_namespace_id: String,
+    #[serde(default)]
+    pub policy: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenerRequest {
+    pub data_id: String,
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenerByIpRequest {
+    pub ip: String,
 }
 
 /// Config detail info for API response
@@ -420,6 +452,127 @@ pub async fn import_configs(
     }
 }
 
+#[delete("batchDelete")]
+pub async fn batch_delete(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    params: web::Query<BatchDeleteRequest>,
+    src_user: Option<String>,
+    src_ip: Option<String>,
+) -> impl Responder {
+    let ids: Vec<i64> = params
+        .ids
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+
+    if ids.is_empty() {
+        return ApiResult::http_param_missing("ids");
+    }
+
+    let user = src_user.unwrap_or_default();
+    let ip = src_ip.unwrap_or_default();
+
+    match datasource.config_batch_delete(&ids, &ip, &user).await {
+        Ok(count) => ApiResult::<usize>::http_success(count),
+        Err(e) => ApiResult::http_internal_error(e),
+    }
+}
+
+#[delete("beta")]
+pub async fn delete_beta(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    params: web::Query<ConfigForm>,
+    src_user: Option<String>,
+    src_ip: Option<String>,
+) -> impl Responder {
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let user = src_user.unwrap_or_default();
+    let ip = src_ip.unwrap_or_default();
+
+    match datasource
+        .config_gray_delete(&params.data_id, &params.group_name, &namespace_id, &ip, &user)
+        .await
+    {
+        Ok(deleted) => ApiResult::<bool>::http_success(deleted),
+        Err(e) => ApiResult::http_internal_error(e),
+    }
+}
+
+#[post("clone")]
+pub async fn clone_configs(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    params: web::Query<CloneRequest>,
+    src_user: Option<String>,
+    src_ip: Option<String>,
+) -> impl Responder {
+    let ids: Vec<i64> = params
+        .ids
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+
+    if ids.is_empty() {
+        return ApiResult::http_param_missing("ids");
+    }
+
+    if params.target_namespace_id.is_empty() {
+        return ApiResult::http_param_missing("targetNamespaceId");
+    }
+
+    let policy = if params.policy.is_empty() {
+        "ABORT"
+    } else {
+        &params.policy
+    };
+
+    let user = src_user.unwrap_or_default();
+    let ip = src_ip.unwrap_or_default();
+
+    match datasource
+        .config_clone(&ids, &params.target_namespace_id, policy, &user, &ip)
+        .await
+    {
+        Ok(result) => ApiResult::<CloneResult>::http_success(result),
+        Err(e) => ApiResult::http_internal_error(e),
+    }
+}
+
+#[get("listener")]
+pub async fn get_listeners(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    params: web::Query<ListenerRequest>,
+) -> impl Responder {
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    match datasource
+        .config_listeners(&params.data_id, &params.group_name, &namespace_id)
+        .await
+    {
+        Ok(listeners) => ApiResult::<Vec<ConfigListenerInfo>>::http_success(listeners),
+        Err(e) => ApiResult::http_internal_error(e),
+    }
+}
+
+#[get("listener/ip")]
+pub async fn get_listeners_by_ip(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    params: web::Query<ListenerByIpRequest>,
+) -> impl Responder {
+    match datasource.config_listeners_by_ip(&params.ip).await {
+        Ok(listeners) => ApiResult::<Vec<ConfigListenerInfo>>::http_success(listeners),
+        Err(e) => ApiResult::http_internal_error(e),
+    }
+}
+
 pub fn routes() -> Scope {
     web::scope("/cs/config")
         .service(find_one)
@@ -427,6 +580,11 @@ pub fn routes() -> Scope {
         .service(create_or_update)
         .service(delete_config)
         .service(find_beta_one)
+        .service(delete_beta)
         .service(export_configs)
         .service(import_configs)
+        .service(batch_delete)
+        .service(clone_configs)
+        .service(get_listeners)
+        .service(get_listeners_by_ip)
 }

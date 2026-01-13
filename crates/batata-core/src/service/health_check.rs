@@ -1,10 +1,15 @@
 // Cluster member health check service
 // Periodically checks the health of cluster members and updates their state
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use dashmap::DashMap;
-use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
 
@@ -85,7 +90,8 @@ pub struct MemberHealthChecker {
     health_status: Arc<DashMap<String, MemberHealthStatus>>,
     /// Circuit breakers per member address for resilient health checks
     circuit_breakers: Arc<DashMap<String, CircuitBreaker>>,
-    running: Arc<RwLock<bool>>,
+    /// Running flag using AtomicBool for lock-free access
+    running: Arc<AtomicBool>,
     local_address: String,
 }
 
@@ -100,19 +106,17 @@ impl MemberHealthChecker {
             members,
             health_status: Arc::new(DashMap::new()),
             circuit_breakers: Arc::new(DashMap::new()),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
             local_address,
         }
     }
 
     /// Start the health check service
     pub async fn start(&self) {
-        let mut running = self.running.write().await;
-        if *running {
-            return;
+        // Use compare_exchange to atomically check and set running flag
+        if self.running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+            return; // Already running
         }
-        *running = true;
-        drop(running);
 
         info!("Starting member health checker with circuit breaker protection");
 
@@ -137,9 +141,8 @@ impl MemberHealthChecker {
     }
 
     /// Stop the health check service
-    pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
+    pub fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
         info!("Stopped member health checker");
     }
 
@@ -148,16 +151,14 @@ impl MemberHealthChecker {
         members: Arc<DashMap<String, Member>>,
         health_status: Arc<DashMap<String, MemberHealthStatus>>,
         circuit_breakers: Arc<DashMap<String, CircuitBreaker>>,
-        running: Arc<RwLock<bool>>,
+        running: Arc<AtomicBool>,
         config: HealthCheckConfig,
         local_address: String,
     ) {
         loop {
-            {
-                let is_running = running.read().await;
-                if !*is_running {
-                    break;
-                }
+            // Lock-free check of running flag
+            if !running.load(Ordering::SeqCst) {
+                break;
             }
 
             // Get all members to check
@@ -188,9 +189,11 @@ impl MemberHealthChecker {
                 handles.push(handle);
             }
 
-            // Wait for all checks to complete
+            // Wait for all checks to complete, log any task errors
             for handle in handles {
-                let _ = handle.await;
+                if let Err(e) = handle.await {
+                    warn!("Health check task failed: {}", e);
+                }
             }
 
             tokio::time::sleep(config.check_interval).await;

@@ -88,6 +88,9 @@ metrics-exporter-prometheus = "0.16"
 jsonwebtoken = "9"
 bcrypt = "0.17"
 
+# System info
+sysinfo = "0.32"
+
 # Utils
 chrono = "0.4"
 uuid = { version = "1.19", features = ["v4"] }

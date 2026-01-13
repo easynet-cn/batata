@@ -20,3 +20,4 @@ pub use model::*;
 // Re-export v3 routes and metrics
 pub use v3::metrics::{METRICS, Metrics};
 pub use v3::route::routes as v3_routes;
+pub use v3::server_state::ServerStateConfig;

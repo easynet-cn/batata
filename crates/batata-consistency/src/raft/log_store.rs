@@ -28,6 +28,16 @@ const CF_STATE: &str = "state";
 const KEY_VOTE: &[u8] = b"vote";
 const KEY_LAST_PURGED: &[u8] = b"last_purged";
 
+// RocksDB performance tuning constants
+/// Write buffer size: 64MB for better write throughput
+const WRITE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
+/// Maximum number of write buffers for write stall prevention
+const MAX_WRITE_BUFFER_NUMBER: i32 = 3;
+/// Block cache size: 256MB for read optimization
+const BLOCK_CACHE_SIZE: usize = 256 * 1024 * 1024;
+/// Bloom filter bits per key for faster lookups
+const BLOOM_FILTER_BITS_PER_KEY: f64 = 10.0;
+
 /// Helper to create StorageError for vote operations
 fn vote_error(
     e: impl std::error::Error + Send + Sync + 'static,
@@ -70,25 +80,20 @@ impl RocksLogStore {
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
 
-        // Performance optimizations
-        // Write buffer size: 64MB for better write throughput
-        db_opts.set_write_buffer_size(64 * 1024 * 1024);
-        // Max write buffer number for write stall prevention
-        db_opts.set_max_write_buffer_number(3);
-        // Enable compression for storage efficiency
+        // Performance optimizations using named constants
+        db_opts.set_write_buffer_size(WRITE_BUFFER_SIZE);
+        db_opts.set_max_write_buffer_number(MAX_WRITE_BUFFER_NUMBER);
         db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
 
         // Block-based table options with block cache for read performance
         let mut block_opts = BlockBasedOptions::default();
-        // 256MB block cache for read optimization
-        let cache = rocksdb::Cache::new_lru_cache(256 * 1024 * 1024);
+        let cache = rocksdb::Cache::new_lru_cache(BLOCK_CACHE_SIZE);
         block_opts.set_block_cache(&cache);
-        // Bloom filter for faster lookups
-        block_opts.set_bloom_filter(10.0, false);
+        block_opts.set_bloom_filter(BLOOM_FILTER_BITS_PER_KEY, false);
 
         // Column family options with same optimizations
         let mut cf_opts = Options::default();
-        cf_opts.set_write_buffer_size(64 * 1024 * 1024);
+        cf_opts.set_write_buffer_size(WRITE_BUFFER_SIZE);
         cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         cf_opts.set_block_based_table_factory(&block_opts);
 

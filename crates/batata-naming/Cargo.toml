@@ -35,3 +35,6 @@ anyhow = "1.0"
 
 # Time
 chrono = "0.4"
+
+# Pattern matching
+regex = "1.11"

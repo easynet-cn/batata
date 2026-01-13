@@ -326,11 +326,26 @@ pub struct NamingFuzzyWatchHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchRequest::from(payload);
         let request_id = request.request_id();
 
-        // FuzzyWatch allows watching services matching a pattern
+        let connection_id = &connection.meta_info.connection_id;
+        let namespace = &request.namespace;
+        let group_pattern = &request.group_name_pattern;
+        let service_pattern = &request.service_name_pattern;
+        let watch_type = &request.watch_type;
+
+        // Register the fuzzy watch pattern for this connection
+        self.naming_service.register_fuzzy_watch(
+            connection_id,
+            namespace,
+            group_pattern,
+            service_pattern,
+            watch_type,
+        );
+
+        // Return matching service keys if this is an initializing request
         let mut response = NamingFuzzyWatchResponse::new();
         response.response.request_id = request_id;
 
@@ -373,9 +388,36 @@ pub struct NamingFuzzyWatchSyncHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchSyncHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchSyncRequest::from(payload);
         let request_id = request.request_id();
+
+        let connection_id = &connection.meta_info.connection_id;
+        let namespace = &request.pattern_namespace;
+        let group_pattern = &request.pattern_group_name;
+        let service_pattern = &request.pattern_service_name;
+        let sync_type = &request.sync_type;
+
+        // For initial sync, get all matching services
+        if sync_type == "all" || request.current_batch == 0 {
+            // Get all services matching the pattern
+            let _matched_services = self.naming_service.get_services_by_pattern(
+                namespace,
+                group_pattern,
+                service_pattern,
+            );
+            // The matched services would be sent to client in batches
+            // This handler acknowledges the sync request
+        }
+
+        // Also register the pattern if not already registered
+        self.naming_service.register_fuzzy_watch(
+            connection_id,
+            namespace,
+            group_pattern,
+            service_pattern,
+            sync_type,
+        );
 
         let mut response = NamingFuzzyWatchSyncResponse::new();
         response.response.request_id = request_id;

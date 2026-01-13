@@ -6,8 +6,9 @@ use serde::Serialize;
 
 use crate::http::BatataHttpClient;
 use crate::model::{
-    ApiResponse, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo, ConfigGrayInfo,
-    ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, Member, Namespace, Page, SelfMemberResponse,
+    ApiResponse, CloneResult, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo, ConfigGrayInfo,
+    ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, ConfigListenerInfo, InstanceInfo, Member,
+    Namespace, Page, SelfMemberResponse, ServiceDetail, ServiceListItem, SubscriberInfo,
 };
 
 /// API client wrapper providing typed access to Batata/Nacos APIs
@@ -371,6 +372,90 @@ impl BatataApiClient {
         self.http_client.get_bytes(&path).await
     }
 
+    /// Batch delete configurations by IDs
+    pub async fn config_batch_delete(&self, ids: &[i64]) -> anyhow::Result<usize> {
+        let ids_str = ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        #[derive(Serialize)]
+        struct Query<'a> {
+            ids: &'a str,
+        }
+
+        let response: ApiResponse<usize> = self
+            .http_client
+            .delete_with_query("/v3/console/cs/config/batchDelete", &Query { ids: &ids_str })
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Delete gray/beta configuration
+    pub async fn config_gray_delete(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            data_id: &'a str,
+            group_name: &'a str,
+            namespace_id: &'a str,
+        }
+
+        let response: ApiResponse<bool> = self
+            .http_client
+            .delete_with_query(
+                "/v3/console/cs/config/beta",
+                &Query {
+                    data_id,
+                    group_name,
+                    namespace_id,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Clone configurations to another namespace
+    pub async fn config_clone(
+        &self,
+        ids: &[i64],
+        target_namespace_id: &str,
+        policy: &str,
+    ) -> anyhow::Result<CloneResult> {
+        let ids_str = ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            ids: &'a str,
+            target_namespace_id: &'a str,
+            policy: &'a str,
+        }
+
+        let response: ApiResponse<CloneResult> = self
+            .http_client
+            .post_with_query(
+                "/v3/console/cs/config/clone",
+                &Query {
+                    ids: &ids_str,
+                    target_namespace_id,
+                    policy,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
     // ============== History APIs ==============
 
     /// Get history entry by ID
@@ -528,6 +613,412 @@ impl BatataApiClient {
         let response: ApiResponse<bool> = self
             .http_client
             .post_form("/v3/console/core/cluster/self/refresh", &())
+            .await?;
+        Ok(response.data)
+    }
+
+    // ============== Service APIs ==============
+
+    /// Create a new service
+    #[allow(clippy::too_many_arguments)]
+    pub async fn service_create(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Form<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            protect_threshold: f32,
+            metadata: &'a str,
+            selector: &'a str,
+        }
+
+        let response: ApiResponse<bool> = self
+            .http_client
+            .post_json(
+                "/v3/console/ns/service",
+                &Form {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    protect_threshold,
+                    metadata,
+                    selector,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Delete a service
+    pub async fn service_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+        }
+
+        let response: ApiResponse<bool> = self
+            .http_client
+            .delete_with_query(
+                "/v3/console/ns/service",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Update a service
+    #[allow(clippy::too_many_arguments)]
+    pub async fn service_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Form<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            protect_threshold: f32,
+            metadata: &'a str,
+            selector: &'a str,
+        }
+
+        let response: ApiResponse<bool> = self
+            .http_client
+            .put_json(
+                "/v3/console/ns/service",
+                &Form {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    protect_threshold,
+                    metadata,
+                    selector,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get service detail
+    pub async fn service_get(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Option<ServiceDetail>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+        }
+
+        let response: ApiResponse<ServiceDetail> = self
+            .http_client
+            .get_with_query(
+                "/v3/console/ns/service",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                },
+            )
+            .await?;
+        Ok(Some(response.data))
+    }
+
+    /// List services with pagination
+    #[allow(clippy::too_many_arguments)]
+    pub async fn service_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name_param: &str,
+        page_no: u32,
+        page_size: u32,
+        with_instances: bool,
+    ) -> anyhow::Result<Page<ServiceListItem>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name_param: &'a str,
+            page_no: u32,
+            page_size: u32,
+            with_instances: bool,
+        }
+
+        let response: ApiResponse<Page<ServiceListItem>> = self
+            .http_client
+            .get_with_query(
+                "/v3/console/ns/service/list",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name_param,
+                    page_no,
+                    page_size,
+                    with_instances,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get service subscribers
+    pub async fn service_subscribers(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<Page<SubscriberInfo>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            page_no: u32,
+            page_size: u32,
+        }
+
+        let response: ApiResponse<Page<SubscriberInfo>> = self
+            .http_client
+            .get_with_query(
+                "/v3/console/ns/service/subscribers",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get selector types
+    pub async fn service_selector_types(&self) -> anyhow::Result<Vec<String>> {
+        let response: ApiResponse<Vec<String>> = self
+            .http_client
+            .get("/v3/console/ns/service/selector/types")
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Update cluster configuration
+    #[allow(clippy::too_many_arguments)]
+    pub async fn service_cluster_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        check_port: i32,
+        use_instance_port: bool,
+        health_check_type: &str,
+        metadata: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Form<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            cluster_name: &'a str,
+            check_port: i32,
+            use_instance_port: bool,
+            health_check_type: &'a str,
+            metadata: &'a str,
+        }
+
+        let response: ApiResponse<bool> = self
+            .http_client
+            .put_json(
+                "/v3/console/ns/service/cluster",
+                &Form {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    cluster_name,
+                    check_port,
+                    use_instance_port,
+                    health_check_type,
+                    metadata,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    // ============== Instance APIs ==============
+
+    /// List instances of a service
+    pub async fn instance_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<Page<InstanceInfo>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            cluster_name: &'a str,
+            page_no: u32,
+            page_size: u32,
+        }
+
+        let response: ApiResponse<Page<InstanceInfo>> = self
+            .http_client
+            .get_with_query(
+                "/v3/console/ns/instance/list",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    cluster_name,
+                    page_no,
+                    page_size,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Update an instance
+    #[allow(clippy::too_many_arguments)]
+    pub async fn instance_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        ip: &str,
+        port: i32,
+        weight: f64,
+        healthy: bool,
+        enabled: bool,
+        ephemeral: bool,
+        metadata: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Form<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            cluster_name: &'a str,
+            ip: &'a str,
+            port: i32,
+            weight: f64,
+            healthy: bool,
+            enabled: bool,
+            ephemeral: bool,
+            metadata: &'a str,
+        }
+
+        let response: ApiResponse<bool> = self
+            .http_client
+            .put_json(
+                "/v3/console/ns/instance",
+                &Form {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    cluster_name,
+                    ip,
+                    port,
+                    weight,
+                    healthy,
+                    enabled,
+                    ephemeral,
+                    metadata,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    // ============== Config Listener APIs ==============
+
+    /// Get config listeners
+    pub async fn config_listeners(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            data_id: &'a str,
+            group_name: &'a str,
+            namespace_id: &'a str,
+        }
+
+        let response: ApiResponse<Vec<ConfigListenerInfo>> = self
+            .http_client
+            .get_with_query(
+                "/v3/console/cs/config/listener",
+                &Query {
+                    data_id,
+                    group_name,
+                    namespace_id,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get config listeners by IP
+    pub async fn config_listeners_by_ip(&self, ip: &str) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            ip: &'a str,
+        }
+
+        let response: ApiResponse<Vec<ConfigListenerInfo>> = self
+            .http_client
+            .get_with_query("/v3/console/cs/config/listener/ip", &Query { ip })
             .await?;
         Ok(response.data)
     }

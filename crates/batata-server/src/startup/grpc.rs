@@ -18,6 +18,7 @@ use crate::{
     api::grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
     model::common::AppState,
     service::{
+        config_fuzzy_watch::ConfigFuzzyWatchManager,
         config_handler::{
             ClientConfigMetricHandler, ConfigBatchListenHandler, ConfigChangeClusterSyncHandler,
             ConfigChangeNotifyHandler, ConfigFuzzyWatchChangeNotifyHandler,
@@ -56,12 +57,15 @@ pub struct GrpcServers {
 }
 
 /// Registers all internal handlers (health check, connection setup, etc.).
-fn register_internal_handlers(registry: &mut HandlerRegistry) {
+fn register_internal_handlers(
+    registry: &mut HandlerRegistry,
+    connection_manager: Arc<ConnectionManager>,
+) {
     registry.register_handler(Arc::new(HealthCheckHandler {}));
     registry.register_handler(Arc::new(ServerCheckHandler {}));
     registry.register_handler(Arc::new(ConnectionSetupHandler {}));
     registry.register_handler(Arc::new(ClientDetectionHandler {}));
-    registry.register_handler(Arc::new(ServerLoaderInfoHandler {}));
+    registry.register_handler(Arc::new(ServerLoaderInfoHandler { connection_manager }));
     registry.register_handler(Arc::new(ServerReloadHandler {}));
     registry.register_handler(Arc::new(ConnectResetHandler {}));
     registry.register_handler(Arc::new(SetupAckHandler {}));
@@ -69,7 +73,11 @@ fn register_internal_handlers(registry: &mut HandlerRegistry) {
 }
 
 /// Registers all config handlers.
-fn register_config_handlers(registry: &mut HandlerRegistry, app_state: Arc<AppState>) {
+fn register_config_handlers(
+    registry: &mut HandlerRegistry,
+    app_state: Arc<AppState>,
+    fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+) {
     registry.register_handler(Arc::new(ConfigQueryHandler {
         app_state: app_state.clone(),
     }));
@@ -90,14 +98,19 @@ fn register_config_handlers(registry: &mut HandlerRegistry, app_state: Arc<AppSt
     }));
     registry.register_handler(Arc::new(ConfigFuzzyWatchHandler {
         app_state: app_state.clone(),
+        fuzzy_watch_manager: fuzzy_watch_manager.clone(),
     }));
     registry.register_handler(Arc::new(ConfigFuzzyWatchChangeNotifyHandler {
         app_state: app_state.clone(),
     }));
     registry.register_handler(Arc::new(ConfigFuzzyWatchSyncHandler {
         app_state: app_state.clone(),
+        fuzzy_watch_manager: fuzzy_watch_manager.clone(),
     }));
-    registry.register_handler(Arc::new(ClientConfigMetricHandler { app_state }));
+    registry.register_handler(Arc::new(ClientConfigMetricHandler {
+        app_state,
+        fuzzy_watch_manager,
+    }));
 }
 
 /// Registers all naming handlers.
@@ -192,11 +205,17 @@ pub fn start_grpc_servers(
         .layer(InterceptorLayer::new(context_interceptor))
         .into_inner();
 
+    // Create connection manager first (needed by handlers and stream service)
+    let connection_manager = Arc::new(ConnectionManager::new());
+
     // Initialize gRPC handlers
     let mut handler_registry = HandlerRegistry::new();
 
-    register_internal_handlers(&mut handler_registry);
-    register_config_handlers(&mut handler_registry, app_state.clone());
+    // Create config fuzzy watch manager
+    let config_fuzzy_watch_manager = Arc::new(ConfigFuzzyWatchManager::new());
+
+    register_internal_handlers(&mut handler_registry, connection_manager.clone());
+    register_config_handlers(&mut handler_registry, app_state.clone(), config_fuzzy_watch_manager);
 
     let naming_service = Arc::new(NamingService::new());
     register_naming_handlers(&mut handler_registry, naming_service.clone());
@@ -221,11 +240,13 @@ pub fn start_grpc_servers(
 
     let handler_registry_arc = Arc::new(handler_registry);
 
-    // Create gRPC services
+    // Create gRPC services (reuse connection_manager created earlier)
     let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
-    let connection_manager = Arc::new(ConnectionManager::new());
-    let grpc_bi_request_stream_service =
-        GrpcBiRequestStreamService::from_arc(handler_registry_arc, connection_manager);
+    let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(
+        handler_registry_arc,
+        connection_manager,
+        app_state.config_subscriber_manager.clone(),
+    );
 
     // Start SDK gRPC server
     let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;

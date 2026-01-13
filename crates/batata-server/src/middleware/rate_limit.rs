@@ -429,6 +429,24 @@ pub fn record_auth_success(key: &str) {
     AUTH_RATE_LIMITER.record_success(key)
 }
 
+/// Cleanup interval for rate limiter entries (5 minutes)
+const CLEANUP_INTERVAL_SECS: u64 = 300;
+
+/// Start a background task to periodically clean up expired rate limiter entries.
+/// This prevents memory leaks from accumulating stale entries.
+/// Returns a handle that can be used to abort the cleanup task.
+pub fn start_cleanup_task() -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
+        loop {
+            interval.tick().await;
+            // Clean up auth rate limiter entries
+            AUTH_RATE_LIMITER.cleanup();
+            tracing::debug!("Rate limiter cleanup completed");
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -92,62 +92,49 @@ pub async fn search_page(
     types: Vec<String>,
     content: &str,
 ) -> anyhow::Result<Page<ConfigBasicInfo>> {
-    let mut count_select =
-        config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant_id));
-    let mut query_select =
+    // Build base query with all filters once
+    let mut base_select =
         config_info::Entity::find().filter(config_info::Column::TenantId.eq(tenant_id));
 
     if !data_id.is_empty() {
         if data_id.contains('*') {
             let pattern = escape_sql_like_pattern(data_id);
-            count_select = count_select.filter(config_info::Column::DataId.like(&pattern));
-            query_select = query_select.filter(config_info::Column::DataId.like(&pattern));
+            base_select = base_select.filter(config_info::Column::DataId.like(&pattern));
         } else {
-            count_select = count_select.filter(config_info::Column::DataId.contains(data_id));
-            query_select = query_select.filter(config_info::Column::DataId.contains(data_id));
+            base_select = base_select.filter(config_info::Column::DataId.contains(data_id));
         }
     }
     if !group_id.is_empty() {
         if group_id.contains('*') {
             let pattern = escape_sql_like_pattern(group_id);
-            count_select = count_select.filter(config_info::Column::GroupId.like(&pattern));
-            query_select = query_select.filter(config_info::Column::GroupId.like(&pattern));
+            base_select = base_select.filter(config_info::Column::GroupId.like(&pattern));
         } else {
-            count_select = count_select.filter(config_info::Column::GroupId.eq(group_id));
-            query_select = query_select.filter(config_info::Column::GroupId.eq(group_id));
+            base_select = base_select.filter(config_info::Column::GroupId.eq(group_id));
         }
     }
     if !app_name.is_empty() {
-        count_select = count_select.filter(config_info::Column::AppName.contains(app_name));
-        query_select = query_select.filter(config_info::Column::AppName.contains(app_name));
+        base_select = base_select.filter(config_info::Column::AppName.contains(app_name));
     }
     if !tags.is_empty() {
-        count_select = count_select.join(
+        base_select = base_select.join(
             JoinType::InnerJoin,
             config_info::Entity::belongs_to(config_tags_relation::Entity)
                 .from(config_info::Column::Id)
                 .to(config_tags_relation::Column::Id)
                 .into(),
         );
-        count_select =
-            count_select.filter(config_tags_relation::Column::TagName.is_in(tags.clone()));
-        query_select = query_select.join(
-            JoinType::InnerJoin,
-            config_info::Entity::belongs_to(config_tags_relation::Entity)
-                .from(config_info::Column::Id)
-                .to(config_tags_relation::Column::Id)
-                .into(),
-        );
-        query_select = query_select.filter(config_tags_relation::Column::TagName.is_in(tags));
+        base_select = base_select.filter(config_tags_relation::Column::TagName.is_in(tags));
     }
     if !types.is_empty() {
-        count_select = count_select.filter(config_info::Column::Type.is_in(types.clone()));
-        query_select = query_select.filter(config_info::Column::Type.is_in(types));
+        base_select = base_select.filter(config_info::Column::Type.is_in(types));
     }
     if !content.is_empty() {
-        count_select = count_select.filter(config_info::Column::Content.contains(content));
-        query_select = query_select.filter(config_info::Column::Content.contains(content));
+        base_select = base_select.filter(config_info::Column::Content.contains(content));
     }
+
+    // Clone base query for count and data queries (deduplicates filter logic)
+    let count_select = base_select.clone();
+    let query_select = base_select;
 
     let offset = (page_no - 1) * page_size;
 
@@ -401,6 +388,272 @@ pub async fn find_gray_one(
     } else {
         Ok(None)
     }
+}
+
+/// Delete gray/beta config
+pub async fn delete_gray(
+    db: &DatabaseConnection,
+    data_id: &str,
+    group: &str,
+    namespace_id: &str,
+    client_ip: &str,
+    src_user: &str,
+) -> anyhow::Result<bool> {
+    // Find the gray config first
+    if let Some(gray_entity) = config_info_gray::Entity::find()
+        .filter(config_info_gray::Column::DataId.eq(data_id))
+        .filter(config_info_gray::Column::GroupId.eq(group))
+        .filter(config_info_gray::Column::TenantId.eq(namespace_id))
+        .one(db)
+        .await?
+    {
+        let tx = db.begin().await?;
+
+        // Delete the gray config
+        config_info_gray::Entity::delete_by_id(gray_entity.id)
+            .exec(&tx)
+            .await?;
+
+        // Record history
+        let now = Local::now().naive_local();
+        let his_config = his_config_info::ActiveModel {
+            id: Set(gray_entity.id),
+            nid: Set(0),
+            data_id: Set(gray_entity.data_id),
+            group_id: Set(gray_entity.group_id),
+            app_name: Set(None),
+            content: Set(gray_entity.content),
+            md5: Set(gray_entity.md5),
+            gmt_create: Set(now),
+            gmt_modified: Set(now),
+            src_user: Set(Some(src_user.to_string())),
+            src_ip: Set(Some(client_ip.to_string())),
+            op_type: Set(Some("D".to_string())),
+            tenant_id: Set(gray_entity.tenant_id),
+            encrypted_data_key: Set(gray_entity.encrypted_data_key),
+            publish_type: Set(Some("gray".to_string())),
+            gray_name: Set(Some(gray_entity.gray_name)),
+            ext_info: Set(None),
+        };
+
+        his_config_info::Entity::insert(his_config)
+            .exec(&tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Batch delete configs by IDs
+pub async fn batch_delete(
+    db: &DatabaseConnection,
+    ids: &[i64],
+    client_ip: &str,
+    src_user: &str,
+) -> anyhow::Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+
+    // Find all configs first to record history
+    let configs = config_info::Entity::find()
+        .filter(config_info::Column::Id.is_in(ids.to_vec()))
+        .all(db)
+        .await?;
+
+    if configs.is_empty() {
+        return Ok(0);
+    }
+
+    let tx = db.begin().await?;
+    let now = Local::now().naive_local();
+    let deleted_count = configs.len();
+
+    for entity in configs {
+        // Get tags for ext_info
+        let tags = config_tags_relation::Entity::find()
+            .filter(config_tags_relation::Column::Id.eq(entity.id))
+            .all(db)
+            .await?;
+
+        // Delete tags
+        if !tags.is_empty() {
+            config_tags_relation::Entity::delete_many()
+                .filter(config_tags_relation::Column::Id.eq(entity.id))
+                .exec(&tx)
+                .await?;
+        }
+
+        // Delete config
+        config_info::Entity::delete_by_id(entity.id)
+            .exec(&tx)
+            .await?;
+
+        // Record history
+        let ext_info = build_ext_info(&tags, &entity);
+        let his_config = his_config_info::ActiveModel {
+            id: Set(entity.id as u64),
+            nid: Set(0),
+            data_id: Set(entity.data_id),
+            group_id: Set(entity.group_id.unwrap_or_default()),
+            app_name: Set(entity.app_name),
+            content: Set(entity.content.unwrap_or_default()),
+            md5: Set(entity.md5),
+            gmt_create: Set(now),
+            gmt_modified: Set(now),
+            src_user: Set(Some(src_user.to_string())),
+            src_ip: Set(Some(client_ip.to_string())),
+            op_type: Set(Some("D".to_string())),
+            tenant_id: Set(entity.tenant_id),
+            encrypted_data_key: Set(entity.encrypted_data_key.unwrap_or_default()),
+            publish_type: Set(Some("formal".to_string())),
+            gray_name: Set(Some(String::new())),
+            ext_info: Set(Some(ext_info)),
+        };
+
+        his_config_info::Entity::insert(his_config)
+            .exec(&tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+    Ok(deleted_count)
+}
+
+/// Clone configs to another namespace
+pub async fn clone_configs(
+    db: &DatabaseConnection,
+    ids: &[i64],
+    target_namespace_id: &str,
+    policy: &str,
+    src_user: &str,
+    src_ip: &str,
+) -> anyhow::Result<CloneResult> {
+    if ids.is_empty() {
+        return Ok(CloneResult::default());
+    }
+
+    // Find all source configs
+    let configs = config_info::Entity::find()
+        .filter(config_info::Column::Id.is_in(ids.to_vec()))
+        .all(db)
+        .await?;
+
+    if configs.is_empty() {
+        return Ok(CloneResult::default());
+    }
+
+    let tx = db.begin().await?;
+    let now = Local::now().naive_local();
+    let mut result = CloneResult::default();
+
+    for entity in configs {
+        // Check if target config exists
+        let existing = config_info::Entity::find()
+            .filter(config_info::Column::DataId.eq(&entity.data_id))
+            .filter(config_info::Column::GroupId.eq(entity.group_id.as_ref().unwrap_or(&String::new())))
+            .filter(config_info::Column::TenantId.eq(target_namespace_id))
+            .one(&tx)
+            .await?;
+
+        match (existing, policy) {
+            (Some(_), "ABORT") => {
+                // Skip on conflict
+                result.skipped += 1;
+            }
+            (Some(existing_entity), "SKIP") => {
+                // Skip existing
+                result.skipped += 1;
+                let _ = existing_entity; // consumed
+            }
+            (Some(existing_entity), _) => {
+                // OVERWRITE: Update existing config
+                let mut model: config_info::ActiveModel = existing_entity.into();
+                model.content = Set(entity.content.clone());
+                model.md5 = Set(entity.md5.clone());
+                model.src_user = Set(Some(src_user.to_string()));
+                model.src_ip = Set(Some(src_ip.to_string()));
+                model.app_name = Set(entity.app_name.clone());
+                model.c_desc = Set(entity.c_desc.clone());
+                model.c_use = Set(entity.c_use.clone());
+                model.effect = Set(entity.effect.clone());
+                model.r#type = Set(entity.r#type.clone());
+                model.c_schema = Set(entity.c_schema.clone());
+                model.encrypted_data_key = Set(entity.encrypted_data_key.clone());
+                model.gmt_modified = Set(Some(now));
+
+                config_info::Entity::update(model).exec(&tx).await?;
+                result.succeeded += 1;
+            }
+            (None, _) => {
+                // Create new config in target namespace
+                let new_model = config_info::ActiveModel {
+                    data_id: Set(entity.data_id.clone()),
+                    group_id: Set(entity.group_id.clone()),
+                    content: Set(entity.content.clone()),
+                    md5: Set(entity.md5.clone()),
+                    gmt_create: Set(Some(now)),
+                    gmt_modified: Set(Some(now)),
+                    src_user: Set(Some(src_user.to_string())),
+                    src_ip: Set(Some(src_ip.to_string())),
+                    app_name: Set(entity.app_name.clone()),
+                    tenant_id: Set(Some(target_namespace_id.to_string())),
+                    c_desc: Set(entity.c_desc.clone()),
+                    c_use: Set(entity.c_use.clone()),
+                    effect: Set(entity.effect.clone()),
+                    r#type: Set(entity.r#type.clone()),
+                    c_schema: Set(entity.c_schema.clone()),
+                    encrypted_data_key: Set(entity.encrypted_data_key.clone()),
+                    ..Default::default()
+                };
+
+                let insert_result = config_info::Entity::insert(new_model).exec(&tx).await?;
+
+                // Clone tags if any
+                let tags = config_tags_relation::Entity::find()
+                    .filter(config_tags_relation::Column::Id.eq(entity.id))
+                    .all(db)
+                    .await?;
+
+                if !tags.is_empty() {
+                    let new_tags: Vec<config_tags_relation::ActiveModel> = tags
+                        .into_iter()
+                        .map(|tag| config_tags_relation::ActiveModel {
+                            id: Set(insert_result.last_insert_id),
+                            tag_name: Set(tag.tag_name),
+                            data_id: Set(entity.data_id.clone()),
+                            tag_type: Set(tag.tag_type),
+                            group_id: Set(entity.group_id.clone().unwrap_or_default()),
+                            tenant_id: Set(Some(target_namespace_id.to_string())),
+                            nid: Set(0),
+                        })
+                        .collect();
+
+                    config_tags_relation::Entity::insert_many(new_tags)
+                        .on_empty_do_nothing()
+                        .exec(&tx)
+                        .await?;
+                }
+
+                result.succeeded += 1;
+            }
+        }
+    }
+
+    tx.commit().await?;
+    Ok(result)
+}
+
+/// Result of clone operation
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneResult {
+    pub succeeded: usize,
+    pub skipped: usize,
+    pub failed: usize,
 }
 
 // Helper functions

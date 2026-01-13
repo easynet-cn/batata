@@ -125,22 +125,30 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 pub struct GrpcBiRequestStreamService {
     handler_registry: Arc<HandlerRegistry>,
     connection_manager: Arc<ConnectionManager>,
+    config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
 }
 
 impl GrpcBiRequestStreamService {
-    pub fn new(handler_registry: HandlerRegistry, connection_manager: ConnectionManager) -> Self {
+    pub fn new(
+        handler_registry: HandlerRegistry,
+        connection_manager: ConnectionManager,
+        config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+    ) -> Self {
         Self {
             handler_registry: Arc::new(handler_registry),
             connection_manager: Arc::new(connection_manager),
+            config_subscriber_manager,
         }
     }
     pub fn from_arc(
         handler_registry: Arc<HandlerRegistry>,
         connection_manager: Arc<ConnectionManager>,
+        config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     ) -> Self {
         Self {
             handler_registry,
             connection_manager,
+            config_subscriber_manager,
         }
     }
 }
@@ -166,6 +174,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
         let handler_registry = self.handler_registry.clone();
         let connection_manager = self.connection_manager.clone();
+        let config_subscriber_manager = self.config_subscriber_manager.clone();
 
         tokio::spawn(async move {
             while let Some(message) = inbound_stream.next().await {
@@ -230,6 +239,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
             }
 
             // 连接断开时清理资源
+            config_subscriber_manager.unsubscribe_all(&connection_id);
             connection_manager.unregister(&connection_id);
         });
 

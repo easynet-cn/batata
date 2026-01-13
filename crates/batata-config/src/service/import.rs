@@ -20,11 +20,15 @@ use crate::service::config as config_service;
 pub fn parse_nacos_import_zip(data: &[u8]) -> anyhow::Result<Vec<NacosExportItem>> {
     let cursor = Cursor::new(data);
     let mut archive = ZipArchive::new(cursor)?;
-    let mut items: Vec<NacosExportItem> = Vec::new();
+
+    // Pre-allocate with estimated capacity to avoid reallocations
+    // Each config typically has a content file and a .meta file
+    let estimated_configs = archive.len() / 2;
+    let mut items: Vec<NacosExportItem> = Vec::with_capacity(estimated_configs);
     let mut content_map: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
+        std::collections::HashMap::with_capacity(estimated_configs);
     let mut meta_map: std::collections::HashMap<String, NacosConfigMetadata> =
-        std::collections::HashMap::new();
+        std::collections::HashMap::with_capacity(estimated_configs);
 
     // First pass: read all files
     for i in 0..archive.len() {
@@ -87,7 +91,8 @@ pub fn parse_consul_import_json(
     default_namespace: &str,
 ) -> anyhow::Result<Vec<ConfigImportItem>> {
     let kv_items: Vec<ConsulKVExportItem> = serde_json::from_slice(data)?;
-    let mut items: Vec<ConfigImportItem> = Vec::new();
+    // Pre-allocate with exact capacity since we know the number of items
+    let mut items: Vec<ConfigImportItem> = Vec::with_capacity(kv_items.len());
 
     for kv in kv_items {
         // Decode base64 value

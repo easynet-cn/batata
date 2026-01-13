@@ -31,6 +31,7 @@ use super::ConsoleDataSource;
 pub struct LocalDataSource {
     database_connection: DatabaseConnection,
     server_member_manager: Arc<ServerMemberManager>,
+    config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     #[allow(dead_code)]
     configuration: Configuration,
 }
@@ -39,11 +40,13 @@ impl LocalDataSource {
     pub fn new(
         database_connection: DatabaseConnection,
         server_member_manager: Arc<ServerMemberManager>,
+        config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
         configuration: Configuration,
     ) -> Self {
         Self {
             database_connection,
             server_member_manager,
+            config_subscriber_manager,
             configuration,
         }
     }

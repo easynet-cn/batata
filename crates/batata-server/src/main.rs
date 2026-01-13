@@ -7,6 +7,7 @@ use std::sync::Arc;
 use batata_core::cluster::ServerMemberManager;
 use batata_server::{
     console::datasource,
+    middleware::rate_limit,
     model::{self, common::AppState},
     startup::{self, ConsulServices, OtelConfig},
 };
@@ -37,6 +38,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize metrics for observability
     batata_server::metrics::init_metrics();
 
+    // Start background cleanup task for rate limiters to prevent memory leaks
+    let _rate_limit_cleanup_handle = rate_limit::start_cleanup_task();
+
     // Extract configuration parameters
     let deployment_type = configuration.deployment_type();
     let is_console_remote = deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE
@@ -63,10 +67,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create console datasource based on mode
+    // Create config subscriber manager (shared between gRPC and console)
+    let config_subscriber_manager = Arc::new(batata_core::ConfigSubscriberManager::new());
+
     let console_datasource = datasource::create_datasource(
         &configuration,
         database_connection.clone(),
         server_member_manager.clone(),
+        config_subscriber_manager.clone(),
     )
     .await?;
 
@@ -75,6 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         configuration,
         database_connection,
         server_member_manager,
+        config_subscriber_manager,
         console_datasource,
     });
 

@@ -11,16 +11,23 @@ use batata_api::model::Member as ApiMember;
 use batata_config::{
     ConfigAllInfo, ConfigBasicInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
     ImportResult, Namespace, SameConfigPolicy,
+    service::config::CloneResult,
 };
 use batata_core::cluster::ServerMemberManager;
+use batata_naming::NamingService;
 
-use super::ConsoleDataSource;
+use super::{
+    ClusterInfo, ConfigListenerInfo, ConsoleDataSource, HealthChecker, InstanceInfo,
+    ServiceDetail, ServiceListItem, ServiceSelector, SubscriberInfo,
+};
 use crate::model::{ClusterHealthResponse, ClusterHealthSummary, Member, SelfMemberResponse};
 
 /// Local data source - direct database access
 pub struct LocalDataSource {
     database_connection: DatabaseConnection,
     server_member_manager: Arc<ServerMemberManager>,
+    naming_service: Arc<NamingService>,
+    config_subscriber_manager: Option<Arc<batata_core::ConfigSubscriberManager>>,
 }
 
 impl LocalDataSource {
@@ -31,6 +38,36 @@ impl LocalDataSource {
         Self {
             database_connection,
             server_member_manager,
+            naming_service: Arc::new(NamingService::new()),
+            config_subscriber_manager: None,
+        }
+    }
+
+    pub fn with_naming_service(
+        database_connection: DatabaseConnection,
+        server_member_manager: Arc<ServerMemberManager>,
+        naming_service: Arc<NamingService>,
+    ) -> Self {
+        Self {
+            database_connection,
+            server_member_manager,
+            naming_service,
+            config_subscriber_manager: None,
+        }
+    }
+
+    /// Create with config subscriber manager for config listener tracking
+    pub fn with_config_subscriber_manager(
+        database_connection: DatabaseConnection,
+        server_member_manager: Arc<ServerMemberManager>,
+        naming_service: Arc<NamingService>,
+        config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+    ) -> Self {
+        Self {
+            database_connection,
+            server_member_manager,
+            naming_service,
+            config_subscriber_manager: Some(config_subscriber_manager),
         }
     }
 }
@@ -272,6 +309,562 @@ impl ConsoleDataSource for LocalDataSource {
             src_ip,
         )
         .await
+    }
+
+    async fn config_batch_delete(
+        &self,
+        ids: &[i64],
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<usize> {
+        batata_config::service::batch_delete(
+            &self.database_connection,
+            ids,
+            client_ip,
+            src_user,
+        )
+        .await
+    }
+
+    async fn config_gray_delete(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<bool> {
+        batata_config::service::delete_gray(
+            &self.database_connection,
+            data_id,
+            group_name,
+            namespace_id,
+            client_ip,
+            src_user,
+        )
+        .await
+    }
+
+    async fn config_clone(
+        &self,
+        ids: &[i64],
+        target_namespace_id: &str,
+        policy: &str,
+        src_user: &str,
+        src_ip: &str,
+    ) -> anyhow::Result<CloneResult> {
+        batata_config::service::clone_configs(
+            &self.database_connection,
+            ids,
+            target_namespace_id,
+            policy,
+            src_user,
+            src_ip,
+        )
+        .await
+    }
+
+    async fn config_listeners(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+        // Use ConfigSubscriberManager if available
+        if let Some(ref manager) = self.config_subscriber_manager {
+            let config_key =
+                batata_core::ConfigKey::new(data_id, group_name, namespace_id);
+            let subscribers = manager.get_subscribers(&config_key);
+
+            return Ok(subscribers
+                .into_iter()
+                .map(|s| ConfigListenerInfo {
+                    connection_id: s.connection_id,
+                    client_ip: s.client_ip,
+                    data_id: data_id.to_string(),
+                    group: group_name.to_string(),
+                    tenant: namespace_id.to_string(),
+                    md5: s.md5,
+                })
+                .collect());
+        }
+
+        // Fallback: ConfigSubscriberManager not configured
+        Ok(Vec::new())
+    }
+
+    async fn config_listeners_by_ip(
+        &self,
+        ip: &str,
+    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+        // Use ConfigSubscriberManager if available
+        if let Some(ref manager) = self.config_subscriber_manager {
+            let subscribers = manager.get_subscribers_by_ip(ip);
+
+            return Ok(subscribers
+                .into_iter()
+                .map(|(key, s)| ConfigListenerInfo {
+                    connection_id: s.connection_id,
+                    client_ip: s.client_ip,
+                    data_id: key.data_id,
+                    group: key.group,
+                    tenant: key.tenant,
+                    md5: s.md5,
+                })
+                .collect());
+        }
+
+        // Fallback: ConfigSubscriberManager not configured
+        Ok(Vec::new())
+    }
+
+    // ============== Naming/Service Operations ==============
+
+    async fn service_create(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool> {
+        // Parse metadata JSON
+        let metadata_map: std::collections::HashMap<String, String> = if metadata.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            serde_json::from_str(metadata).unwrap_or_default()
+        };
+
+        // Parse selector JSON (expects {"type": "...", "expression": "..."})
+        let (selector_type, selector_expression) = if selector.is_empty() {
+            ("none".to_string(), String::new())
+        } else {
+            serde_json::from_str::<serde_json::Value>(selector)
+                .ok()
+                .map(|v| {
+                    (
+                        v.get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("none")
+                            .to_string(),
+                        v.get("expression")
+                            .and_then(|e| e.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                })
+                .unwrap_or(("none".to_string(), String::new()))
+        };
+
+        // Create service metadata
+        let service_metadata = batata_naming::ServiceMetadata {
+            protect_threshold,
+            metadata: metadata_map,
+            selector_type,
+            selector_expression,
+        };
+
+        // Store service metadata (this creates the service)
+        self.naming_service
+            .set_service_metadata(namespace_id, group_name, service_name, service_metadata);
+
+        Ok(true)
+    }
+
+    async fn service_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<bool> {
+        // Get all instances and deregister them
+        let instances =
+            self.naming_service
+                .get_instances(namespace_id, group_name, service_name, "", false);
+        for instance in &instances {
+            self.naming_service
+                .deregister_instance(namespace_id, group_name, service_name, instance);
+        }
+
+        // Delete service metadata
+        self.naming_service
+            .delete_service_metadata(namespace_id, group_name, service_name);
+
+        Ok(true)
+    }
+
+    async fn service_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool> {
+        // Parse metadata JSON
+        let metadata_map: std::collections::HashMap<String, String> = if metadata.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            serde_json::from_str(metadata).unwrap_or_default()
+        };
+
+        // Parse selector JSON (expects {"type": "...", "expression": "..."})
+        let (selector_type, selector_expression) = if selector.is_empty() {
+            ("none".to_string(), String::new())
+        } else {
+            serde_json::from_str::<serde_json::Value>(selector)
+                .ok()
+                .map(|v| {
+                    (
+                        v.get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("none")
+                            .to_string(),
+                        v.get("expression")
+                            .and_then(|e| e.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                })
+                .unwrap_or(("none".to_string(), String::new()))
+        };
+
+        // Update service metadata
+        let service_metadata = batata_naming::ServiceMetadata {
+            protect_threshold,
+            metadata: metadata_map,
+            selector_type,
+            selector_expression,
+        };
+
+        self.naming_service
+            .set_service_metadata(namespace_id, group_name, service_name, service_metadata);
+
+        Ok(true)
+    }
+
+    async fn service_get(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Option<ServiceDetail>> {
+        // Check if service exists (has metadata or instances)
+        if !self
+            .naming_service
+            .service_exists(namespace_id, group_name, service_name)
+        {
+            return Ok(None);
+        }
+
+        let service =
+            self.naming_service
+                .get_service(namespace_id, group_name, service_name, "", false);
+
+        // Get stored service metadata
+        let svc_metadata = self
+            .naming_service
+            .get_service_metadata(namespace_id, group_name, service_name);
+
+        // Extract unique clusters from instances
+        let mut cluster_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for host in &service.hosts {
+            cluster_names.insert(host.cluster_name.clone());
+        }
+
+        // Get cluster configs or use defaults
+        let clusters: Vec<ClusterInfo> = cluster_names
+            .into_iter()
+            .map(|name| {
+                let cluster_config = self.naming_service.get_cluster_config(
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    &name,
+                );
+
+                match cluster_config {
+                    Some(cfg) => ClusterInfo {
+                        name: cfg.name,
+                        health_checker: HealthChecker {
+                            check_type: cfg.health_check_type,
+                            port: cfg.check_port,
+                            use_instance_port: cfg.use_instance_port,
+                        },
+                        metadata: cfg.metadata,
+                    },
+                    None => ClusterInfo {
+                        name,
+                        health_checker: HealthChecker {
+                            check_type: "TCP".to_string(),
+                            port: 80,
+                            use_instance_port: true,
+                        },
+                        metadata: std::collections::HashMap::new(),
+                    },
+                }
+            })
+            .collect();
+
+        Ok(Some(ServiceDetail {
+            namespace_id: namespace_id.to_string(),
+            group_name: group_name.to_string(),
+            service_name: service_name.to_string(),
+            protect_threshold: svc_metadata.as_ref().map_or(0.0, |m| m.protect_threshold),
+            metadata: svc_metadata.as_ref().map_or_else(
+                std::collections::HashMap::new,
+                |m| m.metadata.clone(),
+            ),
+            selector: svc_metadata.as_ref().map_or_else(ServiceSelector::default, |m| {
+                ServiceSelector {
+                    selector_type: m.selector_type.clone(),
+                    expression: m.selector_expression.clone(),
+                }
+            }),
+            clusters,
+        }))
+    }
+
+    async fn service_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        _service_name_pattern: &str,
+        page_no: u32,
+        page_size: u32,
+        with_instances: bool,
+    ) -> anyhow::Result<Page<ServiceListItem>> {
+        let (total, service_names) = self.naming_service.list_services(
+            namespace_id,
+            group_name,
+            page_no as i32,
+            page_size as i32,
+        );
+
+        let items: Vec<ServiceListItem> = service_names
+            .into_iter()
+            .map(|name| {
+                let instances = self.naming_service.get_instances(
+                    namespace_id,
+                    group_name,
+                    &name,
+                    "",
+                    false,
+                );
+                let healthy_count = instances.iter().filter(|i| i.healthy).count() as u32;
+
+                // Extract unique clusters
+                let cluster_names: std::collections::HashSet<String> =
+                    instances.iter().map(|i| i.cluster_name.clone()).collect();
+
+                ServiceListItem {
+                    name: name.clone(),
+                    group_name: group_name.to_string(),
+                    cluster_count: cluster_names.len() as u32,
+                    ip_count: instances.len() as u32,
+                    healthy_instance_count: healthy_count,
+                    trigger_flag: false,
+                    metadata: std::collections::HashMap::new(),
+                    instances: if with_instances {
+                        Some(instances)
+                    } else {
+                        None
+                    },
+                }
+            })
+            .collect();
+
+        let pages_available = if page_size > 0 {
+            (total as u64 + page_size as u64 - 1) / page_size as u64
+        } else {
+            1
+        };
+
+        Ok(Page::new(
+            total as u64,
+            page_no as u64,
+            pages_available,
+            items,
+        ))
+    }
+
+    async fn service_subscribers(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<Page<SubscriberInfo>> {
+        let subscribers =
+            self.naming_service
+                .get_subscribers(namespace_id, group_name, service_name);
+
+        let total = subscribers.len() as u64;
+        let start = ((page_no - 1) * page_size) as usize;
+        let items: Vec<SubscriberInfo> = subscribers
+            .into_iter()
+            .skip(start)
+            .take(page_size as usize)
+            .map(|conn_id| SubscriberInfo {
+                address: conn_id.clone(),
+                agent: String::new(),
+                app: String::new(),
+            })
+            .collect();
+
+        let pages_available = if page_size > 0 {
+            (total + page_size as u64 - 1) / page_size as u64
+        } else {
+            1
+        };
+
+        Ok(Page::new(total, page_no as u64, pages_available, items))
+    }
+
+    fn service_selector_types(&self) -> Vec<String> {
+        vec![
+            "none".to_string(),
+            "label".to_string(),
+        ]
+    }
+
+    async fn service_cluster_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        check_port: i32,
+        use_instance_port: bool,
+        health_check_type: &str,
+        metadata: &str,
+    ) -> anyhow::Result<bool> {
+        // Parse metadata JSON
+        let metadata_map: std::collections::HashMap<String, String> = if metadata.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            serde_json::from_str(metadata).unwrap_or_default()
+        };
+
+        // Create cluster config
+        let cluster_config = batata_naming::ClusterConfig {
+            name: cluster_name.to_string(),
+            health_check_type: health_check_type.to_string(),
+            check_port,
+            use_instance_port,
+            metadata: metadata_map,
+        };
+
+        // Store cluster configuration
+        self.naming_service.set_cluster_config(
+            namespace_id,
+            group_name,
+            service_name,
+            cluster_name,
+            cluster_config,
+        );
+
+        Ok(true)
+    }
+
+    // ============== Instance Operations ==============
+
+    async fn instance_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<Page<InstanceInfo>> {
+        let instances = self.naming_service.get_instances(
+            namespace_id,
+            group_name,
+            service_name,
+            cluster_name,
+            false, // include unhealthy
+        );
+
+        // Convert to InstanceInfo
+        let instance_infos: Vec<InstanceInfo> = instances
+            .into_iter()
+            .map(|inst| InstanceInfo {
+                ip: inst.ip.clone(),
+                port: inst.port,
+                weight: inst.weight,
+                healthy: inst.healthy,
+                enabled: inst.enabled,
+                ephemeral: inst.ephemeral,
+                cluster_name: inst.cluster_name.clone(),
+                service_name: inst.service_name.clone(),
+                metadata: inst.metadata.clone(),
+                instance_heart_beat_interval: inst.instance_heart_beat_interval,
+                instance_heart_beat_timeout: inst.instance_heart_beat_time_out,
+                ip_delete_timeout: inst.ip_delete_timeout,
+            })
+            .collect();
+
+        // Apply pagination
+        let total = instance_infos.len();
+        let start = ((page_no.saturating_sub(1)) * page_size) as usize;
+        let end = (start + page_size as usize).min(total);
+        let page_data = if start < total {
+            instance_infos[start..end].to_vec()
+        } else {
+            vec![]
+        };
+
+        Ok(Page::new(total as u64, page_no as u64, page_size as u64, page_data))
+    }
+
+    async fn instance_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        ip: &str,
+        port: i32,
+        weight: f64,
+        healthy: bool,
+        enabled: bool,
+        ephemeral: bool,
+        metadata: &str,
+    ) -> anyhow::Result<bool> {
+        // Parse metadata JSON
+        let metadata_map: std::collections::HashMap<String, String> = if metadata.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            serde_json::from_str(metadata).unwrap_or_default()
+        };
+
+        // Create updated instance
+        let instance = batata_naming::Instance {
+            ip: ip.to_string(),
+            port,
+            weight,
+            healthy,
+            enabled,
+            ephemeral,
+            cluster_name: cluster_name.to_string(),
+            service_name: service_name.to_string(),
+            metadata: metadata_map,
+            ..Default::default()
+        };
+
+        // Register will update if instance exists
+        self.naming_service.register_instance(
+            namespace_id,
+            group_name,
+            service_name,
+            instance,
+        );
+
+        Ok(true)
     }
 
     // ============== History Operations ==============

@@ -2,9 +2,12 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::sync::Arc;
 
-use actix_web::{Scope, get, web};
+use actix_web::{HttpResponse, Responder, Scope, get, web};
 use serde::Deserialize;
+
+use crate::datasource::ConsoleDataSource;
 
 use super::namespace::ApiResult;
 
@@ -25,6 +28,30 @@ pub const AUTH_SYSTEM_TYPE: &str = "auth_system_type";
 #[serde(rename_all = "camelCase")]
 pub struct LanguageParam {
     pub language: String,
+}
+
+/// Server state configuration
+#[derive(Clone, Debug)]
+pub struct ServerStateConfig {
+    pub server_port: u16,
+    pub console_ui_enabled: bool,
+    pub function_mode: String,
+    pub auth_enabled: bool,
+    pub auth_system_type: String,
+    pub login_page_enabled: bool,
+}
+
+impl Default for ServerStateConfig {
+    fn default() -> Self {
+        Self {
+            server_port: 8848,
+            console_ui_enabled: true,
+            function_mode: "naming,config".to_string(),
+            auth_enabled: false,
+            auth_system_type: "nacos".to_string(),
+            login_page_enabled: true,
+        }
+    }
 }
 
 /// Server state provider trait
@@ -71,6 +98,36 @@ pub fn get_server_state<T: ServerStateProvider>(provider: &T) -> HashMap<String,
     state_map
 }
 
+/// Get server state endpoint
+#[get("/state")]
+pub async fn get_state(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    config: Option<web::Data<ServerStateConfig>>,
+) -> impl Responder {
+    let config = config.map(|c| c.get_ref().clone()).unwrap_or_default();
+    let standalone = datasource.cluster_is_standalone();
+
+    let mut state: HashMap<String, String> = HashMap::new();
+    state.insert(SERVER_PORT_STATE.to_string(), config.server_port.to_string());
+    state.insert(
+        CONSOLE_UI_ENABLED.to_string(),
+        config.console_ui_enabled.to_string(),
+    );
+    state.insert(STANDALONE_MODE.to_string(), standalone.to_string());
+    state.insert(FUNCTION_MODE.to_string(), config.function_mode.clone());
+    state.insert(AUTH_ENABLED.to_string(), config.auth_enabled.to_string());
+    state.insert(
+        AUTH_SYSTEM_TYPE.to_string(),
+        config.auth_system_type.clone(),
+    );
+    state.insert(
+        LOGIN_PAGE_ENABLED.to_string(),
+        config.login_page_enabled.to_string(),
+    );
+
+    HttpResponse::Ok().json(state)
+}
+
 #[get("/announcement")]
 pub async fn announcement(params: web::Query<LanguageParam>) -> web::Json<ApiResult<String>> {
     let file = format!(
@@ -98,5 +155,8 @@ pub async fn guide() -> web::Json<ApiResult<String>> {
 }
 
 pub fn routes() -> Scope {
-    web::scope("/server").service(announcement).service(guide)
+    web::scope("/server")
+        .service(get_state)
+        .service(announcement)
+        .service(guide)
 }

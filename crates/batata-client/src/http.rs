@@ -327,6 +327,26 @@ impl BatataHttpClient {
         .await
     }
 
+    /// Make a POST request with query parameters (no body)
+    pub async fn post_with_query<T: DeserializeOwned, Q: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        query: &Q,
+    ) -> anyhow::Result<T> {
+        self.request_with_retry(
+            |client, url, token| async move {
+                client
+                    .post(&url)
+                    .header("accessToken", &token)
+                    .query(query)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
+    }
+
     /// Make a PUT request with form data
     pub async fn put_form<T: DeserializeOwned, F: Serialize + ?Sized>(
         &self,
@@ -339,6 +359,26 @@ impl BatataHttpClient {
                     .put(&url)
                     .header("accessToken", &token)
                     .form(form)
+                    .send()
+                    .await
+            },
+            path,
+        )
+        .await
+    }
+
+    /// Make a PUT request with JSON body
+    pub async fn put_json<T: DeserializeOwned, B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> anyhow::Result<T> {
+        self.request_with_retry(
+            |client, url, token| async move {
+                client
+                    .put(&url)
+                    .header("accessToken", &token)
+                    .json(body)
                     .send()
                     .await
             },

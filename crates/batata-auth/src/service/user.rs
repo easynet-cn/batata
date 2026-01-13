@@ -51,12 +51,13 @@ pub async fn search_page(
 
     if total_count > 0 {
         let offset = (page_no - 1) * page_size;
+        // Use into_iter() instead of iter() to avoid cloning
         let page_items = query_select
             .offset(offset)
             .limit(page_size)
             .all(db)
             .await?
-            .iter()
+            .into_iter()
             .map(User::from)
             .collect();
 
@@ -72,14 +73,14 @@ pub async fn search_page(
 }
 
 pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<Vec<String>> {
+    // Use into_tuple to directly fetch only username column, avoiding full model deserialization
     let users = users::Entity::find()
+        .select_only()
         .column(users::Column::Username)
         .filter(users::Column::Username.contains(username))
+        .into_tuple::<String>()
         .all(db)
-        .await?
-        .iter()
-        .map(|user| user.username.to_string())
-        .collect();
+        .await?;
 
     Ok(users)
 }

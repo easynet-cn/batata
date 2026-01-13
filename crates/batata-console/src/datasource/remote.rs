@@ -16,7 +16,12 @@ use batata_config::{
 };
 use batata_core::cluster::ServerMemberManager;
 
-use super::{ConsoleDataSource, ConsoleDataSourceConfig};
+use batata_config::service::config::CloneResult;
+
+use super::{
+    ClusterInfo, ConfigListenerInfo, ConsoleDataSource, ConsoleDataSourceConfig, HealthChecker,
+    InstanceInfo, ServiceDetail, ServiceListItem, ServiceSelector, SubscriberInfo,
+};
 use crate::model::{ClusterHealthResponse, ClusterHealthSummary, Member, SelfMemberResponse};
 
 /// Extension trait for RwLock that handles poison recovery gracefully
@@ -414,6 +419,363 @@ impl ConsoleDataSource for RemoteDataSource {
         Err(anyhow::anyhow!(
             "Config import is not yet supported in remote console mode"
         ))
+    }
+
+    async fn config_batch_delete(
+        &self,
+        ids: &[i64],
+        _client_ip: &str,
+        _src_user: &str,
+    ) -> anyhow::Result<usize> {
+        self.api_client.config_batch_delete(ids).await
+    }
+
+    async fn config_gray_delete(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        _client_ip: &str,
+        _src_user: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .config_gray_delete(data_id, group_name, namespace_id)
+            .await
+    }
+
+    async fn config_clone(
+        &self,
+        ids: &[i64],
+        target_namespace_id: &str,
+        policy: &str,
+        _src_user: &str,
+        _src_ip: &str,
+    ) -> anyhow::Result<CloneResult> {
+        let client_result = self
+            .api_client
+            .config_clone(ids, target_namespace_id, policy)
+            .await?;
+
+        // Convert from client CloneResult to batata_config CloneResult
+        Ok(CloneResult {
+            succeeded: client_result.succeeded,
+            skipped: client_result.skipped,
+            failed: client_result.failed,
+        })
+    }
+
+    async fn config_listeners(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+        let result = self
+            .api_client
+            .config_listeners(data_id, group_name, namespace_id)
+            .await?;
+
+        Ok(result
+            .into_iter()
+            .map(|l| ConfigListenerInfo {
+                connection_id: l.connection_id,
+                client_ip: l.client_ip,
+                data_id: l.data_id,
+                group: l.group,
+                tenant: l.tenant,
+                md5: l.md5,
+            })
+            .collect())
+    }
+
+    async fn config_listeners_by_ip(
+        &self,
+        ip: &str,
+    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+        let result = self.api_client.config_listeners_by_ip(ip).await?;
+
+        Ok(result
+            .into_iter()
+            .map(|l| ConfigListenerInfo {
+                connection_id: l.connection_id,
+                client_ip: l.client_ip,
+                data_id: l.data_id,
+                group: l.group,
+                tenant: l.tenant,
+                md5: l.md5,
+            })
+            .collect())
+    }
+
+    // ============== Naming/Service Operations ==============
+
+    async fn service_create(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .service_create(
+                namespace_id,
+                group_name,
+                service_name,
+                protect_threshold,
+                metadata,
+                selector,
+            )
+            .await
+    }
+
+    async fn service_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .service_delete(namespace_id, group_name, service_name)
+            .await
+    }
+
+    async fn service_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .service_update(
+                namespace_id,
+                group_name,
+                service_name,
+                protect_threshold,
+                metadata,
+                selector,
+            )
+            .await
+    }
+
+    async fn service_get(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Option<ServiceDetail>> {
+        let result = self
+            .api_client
+            .service_get(namespace_id, group_name, service_name)
+            .await?;
+
+        Ok(result.map(|s| ServiceDetail {
+            namespace_id: s.namespace_id,
+            group_name: s.group_name,
+            service_name: s.service_name,
+            protect_threshold: s.protect_threshold,
+            metadata: s.metadata,
+            selector: ServiceSelector {
+                selector_type: s.selector.selector_type,
+                expression: s.selector.expression,
+            },
+            clusters: s
+                .clusters
+                .into_iter()
+                .map(|c| ClusterInfo {
+                    name: c.name,
+                    health_checker: HealthChecker {
+                        check_type: c.health_checker.check_type,
+                        port: c.health_checker.port,
+                        use_instance_port: c.health_checker.use_instance_port,
+                    },
+                    metadata: c.metadata,
+                })
+                .collect(),
+        }))
+    }
+
+    async fn service_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name_pattern: &str,
+        page_no: u32,
+        page_size: u32,
+        with_instances: bool,
+    ) -> anyhow::Result<Page<ServiceListItem>> {
+        let result = self
+            .api_client
+            .service_list(
+                namespace_id,
+                group_name,
+                service_name_pattern,
+                page_no,
+                page_size,
+                with_instances,
+            )
+            .await?;
+
+        Ok(Page::new(
+            result.total_count,
+            result.page_number,
+            result.pages_available,
+            result
+                .page_items
+                .into_iter()
+                .map(|s| ServiceListItem {
+                    name: s.name,
+                    group_name: s.group_name,
+                    cluster_count: s.cluster_count,
+                    ip_count: s.ip_count,
+                    healthy_instance_count: s.healthy_instance_count,
+                    trigger_flag: s.trigger_flag,
+                    metadata: s.metadata,
+                    instances: None, // Remote API doesn't return nested instances
+                })
+                .collect(),
+        ))
+    }
+
+    async fn service_subscribers(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<Page<SubscriberInfo>> {
+        let result = self
+            .api_client
+            .service_subscribers(namespace_id, group_name, service_name, page_no, page_size)
+            .await?;
+
+        Ok(Page::new(
+            result.total_count,
+            result.page_number,
+            result.pages_available,
+            result
+                .page_items
+                .into_iter()
+                .map(|s| SubscriberInfo {
+                    address: s.address,
+                    agent: s.agent,
+                    app: s.app,
+                })
+                .collect(),
+        ))
+    }
+
+    fn service_selector_types(&self) -> Vec<String> {
+        vec!["none".to_string(), "label".to_string()]
+    }
+
+    async fn service_cluster_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        check_port: i32,
+        use_instance_port: bool,
+        health_check_type: &str,
+        metadata: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .service_cluster_update(
+                namespace_id,
+                group_name,
+                service_name,
+                cluster_name,
+                check_port,
+                use_instance_port,
+                health_check_type,
+                metadata,
+            )
+            .await
+    }
+
+    // ============== Instance Operations ==============
+
+    async fn instance_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<Page<InstanceInfo>> {
+        let result = self
+            .api_client
+            .instance_list(
+                namespace_id,
+                group_name,
+                service_name,
+                cluster_name,
+                page_no,
+                page_size,
+            )
+            .await?;
+
+        Ok(Page::new(
+            result.total_count,
+            result.page_number,
+            result.pages_available,
+            result
+                .page_items
+                .into_iter()
+                .map(|i| InstanceInfo {
+                    ip: i.ip,
+                    port: i.port,
+                    weight: i.weight,
+                    healthy: i.healthy,
+                    enabled: i.enabled,
+                    ephemeral: i.ephemeral,
+                    cluster_name: i.cluster_name,
+                    service_name: i.service_name,
+                    metadata: i.metadata,
+                    instance_heart_beat_interval: i.instance_heart_beat_interval,
+                    instance_heart_beat_timeout: i.instance_heart_beat_timeout,
+                    ip_delete_timeout: i.ip_delete_timeout,
+                })
+                .collect(),
+        ))
+    }
+
+    async fn instance_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        ip: &str,
+        port: i32,
+        weight: f64,
+        healthy: bool,
+        enabled: bool,
+        ephemeral: bool,
+        metadata: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .instance_update(
+                namespace_id,
+                group_name,
+                service_name,
+                cluster_name,
+                ip,
+                port,
+                weight,
+                healthy,
+                enabled,
+                ephemeral,
+                metadata,
+            )
+            .await
     }
 
     // ============== History Operations ==============

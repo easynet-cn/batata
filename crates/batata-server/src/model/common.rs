@@ -863,6 +863,7 @@ pub struct AppState {
     pub configuration: Configuration,
     pub database_connection: Option<DatabaseConnection>,
     pub server_member_manager: Option<Arc<ServerMemberManager>>,
+    pub config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     pub console_datasource: Arc<dyn ConsoleDataSource>,
 }
 
@@ -875,6 +876,7 @@ impl std::fmt::Debug for AppState {
                 "server_member_manager",
                 &self.server_member_manager.is_some(),
             )
+            .field("config_subscriber_manager", &"<ConfigSubscriberManager>")
             .field("console_datasource", &"<dyn ConsoleDataSource>")
             .finish()
     }
@@ -886,6 +888,7 @@ impl Clone for AppState {
             configuration: self.configuration.clone(),
             database_connection: self.database_connection.clone(),
             server_member_manager: self.server_member_manager.clone(),
+            config_subscriber_manager: self.config_subscriber_manager.clone(),
             console_datasource: self.console_datasource.clone(),
         }
     }

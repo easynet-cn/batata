@@ -40,8 +40,15 @@ pub async fn find_all(db: &DatabaseConnection) -> Vec<Namespace> {
         }
     };
 
+    // Pre-allocate HashMap with known capacity to avoid reallocations
     let config_infos: HashMap<String, i32> = match config_counts_result {
-        Ok(infos) => infos.into_iter().collect(),
+        Ok(infos) => {
+            let mut map = HashMap::with_capacity(infos.len());
+            for (k, v) in infos {
+                map.insert(k, v);
+            }
+            map
+        }
         Err(e) => {
             tracing::error!("Failed to fetch config counts: {}", e);
             HashMap::new()

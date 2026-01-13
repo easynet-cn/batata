@@ -469,9 +469,7 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
 
     async fn get_all_keys(&self) -> Vec<String> {
         // Get all service keys from naming service
-        // This would iterate through all services
-        // For now, return empty - will be populated when services are registered
-        vec![]
+        self.naming_service.get_all_service_keys()
     }
 
     async fn get_data(&self, key: &str) -> Option<DistroData> {

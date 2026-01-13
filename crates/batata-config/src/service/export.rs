@@ -59,9 +59,9 @@ pub async fn find_configs_for_export(
         vec![]
     };
 
-    // Group tags by config id
+    // Group tags by config id with pre-allocated capacity
     let mut tags_map: std::collections::HashMap<i64, Vec<String>> =
-        std::collections::HashMap::new();
+        std::collections::HashMap::with_capacity(configs.len());
     for tag in tags {
         tags_map.entry(tag.id).or_default().push(tag.tag_name);
     }

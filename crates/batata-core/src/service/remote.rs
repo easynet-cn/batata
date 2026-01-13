@@ -65,4 +65,9 @@ impl ConnectionManager {
     pub fn unregister(&self, connection_id: &str) {
         self.clients.remove(connection_id);
     }
+
+    /// Get the current number of connected clients
+    pub fn connection_count(&self) -> usize {
+        self.clients.len()
+    }
 }

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use tonic::Status;
+use tracing::debug;
 
 use batata_core::model::Connection;
 
@@ -23,7 +24,11 @@ use crate::{
         remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
     model::common::AppState,
-    service::{config, rpc::PayloadHandler},
+    service::{
+        config,
+        config_fuzzy_watch::ConfigFuzzyWatchManager,
+        rpc::PayloadHandler,
+    },
 };
 
 // Handler for ConfigQueryRequest - queries configuration by dataId, group, tenant
@@ -247,11 +252,15 @@ pub struct ConfigBatchListenHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigBatchListenHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigBatchListenRequest::from(payload);
         let request_id = request.request_id();
 
         let db = self.app_state.db();
+        let subscriber_manager = &self.app_state.config_subscriber_manager;
+        let connection_id = &connection.meta_info.connection_id;
+        let client_ip = &connection.meta_info.remote_ip;
+
         let mut changed_configs = Vec::new();
 
         // Check each config in the listen list for changes
@@ -260,6 +269,16 @@ impl PayloadHandler for ConfigBatchListenHandler {
             let group = &ctx.group;
             let tenant = &ctx.tenant;
             let client_md5 = &ctx.md5;
+
+            let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
+
+            if request.listen {
+                // Register subscription
+                subscriber_manager.subscribe(connection_id, client_ip, &config_key, client_md5);
+            } else {
+                // Unregister subscription
+                subscriber_manager.unsubscribe(connection_id, &config_key);
+            }
 
             // Query current config and compare MD5
             if let Ok(Some(config_info)) = config::find_one(db, data_id, group, tenant).await {
@@ -329,18 +348,34 @@ pub struct ConfigChangeClusterSyncHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigChangeClusterSyncHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigChangeClusterSyncRequest::from(payload);
         let request_id = request.request_id();
 
-        let _data_id = &request.config_request.data_id;
-        let _group = &request.config_request.group;
-        let _tenant = &request.config_request.tenant;
-        let _last_modified = request.last_modified;
-        let _gray_name = &request.gray_name;
+        let data_id = &request.config_request.data_id;
+        let group = &request.config_request.group;
+        let tenant = &request.config_request.tenant;
+        let last_modified = request.last_modified;
+        let gray_name = &request.gray_name;
 
-        // In a cluster sync scenario, this would trigger local cache refresh
-        // For now, just acknowledge the sync request
+        // Log the cluster sync event for observability
+        debug!(
+            "Config cluster sync from {}: dataId={}, group={}, tenant={}, lastModified={}, grayName={}",
+            connection.meta_info.remote_ip,
+            data_id,
+            group,
+            tenant,
+            last_modified,
+            gray_name
+        );
+
+        // In a distributed cluster, this notification indicates another node has
+        // changed a config. Since we use a shared database, the change is already
+        // persisted. This handler acknowledges the sync and could trigger:
+        // 1. Local cache invalidation (if caching is implemented)
+        // 2. Notification to local listeners
+        // 3. Metrics/audit logging
+
         let mut response = ConfigChangeClusterSyncResponse::new();
         response.response.request_id = request_id;
 
@@ -356,16 +391,39 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
 #[derive(Clone)]
 pub struct ConfigFuzzyWatchHandler {
     pub app_state: Arc<AppState>,
+    pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigFuzzyWatchHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigFuzzyWatchRequest::from(payload);
         let request_id = request.request_id();
 
-        // FuzzyWatch allows watching configs matching a pattern
-        // This would register the watch pattern for the connection
+        let connection_id = &connection.meta_info.connection_id;
+        let group_key_pattern = &request.group_key_pattern;
+        let watch_type = &request.watch_type;
+
+        // Register the fuzzy watch pattern for this connection
+        let registered = self.fuzzy_watch_manager.register_watch(
+            connection_id,
+            group_key_pattern,
+            watch_type,
+        );
+
+        if registered {
+            debug!(
+                "Registered config fuzzy watch for connection {}: pattern={}, type={}",
+                connection_id, group_key_pattern, watch_type
+            );
+        }
+
+        // Mark received group keys as already sent to client
+        self.fuzzy_watch_manager.mark_received_batch(
+            connection_id,
+            &request.received_group_keys,
+        );
+
         let mut response = ConfigFuzzyWatchResponse::new();
         response.response.request_id = request_id;
 
@@ -404,13 +462,30 @@ impl PayloadHandler for ConfigFuzzyWatchChangeNotifyHandler {
 #[derive(Clone)]
 pub struct ConfigFuzzyWatchSyncHandler {
     pub app_state: Arc<AppState>,
+    pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigFuzzyWatchSyncRequest::from(payload);
         let request_id = request.request_id();
+
+        let connection_id = &connection.meta_info.connection_id;
+        let group_key_pattern = &request.group_key_pattern;
+        let sync_type = &request.sync_type;
+
+        // Register the pattern if not already registered
+        self.fuzzy_watch_manager.register_watch(
+            connection_id,
+            group_key_pattern,
+            sync_type,
+        );
+
+        debug!(
+            "Config fuzzy watch sync for connection {}: pattern={}, sync_type={}, batch={}/{}",
+            connection_id, group_key_pattern, sync_type, request.current_batch, request.total_batch
+        );
 
         let mut response = ConfigFuzzyWatchSyncResponse::new();
         response.response.request_id = request_id;
@@ -427,6 +502,7 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
 #[derive(Clone)]
 pub struct ClientConfigMetricHandler {
     pub app_state: Arc<AppState>,
+    pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
@@ -437,7 +513,22 @@ impl PayloadHandler for ClientConfigMetricHandler {
 
         let mut response = ClientConfigMetricResponse::new();
         response.response.request_id = request_id;
-        // Metrics would be populated based on request.metrics_keys
+
+        // Populate metrics based on request.metrics_keys
+        for metric_key in &request.metrics_keys {
+            let value = match metric_key.key.as_str() {
+                "fuzzyWatcherCount" => {
+                    Some(serde_json::json!(self.fuzzy_watch_manager.watcher_count()))
+                }
+                "fuzzyPatternCount" => {
+                    Some(serde_json::json!(self.fuzzy_watch_manager.pattern_count()))
+                }
+                _ => None,
+            };
+            if let Some(v) = value {
+                response.metrics.insert(metric_key.key.clone(), v);
+            }
+        }
 
         Ok(response.build_payload())
     }

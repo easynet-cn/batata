@@ -160,6 +160,110 @@ pub struct Page<T> {
     pub page_items: Vec<T>,
 }
 
+// ============== Service/Naming Models ==============
+
+/// Service detail for API response
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceDetail {
+    pub namespace_id: String,
+    pub group_name: String,
+    pub service_name: String,
+    pub protect_threshold: f32,
+    pub metadata: std::collections::HashMap<String, String>,
+    pub selector: ServiceSelector,
+    pub clusters: Vec<ClusterInfo>,
+}
+
+/// Service selector
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceSelector {
+    #[serde(rename = "type")]
+    pub selector_type: String,
+    pub expression: String,
+}
+
+/// Cluster info in service detail
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterInfo {
+    pub name: String,
+    pub health_checker: HealthChecker,
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+/// Health checker configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HealthChecker {
+    #[serde(rename = "type")]
+    pub check_type: String,
+    pub port: i32,
+    pub use_instance_port: bool,
+}
+
+/// Service list item for pagination
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceListItem {
+    pub name: String,
+    pub group_name: String,
+    pub cluster_count: u32,
+    pub ip_count: u32,
+    pub healthy_instance_count: u32,
+    pub trigger_flag: bool,
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
+/// Subscriber info for API response
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriberInfo {
+    pub address: String,
+    pub agent: String,
+    pub app: String,
+}
+
+/// Instance info for API response
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceInfo {
+    pub ip: String,
+    pub port: i32,
+    pub weight: f64,
+    pub healthy: bool,
+    pub enabled: bool,
+    pub ephemeral: bool,
+    pub cluster_name: String,
+    pub service_name: String,
+    pub metadata: std::collections::HashMap<String, String>,
+    pub instance_heart_beat_interval: i64,
+    pub instance_heart_beat_timeout: i64,
+    pub ip_delete_timeout: i64,
+}
+
+/// Config listener info
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigListenerInfo {
+    pub connection_id: String,
+    pub client_ip: String,
+    pub data_id: String,
+    pub group: String,
+    pub tenant: String,
+    pub md5: String,
+}
+
+/// Clone result
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloneResult {
+    pub succeeded: usize,
+    pub skipped: usize,
+    pub failed: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -238,9 +238,9 @@ impl ServerMemberManager {
             lookup.stop().await;
         }
 
-        // Stop health checker
+        // Stop health checker (synchronous - uses atomic bool)
         if let Some(hc) = self.health_checker.read().await.as_ref() {
-            hc.stop().await;
+            hc.stop();
         }
 
         // Stop distro protocol
