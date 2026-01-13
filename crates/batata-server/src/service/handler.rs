@@ -15,7 +15,7 @@ use crate::{
             SetupAckResponse,
         },
     },
-    service::rpc::PayloadHandler,
+    service::rpc::{AuthRequirement, PayloadHandler},
 };
 
 #[derive(Clone)]
@@ -182,6 +182,10 @@ impl PayloadHandler for ServerReloadHandler {
     fn can_handle(&self) -> &'static str {
         "ServerReloadRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Authenticated
+    }
 }
 
 // Handler for ConnectResetRequest - handles connection reset
@@ -212,6 +216,10 @@ impl PayloadHandler for ConnectResetHandler {
 
     fn can_handle(&self) -> &'static str {
         "ConnectResetRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Authenticated
     }
 }
 

@@ -393,6 +393,10 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
     fn can_handle(&self) -> &'static str {
         "ConfigChangeClusterSyncRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Internal
+    }
 }
 
 // Handler for ConfigFuzzyWatchRequest - handles fuzzy pattern watch for configs
@@ -503,6 +507,10 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
 
     fn can_handle(&self) -> &'static str {
         "ConfigFuzzyWatchSyncRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Internal
     }
 }
 

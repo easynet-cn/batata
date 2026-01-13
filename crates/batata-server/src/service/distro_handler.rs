@@ -20,7 +20,7 @@ use crate::{
         grpc::Payload,
         remote::model::{RequestTrait, ResponseTrait},
     },
-    service::rpc::PayloadHandler,
+    service::rpc::{AuthRequirement, PayloadHandler},
 };
 
 /// Handler for DistroDataSyncRequest - receives sync data from other cluster nodes
@@ -65,6 +65,10 @@ impl PayloadHandler for DistroDataSyncHandler {
 
     fn can_handle(&self) -> &'static str {
         "DistroDataSyncRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Internal
     }
 }
 
@@ -122,6 +126,10 @@ impl PayloadHandler for DistroDataVerifyHandler {
     fn can_handle(&self) -> &'static str {
         "DistroDataVerifyRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Internal
+    }
 }
 
 /// Handler for DistroDataSnapshotRequest - returns all data for a type
@@ -173,6 +181,10 @@ impl PayloadHandler for DistroDataSnapshotHandler {
 
     fn can_handle(&self) -> &'static str {
         "DistroDataSnapshotRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Internal
     }
 }
 

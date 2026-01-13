@@ -440,4 +440,8 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
     fn can_handle(&self) -> &'static str {
         "NamingFuzzyWatchSyncRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Internal
+    }
 }

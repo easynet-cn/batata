@@ -29,6 +29,8 @@ pub enum AuthRequirement {
     Authenticated,
     /// Specific permission required (will be checked by handler)
     Permission,
+    /// Internal cluster operation - requires server identity verification
+    Internal,
 }
 
 // Trait for handling gRPC payload messages
@@ -100,6 +102,28 @@ pub fn check_permission(
     } else {
         Err(Status::permission_denied(
             result.message.unwrap_or_else(|| "permission denied".to_string()),
+        ))
+    }
+}
+
+/// Check if request comes from an authorized cluster node (internal operation)
+pub fn check_server_identity(auth_service: &GrpcAuthService, payload: &Payload) -> Result<(), Status> {
+    // If auth is not enabled, skip the check
+    if !auth_service.is_auth_enabled() {
+        return Ok(());
+    }
+
+    let headers = payload
+        .metadata
+        .as_ref()
+        .map(|m| m.headers.clone())
+        .unwrap_or_default();
+
+    if auth_service.check_server_identity(&headers) {
+        Ok(())
+    } else {
+        Err(Status::permission_denied(
+            "request not from authorized cluster node",
         ))
     }
 }
@@ -202,10 +226,16 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 
             // Check authentication based on handler's auth requirement
             let auth_requirement = handler.auth_requirement();
-            if auth_requirement != AuthRequirement::None {
-                let auth_context =
-                    extract_auth_context_from_payload(self.handler_registry.auth_service(), payload);
-                check_authentication(&auth_context)?;
+            match auth_requirement {
+                AuthRequirement::None => {}
+                AuthRequirement::Internal => {
+                    check_server_identity(self.handler_registry.auth_service(), payload)?;
+                }
+                AuthRequirement::Authenticated | AuthRequirement::Permission => {
+                    let auth_context =
+                        extract_auth_context_from_payload(self.handler_registry.auth_service(), payload);
+                    check_authentication(&auth_context)?;
+                }
             }
 
             return match handler.handle(&connection, payload).await {
@@ -307,26 +337,33 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
                             // Check authentication based on handler's auth requirement
                             let auth_requirement = handler.auth_requirement();
-                            if auth_requirement != AuthRequirement::None {
-                                let auth_context = extract_auth_context_from_payload(
-                                    handler_registry.auth_service(),
-                                    &payload,
-                                );
-                                if let Err(e) = check_authentication(&auth_context) {
-                                    tracing::warn!(
-                                        "Authentication failed for {}: {}",
-                                        message_type,
-                                        e.message()
-                                    );
-                                    if let Err(send_err) = tx.send(Err(e)).await {
-                                        tracing::error!(
-                                            "Failed to send auth error response: {}",
-                                            send_err
-                                        );
-                                        break;
-                                    }
-                                    continue;
+                            let auth_result = match auth_requirement {
+                                AuthRequirement::None => Ok(()),
+                                AuthRequirement::Internal => {
+                                    check_server_identity(handler_registry.auth_service(), &payload)
                                 }
+                                AuthRequirement::Authenticated | AuthRequirement::Permission => {
+                                    let auth_context = extract_auth_context_from_payload(
+                                        handler_registry.auth_service(),
+                                        &payload,
+                                    );
+                                    check_authentication(&auth_context)
+                                }
+                            };
+                            if let Err(e) = auth_result {
+                                tracing::warn!(
+                                    "Authentication failed for {}: {}",
+                                    message_type,
+                                    e.message()
+                                );
+                                if let Err(send_err) = tx.send(Err(e)).await {
+                                    tracing::error!(
+                                        "Failed to send auth error response: {}",
+                                        send_err
+                                    );
+                                    break;
+                                }
+                                continue;
                             }
 
                             match handler.handle(&connection, &payload).await {
