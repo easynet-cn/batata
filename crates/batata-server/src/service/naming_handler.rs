@@ -20,7 +20,7 @@ use crate::{
         },
         remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
-    service::{naming::NamingService, rpc::PayloadHandler},
+    service::{naming::NamingService, rpc::{AuthRequirement, PayloadHandler}},
 };
 
 // Handler for InstanceRequest - registers or deregisters a service instance
@@ -67,6 +67,10 @@ impl PayloadHandler for InstanceRequestHandler {
 
     fn can_handle(&self) -> &'static str {
         "InstanceRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Authenticated
     }
 }
 
@@ -122,6 +126,10 @@ impl PayloadHandler for BatchInstanceRequestHandler {
 
     fn can_handle(&self) -> &'static str {
         "BatchInstanceRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Authenticated
     }
 }
 
@@ -289,6 +297,10 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
 
     fn can_handle(&self) -> &'static str {
         "PersistentInstanceRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Authenticated
     }
 }
 

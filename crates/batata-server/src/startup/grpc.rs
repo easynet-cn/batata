@@ -8,10 +8,13 @@ use tower::ServiceBuilder;
 use tracing::info;
 
 use batata_api::model::Member;
-use batata_core::service::{
-    cluster_client::{ClusterClientConfig, ClusterClientManager},
-    distro::{DistroConfig, DistroProtocol, NamingInstanceDistroHandler},
-    remote::{ConnectionManager, context_interceptor},
+use batata_core::{
+    GrpcAuthService,
+    service::{
+        cluster_client::{ClusterClientConfig, ClusterClientManager},
+        distro::{DistroConfig, DistroProtocol, NamingInstanceDistroHandler},
+        remote::{ConnectionManager, context_interceptor},
+    },
 };
 
 use crate::{
@@ -208,8 +211,33 @@ pub fn start_grpc_servers(
     // Create connection manager first (needed by handlers and stream service)
     let connection_manager = Arc::new(ConnectionManager::new());
 
-    // Initialize gRPC handlers
-    let mut handler_registry = HandlerRegistry::new();
+    // Create gRPC auth service based on configuration
+    let auth_enabled = app_state.configuration.auth_enabled();
+    let token_secret_key = app_state.configuration.token_secret_key();
+    let server_identity_key = app_state
+        .configuration
+        .config
+        .get_string("nacos.core.auth.server.identity.key")
+        .unwrap_or_default();
+    let server_identity_value = app_state
+        .configuration
+        .config
+        .get_string("nacos.core.auth.server.identity.value")
+        .unwrap_or_default();
+
+    let grpc_auth_service = GrpcAuthService::new(
+        auth_enabled,
+        token_secret_key,
+        server_identity_key,
+        server_identity_value,
+    );
+
+    if auth_enabled {
+        info!("gRPC authentication is enabled");
+    }
+
+    // Initialize gRPC handlers with auth service
+    let mut handler_registry = HandlerRegistry::with_auth(grpc_auth_service);
 
     // Create config fuzzy watch manager
     let config_fuzzy_watch_manager = Arc::new(ConfigFuzzyWatchManager::new());

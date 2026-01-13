@@ -11,6 +11,7 @@ use tonic::{Request, Response, Status, Streaming};
 use batata_core::{
     model::{Connection, GrpcClient},
     service::remote::ConnectionManager,
+    GrpcAuthContext, GrpcAuthService, GrpcResource, PermissionAction,
 };
 
 use crate::api::{
@@ -18,6 +19,17 @@ use crate::api::{
     model::APPNAME,
     remote::model::ConnectionSetupRequest,
 };
+
+/// Auth requirement level for handlers
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthRequirement {
+    /// No authentication required (public endpoints)
+    None,
+    /// Authentication required but no specific permission
+    Authenticated,
+    /// Specific permission required (will be checked by handler)
+    Permission,
+}
 
 // Trait for handling gRPC payload messages
 #[tonic::async_trait]
@@ -34,6 +46,62 @@ pub trait PayloadHandler: Send + Sync {
     fn can_handle(&self) -> &'static str {
         ""
     }
+
+    /// Returns the auth requirement for this handler
+    /// Override this to enable authentication for specific handlers
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::None
+    }
+}
+
+/// Helper functions for extracting auth context from payload
+pub fn extract_auth_context_from_payload(
+    auth_service: &GrpcAuthService,
+    payload: &Payload,
+) -> GrpcAuthContext {
+    let headers = payload
+        .metadata
+        .as_ref()
+        .map(|m| m.headers.clone())
+        .unwrap_or_default();
+
+    auth_service.parse_identity(&headers)
+}
+
+/// Check if authentication is valid, returns error Status if not
+pub fn check_authentication(auth_context: &GrpcAuthContext) -> Result<(), Status> {
+    if !auth_context.auth_enabled {
+        return Ok(());
+    }
+
+    if !auth_context.is_authenticated() {
+        let error_msg = auth_context
+            .auth_error
+            .as_deref()
+            .unwrap_or("user not authenticated");
+        return Err(Status::unauthenticated(error_msg));
+    }
+
+    Ok(())
+}
+
+/// Check permission for a resource, returns error Status if denied
+pub fn check_permission(
+    auth_service: &GrpcAuthService,
+    auth_context: &GrpcAuthContext,
+    resource: &GrpcResource,
+    action: PermissionAction,
+    permissions: &[batata_core::GrpcPermissionInfo],
+) -> Result<(), Status> {
+    let result = auth_service.check_permission(auth_context, resource, action, permissions);
+
+    if result.passed {
+        Ok(())
+    } else {
+        Err(Status::permission_denied(
+            result.message.unwrap_or_else(|| "permission denied".to_string()),
+        ))
+    }
 }
 
 // Default handler for unregistered message types
@@ -47,6 +115,7 @@ impl PayloadHandler for DefaultHandler {}
 pub struct HandlerRegistry {
     handlers: HashMap<String, Arc<dyn PayloadHandler>>,
     default_handler: Arc<dyn PayloadHandler>,
+    auth_service: Arc<GrpcAuthService>,
 }
 
 impl Default for HandlerRegistry {
@@ -60,6 +129,16 @@ impl HandlerRegistry {
         Self {
             handlers: HashMap::new(),
             default_handler: Arc::new(DefaultHandler {}),
+            auth_service: Arc::new(GrpcAuthService::default()),
+        }
+    }
+
+    /// Create a new HandlerRegistry with auth service
+    pub fn with_auth(auth_service: GrpcAuthService) -> Self {
+        Self {
+            handlers: HashMap::new(),
+            default_handler: Arc::new(DefaultHandler {}),
+            auth_service: Arc::new(auth_service),
         }
     }
 
@@ -73,6 +152,16 @@ impl HandlerRegistry {
     pub fn register_handler(&mut self, handler: Arc<dyn PayloadHandler>) {
         self.handlers
             .insert(handler.can_handle().to_string(), handler);
+    }
+
+    /// Get the auth service
+    pub fn auth_service(&self) -> &GrpcAuthService {
+        &self.auth_service
+    }
+
+    /// Check if auth is enabled
+    pub fn is_auth_enabled(&self) -> bool {
+        self.auth_service.is_auth_enabled()
     }
 }
 
@@ -110,6 +199,14 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             let payload = request.get_ref();
 
             let handler = self.handler_registry.get_handler(message_type);
+
+            // Check authentication based on handler's auth requirement
+            let auth_requirement = handler.auth_requirement();
+            if auth_requirement != AuthRequirement::None {
+                let auth_context =
+                    extract_auth_context_from_payload(self.handler_registry.auth_service(), payload);
+                check_authentication(&auth_context)?;
+            }
 
             return match handler.handle(&connection, payload).await {
                 Ok(reponse_payload) => Ok(Response::new(reponse_payload)),
@@ -207,6 +304,30 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                             }
 
                             let handler = handler_registry.get_handler(message_type);
+
+                            // Check authentication based on handler's auth requirement
+                            let auth_requirement = handler.auth_requirement();
+                            if auth_requirement != AuthRequirement::None {
+                                let auth_context = extract_auth_context_from_payload(
+                                    handler_registry.auth_service(),
+                                    &payload,
+                                );
+                                if let Err(e) = check_authentication(&auth_context) {
+                                    tracing::warn!(
+                                        "Authentication failed for {}: {}",
+                                        message_type,
+                                        e.message()
+                                    );
+                                    if let Err(send_err) = tx.send(Err(e)).await {
+                                        tracing::error!(
+                                            "Failed to send auth error response: {}",
+                                            send_err
+                                        );
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
 
                             match handler.handle(&connection, &payload).await {
                                 Ok(response_payload) => {

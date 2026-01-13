@@ -22,5 +22,11 @@ pub mod cluster {
 pub use model::{Configuration, Connection, ConnectionMeta, GrpcClient, PageParam};
 pub use service::{ConfigKey, ConfigSubscriber, ConfigSubscriberManager};
 
+// Re-export gRPC auth types
+pub use service::{
+    GrpcAuthContext, GrpcAuthService, GrpcPermissionInfo, GrpcResource, PermissionAction,
+    PermissionCheckResult, ResourceType, extract_auth_context,
+};
+
 // Re-export common functions
 pub use batata_common::local_ip;

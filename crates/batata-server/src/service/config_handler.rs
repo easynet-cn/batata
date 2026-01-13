@@ -27,7 +27,7 @@ use crate::{
     service::{
         config,
         config_fuzzy_watch::ConfigFuzzyWatchManager,
-        rpc::PayloadHandler,
+        rpc::{AuthRequirement, PayloadHandler},
     },
 };
 
@@ -195,6 +195,10 @@ impl PayloadHandler for ConfigPublishHandler {
     fn can_handle(&self) -> &'static str {
         "ConfigPublishRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Authenticated
+    }
 }
 
 // Handler for ConfigRemoveRequest - removes configuration
@@ -241,6 +245,10 @@ impl PayloadHandler for ConfigRemoveHandler {
 
     fn can_handle(&self) -> &'static str {
         "ConfigRemoveRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Authenticated
     }
 }
 
