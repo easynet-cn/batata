@@ -5,8 +5,11 @@
 //! - gRPC service definitions (generated from proto)
 //! - HTTP API request/response models
 
+pub mod config;
+pub mod distro;
 pub mod grpc;
 pub mod model;
+pub mod naming;
 pub mod raft;
 pub mod remote;
 

@@ -9,9 +9,11 @@
 //! - Export/Import functionality
 
 pub mod config;
+pub mod encryption;
 pub mod export;
 pub mod history;
 pub mod import;
 pub mod namespace;
 
 pub use config::*;
+pub use encryption::ConfigEncryptionService;

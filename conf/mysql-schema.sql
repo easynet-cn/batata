@@ -227,3 +227,69 @@ service_prefix "" { policy = "write" }
 session_prefix "" { policy = "write" }
 query_prefix "" { policy = "write" }');
 
+/******************************************/
+/*   Service Discovery Tables             */
+/******************************************/
+
+-- Service metadata table
+CREATE TABLE `service_info` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
+    `namespace_id` varchar(128) NOT NULL DEFAULT 'public' COMMENT 'Namespace ID',
+    `group_name` varchar(128) NOT NULL DEFAULT 'DEFAULT_GROUP' COMMENT 'Service group name',
+    `service_name` varchar(255) NOT NULL COMMENT 'Service name',
+    `protect_threshold` float NOT NULL DEFAULT 0.0 COMMENT 'Protection threshold (0.0-1.0)',
+    `metadata` text COMMENT 'Service metadata (JSON)',
+    `selector` text COMMENT 'Service selector (JSON)',
+    `enabled` boolean NOT NULL DEFAULT TRUE COMMENT 'Whether service is enabled',
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time',
+    `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Modification time',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_service` (`namespace_id`, `group_name`, `service_name`),
+    KEY `idx_namespace` (`namespace_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Service metadata table';
+
+-- Cluster metadata table
+CREATE TABLE `cluster_info` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
+    `service_id` bigint(20) NOT NULL COMMENT 'Service ID (FK to service_info)',
+    `cluster_name` varchar(128) NOT NULL DEFAULT 'DEFAULT' COMMENT 'Cluster name',
+    `health_check_type` varchar(32) DEFAULT 'TCP' COMMENT 'Health check type (TCP/HTTP/MYSQL/NONE)',
+    `health_check_port` int DEFAULT 0 COMMENT 'Health check port (0 means use instance port)',
+    `health_check_path` varchar(255) DEFAULT '' COMMENT 'Health check path (for HTTP)',
+    `use_instance_port` boolean DEFAULT TRUE COMMENT 'Whether to use instance port for health check',
+    `metadata` text COMMENT 'Cluster metadata (JSON)',
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time',
+    `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Modification time',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_cluster` (`service_id`, `cluster_name`),
+    CONSTRAINT `fk_cluster_service` FOREIGN KEY (`service_id`) REFERENCES `service_info` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Cluster metadata table';
+
+-- Instance table (for persistent instances)
+CREATE TABLE `instance_info` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
+    `instance_id` varchar(255) NOT NULL COMMENT 'Instance ID (unique identifier)',
+    `service_id` bigint(20) NOT NULL COMMENT 'Service ID (FK to service_info)',
+    `cluster_name` varchar(128) NOT NULL DEFAULT 'DEFAULT' COMMENT 'Cluster name',
+    `ip` varchar(45) NOT NULL COMMENT 'Instance IP address',
+    `port` int NOT NULL COMMENT 'Instance port',
+    `weight` double NOT NULL DEFAULT 1.0 COMMENT 'Instance weight',
+    `healthy` boolean NOT NULL DEFAULT TRUE COMMENT 'Whether instance is healthy',
+    `enabled` boolean NOT NULL DEFAULT TRUE COMMENT 'Whether instance is enabled',
+    `ephemeral` boolean NOT NULL DEFAULT TRUE COMMENT 'Whether instance is ephemeral',
+    `metadata` text COMMENT 'Instance metadata (JSON)',
+    `heartbeat_interval` int DEFAULT 5000 COMMENT 'Heartbeat interval in ms',
+    `heartbeat_timeout` int DEFAULT 15000 COMMENT 'Heartbeat timeout in ms',
+    `ip_delete_timeout` int DEFAULT 30000 COMMENT 'IP delete timeout in ms',
+    `last_heartbeat` datetime DEFAULT NULL COMMENT 'Last heartbeat time',
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time',
+    `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Modification time',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_instance` (`instance_id`),
+    KEY `idx_service_cluster` (`service_id`, `cluster_name`),
+    KEY `idx_ip_port` (`ip`, `port`),
+    KEY `idx_healthy` (`healthy`),
+    KEY `idx_ephemeral` (`ephemeral`),
+    CONSTRAINT `fk_instance_service` FOREIGN KEY (`service_id`) REFERENCES `service_info` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Service instance table';
+

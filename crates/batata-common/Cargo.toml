@@ -25,5 +25,10 @@ regex = "1.11"
 # Network
 if-addrs = "0.14"
 
+# Encryption
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.22"
+
 [dev-dependencies]
 tokio = { version = "1.49", features = ["rt", "macros"] }

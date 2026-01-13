@@ -4,7 +4,7 @@
 
 use bytes::Bytes;
 use reqwest::{Client, Response, StatusCode};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::{sync::RwLock, time::Duration};
 use tracing::{debug, error, warn};
 

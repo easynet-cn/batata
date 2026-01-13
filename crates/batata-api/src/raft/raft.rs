@@ -239,10 +239,10 @@ pub mod raft_service_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     /// Raft service for inter-node communication
     #[derive(Debug, Clone)]
     pub struct RaftServiceClient<T> {
@@ -282,14 +282,13 @@ pub mod raft_service_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-                Response = http::Response<
-                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                    http::Request<tonic::body::Body>,
+                    Response = http::Response<
+                        <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                    >,
                 >,
-            >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
+                Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             RaftServiceClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -328,22 +327,13 @@ pub mod raft_service_client {
         pub async fn append_entries(
             &mut self,
             request: impl tonic::IntoRequest<super::AppendEntriesRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::AppendEntriesResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::AppendEntriesResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/raft.RaftService/AppendEntries",
-            );
+            let path = http::uri::PathAndQuery::from_static("/raft.RaftService/AppendEntries");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("raft.RaftService", "AppendEntries"));
@@ -354,42 +344,27 @@ pub mod raft_service_client {
             &mut self,
             request: impl tonic::IntoRequest<super::VoteRequest>,
         ) -> std::result::Result<tonic::Response<super::VoteResponse>, tonic::Status> {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static("/raft.RaftService/Vote");
             let mut req = request.into_request();
-            req.extensions_mut().insert(GrpcMethod::new("raft.RaftService", "Vote"));
+            req.extensions_mut()
+                .insert(GrpcMethod::new("raft.RaftService", "Vote"));
             self.inner.unary(req, path, codec).await
         }
         /// Install snapshot (state transfer)
         pub async fn install_snapshot(
             &mut self,
-            request: impl tonic::IntoStreamingRequest<
-                Message = super::InstallSnapshotRequest,
-            >,
-        ) -> std::result::Result<
-            tonic::Response<super::InstallSnapshotResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+            request: impl tonic::IntoStreamingRequest<Message = super::InstallSnapshotRequest>,
+        ) -> std::result::Result<tonic::Response<super::InstallSnapshotResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/raft.RaftService/InstallSnapshot",
-            );
+            let path = http::uri::PathAndQuery::from_static("/raft.RaftService/InstallSnapshot");
             let mut req = request.into_streaming_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("raft.RaftService", "InstallSnapshot"));
@@ -404,7 +379,7 @@ pub mod raft_service_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with RaftServiceServer.
@@ -414,10 +389,7 @@ pub mod raft_service_server {
         async fn append_entries(
             &self,
             request: tonic::Request<super::AppendEntriesRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::AppendEntriesResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::AppendEntriesResponse>, tonic::Status>;
         /// Request vote (leader election)
         async fn vote(
             &self,
@@ -427,10 +399,7 @@ pub mod raft_service_server {
         async fn install_snapshot(
             &self,
             request: tonic::Request<tonic::Streaming<super::InstallSnapshotRequest>>,
-        ) -> std::result::Result<
-            tonic::Response<super::InstallSnapshotResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::InstallSnapshotResponse>, tonic::Status>;
     }
     /// Raft service for inter-node communication
     #[derive(Debug)]
@@ -454,10 +423,7 @@ pub mod raft_service_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -512,15 +478,11 @@ pub mod raft_service_server {
                 "/raft.RaftService/AppendEntries" => {
                     #[allow(non_camel_case_types)]
                     struct AppendEntriesSvc<T: RaftService>(pub Arc<T>);
-                    impl<
-                        T: RaftService,
-                    > tonic::server::UnaryService<super::AppendEntriesRequest>
-                    for AppendEntriesSvc<T> {
+                    impl<T: RaftService> tonic::server::UnaryService<super::AppendEntriesRequest>
+                        for AppendEntriesSvc<T>
+                    {
                         type Response = super::AppendEntriesResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::AppendEntriesRequest>,
@@ -557,21 +519,16 @@ pub mod raft_service_server {
                 "/raft.RaftService/Vote" => {
                     #[allow(non_camel_case_types)]
                     struct VoteSvc<T: RaftService>(pub Arc<T>);
-                    impl<T: RaftService> tonic::server::UnaryService<super::VoteRequest>
-                    for VoteSvc<T> {
+                    impl<T: RaftService> tonic::server::UnaryService<super::VoteRequest> for VoteSvc<T> {
                         type Response = super::VoteResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::VoteRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
-                            let fut = async move {
-                                <T as RaftService>::vote(&inner, request).await
-                            };
+                            let fut =
+                                async move { <T as RaftService>::vote(&inner, request).await };
                             Box::pin(fut)
                         }
                     }
@@ -600,16 +557,12 @@ pub mod raft_service_server {
                 "/raft.RaftService/InstallSnapshot" => {
                     #[allow(non_camel_case_types)]
                     struct InstallSnapshotSvc<T: RaftService>(pub Arc<T>);
-                    impl<
-                        T: RaftService,
-                    > tonic::server::ClientStreamingService<
-                        super::InstallSnapshotRequest,
-                    > for InstallSnapshotSvc<T> {
+                    impl<T: RaftService>
+                        tonic::server::ClientStreamingService<super::InstallSnapshotRequest>
+                        for InstallSnapshotSvc<T>
+                    {
                         type Response = super::InstallSnapshotResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<
@@ -645,25 +598,19 @@ pub mod raft_service_server {
                     };
                     Box::pin(fut)
                 }
-                _ => {
-                    Box::pin(async move {
-                        let mut response = http::Response::new(
-                            tonic::body::Body::default(),
-                        );
-                        let headers = response.headers_mut();
-                        headers
-                            .insert(
-                                tonic::Status::GRPC_STATUS,
-                                (tonic::Code::Unimplemented as i32).into(),
-                            );
-                        headers
-                            .insert(
-                                http::header::CONTENT_TYPE,
-                                tonic::metadata::GRPC_CONTENT_TYPE,
-                            );
-                        Ok(response)
-                    })
-                }
+                _ => Box::pin(async move {
+                    let mut response = http::Response::new(tonic::body::Body::default());
+                    let headers = response.headers_mut();
+                    headers.insert(
+                        tonic::Status::GRPC_STATUS,
+                        (tonic::Code::Unimplemented as i32).into(),
+                    );
+                    headers.insert(
+                        http::header::CONTENT_TYPE,
+                        tonic::metadata::GRPC_CONTENT_TYPE,
+                    );
+                    Ok(response)
+                }),
             }
         }
     }
@@ -692,10 +639,10 @@ pub mod raft_management_service_client {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
-    use tonic::codegen::*;
     use tonic::codegen::http::Uri;
+    use tonic::codegen::*;
     /// Raft management service for cluster operations
     #[derive(Debug, Clone)]
     pub struct RaftManagementServiceClient<T> {
@@ -735,14 +682,13 @@ pub mod raft_management_service_client {
             F: tonic::service::Interceptor,
             T::ResponseBody: Default,
             T: tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-                Response = http::Response<
-                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                    http::Request<tonic::body::Body>,
+                    Response = http::Response<
+                        <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                    >,
                 >,
-            >,
-            <T as tonic::codegen::Service<
-                http::Request<tonic::body::Body>,
-            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+            <T as tonic::codegen::Service<http::Request<tonic::body::Body>>>::Error:
+                Into<StdError> + std::marker::Send + std::marker::Sync,
         {
             RaftManagementServiceClient::new(InterceptedService::new(inner, interceptor))
         }
@@ -781,22 +727,13 @@ pub mod raft_management_service_client {
         pub async fn write(
             &mut self,
             request: impl tonic::IntoRequest<super::ClientWriteRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::ClientWriteResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::ClientWriteResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/raft.RaftManagementService/Write",
-            );
+            let path = http::uri::PathAndQuery::from_static("/raft.RaftManagementService/Write");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("raft.RaftManagementService", "Write"));
@@ -806,22 +743,14 @@ pub mod raft_management_service_client {
         pub async fn add_learner(
             &mut self,
             request: impl tonic::IntoRequest<super::AddLearnerRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::AddLearnerResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::AddLearnerResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/raft.RaftManagementService/AddLearner",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/raft.RaftManagementService/AddLearner");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("raft.RaftManagementService", "AddLearner"));
@@ -831,49 +760,34 @@ pub mod raft_management_service_client {
         pub async fn change_membership(
             &mut self,
             request: impl tonic::IntoRequest<super::ChangeMembershipRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::ChangeMembershipResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::ChangeMembershipResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic_prost::ProstCodec::default();
             let path = http::uri::PathAndQuery::from_static(
                 "/raft.RaftManagementService/ChangeMembership",
             );
             let mut req = request.into_request();
-            req.extensions_mut()
-                .insert(
-                    GrpcMethod::new("raft.RaftManagementService", "ChangeMembership"),
-                );
+            req.extensions_mut().insert(GrpcMethod::new(
+                "raft.RaftManagementService",
+                "ChangeMembership",
+            ));
             self.inner.unary(req, path, codec).await
         }
         /// Get cluster metrics
         pub async fn get_metrics(
             &mut self,
             request: impl tonic::IntoRequest<super::GetMetricsRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::GetMetricsResponse>,
-            tonic::Status,
-        > {
-            self.inner
-                .ready()
-                .await
-                .map_err(|e| {
-                    tonic::Status::unknown(
-                        format!("Service was not ready: {}", e.into()),
-                    )
-                })?;
+        ) -> std::result::Result<tonic::Response<super::GetMetricsResponse>, tonic::Status>
+        {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("Service was not ready: {}", e.into()))
+            })?;
             let codec = tonic_prost::ProstCodec::default();
-            let path = http::uri::PathAndQuery::from_static(
-                "/raft.RaftManagementService/GetMetrics",
-            );
+            let path =
+                http::uri::PathAndQuery::from_static("/raft.RaftManagementService/GetMetrics");
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("raft.RaftManagementService", "GetMetrics"));
@@ -888,7 +802,7 @@ pub mod raft_management_service_server {
         dead_code,
         missing_docs,
         clippy::wildcard_imports,
-        clippy::let_unit_value,
+        clippy::let_unit_value
     )]
     use tonic::codegen::*;
     /// Generated trait containing gRPC methods that should be implemented for use with RaftManagementServiceServer.
@@ -898,34 +812,22 @@ pub mod raft_management_service_server {
         async fn write(
             &self,
             request: tonic::Request<super::ClientWriteRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::ClientWriteResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::ClientWriteResponse>, tonic::Status>;
         /// Add a learner node
         async fn add_learner(
             &self,
             request: tonic::Request<super::AddLearnerRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::AddLearnerResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::AddLearnerResponse>, tonic::Status>;
         /// Change membership
         async fn change_membership(
             &self,
             request: tonic::Request<super::ChangeMembershipRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::ChangeMembershipResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::ChangeMembershipResponse>, tonic::Status>;
         /// Get cluster metrics
         async fn get_metrics(
             &self,
             request: tonic::Request<super::GetMetricsRequest>,
-        ) -> std::result::Result<
-            tonic::Response<super::GetMetricsResponse>,
-            tonic::Status,
-        >;
+        ) -> std::result::Result<tonic::Response<super::GetMetricsResponse>, tonic::Status>;
     }
     /// Raft management service for cluster operations
     #[derive(Debug)]
@@ -949,10 +851,7 @@ pub mod raft_management_service_server {
                 max_encoding_message_size: None,
             }
         }
-        pub fn with_interceptor<F>(
-            inner: T,
-            interceptor: F,
-        ) -> InterceptedService<Self, F>
+        pub fn with_interceptor<F>(inner: T, interceptor: F) -> InterceptedService<Self, F>
         where
             F: tonic::service::Interceptor,
         {
@@ -987,8 +886,7 @@ pub mod raft_management_service_server {
             self
         }
     }
-    impl<T, B> tonic::codegen::Service<http::Request<B>>
-    for RaftManagementServiceServer<T>
+    impl<T, B> tonic::codegen::Service<http::Request<B>> for RaftManagementServiceServer<T>
     where
         T: RaftManagementService,
         B: Body + std::marker::Send + 'static,
@@ -1008,15 +906,11 @@ pub mod raft_management_service_server {
                 "/raft.RaftManagementService/Write" => {
                     #[allow(non_camel_case_types)]
                     struct WriteSvc<T: RaftManagementService>(pub Arc<T>);
-                    impl<
-                        T: RaftManagementService,
-                    > tonic::server::UnaryService<super::ClientWriteRequest>
-                    for WriteSvc<T> {
+                    impl<T: RaftManagementService>
+                        tonic::server::UnaryService<super::ClientWriteRequest> for WriteSvc<T>
+                    {
                         type Response = super::ClientWriteResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ClientWriteRequest>,
@@ -1053,23 +947,18 @@ pub mod raft_management_service_server {
                 "/raft.RaftManagementService/AddLearner" => {
                     #[allow(non_camel_case_types)]
                     struct AddLearnerSvc<T: RaftManagementService>(pub Arc<T>);
-                    impl<
-                        T: RaftManagementService,
-                    > tonic::server::UnaryService<super::AddLearnerRequest>
-                    for AddLearnerSvc<T> {
+                    impl<T: RaftManagementService>
+                        tonic::server::UnaryService<super::AddLearnerRequest> for AddLearnerSvc<T>
+                    {
                         type Response = super::AddLearnerResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::AddLearnerRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as RaftManagementService>::add_learner(&inner, request)
-                                    .await
+                                <T as RaftManagementService>::add_learner(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -1099,25 +988,19 @@ pub mod raft_management_service_server {
                 "/raft.RaftManagementService/ChangeMembership" => {
                     #[allow(non_camel_case_types)]
                     struct ChangeMembershipSvc<T: RaftManagementService>(pub Arc<T>);
-                    impl<
-                        T: RaftManagementService,
-                    > tonic::server::UnaryService<super::ChangeMembershipRequest>
-                    for ChangeMembershipSvc<T> {
+                    impl<T: RaftManagementService>
+                        tonic::server::UnaryService<super::ChangeMembershipRequest>
+                        for ChangeMembershipSvc<T>
+                    {
                         type Response = super::ChangeMembershipResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::ChangeMembershipRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as RaftManagementService>::change_membership(
-                                        &inner,
-                                        request,
-                                    )
+                                <T as RaftManagementService>::change_membership(&inner, request)
                                     .await
                             };
                             Box::pin(fut)
@@ -1148,23 +1031,18 @@ pub mod raft_management_service_server {
                 "/raft.RaftManagementService/GetMetrics" => {
                     #[allow(non_camel_case_types)]
                     struct GetMetricsSvc<T: RaftManagementService>(pub Arc<T>);
-                    impl<
-                        T: RaftManagementService,
-                    > tonic::server::UnaryService<super::GetMetricsRequest>
-                    for GetMetricsSvc<T> {
+                    impl<T: RaftManagementService>
+                        tonic::server::UnaryService<super::GetMetricsRequest> for GetMetricsSvc<T>
+                    {
                         type Response = super::GetMetricsResponse;
-                        type Future = BoxFuture<
-                            tonic::Response<Self::Response>,
-                            tonic::Status,
-                        >;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
                         fn call(
                             &mut self,
                             request: tonic::Request<super::GetMetricsRequest>,
                         ) -> Self::Future {
                             let inner = Arc::clone(&self.0);
                             let fut = async move {
-                                <T as RaftManagementService>::get_metrics(&inner, request)
-                                    .await
+                                <T as RaftManagementService>::get_metrics(&inner, request).await
                             };
                             Box::pin(fut)
                         }
@@ -1191,25 +1069,19 @@ pub mod raft_management_service_server {
                     };
                     Box::pin(fut)
                 }
-                _ => {
-                    Box::pin(async move {
-                        let mut response = http::Response::new(
-                            tonic::body::Body::default(),
-                        );
-                        let headers = response.headers_mut();
-                        headers
-                            .insert(
-                                tonic::Status::GRPC_STATUS,
-                                (tonic::Code::Unimplemented as i32).into(),
-                            );
-                        headers
-                            .insert(
-                                http::header::CONTENT_TYPE,
-                                tonic::metadata::GRPC_CONTENT_TYPE,
-                            );
-                        Ok(response)
-                    })
-                }
+                _ => Box::pin(async move {
+                    let mut response = http::Response::new(tonic::body::Body::default());
+                    let headers = response.headers_mut();
+                    headers.insert(
+                        tonic::Status::GRPC_STATUS,
+                        (tonic::Code::Unimplemented as i32).into(),
+                    );
+                    headers.insert(
+                        http::header::CONTENT_TYPE,
+                        tonic::metadata::GRPC_CONTENT_TYPE,
+                    );
+                    Ok(response)
+                }),
             }
         }
     }

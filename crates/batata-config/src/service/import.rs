@@ -4,7 +4,7 @@
 
 use std::io::{Cursor, Read};
 
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use zip::ZipArchive;
 
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn test_parse_nacos_import_zip() {
         use std::io::Write;
-        use zip::{write::SimpleFileOptions, ZipWriter};
+        use zip::{ZipWriter, write::SimpleFileOptions};
 
         // Create a test ZIP in memory
         let mut buffer = std::io::Cursor::new(Vec::new());
@@ -359,7 +359,7 @@ modifyTime: 1704067200000"#;
     #[test]
     fn test_parse_nacos_import_zip_without_meta() {
         use std::io::Write;
-        use zip::{write::SimpleFileOptions, ZipWriter};
+        use zip::{ZipWriter, write::SimpleFileOptions};
 
         let mut buffer = std::io::Cursor::new(Vec::new());
         {

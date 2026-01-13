@@ -13,6 +13,8 @@ Batata 是一个 Rust 实现的 Nacos 兼容服务，提供服务发现、配置
   - [Nacos API](#nacos-api)
   - [Consul 兼容 API](#consul-兼容-api)
   - [配置导入导出](#配置导入导出)
+- [OpenTelemetry 配置](#opentelemetry-配置)
+- [多数据中心部署](#多数据中心部署)
 - [监控与指标](#监控与指标)
 - [客户端集成](#客户端集成)
 - [故障排除](#故障排除)
@@ -696,6 +698,346 @@ curl -X PUT "http://localhost:8848/v1/kv/import?policy=OVERWRITE" \
 3. **版本管理**：将导出的配置纳入 Git 版本控制
 4. **批量更新**：修改导出文件后重新导入
 5. **跨系统迁移**：Nacos 与 Consul 之间的配置迁移
+
+---
+
+## OpenTelemetry 配置
+
+Batata 支持 OpenTelemetry 分布式追踪，可与 Jaeger、Zipkin、Grafana Tempo 等可观测性平台集成。
+
+### 配置项
+
+在 `application.yml` 中添加 OpenTelemetry 配置：
+
+```yaml
+# OpenTelemetry 配置
+otel:
+  # 是否启用 OpenTelemetry
+  enabled: true
+  # OTLP 导出端点 (gRPC)
+  endpoint: "http://localhost:4317"
+  # 服务名称
+  service-name: "batata"
+  # 采样率 (0.0-1.0, 1.0 = 100%)
+  sampling-ratio: 1.0
+  # 导出超时时间（秒）
+  export-timeout-secs: 30
+```
+
+### 环境变量
+
+```bash
+# 启用 OpenTelemetry
+export BATATA_OTEL_ENABLED=true
+
+# OTLP 端点
+export BATATA_OTEL_ENDPOINT="http://localhost:4317"
+
+# 服务名称
+export BATATA_OTEL_SERVICE_NAME="batata"
+
+# 采样率
+export BATATA_OTEL_SAMPLING_RATIO=1.0
+
+# 导出超时
+export BATATA_OTEL_EXPORT_TIMEOUT_SECS=30
+```
+
+### 与 Jaeger 集成
+
+#### 启动 Jaeger
+
+```bash
+# 使用 Docker 启动 Jaeger All-in-One
+docker run -d --name jaeger \
+  -e COLLECTOR_OTLP_ENABLED=true \
+  -p 16686:16686 \
+  -p 4317:4317 \
+  -p 4318:4318 \
+  jaegertracing/all-in-one:latest
+```
+
+#### 配置 Batata
+
+```yaml
+otel:
+  enabled: true
+  endpoint: "http://localhost:4317"
+  service-name: "batata"
+  sampling-ratio: 1.0
+```
+
+#### 访问 Jaeger UI
+
+打开 `http://localhost:16686` 查看分布式追踪数据。
+
+### 与 Grafana Tempo 集成
+
+#### docker-compose.yml 示例
+
+```yaml
+version: '3.8'
+
+services:
+  tempo:
+    image: grafana/tempo:latest
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "3200:3200"   # Tempo API
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+
+  batata:
+    build: .
+    environment:
+      BATATA_OTEL_ENABLED: "true"
+      BATATA_OTEL_ENDPOINT: "http://tempo:4317"
+      BATATA_OTEL_SERVICE_NAME: "batata"
+    depends_on:
+      - tempo
+```
+
+### 追踪的操作
+
+启用 OpenTelemetry 后，以下操作会被自动追踪：
+
+| 操作类型 | 追踪内容 |
+|----------|----------|
+| HTTP 请求 | 请求路径、方法、状态码、延迟 |
+| gRPC 调用 | 服务名、方法名、状态 |
+| 数据库操作 | SQL 查询、执行时间 |
+| 集群同步 | 节点间通信、同步延迟 |
+
+### 生产环境建议
+
+1. **采样率**：生产环境建议设置 0.1-0.5 的采样率以减少开销
+2. **批量导出**：OTLP 导出器默认批量发送，减少网络开销
+3. **超时设置**：根据网络状况调整导出超时时间
+4. **资源标签**：通过环境变量添加额外的资源标签
+
+```bash
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,service.version=1.0.0"
+```
+
+---
+
+## 多数据中心部署
+
+Batata 支持多数据中心部署，提供本地优先的数据访问和跨数据中心复制能力。
+
+### 架构概述
+
+```
+                    ┌─────────────────────────────────────┐
+                    │            全局集群                  │
+                    └─────────────────────────────────────┘
+                                     │
+        ┌────────────────────────────┼────────────────────────────┐
+        │                            │                            │
+        ▼                            ▼                            ▼
+┌───────────────┐          ┌───────────────┐          ┌───────────────┐
+│  DC: 华东     │          │  DC: 华北     │          │  DC: 华南     │
+│  Region: CN   │          │  Region: CN   │          │  Region: CN   │
+├───────────────┤          ├───────────────┤          ├───────────────┤
+│ Zone: zone-a  │          │ Zone: zone-a  │          │ Zone: zone-a  │
+│  └─ 节点 1    │          │  └─ 节点 3    │          │  └─ 节点 5    │
+│ Zone: zone-b  │          │ Zone: zone-b  │          │ Zone: zone-b  │
+│  └─ 节点 2    │          │  └─ 节点 4    │          │  └─ 节点 6    │
+└───────────────┘          └───────────────┘          └───────────────┘
+```
+
+### 配置项
+
+#### application.yml
+
+```yaml
+# 多数据中心配置
+datacenter:
+  # 本地数据中心名称
+  local: "cn-east-1"
+  # 本地区域
+  region: "cn-east"
+  # 本地可用区
+  zone: "zone-a"
+  # 本地优先权重 (越高越优先)
+  locality-weight: 1.0
+  # 是否启用跨数据中心复制
+  cross-dc-replication: true
+  # 跨数据中心同步延迟（秒）
+  cross-dc-sync-delay: 1
+  # 每个数据中心的副本数
+  replication-factor: 1
+```
+
+### 环境变量
+
+```bash
+# 数据中心名称
+export BATATA_DATACENTER="cn-east-1"
+
+# 区域
+export BATATA_REGION="cn-east"
+
+# 可用区
+export BATATA_ZONE="zone-a"
+
+# 本地优先权重
+export BATATA_LOCALITY_WEIGHT=1.0
+
+# 启用跨数据中心复制
+export BATATA_CROSS_DC_REPLICATION=true
+
+# 跨数据中心同步延迟
+export BATATA_CROSS_DC_SYNC_DELAY_SECS=1
+
+# 副本因子
+export BATATA_REPLICATION_FACTOR=1
+```
+
+### 集群配置示例
+
+#### 华东数据中心 (cn-east-1)
+
+```yaml
+# 节点 1: cn-east-1-zone-a
+datacenter:
+  local: "cn-east-1"
+  region: "cn-east"
+  zone: "zone-a"
+  locality-weight: 1.0
+  cross-dc-replication: true
+
+cluster:
+  member:
+    lookup:
+      type: file
+
+# conf/cluster.conf
+# 192.168.1.10:8848  # cn-east-1-zone-a
+# 192.168.1.11:8848  # cn-east-1-zone-b
+# 192.168.2.10:8848  # cn-north-1-zone-a
+# 192.168.2.11:8848  # cn-north-1-zone-b
+# 192.168.3.10:8848  # cn-south-1-zone-a
+# 192.168.3.11:8848  # cn-south-1-zone-b
+```
+
+#### 华北数据中心 (cn-north-1)
+
+```yaml
+# 节点 3: cn-north-1-zone-a
+datacenter:
+  local: "cn-north-1"
+  region: "cn-north"
+  zone: "zone-a"
+  locality-weight: 1.0
+  cross-dc-replication: true
+```
+
+### Kubernetes 多数据中心部署
+
+#### 使用 Pod 拓扑标签
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: batata
+spec:
+  replicas: 3
+  template:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: batata
+      containers:
+        - name: batata
+          image: batata:latest
+          env:
+            - name: BATATA_DATACENTER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['topology.kubernetes.io/zone']
+            - name: BATATA_REGION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['topology.kubernetes.io/region']
+            - name: BATATA_ZONE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['topology.kubernetes.io/zone']
+```
+
+### 数据复制策略
+
+| 策略 | 描述 | 适用场景 |
+|------|------|----------|
+| **本地优先** | 优先访问同数据中心节点 | 低延迟读取 |
+| **跨 DC 复制** | 异步复制到远程数据中心 | 数据冗余、灾备 |
+| **权重选择** | 按 locality_weight 选择节点 | 负载均衡 |
+
+### 故障转移
+
+当本地数据中心不可用时，请求会自动路由到远程数据中心：
+
+```
+1. 客户端请求 → 本地 DC (cn-east-1)
+2. 本地 DC 不可用 → 检测故障
+3. 自动切换 → 远程 DC (cn-north-1)
+4. 本地 DC 恢复 → 自动切回
+```
+
+### 监控多数据中心状态
+
+```bash
+# 查看集群节点状态
+curl localhost:8848/nacos/v1/core/cluster/nodes
+
+# 响应示例
+{
+  "data": [
+    {
+      "address": "192.168.1.10:8848",
+      "state": "UP",
+      "extendInfo": {
+        "datacenter": "cn-east-1",
+        "region": "cn-east",
+        "zone": "zone-a"
+      }
+    },
+    {
+      "address": "192.168.2.10:8848",
+      "state": "UP",
+      "extendInfo": {
+        "datacenter": "cn-north-1",
+        "region": "cn-north",
+        "zone": "zone-a"
+      }
+    }
+  ]
+}
+```
+
+### 最佳实践
+
+1. **网络延迟**：确保数据中心间网络延迟 < 100ms
+2. **副本分布**：每个数据中心至少部署 2 个节点
+3. **同步延迟**：根据业务需求调整 `cross-dc-sync-delay`
+4. **监控告警**：监控跨数据中心复制延迟和失败率
+5. **容灾测试**：定期进行数据中心故障切换演练
 
 ---
 

@@ -16,8 +16,6 @@ members = [
     "crates/batata-server",
 ]
 
-# Keep the original package as a separate member for backward compatibility
-# This allows gradual migration without breaking existing builds
 [workspace.package]
 version = "0.1.0"
 authors = ["Tianyu Liang <124244236@qq.com>"]
@@ -39,6 +37,7 @@ batata-plugin = { path = "crates/batata-plugin" }
 batata-plugin-consul = { path = "crates/batata-plugin-consul" }
 batata-console = { path = "crates/batata-console" }
 batata-client = { path = "crates/batata-client" }
+batata-server = { path = "crates/batata-server" }
 
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }
@@ -49,9 +48,13 @@ futures = "0.3"
 actix-web = "4"
 actix-rt = "2"
 actix-multipart = "0.7"
+actix-service = "2.0"
+actix-utils = "3.0"
 tonic = "0.14"
 prost = "0.14"
 prost-types = "0.14"
+tonic-prost = "0.14"
+tower = "0.5"
 
 # Database (supports both MySQL and PostgreSQL)
 sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
@@ -60,6 +63,8 @@ sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
+serde_urlencoded = "0.7"
+serde_with = "3.16"
 
 # Auth
 jsonwebtoken = "9"
@@ -77,6 +82,7 @@ dashmap = "6.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 tracing-bunyan-formatter = "0.3"
+tracing-log = "0.2"
 
 # Error handling
 anyhow = "1.0"
@@ -95,6 +101,9 @@ bytes = "1.11"
 byteorder = "1.5"
 zip = "2.2"
 if-addrs = "0.14"
+htmlescape = "0.3"
+pin-project-lite = "0.2"
+tokio-stream = "0.1"
 
 # Configuration
 config = "0.15"
@@ -104,103 +113,10 @@ clap = { version = "4.5", features = ["derive", "env"] }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
 
-# Additional workspace dependencies for root package
-actix-service = "2.0"
-actix-utils = "3.0"
-htmlescape = "0.3"
-pin-project-lite = "0.2"
-tokio-stream = "0.1"
-tonic-prost = "0.14"
-tower = "0.5"
-tracing-log = "0.2"
-serde_urlencoded = "0.7"
-serde_with = "3.16"
-
-# ============================================
-# Original package configuration (for backward compatibility)
-# This section keeps the original monolithic build working
-# ============================================
-
-[package]
-name = "batata"
-version = "0.1.0"
-authors = ["Tianyu Liang <124244236@qq.com>"]
-edition = "2024"
-
-[dependencies]
-# Use workspace dependencies where possible
-actix-web.workspace = true
-actix-multipart.workspace = true
-actix-service.workspace = true
-actix-utils.workspace = true
-anyhow.workspace = true
-async-trait.workspace = true
-base64.workspace = true
-bcrypt.workspace = true
-byteorder.workspace = true
-bytes.workspace = true
-chrono.workspace = true
-clap.workspace = true
-config.workspace = true
-dashmap.workspace = true
-futures.workspace = true
-htmlescape.workspace = true
-if-addrs.workspace = true
-jsonwebtoken.workspace = true
-md5.workspace = true
-metrics.workspace = true
-metrics-exporter-prometheus.workspace = true
-moka.workspace = true
-openraft.workspace = true
-pin-project-lite.workspace = true
-prost.workspace = true
-prost-types.workspace = true
-regex.workspace = true
-reqwest.workspace = true
-rocksdb.workspace = true
-sea-orm.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-serde_urlencoded.workspace = true
-serde_with.workspace = true
-serde_yaml.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-tokio-stream.workspace = true
-tonic.workspace = true
-tonic-prost.workspace = true
-tower.workspace = true
-tracing.workspace = true
-tracing-bunyan-formatter.workspace = true
-tracing-log.workspace = true
-tracing-subscriber.workspace = true
-uuid.workspace = true
-zip.workspace = true
-
-# Internal crates
-batata-api.workspace = true
-batata-client.workspace = true
-batata-config.workspace = true
-batata-console.workspace = true
-batata-core.workspace = true
-batata-persistence.workspace = true
-
-[dev-dependencies]
+# Dev dependencies
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 
-[[bench]]
-name = "naming_bench"
-harness = false
-
-[[bench]]
-name = "auth_bench"
-harness = false
-
-[[bench]]
-name = "circuit_breaker_bench"
-harness = false
-
-[build-dependencies]
+# Build dependencies
 tonic-prost-build = "0.14.2"
 
 [profile.dev]

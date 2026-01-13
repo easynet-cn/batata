@@ -499,11 +499,7 @@ impl BatataApiClient {
     /// Get a specific member by address
     pub async fn cluster_member(&self, address: &str) -> anyhow::Result<Option<Member>> {
         let path = format!("/v3/console/core/cluster/node/{}", address);
-        match self
-            .http_client
-            .get::<ApiResponse<Member>>(&path)
-            .await
-        {
+        match self.http_client.get::<ApiResponse<Member>>(&path).await {
             Ok(response) => Ok(Some(response.data)),
             Err(_) => Ok(None),
         }

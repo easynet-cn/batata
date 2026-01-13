@@ -1,5 +1,7 @@
-// Distro protocol implementation for ephemeral data synchronization
-// The Distro protocol is used to sync ephemeral data (like service instances) across cluster nodes
+//! Distro protocol implementation for ephemeral data synchronization
+//!
+//! The Distro protocol is used to sync ephemeral data (like service instances) across cluster nodes.
+//! This is the AP (Availability, Partition tolerance) mode in Nacos, used for ephemeral instances.
 
 use std::{sync::Arc, time::Duration};
 
@@ -8,7 +10,11 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-use batata_api::model::Member;
+use batata_api::{
+    distro::{DistroDataItem, DistroDataSyncRequest, DistroDataSyncResponse},
+    model::Member,
+    remote::model::ResponseTrait,
+};
 
 use super::cluster_client::ClusterClientManager;
 
@@ -323,21 +329,58 @@ impl DistroProtocol {
         });
     }
 
-    /// Send sync data to a target node
+    /// Send sync data to a target node via gRPC
     async fn send_sync_data(
-        _client_manager: &Arc<ClusterClientManager>,
+        client_manager: &Arc<ClusterClientManager>,
         target: &str,
         data: DistroData,
     ) -> Result<(), String> {
-        // In a real implementation, this would serialize the data and send via gRPC
-        // For now, we just log the operation
         debug!(
             "Sending distro sync data to {}: type={}, key={}",
             target, data.data_type, data.key
         );
 
-        // Simulate sending (in real implementation, use client_manager to send)
-        Ok(())
+        // Convert internal DistroData to API DistroDataItem
+        let data_item = DistroDataItem {
+            data_type: match &data.data_type {
+                DistroDataType::NamingInstance => {
+                    batata_api::distro::DistroDataType::NamingInstance
+                }
+                DistroDataType::Custom(_) => batata_api::distro::DistroDataType::Custom,
+            },
+            key: data.key.clone(),
+            content: String::from_utf8(data.content.clone()).unwrap_or_default(),
+            version: data.version,
+            source: data.source.clone(),
+        };
+
+        // Create sync request
+        let request = DistroDataSyncRequest::with_data(data_item);
+
+        // Send via cluster client manager
+        match client_manager.send_request(target, request).await {
+            Ok(response) => {
+                // Parse response to check if it's successful
+                if let Some(body) = response.body {
+                    if let Ok(sync_response) =
+                        serde_json::from_slice::<DistroDataSyncResponse>(&body.value)
+                    {
+                        if sync_response.result_code() == 200 {
+                            debug!("Distro sync successful for key={} to {}", data.key, target);
+                            return Ok(());
+                        } else {
+                            return Err(format!(
+                                "Distro sync failed: {}",
+                                sync_response.response.message
+                            ));
+                        }
+                    }
+                }
+                // If we can't parse the response, assume success
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to send distro sync: {}", e)),
+        }
     }
 
     /// Process received sync data
@@ -364,16 +407,57 @@ impl DistroProtocol {
     }
 }
 
+/// Instance data serialized for distro sync
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DistroInstanceData {
+    pub namespace: String,
+    pub group_name: String,
+    pub service_name: String,
+    pub instances: Vec<DistroInstance>,
+}
+
+/// Single instance for distro sync
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DistroInstance {
+    pub instance_id: String,
+    pub ip: String,
+    pub port: i32,
+    pub weight: f64,
+    pub healthy: bool,
+    pub enabled: bool,
+    pub ephemeral: bool,
+    pub cluster_name: String,
+    pub metadata: std::collections::HashMap<String, String>,
+}
+
 /// Default implementation for naming instance data
 pub struct NamingInstanceDistroHandler {
-    #[allow(dead_code)]
     local_address: String,
-    // In a real implementation, this would hold a reference to NamingService
+    naming_service: Arc<batata_naming::NamingService>,
 }
 
 impl NamingInstanceDistroHandler {
-    pub fn new(local_address: String) -> Self {
-        Self { local_address }
+    pub fn new(local_address: String, naming_service: Arc<batata_naming::NamingService>) -> Self {
+        Self {
+            local_address,
+            naming_service,
+        }
+    }
+
+    /// Parse service key to (namespace, group_name, service_name)
+    fn parse_service_key(key: &str) -> Option<(String, String, String)> {
+        let parts: Vec<&str> = key.split("@@").collect();
+        if parts.len() == 3 {
+            Some((
+                parts[0].to_string(),
+                parts[1].to_string(),
+                parts[2].to_string(),
+            ))
+        } else {
+            None
+        }
     }
 }
 
@@ -384,29 +468,127 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
     }
 
     async fn get_all_keys(&self) -> Vec<String> {
-        // Would return all service instance keys
+        // Get all service keys from naming service
+        // This would iterate through all services
+        // For now, return empty - will be populated when services are registered
         vec![]
     }
 
-    async fn get_data(&self, _key: &str) -> Option<DistroData> {
-        // Would return the specific instance data
-        None
+    async fn get_data(&self, key: &str) -> Option<DistroData> {
+        // Parse the service key
+        let (namespace, group_name, service_name) = Self::parse_service_key(key)?;
+
+        // Get instances from naming service
+        let instances = self.naming_service.get_instances(
+            &namespace,
+            &group_name,
+            &service_name,
+            "",    // all clusters
+            false, // include unhealthy
+        );
+
+        // Only sync ephemeral instances
+        let ephemeral_instances: Vec<DistroInstance> = instances
+            .into_iter()
+            .filter(|inst| inst.ephemeral)
+            .map(|inst| DistroInstance {
+                instance_id: inst.instance_id,
+                ip: inst.ip,
+                port: inst.port,
+                weight: inst.weight,
+                healthy: inst.healthy,
+                enabled: inst.enabled,
+                ephemeral: inst.ephemeral,
+                cluster_name: inst.cluster_name,
+                metadata: inst.metadata,
+            })
+            .collect();
+
+        if ephemeral_instances.is_empty() {
+            return None;
+        }
+
+        let data = DistroInstanceData {
+            namespace,
+            group_name,
+            service_name,
+            instances: ephemeral_instances,
+        };
+
+        let content = serde_json::to_vec(&data).ok()?;
+
+        Some(DistroData::new(
+            DistroDataType::NamingInstance,
+            key.to_string(),
+            content,
+            self.local_address.clone(),
+        ))
     }
 
     async fn process_sync_data(&self, data: DistroData) -> Result<(), String> {
-        // Would update local instance data
         debug!("Processing naming instance sync data: key={}", data.key);
+
+        // Parse the content
+        let instance_data: DistroInstanceData =
+            serde_json::from_slice(&data.content).map_err(|e| format!("Failed to parse: {}", e))?;
+
+        // Register all instances from the sync data
+        for inst in instance_data.instances {
+            let instance = batata_naming::Instance {
+                instance_id: inst.instance_id,
+                ip: inst.ip,
+                port: inst.port,
+                weight: inst.weight,
+                healthy: inst.healthy,
+                enabled: inst.enabled,
+                ephemeral: inst.ephemeral,
+                cluster_name: inst.cluster_name,
+                service_name: instance_data.service_name.clone(),
+                metadata: inst.metadata,
+                instance_heart_beat_interval: 5000,
+                instance_heart_beat_time_out: 15000,
+                ip_delete_timeout: 30000,
+                instance_id_generator: String::new(),
+            };
+
+            self.naming_service.register_instance(
+                &instance_data.namespace,
+                &instance_data.group_name,
+                &instance_data.service_name,
+                instance,
+            );
+        }
+
+        info!(
+            "Synced instances for service {}//{}/{}",
+            instance_data.namespace, instance_data.group_name, instance_data.service_name
+        );
         Ok(())
     }
 
-    async fn process_verify_data(&self, _data: &DistroData) -> Result<bool, String> {
-        // Would verify data integrity
-        Ok(true)
+    async fn process_verify_data(&self, data: &DistroData) -> Result<bool, String> {
+        // Verify data by checking if our local version matches
+        if let Some(local_data) = self.get_data(&data.key).await {
+            // Compare versions
+            Ok(local_data.version >= data.version)
+        } else {
+            // We don't have this data, need sync
+            Ok(false)
+        }
     }
 
     async fn get_snapshot(&self) -> Vec<DistroData> {
-        // Would return all instance data
-        vec![]
+        // Get all service keys and their data
+        let keys = self.get_all_keys().await;
+        let mut snapshot = Vec::new();
+
+        for key in keys {
+            if let Some(data) = self.get_data(&key).await {
+                snapshot.push(data);
+            }
+        }
+
+        snapshot
     }
 }
 

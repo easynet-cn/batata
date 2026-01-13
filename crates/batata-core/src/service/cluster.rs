@@ -338,8 +338,8 @@ impl ServerMemberManager {
     /// Update member state
     pub async fn update_member_state(&self, address: &str, state: NodeState) {
         if let Some(mut member) = self.server_list.get_mut(address) {
-            let previous_state = member.state.clone();
-            member.state = state.clone();
+            let previous_state = member.state;
+            member.state = state;
 
             // Publish state change event
             self.event_publisher

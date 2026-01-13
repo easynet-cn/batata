@@ -14,9 +14,21 @@ use chrono::Local;
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use batata_api::Page;
-use batata_persistence::entity::{config_info, config_info_gray, config_tags_relation, his_config_info};
+use batata_persistence::entity::{
+    config_info, config_info_gray, config_tags_relation, his_config_info,
+};
 
 use crate::model::{ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper};
+
+/// Escape SQL wildcard characters and convert user wildcards to SQL LIKE pattern.
+/// Escapes % and _ to prevent SQL wildcard injection, then converts * to %.
+#[inline]
+fn escape_sql_like_pattern(input: &str) -> String {
+    input
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+        .replace('*', "%")
+}
 
 /// Normalize config tags by filtering empty entries.
 /// Returns a Vec of non-empty tag references for direct iteration.
@@ -87,8 +99,9 @@ pub async fn search_page(
 
     if !data_id.is_empty() {
         if data_id.contains('*') {
-            count_select = count_select.filter(config_info::Column::DataId.like(data_id));
-            query_select = query_select.filter(config_info::Column::DataId.like(data_id));
+            let pattern = escape_sql_like_pattern(data_id);
+            count_select = count_select.filter(config_info::Column::DataId.like(&pattern));
+            query_select = query_select.filter(config_info::Column::DataId.like(&pattern));
         } else {
             count_select = count_select.filter(config_info::Column::DataId.contains(data_id));
             query_select = query_select.filter(config_info::Column::DataId.contains(data_id));
@@ -96,8 +109,9 @@ pub async fn search_page(
     }
     if !group_id.is_empty() {
         if group_id.contains('*') {
-            count_select = count_select.filter(config_info::Column::GroupId.like(group_id));
-            query_select = query_select.filter(config_info::Column::GroupId.like(group_id));
+            let pattern = escape_sql_like_pattern(group_id);
+            count_select = count_select.filter(config_info::Column::GroupId.like(&pattern));
+            query_select = query_select.filter(config_info::Column::GroupId.like(&pattern));
         } else {
             count_select = count_select.filter(config_info::Column::GroupId.eq(group_id));
             query_select = query_select.filter(config_info::Column::GroupId.eq(group_id));
@@ -395,10 +409,7 @@ fn md5_digest(content: &str) -> String {
     format!("{:x}", md5::compute(content))
 }
 
-fn build_ext_info(
-    tags: &[config_tags_relation::Model],
-    entity: &config_info::Model,
-) -> String {
+fn build_ext_info(tags: &[config_tags_relation::Model], entity: &config_info::Model) -> String {
     let mut map = HashMap::<String, String>::with_capacity(6);
 
     let tags_str = tags
@@ -530,19 +541,34 @@ async fn update_existing_config(
             map.insert("config_tags".to_string(), config_tags.to_string());
         }
         if entity_c.c_desc.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert("desc".to_string(), entity_c.c_desc.clone().unwrap_or_default());
+            map.insert(
+                "desc".to_string(),
+                entity_c.c_desc.clone().unwrap_or_default(),
+            );
         }
         if entity_c.c_use.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert("use".to_string(), entity_c.c_use.clone().unwrap_or_default());
+            map.insert(
+                "use".to_string(),
+                entity_c.c_use.clone().unwrap_or_default(),
+            );
         }
         if entity_c.effect.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert("effect".to_string(), entity_c.effect.clone().unwrap_or_default());
+            map.insert(
+                "effect".to_string(),
+                entity_c.effect.clone().unwrap_or_default(),
+            );
         }
         if entity_c.r#type.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert("type".to_string(), entity_c.r#type.clone().unwrap_or_default());
+            map.insert(
+                "type".to_string(),
+                entity_c.r#type.clone().unwrap_or_default(),
+            );
         }
         if entity_c.c_schema.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert("schema".to_string(), entity_c.c_schema.clone().unwrap_or_default());
+            map.insert(
+                "schema".to_string(),
+                entity_c.c_schema.clone().unwrap_or_default(),
+            );
         }
 
         let ext_info = serde_json::to_string(&map).unwrap_or_default();

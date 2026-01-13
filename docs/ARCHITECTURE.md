@@ -1,100 +1,31 @@
-# Batata Multi-Crate Architecture Design
+# Batata Multi-Crate Architecture
 
-This document describes the recommended multi-crate architecture for Batata, a Rust implementation of Nacos-compatible service discovery and configuration management platform.
+This document describes the multi-crate architecture of Batata, a Rust implementation of Nacos-compatible service discovery and configuration management platform.
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Current Architecture Issues](#current-architecture-issues)
-3. [Proposed Solution](#proposed-solution)
-4. [Crate Structure](#crate-structure)
+2. [Crate Structure](#crate-structure)
+3. [Dependency Graph](#dependency-graph)
+4. [Implementation Details](#implementation-details)
 5. [Trait-Based Dependency Injection](#trait-based-dependency-injection)
-6. [Dependency Graph](#dependency-graph)
-7. [Implementation Details](#implementation-details)
-8. [Migration Plan](#migration-plan)
 
 ---
 
 ## Overview
 
-The current Batata project is a monolithic Rust application with all modules in a single crate. As the project grows, this architecture leads to:
+Batata uses a multi-crate workspace architecture for modularity and maintainability. This architecture provides:
 
-- Long compilation times
-- Circular dependency risks
-- Difficulty in testing individual components
-- Tight coupling between modules
+- Faster compilation times through parallel crate compilation
+- Clear dependency boundaries between modules
+- Better testability with isolated unit tests
+- Flexible deployment options
 
-This document proposes splitting the project into 13 independent crates following the architecture of Java Nacos while leveraging Rust's trait system to solve circular dependencies.
-
----
-
-## Current Architecture Issues
-
-### 1. Circular Dependency Problem
-
-The current `AppState` structure creates potential circular dependencies:
-
-```
-console → service → AppState → console_data_source → service
-                 ↓
-             config ← → naming (future)
-```
-
-### 2. Tight Coupling
-
-Multiple modules directly depend on the concrete `AppState` type, making it impossible to:
-- Test modules in isolation
-- Use different implementations for different deployment modes
-- Split into separate crates without significant refactoring
-
-### 3. Compilation Bottleneck
-
-All 31,000+ lines of code must be recompiled when any file changes, leading to slow development cycles.
-
----
-
-## Proposed Solution
-
-### Trait-Based Abstraction
-
-Instead of passing concrete `AppState` everywhere, define trait abstractions that each module requires:
-
-```rust
-// Each module only depends on the traits it needs
-pub trait ConfigContext: Send + Sync {
-    fn db(&self) -> &DatabaseConnection;
-    fn max_content(&self) -> u64;
-}
-
-pub trait ClusterContext: Send + Sync {
-    fn member_manager(&self) -> &Arc<ServerMemberManager>;
-    fn is_standalone(&self) -> bool;
-}
-```
-
-### Layered State Assembly
-
-The final `AppState` is assembled in the server crate, implementing all required traits:
-
-```rust
-// In batata-server
-pub struct AppState {
-    pub config: Configuration,
-    pub db: DbState,
-    pub cluster: ClusterState,
-    pub console: Arc<dyn ConsoleDataSource>,
-}
-
-impl ConfigContext for AppState { ... }
-impl ClusterContext for AppState { ... }
-impl DbContext for AppState { ... }
-```
+The project consists of **13 internal crates** following a layered architecture similar to Java Nacos while leveraging Rust's trait system for dependency injection.
 
 ---
 
 ## Crate Structure
-
-### Proposed 13-Crate Workspace
 
 ```
 batata/
@@ -102,19 +33,33 @@ batata/
 ├── crates/
 │   ├── batata-common/         # Shared types, traits, utilities
 │   ├── batata-api/            # gRPC/HTTP API definitions
-│   ├── batata-persistence/    # Database entities and migrations
+│   ├── batata-persistence/    # Database entities (SeaORM)
 │   ├── batata-auth/           # Authentication and authorization
-│   ├── batata-consistency/    # Raft (CP) and Distro (AP) protocols
+│   ├── batata-consistency/    # Raft consensus protocol
 │   ├── batata-core/           # Cluster and connection management
 │   ├── batata-config/         # Configuration management service
 │   ├── batata-naming/         # Service discovery service
 │   ├── batata-plugin/         # Plugin SPI definitions
 │   ├── batata-plugin-consul/  # Consul compatibility plugin
-│   ├── batata-console/        # Management console
+│   ├── batata-console/        # Management console backend
 │   ├── batata-client/         # Rust SDK for clients
 │   └── batata-server/         # Main application entry point
-└── docs/
-    └── ARCHITECTURE.md        # This document
+│       ├── src/
+│       │   ├── api/           # API handlers (HTTP, gRPC, Consul)
+│       │   ├── auth/          # Auth HTTP handlers
+│       │   ├── config/        # Config models (re-exports)
+│       │   ├── console/       # Console API handlers
+│       │   ├── middleware/    # HTTP middleware
+│       │   ├── model/         # Application state & config
+│       │   ├── service/       # gRPC handlers
+│       │   ├── startup/       # Server initialization
+│       │   ├── lib.rs         # Library exports
+│       │   └── main.rs        # Entry point
+│       ├── tests/             # Integration tests
+│       └── benches/           # Performance benchmarks
+├── conf/                      # Configuration files
+├── docs/                      # Documentation
+└── proto/                     # Protocol buffer definitions
 ```
 
 ### Crate Descriptions
@@ -124,59 +69,32 @@ batata/
 
 **Contents**:
 - Error types (`BatataError`, error codes)
-- Common traits (`ConfigContext`, `DbContext`, `ClusterContext`)
+- Common traits (`DbContext`, `ConfigContext`, `ClusterContext`)
 - Utility functions (validation, MD5, encoding)
-- Common constants
+- Common constants and re-exports
 
-**Dependencies**: Minimal (serde, thiserror, anyhow)
-
-```rust
-// crates/batata-common/src/lib.rs
-pub mod error;
-pub mod traits;
-pub mod utils;
-pub mod constants;
-
-// Re-exports
-pub use error::{BatataError, AppError};
-pub use traits::*;
-```
+**Dependencies**: Minimal (serde, thiserror, anyhow, sea-orm)
 
 #### 2. `batata-api`
 **Purpose**: gRPC and HTTP API model definitions.
 
 **Contents**:
-- Protocol buffer generated code
+- Protocol buffer generated code (`grpc/`)
 - API request/response models
-- Payload handlers trait
+- Payload handlers trait and registry
+- Raft protocol definitions
 
 **Dependencies**: batata-common, prost, tonic
-
-```rust
-// crates/batata-api/src/lib.rs
-pub mod grpc;      // Generated protobuf code
-pub mod config;    // Config API models
-pub mod naming;    // Naming API models
-pub mod remote;    // Remote communication models
-pub mod consul;    // Consul compatibility models
-```
 
 #### 3. `batata-persistence`
 **Purpose**: Database layer with SeaORM entities.
 
 **Contents**:
 - SeaORM entity definitions (auto-generated)
-- Repository traits
-- Migration scripts
+- Database migrations
+- Repository patterns
 
 **Dependencies**: batata-common, sea-orm
-
-```rust
-// crates/batata-persistence/src/lib.rs
-pub mod entity;       // Auto-generated entities
-pub mod repository;   // Repository traits
-pub mod migration;    // Database migrations
-```
 
 #### 4. `batata-auth`
 **Purpose**: Authentication and authorization services.
@@ -185,36 +103,19 @@ pub mod migration;    // Database migrations
 - JWT token handling
 - RBAC permission model
 - User/Role/Permission services
-- Auth middleware
+- Auth middleware and macros (`secured!`)
 
-**Dependencies**: batata-common, batata-persistence
-
-```rust
-// crates/batata-auth/src/lib.rs
-pub mod jwt;          // JWT encoding/decoding
-pub mod rbac;         // Role-based access control
-pub mod service;      // Auth services
-pub mod middleware;   // Actix middleware
-pub mod model;        // Auth models
-```
+**Dependencies**: batata-common, batata-persistence, jsonwebtoken, bcrypt
 
 #### 5. `batata-consistency`
 **Purpose**: Distributed consensus protocols.
 
 **Contents**:
 - Raft implementation (CP protocol for persistent data)
-- Distro implementation (AP protocol for ephemeral data)
 - State machine definitions
-- Log storage
+- Log storage (RocksDB)
 
-**Dependencies**: batata-common, openraft
-
-```rust
-// crates/batata-consistency/src/lib.rs
-pub mod raft;         // Raft consensus
-pub mod distro;       // Distro protocol
-pub mod storage;      // Log and state storage
-```
+**Dependencies**: batata-common, openraft, rocksdb
 
 #### 6. `batata-core`
 **Purpose**: Core cluster and connection management.
@@ -223,17 +124,12 @@ pub mod storage;      // Log and state storage
 - Server member management
 - Connection management
 - Health checking
+- Circuit breaker
 - Task scheduling
+- Multi-datacenter topology management (`DatacenterManager`)
+- Locality-aware replication
 
-**Dependencies**: batata-common, batata-consistency
-
-```rust
-// crates/batata-core/src/lib.rs
-pub mod cluster;      // Cluster management
-pub mod connection;   // Connection pool
-pub mod health;       // Health checking
-pub mod scheduler;    // Task scheduling
-```
+**Dependencies**: batata-common, batata-consistency, batata-persistence
 
 #### 7. `batata-config`
 **Purpose**: Configuration management service.
@@ -242,340 +138,110 @@ pub mod scheduler;    // Task scheduling
 - Config CRUD operations
 - Config listening/pushing
 - Gray release (beta configs)
-- Import/Export functionality
+- Import/Export functionality (ZIP format)
 - History management
+- Namespace service
 
 **Dependencies**: batata-common, batata-persistence, batata-consistency
-
-```rust
-// crates/batata-config/src/lib.rs
-pub mod service;      // Config service
-pub mod handler;      // gRPC handlers
-pub mod listener;     // Config change listeners
-pub mod export;       // Export functionality
-pub mod import;       // Import functionality
-pub mod history;      // History service
-```
 
 #### 8. `batata-naming`
 **Purpose**: Service discovery service.
 
 **Contents**:
-- Service registration
-- Service discovery
+- Service registration models
+- Service discovery models
 - Health checking
-- Load balancing
+- Instance management
 
 **Dependencies**: batata-common, batata-persistence, batata-consistency
-
-```rust
-// crates/batata-naming/src/lib.rs
-pub mod service;      // Naming service
-pub mod handler;      // gRPC handlers
-pub mod health;       // Instance health check
-pub mod selector;     // Instance selection
-```
 
 #### 9. `batata-plugin`
 **Purpose**: Plugin SPI (Service Provider Interface) definitions.
 
 **Contents**:
 - Plugin traits
-- Plugin loading mechanism
 - Extension points
 
 **Dependencies**: batata-common
-
-```rust
-// crates/batata-plugin/src/lib.rs
-pub mod spi;          // SPI trait definitions
-pub mod loader;       // Plugin loader
-pub mod registry;     // Plugin registry
-```
 
 #### 10. `batata-plugin-consul`
 **Purpose**: Consul API compatibility layer.
 
 **Contents**:
-- Consul KV API
+- Consul KV API handlers
+- Consul Agent API (service registration)
+- Consul Health API
+- Consul Catalog API
 - Consul ACL API
-- Consul Agent API
 - Data format conversion
 
-**Dependencies**: batata-common, batata-plugin, batata-config
-
-```rust
-// crates/batata-plugin-consul/src/lib.rs
-pub mod kv;           // KV store API
-pub mod acl;          // ACL API
-pub mod agent;        // Agent API
-pub mod convert;      // Data conversion
-```
+**Dependencies**: batata-common, batata-plugin, batata-naming
 
 #### 11. `batata-console`
 **Purpose**: Management console backend.
 
 **Contents**:
-- Console API endpoints
+- Console API endpoints (v3)
 - Data source abstraction (local/remote)
 - Cluster management UI API
 - Metrics API
 
 **Dependencies**: batata-common, batata-core, batata-config, batata-naming
 
-```rust
-// crates/batata-console/src/lib.rs
-pub mod api;          // Console API handlers
-pub mod datasource;   // Data source abstraction
-pub mod client;       // HTTP client for remote mode
-```
-
 #### 12. `batata-client`
 **Purpose**: Rust SDK for Nacos clients.
 
 **Contents**:
 - Config client
-- Naming client
-- gRPC transport
-- Retry and failover logic
+- HTTP transport
+- API abstractions
 
-**Dependencies**: batata-common, batata-api
-
-```rust
-// crates/batata-client/src/lib.rs
-pub mod config;       // Config client
-pub mod naming;       // Naming client
-pub mod transport;    // gRPC transport
-pub mod failover;     // Failover logic
-```
+**Dependencies**: batata-common, batata-api, reqwest
 
 #### 13. `batata-server`
 **Purpose**: Main application entry point that assembles all components.
 
 **Contents**:
-- Main function
+- Main function and server initialization
 - AppState assembly
-- Server initialization
-- Route configuration
+- HTTP route configuration (actix-web)
+- gRPC service initialization (tonic)
+- Metrics and observability setup
+- **OpenTelemetry integration** (OTLP export, distributed tracing)
+- Integration tests and benchmarks
 
 **Dependencies**: All crates
-
-```rust
-// crates/batata-server/src/main.rs
-use batata_common::*;
-use batata_core::*;
-use batata_config::*;
-use batata_naming::*;
-use batata_console::*;
-use batata_auth::*;
-
-fn main() {
-    // Initialize and start servers
-}
-```
-
----
-
-## Trait-Based Dependency Injection
-
-### Core Traits (in batata-common)
-
-```rust
-// crates/batata-common/src/traits/mod.rs
-
-use sea_orm::DatabaseConnection;
-use std::sync::Arc;
-
-/// Database access context
-pub trait DbContext: Send + Sync {
-    fn db(&self) -> &DatabaseConnection;
-}
-
-/// Configuration access context
-pub trait ConfigContext: Send + Sync {
-    fn max_content(&self) -> u64;
-    fn auth_enabled(&self) -> bool;
-    fn token_expire_seconds(&self) -> i64;
-    fn secret_key(&self) -> &str;
-}
-
-/// Cluster management context
-pub trait ClusterContext: Send + Sync {
-    fn is_standalone(&self) -> bool;
-    fn is_leader(&self) -> bool;
-    fn leader_address(&self) -> Option<String>;
-    fn all_members(&self) -> Vec<Member>;
-}
-
-/// Console data source abstraction
-#[async_trait::async_trait]
-pub trait ConsoleDataSource: Send + Sync {
-    // Namespace operations
-    async fn namespace_find_all(&self) -> Vec<Namespace>;
-    async fn namespace_create(&self, id: &str, name: &str, desc: &str) -> anyhow::Result<()>;
-
-    // Config operations
-    async fn config_find_one(&self, data_id: &str, group: &str, ns: &str)
-        -> anyhow::Result<Option<ConfigAllInfo>>;
-    async fn config_search_page(&self, ...) -> anyhow::Result<Page<ConfigBasicInfo>>;
-
-    // History operations
-    async fn history_search_page(&self, ...) -> anyhow::Result<Page<ConfigHistoryBasicInfo>>;
-
-    // Cluster operations
-    fn cluster_all_members(&self) -> Vec<Member>;
-    fn cluster_is_standalone(&self) -> bool;
-
-    // Helper methods
-    fn is_remote(&self) -> bool;
-}
-```
-
-### Service Layer Usage
-
-```rust
-// crates/batata-config/src/service/config.rs
-
-use batata_common::{DbContext, ConfigContext};
-
-/// Config service that only depends on required traits
-pub struct ConfigService<C: DbContext + ConfigContext> {
-    context: Arc<C>,
-}
-
-impl<C: DbContext + ConfigContext> ConfigService<C> {
-    pub fn new(context: Arc<C>) -> Self {
-        Self { context }
-    }
-
-    pub async fn find_one(
-        &self,
-        data_id: &str,
-        group: &str,
-        namespace_id: &str,
-    ) -> anyhow::Result<Option<ConfigAllInfo>> {
-        // Use context.db() to access database
-        let config = config_info::Entity::find()
-            .filter(config_info::Column::DataId.eq(data_id))
-            .filter(config_info::Column::GroupId.eq(group))
-            .filter(config_info::Column::TenantId.eq(namespace_id))
-            .one(self.context.db())
-            .await?;
-
-        Ok(config.map(ConfigAllInfo::from))
-    }
-
-    pub async fn create_or_update(
-        &self,
-        data_id: &str,
-        group: &str,
-        namespace_id: &str,
-        content: &str,
-        // ... other params
-    ) -> anyhow::Result<()> {
-        // Validate content size using config context
-        if content.len() as u64 > self.context.max_content() {
-            return Err(anyhow::anyhow!("Content exceeds maximum size"));
-        }
-
-        // ... implementation
-        Ok(())
-    }
-}
-```
-
-### AppState Assembly (in batata-server)
-
-```rust
-// crates/batata-server/src/state.rs
-
-use batata_common::*;
-use batata_core::cluster::ServerMemberManager;
-use batata_console::datasource::ConsoleDataSource;
-use sea_orm::DatabaseConnection;
-use std::sync::Arc;
-
-/// Complete application state assembled from all components
-pub struct AppState {
-    pub configuration: Configuration,
-    pub database_connection: DatabaseConnection,
-    pub server_member_manager: Arc<ServerMemberManager>,
-    pub console_data_source: Arc<dyn ConsoleDataSource>,
-}
-
-impl DbContext for AppState {
-    fn db(&self) -> &DatabaseConnection {
-        &self.database_connection
-    }
-}
-
-impl ConfigContext for AppState {
-    fn max_content(&self) -> u64 {
-        self.configuration.max_content()
-    }
-
-    fn auth_enabled(&self) -> bool {
-        self.configuration.auth_enabled()
-    }
-
-    fn token_expire_seconds(&self) -> i64 {
-        self.configuration.token_expire_seconds()
-    }
-
-    fn secret_key(&self) -> &str {
-        self.configuration.secret_key()
-    }
-}
-
-impl ClusterContext for AppState {
-    fn is_standalone(&self) -> bool {
-        self.server_member_manager.is_standalone()
-    }
-
-    fn is_leader(&self) -> bool {
-        self.server_member_manager.is_leader()
-    }
-
-    fn leader_address(&self) -> Option<String> {
-        self.server_member_manager.leader_address()
-    }
-
-    fn all_members(&self) -> Vec<Member> {
-        self.server_member_manager.all_members()
-    }
-}
-```
 
 ---
 
 ## Dependency Graph
 
 ```
-                                  batata-server
-                                       │
-           ┌───────────────────────────┼───────────────────────────┐
-           │                           │                           │
-           ▼                           ▼                           ▼
-    batata-console              batata-config               batata-naming
-           │                           │                           │
-           │                           │                           │
-           ▼                           ▼                           ▼
-    batata-core ◄──────────── batata-consistency ─────────► batata-core
-           │                           │                           │
-           │                           │                           │
-           └───────────┬───────────────┴───────────────────────────┘
-                       │
-                       ▼
-              batata-persistence
-                       │
-                       ▼
-                batata-auth
-                       │
-                       ▼
-                 batata-api
-                       │
-                       ▼
-               batata-common
+                              batata-server (main binary)
+                                     │
+         ┌───────────────────────────┼───────────────────────────┐
+         │                           │                           │
+         ▼                           ▼                           ▼
+  batata-console              batata-config               batata-naming
+         │                           │                           │
+         │                           │                           │
+         ▼                           ▼                           ▼
+  batata-core ◄──────────── batata-consistency ─────────► batata-core
+         │                           │                           │
+         │                           │                           │
+         └───────────┬───────────────┴───────────────────────────┘
+                     │
+                     ▼
+            batata-persistence
+                     │
+                     ▼
+              batata-auth
+                     │
+                     ▼
+               batata-api
+                     │
+                     ▼
+             batata-common
 
 Plugins (optional):
 ┌─────────────────────┐
@@ -609,7 +275,6 @@ Client SDK:
 ### Workspace Cargo.toml
 
 ```toml
-# Cargo.toml (workspace root)
 [workspace]
 resolver = "2"
 members = [
@@ -631,223 +296,127 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
 license = "Apache-2.0"
 repository = "https://github.com/easynet-cn/batata"
 
 [workspace.dependencies]
-# Async runtime
-tokio = { version = "1.44", features = ["full"] }
-async-trait = "0.1"
-futures = "0.3"
-
-# Web frameworks
-actix-web = "4"
-actix-rt = "2"
-tonic = "0.13"
-prost = "0.13"
-
-# Database
-sea-orm = { version = "1.1", features = ["sqlx-mysql", "runtime-tokio-rustls"] }
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_yaml = "0.9"
-
-# Auth
-jsonwebtoken = "9"
-bcrypt = "0.17"
-
-# Consensus
-openraft = { version = "0.10", features = ["serde"] }
-
-# Caching
-moka = { version = "0.12", features = ["future"] }
-dashmap = "6"
-
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Error handling
-anyhow = "1.0"
-thiserror = "2.0"
-
 # Internal crates
 batata-common = { path = "crates/batata-common" }
 batata-api = { path = "crates/batata-api" }
-batata-persistence = { path = "crates/batata-persistence" }
-batata-auth = { path = "crates/batata-auth" }
-batata-consistency = { path = "crates/batata-consistency" }
-batata-core = { path = "crates/batata-core" }
-batata-config = { path = "crates/batata-config" }
-batata-naming = { path = "crates/batata-naming" }
-batata-plugin = { path = "crates/batata-plugin" }
-batata-plugin-consul = { path = "crates/batata-plugin-consul" }
-batata-console = { path = "crates/batata-console" }
-batata-client = { path = "crates/batata-client" }
+# ... etc
 ```
 
-### Individual Crate Cargo.toml Examples
+### Build Commands
 
-```toml
-# crates/batata-common/Cargo.toml
-[package]
-name = "batata-common"
-version.workspace = true
-edition.workspace = true
+```bash
+# Build all crates
+cargo build
 
-[dependencies]
-serde = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-sea-orm = { workspace = true }
-```
+# Build server only (faster)
+cargo build -p batata-server
 
-```toml
-# crates/batata-config/Cargo.toml
-[package]
-name = "batata-config"
-version.workspace = true
-edition.workspace = true
+# Release build (optimized)
+cargo build --release -p batata-server
 
-[dependencies]
-batata-common = { workspace = true }
-batata-persistence = { workspace = true }
-batata-consistency = { workspace = true }
+# Run tests (all crates)
+cargo test --workspace
 
-serde = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-sea-orm = { workspace = true }
-```
+# Run specific crate tests
+cargo test -p batata-server
 
-```toml
-# crates/batata-server/Cargo.toml
-[package]
-name = "batata-server"
-version.workspace = true
-edition.workspace = true
-
-[[bin]]
-name = "batata"
-path = "src/main.rs"
-
-[dependencies]
-batata-common = { workspace = true }
-batata-api = { workspace = true }
-batata-persistence = { workspace = true }
-batata-auth = { workspace = true }
-batata-consistency = { workspace = true }
-batata-core = { workspace = true }
-batata-config = { workspace = true }
-batata-naming = { workspace = true }
-batata-console = { workspace = true }
-batata-plugin-consul = { workspace = true }
-
-actix-web = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+# Run benchmarks
+cargo bench -p batata-server
 ```
 
 ---
 
-## Migration Plan
+## Trait-Based Dependency Injection
 
-### Phase 1: Prepare (No Breaking Changes)
+### Core Traits (in batata-common)
 
-1. **Create workspace structure**
-   - Create `crates/` directory
-   - Update root `Cargo.toml` to workspace format
-   - Keep existing `src/` as temporary compatibility layer
+The architecture uses trait-based abstractions to avoid circular dependencies and enable better testing:
 
-2. **Extract batata-common**
-   - Move `src/error.rs` → `crates/batata-common/src/error.rs`
-   - Define core traits in `crates/batata-common/src/traits/`
-   - Move utility functions
+```rust
+// crates/batata-common/src/traits.rs
 
-3. **Extract batata-api**
-   - Move `src/api/grpc/` → `crates/batata-api/src/grpc/`
-   - Move API models
-   - Update proto build script
+use sea_orm::DatabaseConnection;
+use std::sync::Arc;
 
-### Phase 2: Core Infrastructure
+/// Database access context
+pub trait DbContext: Send + Sync {
+    fn db(&self) -> &DatabaseConnection;
+}
 
-4. **Extract batata-persistence**
-   - Move `src/entity/` → `crates/batata-persistence/src/entity/`
-   - Define repository traits
-   - Update sea-orm-cli output path
+/// Configuration access context
+pub trait ConfigContext: Send + Sync {
+    fn max_content(&self) -> u64;
+    fn auth_enabled(&self) -> bool;
+    fn token_expire_seconds(&self) -> i64;
+    fn secret_key(&self) -> &str;
+}
 
-5. **Extract batata-auth**
-   - Move `src/auth/` → `crates/batata-auth/src/`
-   - Update to use traits from batata-common
+/// Cluster management context
+pub trait ClusterContext: Send + Sync {
+    fn is_standalone(&self) -> bool;
+    fn is_leader(&self) -> bool;
+    fn leader_address(&self) -> Option<String>;
+}
+```
 
-6. **Extract batata-consistency**
-   - Move `src/core/raft/` → `crates/batata-consistency/src/raft/`
-   - Move distro protocol code
-   - Update to use traits
+### Service Layer Usage
 
-### Phase 3: Business Services
+Services depend only on the traits they need, not concrete types:
 
-7. **Extract batata-core**
-   - Move `src/core/service/` → `crates/batata-core/src/`
-   - Cluster and connection management
+```rust
+// crates/batata-config/src/service/config.rs
 
-8. **Extract batata-config**
-   - Move `src/service/config*.rs` → `crates/batata-config/src/`
-   - Move config handlers
+use batata_common::{DbContext, ConfigContext};
 
-9. **Extract batata-naming**
-   - Move `src/naming/` → `crates/batata-naming/src/`
-   - Service discovery implementation
+pub struct ConfigService<C: DbContext + ConfigContext> {
+    context: Arc<C>,
+}
 
-### Phase 4: Console and Plugins
+impl<C: DbContext + ConfigContext> ConfigService<C> {
+    pub fn new(context: Arc<C>) -> Self {
+        Self { context }
+    }
 
-10. **Extract batata-console**
-    - Move `src/console/` → `crates/batata-console/src/`
-    - Update data source implementations
+    pub async fn find_one(&self, data_id: &str, group: &str, namespace_id: &str)
+        -> anyhow::Result<Option<ConfigAllInfo>>
+    {
+        // Use context.db() to access database
+        // ...
+    }
+}
+```
 
-11. **Extract batata-plugin and batata-plugin-consul**
-    - Define plugin SPI
-    - Move Consul compatibility code
+### AppState Assembly (in batata-server)
 
-### Phase 5: Finalize
+The final `AppState` is assembled in the server crate, implementing all required traits:
 
-12. **Create batata-server**
-    - Move `src/main.rs` → `crates/batata-server/src/main.rs`
-    - Implement AppState with all traits
-    - Wire up all components
+```rust
+// crates/batata-server/src/model/common.rs
 
-13. **Extract batata-client**
-    - Create Rust SDK for external clients
+pub struct AppState {
+    pub configuration: Configuration,
+    pub database_connection: Option<DatabaseConnection>,
+    pub server_member_manager: Option<Arc<ServerMemberManager>>,
+    pub console_datasource: Arc<dyn ConsoleDataSource>,
+}
 
-14. **Cleanup**
-    - Remove old `src/` directory
-    - Update CI/CD pipelines
-    - Update documentation
+impl DbContext for AppState {
+    fn db(&self) -> &DatabaseConnection {
+        self.database_connection.as_ref().unwrap()
+    }
+}
 
-### Estimated File Movements
-
-| Source | Destination |
-|--------|-------------|
-| `src/error.rs` | `crates/batata-common/src/error.rs` |
-| `src/model/common.rs` (types) | `crates/batata-common/src/types.rs` |
-| `src/api/` | `crates/batata-api/src/` |
-| `src/entity/` | `crates/batata-persistence/src/entity/` |
-| `src/auth/` | `crates/batata-auth/src/` |
-| `src/core/raft/` | `crates/batata-consistency/src/raft/` |
-| `src/core/service/` | `crates/batata-core/src/` |
-| `src/service/config*.rs` | `crates/batata-config/src/` |
-| `src/service/namespace.rs` | `crates/batata-config/src/namespace.rs` |
-| `src/service/history.rs` | `crates/batata-config/src/history.rs` |
-| `src/naming/` | `crates/batata-naming/src/` |
-| `src/console/` | `crates/batata-console/src/` |
-| `src/api/consul/` | `crates/batata-plugin-consul/src/` |
-| `src/main.rs` | `crates/batata-server/src/main.rs` |
-| `src/lib.rs` | `crates/batata-server/src/lib.rs` |
+impl ConfigContext for AppState {
+    fn max_content(&self) -> u64 {
+        self.configuration.max_content()
+    }
+    // ...
+}
+```
 
 ---
 
@@ -888,7 +457,7 @@ tracing-subscriber = { workspace = true }
 | nacos-api | batata-api | API definitions |
 | nacos-persistence | batata-persistence | Database layer |
 | nacos-auth | batata-auth | Authentication |
-| nacos-consistency | batata-consistency | Raft/Distro protocols |
+| nacos-consistency | batata-consistency | Raft protocols |
 | nacos-core | batata-core | Core services |
 | nacos-config | batata-config | Config management |
 | nacos-naming | batata-naming | Service discovery |
@@ -899,8 +468,210 @@ tracing-subscriber = { workspace = true }
 
 ---
 
-## Conclusion
+## Observability Architecture
 
-This multi-crate architecture provides a clean separation of concerns while maintaining the ability to compose all components into a single application. The trait-based dependency injection solves circular dependency issues and enables better testing and modularity.
+### OpenTelemetry Integration
 
-The migration can be done incrementally without breaking existing functionality, and the resulting architecture closely mirrors Java Nacos for familiarity while taking advantage of Rust's strong type system and trait mechanisms.
+Batata provides comprehensive distributed tracing support through OpenTelemetry, enabling seamless integration with observability platforms like Jaeger, Zipkin, and Grafana Tempo.
+
+#### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Batata Server                            │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │   HTTP API   │  │   gRPC API   │  │   Cluster Sync       │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────┘  │
+│         │                 │                      │              │
+│         └─────────────────┼──────────────────────┘              │
+│                           │                                     │
+│                  ┌────────▼────────┐                            │
+│                  │ tracing-subscriber │                         │
+│                  │   + otel layer   │                           │
+│                  └────────┬────────┘                            │
+│                           │                                     │
+│                  ┌────────▼────────┐                            │
+│                  │  OTLP Exporter  │                            │
+│                  │  (gRPC/HTTP)    │                            │
+│                  └────────┬────────┘                            │
+└───────────────────────────┼─────────────────────────────────────┘
+                            │
+                            ▼
+              ┌─────────────────────────┐
+              │   OTLP Collector        │
+              │  (Jaeger/Tempo/etc)     │
+              └─────────────────────────┘
+```
+
+#### Key Components
+
+| Component | Crate | Description |
+|-----------|-------|-------------|
+| `OtelConfig` | batata-server | Configuration for OpenTelemetry settings |
+| `OtelGuard` | batata-server | RAII guard for proper shutdown |
+| `init_tracing_with_otel` | batata-server | Initialization function |
+
+#### Implementation Details
+
+```rust
+// crates/batata-server/src/startup/telemetry.rs
+
+pub struct OtelConfig {
+    pub enabled: bool,
+    pub endpoint: String,
+    pub service_name: String,
+    pub sampling_ratio: f64,
+    pub export_timeout_secs: u64,
+}
+
+pub struct OtelGuard {
+    _tracer_provider: Option<SdkTracerProvider>,
+}
+
+impl Drop for OtelGuard {
+    fn drop(&mut self) {
+        if let Some(ref provider) = self._tracer_provider {
+            if let Err(e) = provider.shutdown() {
+                eprintln!("Failed to shutdown tracer provider: {e}");
+            }
+        }
+    }
+}
+```
+
+---
+
+## Multi-Datacenter Architecture
+
+Batata supports multi-datacenter deployments with locality-aware data synchronization and cross-datacenter replication.
+
+### Topology Model
+
+```
+                    ┌─────────────────────────────────────┐
+                    │            Global Cluster           │
+                    └─────────────────────────────────────┘
+                                     │
+        ┌────────────────────────────┼────────────────────────────┐
+        │                            │                            │
+        ▼                            ▼                            ▼
+┌───────────────┐          ┌───────────────┐          ┌───────────────┐
+│   DC: us-east │          │   DC: us-west │          │   DC: eu-west │
+│   Region: NA  │          │   Region: NA  │          │   Region: EU  │
+├───────────────┤          ├───────────────┤          ├───────────────┤
+│ Zone: zone-a  │          │ Zone: zone-a  │          │ Zone: zone-a  │
+│  └─ Member 1  │          │  └─ Member 3  │          │  └─ Member 5  │
+│ Zone: zone-b  │          │ Zone: zone-b  │          │ Zone: zone-b  │
+│  └─ Member 2  │          │  └─ Member 4  │          │  └─ Member 6  │
+└───────────────┘          └───────────────┘          └───────────────┘
+```
+
+### Key Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Datacenter** | Physical or logical grouping of nodes (e.g., `us-east-1`) |
+| **Region** | Geographic area containing datacenters (e.g., `us-east`) |
+| **Zone** | Availability zone within a datacenter (e.g., `zone-a`) |
+| **Locality Weight** | Priority for local-first data access (higher = prefer local) |
+
+### Core Components
+
+#### DatacenterConfig
+
+Configuration for datacenter-aware behavior:
+
+```rust
+// crates/batata-core/src/service/datacenter.rs
+
+pub struct DatacenterConfig {
+    pub local_datacenter: String,     // e.g., "us-east-1"
+    pub local_region: String,         // e.g., "us-east"
+    pub local_zone: String,           // e.g., "zone-a"
+    pub locality_weight: f64,         // Priority weight (default: 1.0)
+    pub cross_dc_replication_enabled: bool,
+    pub cross_dc_sync_delay_secs: u64,
+    pub replication_factor: usize,
+}
+```
+
+#### DatacenterManager
+
+Manages datacenter topology and provides locality-aware operations:
+
+```rust
+pub struct DatacenterManager {
+    config: DatacenterConfig,
+    members_by_dc: DashMap<String, Vec<Arc<Member>>>,
+    datacenter_info: DashMap<String, DatacenterInfo>,
+}
+
+impl DatacenterManager {
+    // Get members in the local datacenter
+    pub fn get_local_members(&self) -> Vec<Arc<Member>>;
+
+    // Get members in remote datacenters
+    pub fn get_remote_members(&self) -> Vec<Arc<Member>>;
+
+    // Select targets for replication (local-first)
+    pub fn select_replication_targets(&self, exclude_self: Option<&str>, max_count: usize) -> Vec<Arc<Member>>;
+
+    // Select one member per remote DC for cross-DC replication
+    pub fn select_cross_dc_replication_targets(&self, exclude_self: Option<&str>) -> Vec<Arc<Member>>;
+}
+```
+
+#### Member Extensions
+
+The `Member` struct includes datacenter metadata:
+
+```rust
+// crates/batata-api/src/model.rs
+
+impl Member {
+    pub fn datacenter(&self) -> String;
+    pub fn region(&self) -> String;
+    pub fn zone(&self) -> String;
+    pub fn locality_weight(&self) -> f64;
+    pub fn is_same_datacenter(&self, other: &Member) -> bool;
+    pub fn is_same_region(&self, other: &Member) -> bool;
+    pub fn is_same_zone(&self, other: &Member) -> bool;
+}
+```
+
+### Replication Strategies
+
+| Strategy | Description |
+|----------|-------------|
+| **Local-First** | Prefer members in the same datacenter for reads/writes |
+| **Cross-DC Replication** | Asynchronously replicate to one member per remote DC |
+| **Locality-Weighted** | Higher locality_weight members are preferred |
+
+### Data Flow
+
+```
+Write Request
+     │
+     ▼
+┌────────────────┐
+│ Local DC Write │ ◄─── Synchronous (low latency)
+└───────┬────────┘
+        │
+        ├──────────────────────┬──────────────────────┐
+        ▼                      ▼                      ▼
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│ Cross-DC Sync │    │ Cross-DC Sync │    │ Cross-DC Sync │
+│   (us-west)   │    │   (eu-west)   │    │   (ap-east)   │
+└───────────────┘    └───────────────┘    └───────────────┘
+        │                    │                    │
+        └──────── Asynchronous (configurable delay) ────┘
+```
+
+---
+
+## Project Statistics
+
+- **~50,000+ lines** of Rust code
+- **13 internal crates** in workspace
+- **333 unit tests** with comprehensive coverage
+- **3 benchmark suites** for performance testing

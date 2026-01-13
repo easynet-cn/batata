@@ -1,0 +1,270 @@
+//! gRPC server setup and handler registration module.
+
+use std::sync::Arc;
+
+use dashmap::DashMap;
+use tonic::service::InterceptorLayer;
+use tower::ServiceBuilder;
+use tracing::info;
+
+use batata_api::model::Member;
+use batata_core::service::{
+    cluster_client::{ClusterClientConfig, ClusterClientManager},
+    distro::{DistroConfig, DistroProtocol, NamingInstanceDistroHandler},
+    remote::{ConnectionManager, context_interceptor},
+};
+
+use crate::{
+    api::grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
+    model::common::AppState,
+    service::{
+        config_handler::{
+            ClientConfigMetricHandler, ConfigBatchListenHandler, ConfigChangeClusterSyncHandler,
+            ConfigChangeNotifyHandler, ConfigFuzzyWatchChangeNotifyHandler,
+            ConfigFuzzyWatchHandler, ConfigFuzzyWatchSyncHandler, ConfigPublishHandler,
+            ConfigQueryHandler, ConfigRemoveHandler,
+        },
+        distro_handler::{
+            DistroDataSnapshotHandler, DistroDataSyncHandler, DistroDataVerifyHandler,
+        },
+        handler::{
+            ClientDetectionHandler, ConnectResetHandler, ConnectionSetupHandler,
+            HealthCheckHandler, PushAckHandler, ServerCheckHandler, ServerLoaderInfoHandler,
+            ServerReloadHandler, SetupAckHandler,
+        },
+        naming::NamingService,
+        naming_handler::{
+            BatchInstanceRequestHandler, InstanceRequestHandler,
+            NamingFuzzyWatchChangeNotifyHandler, NamingFuzzyWatchHandler,
+            NamingFuzzyWatchSyncHandler, NotifySubscriberHandler, PersistentInstanceRequestHandler,
+            ServiceListRequestHandler, ServiceQueryRequestHandler, SubscribeServiceRequestHandler,
+        },
+        rpc::{GrpcBiRequestStreamService, GrpcRequestService, HandlerRegistry},
+    },
+};
+
+/// gRPC server configuration and state.
+pub struct GrpcServers {
+    /// Handle for the SDK gRPC server task (kept for potential graceful shutdown).
+    #[allow(dead_code)]
+    sdk_server: tokio::task::JoinHandle<()>,
+    /// Handle for the cluster gRPC server task (kept for potential graceful shutdown).
+    #[allow(dead_code)]
+    cluster_server: tokio::task::JoinHandle<()>,
+    /// The naming service used by handlers.
+    pub naming_service: Arc<NamingService>,
+}
+
+/// Registers all internal handlers (health check, connection setup, etc.).
+fn register_internal_handlers(registry: &mut HandlerRegistry) {
+    registry.register_handler(Arc::new(HealthCheckHandler {}));
+    registry.register_handler(Arc::new(ServerCheckHandler {}));
+    registry.register_handler(Arc::new(ConnectionSetupHandler {}));
+    registry.register_handler(Arc::new(ClientDetectionHandler {}));
+    registry.register_handler(Arc::new(ServerLoaderInfoHandler {}));
+    registry.register_handler(Arc::new(ServerReloadHandler {}));
+    registry.register_handler(Arc::new(ConnectResetHandler {}));
+    registry.register_handler(Arc::new(SetupAckHandler {}));
+    registry.register_handler(Arc::new(PushAckHandler {}));
+}
+
+/// Registers all config handlers.
+fn register_config_handlers(registry: &mut HandlerRegistry, app_state: Arc<AppState>) {
+    registry.register_handler(Arc::new(ConfigQueryHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ConfigPublishHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ConfigRemoveHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ConfigBatchListenHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ConfigChangeNotifyHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ConfigChangeClusterSyncHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ConfigFuzzyWatchHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ConfigFuzzyWatchChangeNotifyHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ConfigFuzzyWatchSyncHandler {
+        app_state: app_state.clone(),
+    }));
+    registry.register_handler(Arc::new(ClientConfigMetricHandler { app_state }));
+}
+
+/// Registers all naming handlers.
+fn register_naming_handlers(registry: &mut HandlerRegistry, naming_service: Arc<NamingService>) {
+    registry.register_handler(Arc::new(InstanceRequestHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(BatchInstanceRequestHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(ServiceListRequestHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(ServiceQueryRequestHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(SubscribeServiceRequestHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(PersistentInstanceRequestHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(NotifySubscriberHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(NamingFuzzyWatchHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(NamingFuzzyWatchChangeNotifyHandler {
+        naming_service: naming_service.clone(),
+    }));
+    registry.register_handler(Arc::new(NamingFuzzyWatchSyncHandler { naming_service }));
+}
+
+/// Registers all distro protocol handlers.
+fn register_distro_handlers(registry: &mut HandlerRegistry, distro_protocol: Arc<DistroProtocol>) {
+    registry.register_handler(Arc::new(DistroDataSyncHandler {
+        distro_protocol: distro_protocol.clone(),
+    }));
+    registry.register_handler(Arc::new(DistroDataVerifyHandler {
+        distro_protocol: distro_protocol.clone(),
+    }));
+    registry.register_handler(Arc::new(DistroDataSnapshotHandler { distro_protocol }));
+}
+
+/// Creates and initializes the Distro protocol with the naming service handler.
+fn create_distro_protocol(
+    local_address: &str,
+    naming_service: Arc<batata_naming::NamingService>,
+) -> Arc<DistroProtocol> {
+    // Create cluster client manager for inter-node communication
+    let cluster_client_config = ClusterClientConfig::default();
+    let cluster_client_manager =
+        Arc::new(ClusterClientManager::new(local_address.to_string(), cluster_client_config));
+
+    // Create cluster members map (will be populated dynamically)
+    let members: Arc<DashMap<String, Member>> = Arc::new(DashMap::new());
+
+    // Create distro protocol
+    let distro_config = DistroConfig::default();
+    let distro_protocol = DistroProtocol::new(
+        local_address.to_string(),
+        distro_config,
+        cluster_client_manager,
+        members,
+    );
+
+    // Create and register naming instance handler
+    let naming_handler = NamingInstanceDistroHandler::new(local_address.to_string(), naming_service);
+    distro_protocol.register_handler(Arc::new(naming_handler));
+
+    Arc::new(distro_protocol)
+}
+
+/// Creates and starts gRPC servers for SDK and cluster communication.
+///
+/// # Arguments
+/// * `app_state` - Application state containing configuration and services
+/// * `sdk_server_port` - Port for SDK gRPC server
+/// * `cluster_server_port` - Port for cluster gRPC server
+///
+/// # Returns
+/// A `GrpcServers` struct containing the spawned server handles and naming service.
+pub fn start_grpc_servers(
+    app_state: Arc<AppState>,
+    sdk_server_port: u16,
+    cluster_server_port: u16,
+) -> Result<GrpcServers, Box<dyn std::error::Error>> {
+    // Setup gRPC interceptor layer
+    let layer = ServiceBuilder::new()
+        .load_shed()
+        .layer(InterceptorLayer::new(context_interceptor))
+        .into_inner();
+
+    // Initialize gRPC handlers
+    let mut handler_registry = HandlerRegistry::new();
+
+    register_internal_handlers(&mut handler_registry);
+    register_config_handlers(&mut handler_registry, app_state.clone());
+
+    let naming_service = Arc::new(NamingService::new());
+    register_naming_handlers(&mut handler_registry, naming_service.clone());
+
+    // Create local address for distro protocol
+    let local_ip = "127.0.0.1"; // Will be updated with actual cluster member discovery
+    let main_port = app_state.configuration.server_main_port();
+    let local_address = format!("{}:{}", local_ip, main_port);
+
+    // Create and initialize distro protocol
+    let naming_service_for_distro = Arc::new(batata_naming::NamingService::new());
+    let distro_protocol = create_distro_protocol(&local_address, naming_service_for_distro);
+
+    // Register distro handlers
+    register_distro_handlers(&mut handler_registry, distro_protocol.clone());
+
+    // Start distro protocol background tasks
+    let distro_protocol_clone = distro_protocol.clone();
+    tokio::spawn(async move {
+        distro_protocol_clone.start().await;
+    });
+
+    let handler_registry_arc = Arc::new(handler_registry);
+
+    // Create gRPC services
+    let grpc_request_service = GrpcRequestService::from_arc(handler_registry_arc.clone());
+    let connection_manager = Arc::new(ConnectionManager::new());
+    let grpc_bi_request_stream_service =
+        GrpcBiRequestStreamService::from_arc(handler_registry_arc, connection_manager);
+
+    // Start SDK gRPC server
+    let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;
+    info!("Starting SDK gRPC server on {}", grpc_sdk_addr);
+    let sdk_server = {
+        let grpc_request_service = grpc_request_service.clone();
+        let grpc_bi_request_stream_service = grpc_bi_request_stream_service.clone();
+        let layer = layer.clone();
+        tokio::spawn(async move {
+            if let Err(e) = tonic::transport::Server::builder()
+                .layer(layer)
+                .add_service(RequestServer::new(grpc_request_service))
+                .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+                .serve(grpc_sdk_addr)
+                .await
+            {
+                tracing::error!("SDK gRPC server error: {}", e);
+            }
+        })
+    };
+
+    // Start cluster gRPC server
+    let grpc_cluster_addr = format!("0.0.0.0:{}", cluster_server_port).parse()?;
+    info!("Starting cluster gRPC server on {}", grpc_cluster_addr);
+    let cluster_server = tokio::spawn(async move {
+        if let Err(e) = tonic::transport::Server::builder()
+            .layer(layer)
+            .add_service(RequestServer::new(grpc_request_service))
+            .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+            .serve(grpc_cluster_addr)
+            .await
+        {
+            tracing::error!("Cluster gRPC server error: {}", e);
+        }
+    });
+
+    Ok(GrpcServers {
+        sdk_server,
+        cluster_server,
+        naming_service,
+    })
+}

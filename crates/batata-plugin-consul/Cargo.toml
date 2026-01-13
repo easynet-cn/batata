@@ -10,10 +10,15 @@ repository = "https://github.com/easynet-cn/batata"
 [dependencies]
 batata-common = { path = "../batata-common" }
 batata-plugin = { path = "../batata-plugin" }
+batata-api = { path = "../batata-api" }
+batata-naming = { path = "../batata-naming" }
 batata-config = { path = "../batata-config" }
 
 # Web framework
 actix-web = "4"
+
+# Concurrency
+dashmap = "6.1"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -22,6 +27,19 @@ base64 = "0.22"
 
 # Async
 async-trait = "0.1"
+tokio = { version = "1.49", features = ["full"] }
+
+# Logging
+tracing = "0.1"
 
 # Error handling
 anyhow = "1.0"
+
+# Caching
+moka = { version = "0.12", features = ["sync"] }
+
+# Time
+chrono = "0.4"
+
+# UUID
+uuid = { version = "1.12", features = ["v4"] }

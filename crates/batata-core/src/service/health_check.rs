@@ -214,18 +214,15 @@ impl MemberHealthChecker {
         }
 
         // Get or create circuit breaker for this member
-        if !circuit_breakers.contains_key(address) {
-            let cb_config = CircuitBreakerConfig {
-                failure_threshold: config.max_fail_count as u32,
-                reset_timeout: Duration::from_secs(60),
-                success_threshold: 2,
-                failure_window: Duration::from_secs(120),
-            };
-            circuit_breakers.insert(address.to_string(), CircuitBreaker::with_config(cb_config));
-        }
-
-        // Check circuit breaker state
-        let cb = circuit_breakers.get(address).unwrap();
+        let cb_config = CircuitBreakerConfig {
+            failure_threshold: config.max_fail_count as u32,
+            reset_timeout: Duration::from_secs(60),
+            success_threshold: 2,
+            failure_window: Duration::from_secs(120),
+        };
+        let cb = circuit_breakers
+            .entry(address.to_string())
+            .or_insert_with(|| CircuitBreaker::with_config(cb_config));
         if !cb.allow_request() {
             debug!(
                 "Circuit breaker open for member: {}, skipping health check",
@@ -278,7 +275,7 @@ impl MemberHealthChecker {
 
                 // Update member state
                 if let Some(mut member) = members.get_mut(address) {
-                    member.state = status.state.clone();
+                    member.state = status.state;
                     member.fail_access_cnt = status.fail_count;
                 }
             }

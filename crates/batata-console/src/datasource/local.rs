@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 use std::sync::Arc;
 
-use batata_api::model::Member as ApiMember;
 use batata_api::Page;
+use batata_api::model::Member as ApiMember;
 use batata_config::{
     ConfigAllInfo, ConfigBasicInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
     ImportResult, Namespace, SameConfigPolicy,
@@ -44,7 +44,12 @@ impl ConsoleDataSource for LocalDataSource {
     }
 
     async fn namespace_get(&self, namespace_id: &str) -> anyhow::Result<Namespace> {
-        batata_config::service::namespace::get_by_namespace_id(&self.database_connection, namespace_id, "").await
+        batata_config::service::namespace::get_by_namespace_id(
+            &self.database_connection,
+            namespace_id,
+            "",
+        )
+        .await
     }
 
     async fn namespace_create(
@@ -94,8 +99,13 @@ impl ConsoleDataSource for LocalDataSource {
         group_name: &str,
         namespace_id: &str,
     ) -> anyhow::Result<Option<ConfigAllInfo>> {
-        batata_config::service::find_one(&self.database_connection, data_id, group_name, namespace_id)
-            .await
+        batata_config::service::find_one(
+            &self.database_connection,
+            data_id,
+            group_name,
+            namespace_id,
+        )
+        .await
     }
 
     async fn config_list(

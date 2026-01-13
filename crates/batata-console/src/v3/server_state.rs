@@ -98,7 +98,5 @@ pub async fn guide() -> web::Json<ApiResult<String>> {
 }
 
 pub fn routes() -> Scope {
-    web::scope("/server")
-        .service(announcement)
-        .service(guide)
+    web::scope("/server").service(announcement).service(guide)
 }

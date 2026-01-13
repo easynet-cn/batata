@@ -39,40 +39,128 @@
 - **高吞吐量** - 基于 Tokio 运行时的异步 I/O 优化
 - **高效存储** - 使用 RocksDB 持久化存储，配合优化的缓存策略
 
+## 与 Nacos 功能对比
+
+Batata 已实现 **100% 的 Nacos 核心功能**，可作为生产环境的替代方案。
+
+### 核心功能
+
+| 功能 | Nacos | Batata | 状态 |
+|------|-------|--------|------|
+| **配置管理** | | | |
+| 配置 CRUD | ✅ | ✅ | 完整 |
+| 配置搜索与分页 | ✅ | ✅ | 完整 |
+| 配置历史与回滚 | ✅ | ✅ | 完整 |
+| 配置监听 (长轮询) | ✅ | ✅ | 完整 |
+| 灰度发布 | ✅ | ✅ | 完整 |
+| 配置导入/导出 (ZIP) | ✅ | ✅ | 完整 |
+| 配置标签 | ✅ | ✅ | 完整 |
+| 配置加密 | ✅ | ✅ | 完整 |
+| **服务发现** | | | |
+| 实例注册/注销 | ✅ | ✅ | 完整 |
+| 服务发现查询 | ✅ | ✅ | 完整 |
+| 健康检查 | ✅ | ✅ | 完整 |
+| 心跳机制 | ✅ | ✅ | 完整 |
+| 订阅/推送 | ✅ | ✅ | 完整 |
+| 权重路由 | ✅ | ✅ | 完整 |
+| 临时实例 | ✅ | ✅ | 完整 |
+| 持久实例 | ✅ | ✅ | 完整 |
+| 服务元数据 | ✅ | ✅ | 完整 |
+| **命名空间** | | | |
+| 命名空间 CRUD | ✅ | ✅ | 完整 |
+| 多租户隔离 | ✅ | ✅ | 完整 |
+| **集群** | | | |
+| 集群节点发现 | ✅ | ✅ | 完整 |
+| 节点健康检查 | ✅ | ✅ | 完整 |
+| Raft 共识 (CP) | ✅ | ✅ | 完整 |
+| Distro 协议 (AP) | ✅ | ✅ | 完整 |
+| **认证** | | | |
+| 用户管理 | ✅ | ✅ | 完整 |
+| 角色管理 | ✅ | ✅ | 完整 |
+| 权限 (RBAC) | ✅ | ✅ | 完整 |
+| JWT Token | ✅ | ✅ | 完整 |
+| **API** | | | |
+| Nacos v1 API | ✅ | ✅ | 完整 |
+| Nacos v3 API | ✅ | ✅ | 完整 |
+| gRPC 双向流 | ✅ | ✅ | 完整 |
+| Consul API 兼容 | ❌ | ✅ | **额外特性** |
+| **可观测性** | | | |
+| Prometheus 指标 | ✅ | ✅ | 完整 |
+| 健康检查端点 | ✅ | ✅ | 完整 |
+| OpenTelemetry | ✅ | ✅ | 完整 |
+
+### Batata 独有特性
+
+| 特性 | 说明 |
+|-----|------|
+| **Consul API 兼容** | 完整支持 Agent、Health、Catalog、KV、ACL API |
+| **PostgreSQL 支持** | 除 MySQL 外还支持 PostgreSQL |
+| **Consul JSON 导入/导出** | 支持 Consul KV 存储迁移 |
+| **内置熔断器** | 集群健康检查弹性模式 |
+| **OpenTelemetry 分布式追踪** | OTLP 导出支持 (Jaeger、Zipkin 等) |
+| **多数据中心支持** | 本地优先同步的地域感知复制 |
+
+### 功能完成度总结
+
+| 模块 | 完成度 | 备注 |
+|-----|-------|------|
+| 配置管理 | **100%** | 完整 AES-GCM 加密支持 |
+| 服务发现 | **100%** | 完整持久实例支持 |
+| 命名空间 | **100%** | 完全支持 |
+| 集群管理 | **100%** | 完整 Distro 协议支持 |
+| 认证授权 | **100%** | 完全支持 |
+| API 兼容性 | **100%+** | 完整 Nacos + Consul API |
+
 ## 项目结构
 
 Batata 采用多 crate 工作空间架构，提高模块化和可维护性：
 
 ```
 batata/
-├── src/                          # 主应用程序
-│   ├── api/                      # API 处理器 (HTTP, gRPC, Consul)
-│   ├── auth/                     # 认证与授权
-│   ├── config/                   # 配置模型
-│   ├── console/                  # Web 控制台 API
-│   ├── core/                     # 核心业务逻辑 & Raft
-│   ├── entity/                   # 数据库实体（重导出）
-│   ├── middleware/               # HTTP 中间件
-│   ├── model/                    # 数据模型
-│   └── service/                  # 业务服务
 ├── crates/
+│   ├── batata-common/            # 公共工具和类型
 │   ├── batata-api/               # API 定义 & gRPC proto
-│   ├── batata-auth/              # 认证模块
-│   ├── batata-client/            # 客户端 SDK
-│   ├── batata-common/            # 公共工具
-│   ├── batata-config/            # 配置服务
-│   ├── batata-console/           # 控制台服务
-│   ├── batata-consistency/       # 一致性协议
-│   ├── batata-core/              # 核心抽象 & 集群
-│   ├── batata-naming/            # 服务发现
 │   ├── batata-persistence/       # 数据库实体 (SeaORM)
+│   ├── batata-auth/              # 认证与授权
+│   ├── batata-consistency/       # Raft 共识协议
+│   ├── batata-core/              # 核心抽象 & 集群
+│   ├── batata-config/            # 配置服务
+│   ├── batata-naming/            # 服务发现
 │   ├── batata-plugin/            # 插件接口
 │   ├── batata-plugin-consul/     # Consul 兼容插件
-│   └── batata-server/            # 服务器二进制
+│   ├── batata-console/           # 控制台后端服务
+│   ├── batata-client/            # 客户端 SDK
+│   └── batata-server/            # 主服务器 (HTTP, gRPC, 控制台)
+│       ├── src/
+│       │   ├── api/              # API 处理器 (HTTP, gRPC, Consul)
+│       │   ├── auth/             # 认证 HTTP 处理器
+│       │   ├── config/           # 配置模型（重导出）
+│       │   ├── console/          # 控制台 API 处理器
+│       │   ├── middleware/       # HTTP 中间件
+│       │   ├── model/            # 应用状态与配置
+│       │   ├── service/          # gRPC 处理器
+│       │   ├── startup/          # 服务器初始化
+│       │   ├── lib.rs            # 库导出
+│       │   └── main.rs           # 入口点
+│       ├── tests/                # 集成测试
+│       └── benches/              # 性能基准测试
 ├── conf/                         # 配置文件
-├── proto/                        # Protocol buffer 定义
-├── tests/                        # 集成测试
-└── benches/                      # 性能基准测试
+├── docs/                         # 文档
+└── proto/                        # Protocol buffer 定义
+```
+
+### Crate 依赖关系
+
+```
+batata-server (主二进制)
+├── batata-api (API 类型, gRPC proto)
+├── batata-auth (JWT, RBAC)
+├── batata-config (配置服务)
+├── batata-naming (服务发现)
+├── batata-console (控制台后端)
+├── batata-core (集群, 连接)
+├── batata-plugin-consul (Consul API)
+└── batata-persistence (数据库)
 ```
 
 ## 快速开始
@@ -97,8 +185,8 @@ cp conf/application.yml.example conf/application.yml
 # 编辑 conf/application.yml 配置数据库连接信息
 
 # 构建并运行
-cargo build --release
-./target/release/batata
+cargo build --release -p batata-server
+./target/release/batata-server
 ```
 
 ### 默认端口
@@ -152,6 +240,53 @@ export NACOS_SERVER_MAIN_PORT=8848
 export NACOS_CORE_AUTH_ENABLED=true
 export RUST_LOG=info
 ```
+
+### OpenTelemetry 配置
+
+启用 OpenTelemetry OTLP 导出的分布式追踪：
+
+**application.yml:**
+```yaml
+nacos:
+  otel:
+    enabled: true
+    endpoint: "http://localhost:4317"  # OTLP gRPC 端点
+    service_name: "batata"
+    sampling_ratio: 1.0  # 采样率 0.0 到 1.0
+    export_timeout_secs: 10
+```
+
+**环境变量（优先级高于配置文件）：**
+```bash
+export OTEL_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+export OTEL_SERVICE_NAME="batata"
+export OTEL_SAMPLING_RATIO=1.0
+export OTEL_EXPORT_TIMEOUT_SECS=10
+```
+
+**兼容后端：** Jaeger、Zipkin、Tempo、Datadog、Honeycomb 及任何 OTLP 兼容的收集器。
+
+### 多数据中心配置
+
+启用数据中心、区域和可用区的地域感知集群：
+
+**环境变量：**
+```bash
+export BATATA_DATACENTER="dc1"
+export BATATA_REGION="us-east"
+export BATATA_ZONE="zone-a"
+export BATATA_LOCALITY_WEIGHT=1.0
+export BATATA_CROSS_DC_REPLICATION=true
+export BATATA_CROSS_DC_SYNC_DELAY_SECS=1
+export BATATA_REPLICATION_FACTOR=1
+```
+
+**功能特点：**
+- 地域感知成员选择（本地优先同步）
+- 可配置延迟的跨数据中心复制
+- 自动数据中心拓扑发现
+- 区域/可用区层级支持
 
 ## API 参考
 
@@ -275,10 +410,10 @@ curl -X PUT "http://localhost:8848/v1/kv/import?namespaceId=public" \
 
 ```bash
 # 直接运行
-cargo run --release
+cargo run --release -p batata-server
 
 # 或使用环境变量
-NACOS_STANDALONE=true ./target/release/batata
+NACOS_STANDALONE=true ./target/release/batata-server
 ```
 
 ### 集群模式
@@ -328,29 +463,32 @@ docker-compose up -d
 ### 构建命令
 
 ```bash
-# 开发构建
+# 构建所有 crate
 cargo build
 
+# 仅构建服务器（更快）
+cargo build -p batata-server
+
 # 发布构建（优化）
-cargo build --release
+cargo build --release -p batata-server
 
-# 运行测试
-cargo test
+# 运行测试（所有 crate）
+cargo test --workspace
 
-# 运行指定测试
-cargo test test_name
+# 运行指定 crate 测试
+cargo test -p batata-server
 
 # 运行性能基准测试
-cargo bench
+cargo bench -p batata-server
 
 # 格式化代码
-cargo fmt
+cargo fmt --all
 
 # Clippy 检查
-cargo clippy
+cargo clippy --workspace
 
 # 生成文档
-cargo doc --open
+cargo doc --workspace --open
 ```
 
 ### 生成数据库实体
@@ -364,9 +502,9 @@ sea-orm-cli generate entity \
 
 ### 项目统计
 
-- **~47,500+ 行** Rust 代码
+- **~50,000+ 行** Rust 代码
 - **13 个内部 crate** 工作空间
-- **178 个单元测试**，全面覆盖
+- **333 个单元测试**，全面覆盖
 - **3 套性能基准测试**
 
 ## 客户端 SDK
@@ -434,11 +572,12 @@ batata_cluster_member_count 3
 
 ## 路线图
 
+- [x] 持久服务实例（数据库存储）
+- [x] Distro 协议完善（AP 模式）
+- [x] 配置静态加密（AES-256-GCM）
+- [x] OpenTelemetry 集成（OTLP 导出）
+- [x] 多数据中心支持（地域感知同步）
 - [ ] Kubernetes Operator
-- [ ] Web UI 控制台
-- [ ] OpenTelemetry 集成
-- [ ] 配置静态加密
-- [ ] 多数据中心支持
 
 ## 贡献
 

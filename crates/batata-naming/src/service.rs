@@ -121,9 +121,26 @@ impl NamingService {
         cluster: &str,
         healthy_only: bool,
     ) -> Service {
-        let instances =
-            self.get_instances(namespace, group_name, service_name, cluster, healthy_only);
-        let all_instances = self.get_instances(namespace, group_name, service_name, cluster, false);
+        let service_key = build_service_key(namespace, group_name, service_name);
+
+        let (instances, has_any_instances) =
+            if let Some(all_instances) = self.services.get(&service_key) {
+                let has_any = !all_instances.is_empty();
+                let filtered: Vec<Instance> = all_instances
+                    .iter()
+                    .filter(|entry| {
+                        let inst = entry.value();
+                        let cluster_match =
+                            cluster.is_empty() || inst.cluster_name == cluster || cluster == "*";
+                        let health_match = !healthy_only || inst.healthy;
+                        cluster_match && health_match
+                    })
+                    .map(|entry| entry.value().clone())
+                    .collect();
+                (filtered, has_any)
+            } else {
+                (Vec::new(), false)
+            };
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -138,7 +155,7 @@ impl NamingService {
             hosts: instances,
             last_ref_time: now,
             checksum: String::new(),
-            all_ips: !all_instances.is_empty(),
+            all_ips: has_any_instances,
             reach_protection_threshold: false,
         }
     }
@@ -157,30 +174,29 @@ impl NamingService {
             format!("{}@@{}@@", namespace, group_name)
         };
 
+        // Extract service name from key (third part after "@@")
+        fn extract_service_name(key: &str) -> String {
+            key.split("@@")
+                .nth(2)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| key.to_string())
+        }
+
         let service_names: Vec<String> = self
             .services
             .iter()
             .filter(|entry| entry.key().starts_with(&prefix))
-            .map(|entry| {
-                let parts: Vec<&str> = entry.key().split("@@").collect();
-                if parts.len() >= 3 {
-                    parts[2].to_string()
-                } else {
-                    entry.key().clone()
-                }
-            })
+            .map(|entry| extract_service_name(entry.key()))
             .collect();
 
         let total = service_names.len() as i32;
 
         // Paginate
         let start = ((page_no - 1) * page_size) as usize;
-        let end = (page_no * page_size) as usize;
-
         let paginated: Vec<String> = service_names
             .into_iter()
             .skip(start)
-            .take(end - start)
+            .take(page_size as usize)
             .collect();
 
         (total, paginated)
@@ -289,7 +305,12 @@ impl NamingService {
     }
 
     /// Get instance count for a service
-    pub fn get_instance_count(&self, namespace: &str, group_name: &str, service_name: &str) -> usize {
+    pub fn get_instance_count(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> usize {
         let service_key = build_service_key(namespace, group_name, service_name);
 
         self.services
@@ -299,14 +320,17 @@ impl NamingService {
     }
 
     /// Get healthy instance count for a service
-    pub fn get_healthy_instance_count(&self, namespace: &str, group_name: &str, service_name: &str) -> usize {
+    pub fn get_healthy_instance_count(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> usize {
         let service_key = build_service_key(namespace, group_name, service_name);
 
         self.services
             .get(&service_key)
-            .map(|instances| {
-                instances.iter().filter(|e| e.value().healthy).count()
-            })
+            .map(|instances| instances.iter().filter(|e| e.value().healthy).count())
             .unwrap_or(0)
     }
 }
@@ -428,7 +452,14 @@ mod tests {
 
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance);
 
-        let result = naming.heartbeat("public", "DEFAULT_GROUP", "test-service", "127.0.0.1", 8080, "DEFAULT");
+        let result = naming.heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+        );
         assert!(result);
 
         let instances = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", true);
@@ -439,10 +470,23 @@ mod tests {
     fn test_instance_count() {
         let naming = NamingService::new();
 
-        naming.register_instance("public", "DEFAULT_GROUP", "test-service", create_test_instance("127.0.0.1", 8080));
-        naming.register_instance("public", "DEFAULT_GROUP", "test-service", create_test_instance("127.0.0.2", 8081));
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            create_test_instance("127.0.0.1", 8080),
+        );
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            create_test_instance("127.0.0.2", 8081),
+        );
 
-        assert_eq!(naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"), 2);
+        assert_eq!(
+            naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"),
+            2
+        );
     }
 
     // === Boundary and Edge Case Tests ===
@@ -457,7 +501,10 @@ mod tests {
     #[test]
     fn test_get_instance_count_non_existent() {
         let naming = NamingService::new();
-        assert_eq!(naming.get_instance_count("public", "DEFAULT_GROUP", "non-existent"), 0);
+        assert_eq!(
+            naming.get_instance_count("public", "DEFAULT_GROUP", "non-existent"),
+            0
+        );
     }
 
     #[test]
@@ -471,13 +518,19 @@ mod tests {
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", healthy);
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", unhealthy);
 
-        assert_eq!(naming.get_healthy_instance_count("public", "DEFAULT_GROUP", "test-service"), 1);
+        assert_eq!(
+            naming.get_healthy_instance_count("public", "DEFAULT_GROUP", "test-service"),
+            1
+        );
     }
 
     #[test]
     fn test_get_healthy_instance_count_non_existent() {
         let naming = NamingService::new();
-        assert_eq!(naming.get_healthy_instance_count("public", "DEFAULT_GROUP", "non-existent"), 0);
+        assert_eq!(
+            naming.get_healthy_instance_count("public", "DEFAULT_GROUP", "non-existent"),
+            0
+        );
     }
 
     #[test]
@@ -510,7 +563,8 @@ mod tests {
         let naming = NamingService::new();
         let instance = create_test_instance("127.0.0.1", 8080);
 
-        let result = naming.deregister_instance("public", "DEFAULT_GROUP", "non-existent", &instance);
+        let result =
+            naming.deregister_instance("public", "DEFAULT_GROUP", "non-existent", &instance);
         assert!(!result);
     }
 
@@ -523,7 +577,8 @@ mod tests {
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance1);
 
         // Try to deregister instance that was never registered
-        let result = naming.deregister_instance("public", "DEFAULT_GROUP", "test-service", &instance2);
+        let result =
+            naming.deregister_instance("public", "DEFAULT_GROUP", "test-service", &instance2);
         // Should still return true because the service exists, even if the instance doesn't
         assert!(result);
     }
@@ -541,11 +596,23 @@ mod tests {
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance1);
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance2);
 
-        let cluster_a = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "CLUSTER_A", false);
+        let cluster_a = naming.get_instances(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "CLUSTER_A",
+            false,
+        );
         assert_eq!(cluster_a.len(), 1);
         assert_eq!(cluster_a[0].cluster_name, "CLUSTER_A");
 
-        let cluster_b = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "CLUSTER_B", false);
+        let cluster_b = naming.get_instances(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "CLUSTER_B",
+            false,
+        );
         assert_eq!(cluster_b.len(), 1);
         assert_eq!(cluster_b[0].cluster_name, "CLUSTER_B");
     }
@@ -575,7 +642,12 @@ mod tests {
         // Register 5 services
         for i in 0..5 {
             let instance = create_test_instance("127.0.0.1", 8080 + i);
-            naming.register_instance("public", "DEFAULT_GROUP", &format!("service-{}", i), instance);
+            naming.register_instance(
+                "public",
+                "DEFAULT_GROUP",
+                &format!("service-{}", i),
+                instance,
+            );
         }
 
         // Page 1 with size 2
@@ -669,7 +741,14 @@ mod tests {
     fn test_heartbeat_non_existent_service() {
         let naming = NamingService::new();
 
-        let result = naming.heartbeat("public", "DEFAULT_GROUP", "non-existent", "127.0.0.1", 8080, "DEFAULT");
+        let result = naming.heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "non-existent",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+        );
         assert!(!result);
     }
 
@@ -681,7 +760,14 @@ mod tests {
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance);
 
         // Heartbeat for different IP
-        let result = naming.heartbeat("public", "DEFAULT_GROUP", "test-service", "192.168.1.1", 8080, "DEFAULT");
+        let result = naming.heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "192.168.1.1",
+            8080,
+            "DEFAULT",
+        );
         assert!(!result);
     }
 
@@ -695,20 +781,28 @@ mod tests {
             create_test_instance("127.0.0.3", 8082),
         ];
 
-        let result = naming.batch_register_instances("public", "DEFAULT_GROUP", "test-service", instances);
+        let result =
+            naming.batch_register_instances("public", "DEFAULT_GROUP", "test-service", instances);
         assert!(result);
 
-        assert_eq!(naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"), 3);
+        assert_eq!(
+            naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"),
+            3
+        );
     }
 
     #[test]
     fn test_batch_register_instances_empty() {
         let naming = NamingService::new();
 
-        let result = naming.batch_register_instances("public", "DEFAULT_GROUP", "test-service", vec![]);
+        let result =
+            naming.batch_register_instances("public", "DEFAULT_GROUP", "test-service", vec![]);
         assert!(result);
 
-        assert_eq!(naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"), 0);
+        assert_eq!(
+            naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"),
+            0
+        );
     }
 
     #[test]
@@ -721,12 +815,20 @@ mod tests {
             create_test_instance("127.0.0.3", 8082),
         ];
 
-        naming.batch_register_instances("public", "DEFAULT_GROUP", "test-service", instances.clone());
+        naming.batch_register_instances(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            instances.clone(),
+        );
 
         let to_remove = &instances[0..2];
         naming.batch_deregister_instances("public", "DEFAULT_GROUP", "test-service", to_remove);
 
-        assert_eq!(naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"), 1);
+        assert_eq!(
+            naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"),
+            1
+        );
     }
 
     #[test]
@@ -746,7 +848,8 @@ mod tests {
         assert_eq!(service.hosts.len(), 2);
         assert!(service.all_ips);
 
-        let healthy_service = naming.get_service("public", "DEFAULT_GROUP", "test-service", "", true);
+        let healthy_service =
+            naming.get_service("public", "DEFAULT_GROUP", "test-service", "", true);
         assert_eq!(healthy_service.hosts.len(), 1);
     }
 
@@ -766,16 +869,30 @@ mod tests {
         let instance = create_test_instance("127.0.0.1", 8080);
 
         // Test with special characters that might break key format
-        naming.register_instance("ns-with-dash", "group.with.dots", "service:with:colons", instance);
+        naming.register_instance(
+            "ns-with-dash",
+            "group.with.dots",
+            "service:with:colons",
+            instance,
+        );
 
-        let instances = naming.get_instances("ns-with-dash", "group.with.dots", "service:with:colons", "", false);
+        let instances = naming.get_instances(
+            "ns-with-dash",
+            "group.with.dots",
+            "service:with:colons",
+            "",
+            false,
+        );
         assert_eq!(instances.len(), 1);
     }
 
     #[test]
     fn test_naming_service_default() {
         let naming = NamingService::default();
-        assert_eq!(naming.get_instance_count("public", "DEFAULT_GROUP", "any"), 0);
+        assert_eq!(
+            naming.get_instance_count("public", "DEFAULT_GROUP", "any"),
+            0
+        );
     }
 
     #[test]
@@ -787,6 +904,9 @@ mod tests {
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance);
 
         // Should overwrite, not duplicate
-        assert_eq!(naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"), 1);
+        assert_eq!(
+            naming.get_instance_count("public", "DEFAULT_GROUP", "test-service"),
+            1
+        );
     }
 }

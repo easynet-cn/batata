@@ -392,9 +392,7 @@ pub async fn import_configs(
         };
 
         if let Some(content_disposition) = field.content_disposition()
-            && content_disposition
-                .get_name()
-                .is_some_and(|n| n == "file")
+            && content_disposition.get_name().is_some_and(|n| n == "file")
         {
             while let Some(chunk_result) = field.next().await {
                 match chunk_result {

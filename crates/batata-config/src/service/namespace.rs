@@ -9,7 +9,7 @@ use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 use batata_common::error::BatataError;
 use batata_persistence::entity::{config_info, tenant_info};
 
-use crate::model::{Namespace, DEFAULT_NAMESPACE_ID};
+use crate::model::{DEFAULT_NAMESPACE_ID, Namespace};
 
 const DEFAULT_NAMESPACE: &str = "public";
 const DEFAULT_CREATE_SOURCE: &str = "nacos";

@@ -137,7 +137,10 @@ impl Metrics {
         output
             .push_str("# HELP batata_uptime_seconds Number of seconds since the server started\n");
         output.push_str("# TYPE batata_uptime_seconds gauge\n");
-        output.push_str(&format!("batata_uptime_seconds {}\n", self.uptime_seconds()));
+        output.push_str(&format!(
+            "batata_uptime_seconds {}\n",
+            self.uptime_seconds()
+        ));
 
         output.push_str("# HELP batata_cluster_size Number of nodes in the cluster\n");
         output.push_str("# TYPE batata_cluster_size gauge\n");

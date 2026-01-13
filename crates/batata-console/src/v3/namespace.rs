@@ -67,12 +67,14 @@ impl<T: Serialize> ApiResult<T> {
     }
 
     pub fn http_response(status: u16, code: i32, message: String, data: T) -> HttpResponse {
-        HttpResponse::build(StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR))
-            .json(Self {
-                code,
-                message,
-                data,
-            })
+        HttpResponse::build(
+            StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        )
+        .json(Self {
+            code,
+            message,
+            data,
+        })
     }
 }
 
@@ -102,7 +104,10 @@ impl ApiResult<String> {
         HttpResponse::BadRequest().json(Self {
             code: 10000,
             message: "parameter missing".to_string(),
-            data: format!("Required parameter '{}' type String is not present", param_name),
+            data: format!(
+                "Required parameter '{}' type String is not present",
+                param_name
+            ),
         })
     }
 }
@@ -234,7 +239,10 @@ pub async fn namespace_exists(
         return ApiResult::<bool>::http_success(false);
     }
 
-    match datasource.namespace_exists(&params.custom_namespace_id).await {
+    match datasource
+        .namespace_exists(&params.custom_namespace_id)
+        .await
+    {
         Ok(exists) => ApiResult::<bool>::http_success(exists),
         Err(e) => ApiResult::http_internal_error(e),
     }

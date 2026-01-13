@@ -34,6 +34,19 @@ pub const TOKEN_SECRET_KEY: &str = "nacos.core.auth.plugin.nacos.token.secret.ke
 pub const DEFAULT_TOKEN_SECRET_KEY: &str = "";
 pub const TOKEN_EXPIRE_SECONDS: &str = "nacos.core.auth.plugin.nacos.token.expire.seconds";
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 18000;
+
+// LDAP configuration keys
+pub const NACOS_CORE_AUTH_LDAP_URL: &str = "nacos.core.auth.ldap.url";
+pub const NACOS_CORE_AUTH_LDAP_BASEDC: &str = "nacos.core.auth.ldap.basedc";
+pub const NACOS_CORE_AUTH_LDAP_TIMEOUT: &str = "nacos.core.auth.ldap.timeout";
+pub const NACOS_CORE_AUTH_LDAP_USERDN: &str = "nacos.core.auth.ldap.userDn";
+pub const NACOS_CORE_AUTH_LDAP_PASSWORD: &str = "nacos.core.auth.ldap.password";
+pub const NACOS_CORE_AUTH_LDAP_FILTER_PREFIX: &str = "nacos.core.auth.ldap.filter.prefix";
+pub const NACOS_CORE_AUTH_CASE_SENSITIVE: &str = "nacos.core.auth.ldap.case.sensitive";
+pub const NACOS_CORE_AUTH_IGNORE_PARTIAL_RESULT_EXCEPTION: &str =
+    "nacos.core.auth.ldap.ignore.partial.result.exception";
+pub const LDAP_PREFIX: &str = "LDAP_";
+
 pub const MAX_PASSWORD_LENGTH: i32 = 72;
 pub const USER_PATH: &str = "/v3/auth/user";
 pub const ROLE_PATH: &str = "/v3/auth/role";

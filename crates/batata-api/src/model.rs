@@ -216,7 +216,7 @@ impl<T> Page<T> {
 }
 
 /// Node state enumeration for cluster members
-#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum NodeState {
     Starting,
@@ -288,6 +288,16 @@ impl Member {
     pub const READY_TO_UPGRADE: &str = "readyToUpgrade";
     pub const SUPPORT_GRAY_MODEL: &str = "supportGrayModel";
 
+    // Multi-datacenter support constants
+    pub const DATACENTER: &str = "datacenter";
+    pub const REGION: &str = "region";
+    pub const ZONE: &str = "zone";
+    pub const LOCALITY_WEIGHT: &str = "localityWeight";
+    pub const CLUSTER_GROUP: &str = "clusterGroup";
+    pub const DEFAULT_DATACENTER: &str = "default";
+    pub const DEFAULT_REGION: &str = "default";
+    pub const DEFAULT_ZONE: &str = "default";
+
     pub const TARGET_MEMBER_CONNECT_REFUSE_ERRMSG: &str = "Connection refused";
     pub const SERVER_PORT_PROPERTY: &str = "nacos.server.main.port";
     pub const DEFAULT_SERVER_PORT: u16 = 8848;
@@ -312,6 +322,102 @@ impl Member {
 
     pub fn is_healthy(&self) -> bool {
         self.state.is_healthy()
+    }
+
+    /// Get the datacenter this member belongs to
+    pub fn datacenter(&self) -> String {
+        self.get_extend_info_string(Self::DATACENTER)
+            .unwrap_or_else(|| Self::DEFAULT_DATACENTER.to_string())
+    }
+
+    /// Set the datacenter for this member
+    pub fn set_datacenter(&self, datacenter: &str) {
+        self.set_extend_info(Self::DATACENTER, serde_json::Value::String(datacenter.to_string()));
+    }
+
+    /// Get the region this member belongs to
+    pub fn region(&self) -> String {
+        self.get_extend_info_string(Self::REGION)
+            .unwrap_or_else(|| Self::DEFAULT_REGION.to_string())
+    }
+
+    /// Set the region for this member
+    pub fn set_region(&self, region: &str) {
+        self.set_extend_info(Self::REGION, serde_json::Value::String(region.to_string()));
+    }
+
+    /// Get the zone this member belongs to
+    pub fn zone(&self) -> String {
+        self.get_extend_info_string(Self::ZONE)
+            .unwrap_or_else(|| Self::DEFAULT_ZONE.to_string())
+    }
+
+    /// Set the zone for this member
+    pub fn set_zone(&self, zone: &str) {
+        self.set_extend_info(Self::ZONE, serde_json::Value::String(zone.to_string()));
+    }
+
+    /// Get the locality weight (priority for local-first sync)
+    pub fn locality_weight(&self) -> f64 {
+        self.get_extend_info(Self::LOCALITY_WEIGHT)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0)
+    }
+
+    /// Set the locality weight
+    pub fn set_locality_weight(&self, weight: f64) {
+        self.set_extend_info(Self::LOCALITY_WEIGHT, serde_json::json!(weight));
+    }
+
+    /// Get the cluster group (logical partition)
+    pub fn cluster_group(&self) -> Option<String> {
+        self.get_extend_info_string(Self::CLUSTER_GROUP)
+    }
+
+    /// Set the cluster group
+    pub fn set_cluster_group(&self, group: &str) {
+        self.set_extend_info(Self::CLUSTER_GROUP, serde_json::Value::String(group.to_string()));
+    }
+
+    /// Check if this member is in the same datacenter
+    pub fn is_same_datacenter(&self, other: &Member) -> bool {
+        self.datacenter() == other.datacenter()
+    }
+
+    /// Check if this member is in the same region
+    pub fn is_same_region(&self, other: &Member) -> bool {
+        self.region() == other.region()
+    }
+
+    /// Check if this member is in the same zone
+    pub fn is_same_zone(&self, other: &Member) -> bool {
+        self.zone() == other.zone()
+    }
+
+    /// Get full locality path (region/datacenter/zone)
+    pub fn locality_path(&self) -> String {
+        format!("{}/{}/{}", self.region(), self.datacenter(), self.zone())
+    }
+
+    /// Helper to get extend info as string
+    fn get_extend_info_string(&self, key: &str) -> Option<String> {
+        self.get_extend_info(key)
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+    }
+
+    /// Helper to get extend info value
+    fn get_extend_info(&self, key: &str) -> Option<serde_json::Value> {
+        self.extend_info
+            .read()
+            .ok()
+            .and_then(|info| info.get(key).cloned())
+    }
+
+    /// Helper to set extend info value
+    fn set_extend_info(&self, key: &str, value: serde_json::Value) {
+        if let Ok(mut info) = self.extend_info.write() {
+            info.insert(key.to_string(), value);
+        }
     }
 }
 
@@ -350,6 +456,46 @@ impl MemberBuilder {
 
     pub fn extend_info(mut self, info: BTreeMap<String, Value>) -> Self {
         self.extend_info = Arc::new(RwLock::new(info));
+        self
+    }
+
+    /// Set the datacenter for this member
+    pub fn datacenter(self, datacenter: &str) -> Self {
+        if let Ok(mut info) = self.extend_info.write() {
+            info.insert(Member::DATACENTER.to_string(), Value::String(datacenter.to_string()));
+        }
+        self
+    }
+
+    /// Set the region for this member
+    pub fn region(self, region: &str) -> Self {
+        if let Ok(mut info) = self.extend_info.write() {
+            info.insert(Member::REGION.to_string(), Value::String(region.to_string()));
+        }
+        self
+    }
+
+    /// Set the zone for this member
+    pub fn zone(self, zone: &str) -> Self {
+        if let Ok(mut info) = self.extend_info.write() {
+            info.insert(Member::ZONE.to_string(), Value::String(zone.to_string()));
+        }
+        self
+    }
+
+    /// Set the locality weight
+    pub fn locality_weight(self, weight: f64) -> Self {
+        if let Ok(mut info) = self.extend_info.write() {
+            info.insert(Member::LOCALITY_WEIGHT.to_string(), serde_json::json!(weight));
+        }
+        self
+    }
+
+    /// Set the cluster group
+    pub fn cluster_group(self, group: &str) -> Self {
+        if let Ok(mut info) = self.extend_info.write() {
+            info.insert(Member::CLUSTER_GROUP.to_string(), Value::String(group.to_string()));
+        }
         self
     }
 

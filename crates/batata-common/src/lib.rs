@@ -5,7 +5,9 @@
 //! - Context traits for dependency injection
 //! - Utility functions
 //! - Common constants
+//! - Configuration encryption
 
+pub mod crypto;
 pub mod error;
 pub mod traits;
 pub mod utils;

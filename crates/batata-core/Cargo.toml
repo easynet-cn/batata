@@ -11,6 +11,7 @@ repository = "https://github.com/easynet-cn/batata"
 batata-common = { path = "../batata-common" }
 batata-api = { path = "../batata-api" }
 batata-consistency = { path = "../batata-consistency" }
+batata-naming = { path = "../batata-naming" }
 
 # Concurrency
 dashmap = "6.1"

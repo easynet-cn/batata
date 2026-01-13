@@ -342,7 +342,6 @@ impl ClusterClientManager {
 
 /// Cluster request sender helper
 pub struct ClusterRequestSender {
-    #[allow(dead_code)] // Will be used once ConfigChangeClusterSyncRequest is migrated
     client_manager: Arc<ClusterClientManager>,
 }
 
@@ -351,46 +350,45 @@ impl ClusterRequestSender {
         Self { client_manager }
     }
 
-    // TODO: Re-enable once ConfigChangeClusterSyncRequest is migrated to batata-api
-    // /// Send config change sync to a specific node
-    // pub async fn send_config_change_sync(
-    //     &self,
-    //     address: &str,
-    //     data_id: &str,
-    //     group: &str,
-    //     tenant: &str,
-    //     last_modified: i64,
-    // ) -> Result<Payload, Box<dyn std::error::Error + Send + Sync>> {
-    //     use batata_api::config::model::ConfigChangeClusterSyncRequest;
-    //
-    //     let mut request = ConfigChangeClusterSyncRequest::new();
-    //     request.config_request.data_id = data_id.to_string();
-    //     request.config_request.group = group.to_string();
-    //     request.config_request.tenant = tenant.to_string();
-    //     request.last_modified = last_modified;
-    //
-    //     self.client_manager.send_request(address, request).await
-    // }
-    //
-    // /// Broadcast config change to all cluster nodes
-    // pub async fn broadcast_config_change(
-    //     &self,
-    //     members: &[Member],
-    //     data_id: &str,
-    //     group: &str,
-    //     tenant: &str,
-    //     last_modified: i64,
-    // ) -> Vec<(String, Result<Payload, String>)> {
-    //     use batata_api::config::model::ConfigChangeClusterSyncRequest;
-    //
-    //     let mut request = ConfigChangeClusterSyncRequest::new();
-    //     request.config_request.data_id = data_id.to_string();
-    //     request.config_request.group = group.to_string();
-    //     request.config_request.tenant = tenant.to_string();
-    //     request.last_modified = last_modified;
-    //
-    //     self.client_manager.broadcast(members, request).await
-    // }
+    /// Send config change sync to a specific node
+    pub async fn send_config_change_sync(
+        &self,
+        address: &str,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        last_modified: i64,
+    ) -> Result<Payload, Box<dyn std::error::Error + Send + Sync>> {
+        use batata_api::config::ConfigChangeClusterSyncRequest;
+
+        let mut request = ConfigChangeClusterSyncRequest::new();
+        request.config_request.data_id = data_id.to_string();
+        request.config_request.group = group.to_string();
+        request.config_request.tenant = tenant.to_string();
+        request.last_modified = last_modified;
+
+        self.client_manager.send_request(address, request).await
+    }
+
+    /// Broadcast config change to all cluster nodes
+    pub async fn broadcast_config_change(
+        &self,
+        members: &[Member],
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        last_modified: i64,
+    ) -> Vec<(String, Result<Payload, String>)> {
+        use batata_api::config::ConfigChangeClusterSyncRequest;
+
+        let mut request = ConfigChangeClusterSyncRequest::new();
+        request.config_request.data_id = data_id.to_string();
+        request.config_request.group = group.to_string();
+        request.config_request.tenant = tenant.to_string();
+        request.last_modified = last_modified;
+
+        self.client_manager.broadcast(members, request).await
+    }
 }
 
 #[cfg(test)]

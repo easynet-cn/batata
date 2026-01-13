@@ -25,9 +25,10 @@ pub async fn get_nodes(
     let mut members = datasource.cluster_members();
 
     if let Some(keyword) = &params.keyword
-        && !keyword.is_empty() {
-            members.retain(|e| e.address.contains(keyword));
-        }
+        && !keyword.is_empty()
+    {
+        members.retain(|e| e.address.contains(keyword));
+    }
 
     ApiResult::<Vec<Member>>::http_success(members)
 }
@@ -71,17 +72,13 @@ pub async fn get_node(
 }
 
 #[get("count")]
-pub async fn get_member_count(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-) -> impl Responder {
+pub async fn get_member_count(datasource: web::Data<Arc<dyn ConsoleDataSource>>) -> impl Responder {
     let count = datasource.cluster_member_count();
     ApiResult::<usize>::http_success(count)
 }
 
 #[get("standalone")]
-pub async fn check_standalone(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-) -> impl Responder {
+pub async fn check_standalone(datasource: web::Data<Arc<dyn ConsoleDataSource>>) -> impl Responder {
     let standalone_mode = datasource.cluster_is_standalone();
     ApiResult::<bool>::http_success(standalone_mode)
 }

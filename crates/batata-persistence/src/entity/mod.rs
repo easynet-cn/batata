@@ -12,3 +12,8 @@ pub mod roles;
 pub mod tenant_capacity;
 pub mod tenant_info;
 pub mod users;
+
+// Service discovery entities
+pub mod cluster_info;
+pub mod instance_info;
+pub mod service_info;

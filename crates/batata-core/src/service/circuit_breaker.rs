@@ -46,7 +46,8 @@ pub struct CircuitBreaker {
     state: RwLock<CircuitState>,
     failure_count: AtomicU32,
     success_count: AtomicU32,
-    last_failure_time: AtomicU64,
+    /// Timestamp of last failure in milliseconds since UNIX epoch
+    last_failure_time_ms: AtomicU64,
     opened_at: RwLock<Option<Instant>>,
 }
 
@@ -63,7 +64,7 @@ impl CircuitBreaker {
             state: RwLock::new(CircuitState::Closed),
             failure_count: AtomicU32::new(0),
             success_count: AtomicU32::new(0),
-            last_failure_time: AtomicU64::new(0),
+            last_failure_time_ms: AtomicU64::new(0),
             opened_at: RwLock::new(None),
         }
     }
@@ -115,20 +116,21 @@ impl CircuitBreaker {
 
         match state {
             CircuitState::Closed => {
-                let now = Instant::now();
-                let last_failure = self.last_failure_time.load(Ordering::SeqCst);
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let last_failure_ms = self.last_failure_time_ms.load(Ordering::SeqCst);
 
                 // Reset count if outside failure window
-                if last_failure > 0 {
-                    let elapsed =
-                        Duration::from_millis(now.elapsed().as_millis() as u64 - last_failure);
+                if last_failure_ms > 0 && now_ms > last_failure_ms {
+                    let elapsed = Duration::from_millis(now_ms - last_failure_ms);
                     if elapsed > self.config.failure_window {
                         self.failure_count.store(0, Ordering::SeqCst);
                     }
                 }
 
-                self.last_failure_time
-                    .store(now.elapsed().as_millis() as u64, Ordering::SeqCst);
+                self.last_failure_time_ms.store(now_ms, Ordering::SeqCst);
 
                 let count = self.failure_count.fetch_add(1, Ordering::SeqCst) + 1;
                 if count >= self.config.failure_threshold {

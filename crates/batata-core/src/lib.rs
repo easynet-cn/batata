@@ -13,7 +13,9 @@ pub mod service;
 
 // Re-export cluster module
 pub mod cluster {
-    pub use crate::service::cluster::{ClusterHealthSummary, ServerMemberManager, ServerMemberManagerConfig};
+    pub use crate::service::cluster::{
+        ClusterHealthSummary, ServerMemberManager, ServerMemberManagerConfig,
+    };
 }
 
 // Re-export commonly used types

@@ -286,3 +286,113 @@ CREATE TRIGGER update_consul_acl_tokens_modify_time
 CREATE TRIGGER update_consul_acl_policies_modify_time
     BEFORE UPDATE ON consul_acl_policies
     FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+/******************************************/
+/*   Service Discovery Tables             */
+/******************************************/
+
+-- Service metadata table
+CREATE TABLE service_info (
+    id BIGSERIAL PRIMARY KEY,
+    namespace_id VARCHAR(128) NOT NULL DEFAULT 'public',
+    group_name VARCHAR(128) NOT NULL DEFAULT 'DEFAULT_GROUP',
+    service_name VARCHAR(255) NOT NULL,
+    protect_threshold REAL NOT NULL DEFAULT 0.0,
+    metadata TEXT,
+    selector TEXT,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    gmt_create TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_service UNIQUE (namespace_id, group_name, service_name)
+);
+
+CREATE INDEX idx_service_namespace ON service_info(namespace_id);
+
+COMMENT ON TABLE service_info IS 'Service metadata table';
+COMMENT ON COLUMN service_info.namespace_id IS 'Namespace ID';
+COMMENT ON COLUMN service_info.group_name IS 'Service group name';
+COMMENT ON COLUMN service_info.service_name IS 'Service name';
+COMMENT ON COLUMN service_info.protect_threshold IS 'Protection threshold (0.0-1.0)';
+COMMENT ON COLUMN service_info.metadata IS 'Service metadata (JSON)';
+COMMENT ON COLUMN service_info.selector IS 'Service selector (JSON)';
+COMMENT ON COLUMN service_info.enabled IS 'Whether service is enabled';
+
+-- Cluster metadata table
+CREATE TABLE cluster_info (
+    id BIGSERIAL PRIMARY KEY,
+    service_id BIGINT NOT NULL REFERENCES service_info(id) ON DELETE CASCADE,
+    cluster_name VARCHAR(128) NOT NULL DEFAULT 'DEFAULT',
+    health_check_type VARCHAR(32) DEFAULT 'TCP',
+    health_check_port INTEGER DEFAULT 0,
+    health_check_path VARCHAR(255) DEFAULT '',
+    use_instance_port BOOLEAN DEFAULT TRUE,
+    metadata TEXT,
+    gmt_create TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_cluster UNIQUE (service_id, cluster_name)
+);
+
+COMMENT ON TABLE cluster_info IS 'Cluster metadata table';
+COMMENT ON COLUMN cluster_info.service_id IS 'Service ID (FK to service_info)';
+COMMENT ON COLUMN cluster_info.cluster_name IS 'Cluster name';
+COMMENT ON COLUMN cluster_info.health_check_type IS 'Health check type (TCP/HTTP/MYSQL/NONE)';
+COMMENT ON COLUMN cluster_info.health_check_port IS 'Health check port (0 means use instance port)';
+COMMENT ON COLUMN cluster_info.health_check_path IS 'Health check path (for HTTP)';
+COMMENT ON COLUMN cluster_info.use_instance_port IS 'Whether to use instance port for health check';
+COMMENT ON COLUMN cluster_info.metadata IS 'Cluster metadata (JSON)';
+
+-- Instance table (for persistent instances)
+CREATE TABLE instance_info (
+    id BIGSERIAL PRIMARY KEY,
+    instance_id VARCHAR(255) NOT NULL,
+    service_id BIGINT NOT NULL REFERENCES service_info(id) ON DELETE CASCADE,
+    cluster_name VARCHAR(128) NOT NULL DEFAULT 'DEFAULT',
+    ip VARCHAR(45) NOT NULL,
+    port INTEGER NOT NULL,
+    weight DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    healthy BOOLEAN NOT NULL DEFAULT TRUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    ephemeral BOOLEAN NOT NULL DEFAULT TRUE,
+    metadata TEXT,
+    heartbeat_interval INTEGER DEFAULT 5000,
+    heartbeat_timeout INTEGER DEFAULT 15000,
+    ip_delete_timeout INTEGER DEFAULT 30000,
+    last_heartbeat TIMESTAMP DEFAULT NULL,
+    gmt_create TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_instance UNIQUE (instance_id)
+);
+
+CREATE INDEX idx_instance_service_cluster ON instance_info(service_id, cluster_name);
+CREATE INDEX idx_instance_ip_port ON instance_info(ip, port);
+CREATE INDEX idx_instance_healthy ON instance_info(healthy);
+CREATE INDEX idx_instance_ephemeral ON instance_info(ephemeral);
+
+COMMENT ON TABLE instance_info IS 'Service instance table';
+COMMENT ON COLUMN instance_info.instance_id IS 'Instance ID (unique identifier)';
+COMMENT ON COLUMN instance_info.service_id IS 'Service ID (FK to service_info)';
+COMMENT ON COLUMN instance_info.cluster_name IS 'Cluster name';
+COMMENT ON COLUMN instance_info.ip IS 'Instance IP address';
+COMMENT ON COLUMN instance_info.port IS 'Instance port';
+COMMENT ON COLUMN instance_info.weight IS 'Instance weight';
+COMMENT ON COLUMN instance_info.healthy IS 'Whether instance is healthy';
+COMMENT ON COLUMN instance_info.enabled IS 'Whether instance is enabled';
+COMMENT ON COLUMN instance_info.ephemeral IS 'Whether instance is ephemeral';
+COMMENT ON COLUMN instance_info.metadata IS 'Instance metadata (JSON)';
+COMMENT ON COLUMN instance_info.heartbeat_interval IS 'Heartbeat interval in ms';
+COMMENT ON COLUMN instance_info.heartbeat_timeout IS 'Heartbeat timeout in ms';
+COMMENT ON COLUMN instance_info.ip_delete_timeout IS 'IP delete timeout in ms';
+COMMENT ON COLUMN instance_info.last_heartbeat IS 'Last heartbeat time';
+
+-- Apply update trigger to service discovery tables
+CREATE TRIGGER update_service_info_modify_time
+    BEFORE UPDATE ON service_info
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_cluster_info_modify_time
+    BEFORE UPDATE ON cluster_info
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_instance_info_modify_time
+    BEFORE UPDATE ON instance_info
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();

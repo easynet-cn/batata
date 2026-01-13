@@ -161,13 +161,7 @@ mod tests {
 
     #[test]
     fn test_new_config() {
-        let config = RaftConfig::new(
-            3000,
-            500,
-            900,
-            5000,
-            PathBuf::from("/data/raft"),
-        );
+        let config = RaftConfig::new(3000, 500, 900, 5000, PathBuf::from("/data/raft"));
         assert_eq!(config.election_timeout_ms, 3000);
         assert_eq!(config.heartbeat_interval_ms, 500);
         assert_eq!(config.snapshot_interval_secs, 900);
