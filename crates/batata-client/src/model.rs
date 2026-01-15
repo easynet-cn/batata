@@ -264,6 +264,25 @@ pub struct CloneResult {
     pub failed: usize,
 }
 
+/// Import operation result summary
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub success_count: u32,
+    pub skip_count: u32,
+    pub fail_count: u32,
+    pub fail_data: Vec<ImportFailItem>,
+}
+
+/// Details of a failed import item
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportFailItem {
+    pub data_id: String,
+    pub group: String,
+    pub reason: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

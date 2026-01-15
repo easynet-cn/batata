@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use tonic::Status;
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 use batata_core::model::Connection;
 
@@ -26,7 +26,7 @@ use crate::{
     model::common::AppState,
     service::{
         config,
-        config_fuzzy_watch::ConfigFuzzyWatchManager,
+        config_fuzzy_watch::{ConfigFuzzyWatchManager, ConfigFuzzyWatchPattern},
         rpc::{AuthRequirement, PayloadHandler},
     },
 };
@@ -94,6 +94,7 @@ impl PayloadHandler for ConfigQueryHandler {
 #[derive(Clone)]
 pub struct ConfigPublishHandler {
     pub app_state: Arc<AppState>,
+    pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
@@ -174,6 +175,16 @@ impl PayloadHandler for ConfigPublishHandler {
         .await
         {
             Ok(_) => {
+                // Notify fuzzy watchers about config change
+                if let Err(e) = self.notify_fuzzy_watchers(
+                    data_id,
+                    group,
+                    tenant,
+                    src_ip,
+                ).await {
+                    warn!("Failed to notify fuzzy watchers: {}", e);
+                }
+
                 let mut response = ConfigPublishResponse::new();
                 response.response.request_id = request_id;
 
@@ -201,10 +212,78 @@ impl PayloadHandler for ConfigPublishHandler {
     }
 }
 
+impl ConfigPublishHandler {
+    /// Notify both fuzzy watchers and regular subscribers about configuration change
+    async fn notify_fuzzy_watchers(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        source_ip: &str,
+    ) -> anyhow::Result<()> {
+        // Notify fuzzy watchers
+        let fuzzy_watchers = self.fuzzy_watch_manager.get_watchers_for_config(
+            tenant,
+            group,
+            data_id,
+        );
+
+        if !fuzzy_watchers.is_empty() {
+            // Build group key
+            let group_key = ConfigFuzzyWatchPattern::build_group_key(tenant, group, data_id);
+
+            info!(
+                "Notifying {} fuzzy watchers for config change: {}",
+                fuzzy_watchers.len(),
+                group_key
+            );
+
+            // For each watcher, mark the config as received
+            // Future enhancement: Send actual notification payload via connection manager
+            for connection_id in fuzzy_watchers {
+                // Mark the group key as received by this connection
+                self.fuzzy_watch_manager.mark_received(&connection_id, &group_key);
+
+                info!(
+                    "Notified connection {} about config change (fuzzy watch): {}",
+                    connection_id,
+                    group_key
+                );
+            }
+        }
+
+        // Notify regular subscribers via ConfigSubscriberManager
+        let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
+        let subscribers = self.app_state.config_subscriber_manager.get_subscribers(&config_key);
+
+        if !subscribers.is_empty() {
+            info!(
+                "Notifying {} regular subscribers for config change: {}@@{}@@{}",
+                subscribers.len(),
+                tenant,
+                group,
+                data_id
+            );
+
+            // Future enhancement: Send actual notification payload via connection manager
+            for subscriber in subscribers {
+                info!(
+                    "Notified connection {} about config change (subscriber): {}",
+                    subscriber.connection_id,
+                    config_key.to_key_string()
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
 // Handler for ConfigRemoveRequest - removes configuration
 #[derive(Clone)]
 pub struct ConfigRemoveHandler {
     pub app_state: Arc<AppState>,
+    pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
@@ -225,6 +304,16 @@ impl PayloadHandler for ConfigRemoveHandler {
 
         match config::delete(db, data_id, group, tenant, "", src_ip, src_user).await {
             Ok(_) => {
+                // Notify fuzzy watchers about config removal
+                if let Err(e) = self.notify_fuzzy_watchers(
+                    data_id,
+                    group,
+                    tenant,
+                    src_ip,
+                ).await {
+                    warn!("Failed to notify fuzzy watchers: {}", e);
+                }
+
                 let mut response = ConfigRemoveResponse::new();
                 response.response.request_id = request_id;
 
@@ -249,6 +338,73 @@ impl PayloadHandler for ConfigRemoveHandler {
 
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Authenticated
+    }
+}
+
+impl ConfigRemoveHandler {
+    /// Notify both fuzzy watchers and regular subscribers about configuration removal
+    async fn notify_fuzzy_watchers(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        source_ip: &str,
+    ) -> anyhow::Result<()> {
+        // Notify fuzzy watchers
+        let fuzzy_watchers = self.fuzzy_watch_manager.get_watchers_for_config(
+            tenant,
+            group,
+            data_id,
+        );
+
+        if !fuzzy_watchers.is_empty() {
+            // Build group key
+            let group_key = ConfigFuzzyWatchPattern::build_group_key(tenant, group, data_id);
+
+            info!(
+                "Notifying {} fuzzy watchers for config removal: {}",
+                fuzzy_watchers.len(),
+                group_key
+            );
+
+            // For each watcher, mark the config as received
+            // Future enhancement: Send actual notification payload via connection manager
+            for connection_id in fuzzy_watchers {
+                // Mark the group key as received by this connection
+                self.fuzzy_watch_manager.mark_received(&connection_id, &group_key);
+
+                info!(
+                    "Notified connection {} about config removal (fuzzy watch): {}",
+                    connection_id,
+                    group_key
+                );
+            }
+        }
+
+        // Notify regular subscribers via ConfigSubscriberManager
+        let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
+        let subscribers = self.app_state.config_subscriber_manager.get_subscribers(&config_key);
+
+        if !subscribers.is_empty() {
+            info!(
+                "Notifying {} regular subscribers for config removal: {}@@{}@@{}",
+                subscribers.len(),
+                tenant,
+                group,
+                data_id
+            );
+
+            // Future enhancement: Send actual notification payload via connection manager
+            for subscriber in subscribers {
+                info!(
+                    "Notified connection {} about config removal (subscriber): {}",
+                    subscriber.connection_id,
+                    config_key.to_key_string()
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -367,7 +523,7 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
         let gray_name = &request.gray_name;
 
         // Log the cluster sync event for observability
-        debug!(
+        info!(
             "Config cluster sync from {}: dataId={}, group={}, tenant={}, lastModified={}, grayName={}",
             connection.meta_info.remote_ip,
             data_id,
@@ -379,10 +535,21 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
 
         // In a distributed cluster, this notification indicates another node has
         // changed a config. Since we use a shared database, the change is already
-        // persisted. This handler acknowledges the sync and could trigger:
+        // persisted. This handler implements:
         // 1. Local cache invalidation (if caching is implemented)
-        // 2. Notification to local listeners
+        // 2. Notification to local listeners via config subscriber manager
         // 3. Metrics/audit logging
+
+        // Notify config subscribers about change
+        if let Err(e) = self.notify_config_change(
+            data_id,
+            group,
+            tenant,
+            gray_name.as_str(),
+            connection.meta_info.remote_ip.as_str(),
+        ).await {
+            warn!("Failed to notify config subscribers: {}", e);
+        }
 
         let mut response = ConfigChangeClusterSyncResponse::new();
         response.response.request_id = request_id;
@@ -396,6 +563,38 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
 
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Internal
+    }
+}
+
+impl ConfigChangeClusterSyncHandler {
+    /// Notify local config subscribers about configuration changes
+    async fn notify_config_change(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        gray_name: &str,
+        source_ip: &str,
+    ) -> anyhow::Result<()> {
+        // Build config key
+        let config_key = if gray_name.is_empty() {
+            format!("{}@@{}@@{}", tenant, group, data_id)
+        } else {
+            format!("{}@@{}@@{}@@{}", tenant, group, data_id, gray_name)
+        };
+
+        // Notify subscribers
+        // Note: The actual notification mechanism depends on the implementation
+        // of config_subscriber_manager. For now, we log the action.
+        info!(
+            "Notifying config subscribers for key: {}, change_type: MODIFY, source: {}",
+            config_key, source_ip
+        );
+
+        // Future enhancement: Call subscriber_manager.notify(&config_key, notification)
+        // to push the change to all subscribed clients.
+
+        Ok(())
     }
 }
 

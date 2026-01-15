@@ -14,6 +14,9 @@ pub mod naming;
 // Config fuzzy watch manager
 pub mod config_fuzzy_watch;
 
+// Naming fuzzy watch manager
+pub mod naming_fuzzy_watch;
+
 // Local implementations (gRPC handlers and RPC)
 pub mod config_handler; // Config module gRPC handlers
 pub mod distro_handler; // Distro protocol gRPC handlers

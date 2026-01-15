@@ -295,6 +295,82 @@ impl ConsoleHttpClient {
         .await
     }
 
+    /// Make a POST request with multipart form data (for file uploads)
+    /// Note: multipart requests cannot be retried across servers since Form cannot be cloned
+    pub async fn post_multipart<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> anyhow::Result<T> {
+        let url = self.build_url(path);
+        let token = self.ensure_token().await?;
+
+        match self
+            .client
+            .post(&url)
+            .header("accessToken", &token)
+            .multipart(form)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    warn!("Token expired, re-authenticating...");
+                    self.authenticate().await?;
+                    // Token expired, caller should retry
+                    return Err(anyhow::anyhow!("Token expired, please retry"));
+                }
+                self.handle_response(response).await
+            }
+            Err(e) => {
+                warn!("Request failed: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Make a POST multipart request and return raw bytes (for file upload responses)
+    /// Note: multipart requests cannot be retried across servers since Form cannot be cloned
+    pub async fn post_multipart_bytes(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> anyhow::Result<Vec<u8>> {
+        let url = self.build_url(path);
+        let token = self.ensure_token().await?;
+
+        match self
+            .client
+            .post(&url)
+            .header("accessToken", &token)
+            .multipart(form)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    Ok(response.bytes().await?.to_vec())
+                } else if response.status() == StatusCode::UNAUTHORIZED {
+                    warn!("Token expired, re-authenticating...");
+                    self.authenticate().await?;
+                    Err(anyhow::anyhow!("Token expired, please retry"))
+                } else {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    Err(anyhow::anyhow!(
+                        "Request failed with status {}: {}",
+                        status,
+                        body
+                    ))
+                }
+            }
+            Err(e) => {
+                warn!("Request failed: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
     /// Make a GET request and return raw bytes
     pub async fn get_bytes(&self, path: &str) -> anyhow::Result<Vec<u8>> {
         let max_retries = self.config.server_addrs.len();

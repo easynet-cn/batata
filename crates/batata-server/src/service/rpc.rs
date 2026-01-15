@@ -7,6 +7,7 @@ use futures::Stream;
 use tokio::sync::mpsc;
 use tokio_stream::{StreamExt, wrappers::ReceiverStream};
 use tonic::{Request, Response, Status, Streaming};
+use tracing::{info, warn};
 
 use batata_core::{
     model::{Connection, GrpcClient},
@@ -129,13 +130,45 @@ pub fn check_server_identity(auth_service: &GrpcAuthService, payload: &Payload) 
 }
 
 // Default handler for unregistered message types
+// Provides enhanced error handling and logging for unknown message types
 #[derive(Clone)]
 pub struct DefaultHandler;
 
 #[tonic::async_trait]
-impl PayloadHandler for DefaultHandler {}
+impl PayloadHandler for DefaultHandler {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+        let metadata = payload.metadata.as_ref();
+        let message_type = metadata.map(|m| m.r#type.clone()).unwrap_or_default();
+        let client_ip = metadata.map(|m| m.client_ip.clone()).unwrap_or_default();
+
+        // Log unknown message type with client information for debugging
+        warn!(
+            message_type = %message_type,
+            client_ip = %client_ip,
+            "Received unknown message type in DefaultHandler - no handler registered"
+        );
+
+        // Provide informative error message to client
+        let error_message = if message_type.is_empty() {
+            "Message type is empty or missing. Please ensure your client is sending valid gRPC requests."
+        } else {
+            &format!(
+                "Unknown message type '{}'. This message type is not supported by the server. \
+                Please check the client SDK version and ensure compatibility with the server API.",
+                message_type
+            )
+        };
+
+        Err(Status::invalid_argument(error_message))
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "default"
+    }
+}
 
 // Registry for managing payload handlers by message type
+// Supports dynamic handler registration with logging for debugging
 pub struct HandlerRegistry {
     handlers: HashMap<String, Arc<dyn PayloadHandler>>,
     default_handler: Arc<dyn PayloadHandler>,
@@ -166,6 +199,8 @@ impl HandlerRegistry {
         }
     }
 
+    /// Get handler for a specific message type
+    /// Returns the default handler if no specific handler is registered
     pub fn get_handler(&self, message_type: &str) -> Arc<dyn PayloadHandler> {
         self.handlers
             .get(message_type)
@@ -173,9 +208,42 @@ impl HandlerRegistry {
             .clone()
     }
 
+    /// Register a new handler for a specific message type
+    /// Logs the registration for debugging purposes
     pub fn register_handler(&mut self, handler: Arc<dyn PayloadHandler>) {
-        self.handlers
-            .insert(handler.can_handle().to_string(), handler);
+        let message_type = handler.can_handle();
+        info!(
+            message_type = %message_type,
+            "Registering handler for message type '{}'",
+            message_type
+        );
+        self.handlers.insert(message_type.to_string(), handler);
+    }
+
+    /// Unregister a handler for a specific message type
+    /// Useful for dynamic handler management
+    pub fn unregister_handler(&mut self, message_type: &str) -> bool {
+        if let Some(_handler) = self.handlers.remove(message_type) {
+            info!(
+                message_type = %message_type,
+                "Unregistered handler for message type '{}'",
+                message_type
+            );
+            true
+        } else {
+            warn!(
+                message_type = %message_type,
+                "Attempted to unregister non-existent handler for message type '{}'",
+                message_type
+            );
+            false
+        }
+    }
+
+    /// Get a list of all registered message types
+    /// Useful for debugging and monitoring
+    pub fn registered_message_types(&self) -> Vec<String> {
+        self.handlers.keys().cloned().collect()
     }
 
     /// Get the auth service
@@ -244,7 +312,10 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             };
         }
 
-        Err(tonic::Status::not_found("unknow message type"))
+        warn!("Received gRPC request without metadata - invalid request format");
+        Err(tonic::Status::invalid_argument(
+            "Invalid request: missing metadata. Please ensure your client is sending properly formatted gRPC requests.",
+        ))
     }
 }
 

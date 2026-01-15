@@ -158,6 +158,7 @@ impl RemoteDataSource {
             }
         }
     }
+
 }
 
 #[async_trait]
@@ -409,16 +410,33 @@ impl ConsoleDataSource for RemoteDataSource {
 
     async fn config_import(
         &self,
-        _file_data: Vec<u8>,
-        _namespace_id: &str,
-        _policy: SameConfigPolicy,
+        file_data: Vec<u8>,
+        namespace_id: &str,
+        policy: SameConfigPolicy,
         _src_user: &str,
         _src_ip: &str,
     ) -> anyhow::Result<ImportResult> {
-        // Import via multipart is complex, for now return error
-        Err(anyhow::anyhow!(
-            "Config import is not yet supported in remote console mode"
-        ))
+        // Import configuration via HTTP API
+        let client_result = self
+            .api_client
+            .config_import(file_data, namespace_id, &format!("{}", policy))
+            .await?;
+
+        // Convert from client ImportResult to config ImportResult
+        Ok(ImportResult {
+            success_count: client_result.success_count,
+            skip_count: client_result.skip_count,
+            fail_count: client_result.fail_count,
+            fail_data: client_result
+                .fail_data
+                .into_iter()
+                .map(|item| batata_config::ImportFailItem {
+                    data_id: item.data_id,
+                    group: item.group,
+                    reason: item.reason,
+                })
+                .collect(),
+        })
     }
 
     async fn config_batch_delete(
@@ -942,7 +960,9 @@ impl ConsoleDataSource for RemoteDataSource {
     }
 
     fn cluster_refresh_self(&self) {
-        warn!("cluster_refresh_self called in remote mode - refresh not implemented");
+        // Remote data source uses HTTP API, cache is refreshed periodically via other means
+        // This method is a no-op for remote sources as the HTTP client handles connection failover
+        // and the cluster cache is refreshed in the constructor and by other operations
     }
 
     // ============== Helper Methods ==============

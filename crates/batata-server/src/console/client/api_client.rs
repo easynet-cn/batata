@@ -12,7 +12,10 @@ use crate::{
         },
         model::{Member, Page},
     },
-    config::model::ConfigAllInfo,
+    config::{
+        export_model::{ImportResult, SameConfigPolicy},
+        model::ConfigAllInfo,
+    },
     console::v3::cluster::{ClusterHealthResponse, SelfMemberResponse},
 };
 
@@ -370,6 +373,33 @@ impl ConsoleApiClient {
         let path = format!("/v3/console/cs/config/export?{}", query_string);
 
         self.http_client.get_bytes(&path).await
+    }
+
+    /// Import configuration from a ZIP file
+    pub async fn config_import(
+        &self,
+        file_data: Vec<u8>,
+        namespace_id: &str,
+        policy: SameConfigPolicy,
+    ) -> anyhow::Result<ImportResult> {
+        // Build query parameters
+        let query_string = serde_urlencoded::to_string(&[
+            ("namespace_id", namespace_id),
+            ("policy", &format!("{}", policy)),
+        ])?;
+        let path = format!("/v3/console/cs/config/import?{}", query_string);
+
+        // Create multipart form
+        let part = reqwest::multipart::Part::bytes(file_data)
+            .file_name("import.zip")
+            .mime_str("application/zip")?;
+        let form = reqwest::multipart::Form::new().part("file", part);
+
+        let response: ApiResponse<ImportResult> = self
+            .http_client
+            .post_multipart(&path, form)
+            .await?;
+        Ok(response.data)
     }
 
     // ============== History APIs ==============

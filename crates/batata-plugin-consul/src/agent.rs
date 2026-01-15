@@ -230,9 +230,11 @@ pub async fn get_service(
         for instance in instances {
             if instance.instance_id == service_id {
                 let agent_service = AgentService::from(&instance);
+                // Generate health check based on instance status
+                let checks = vec![create_service_health_check(&instance, &service_name)];
                 let response = AgentServiceWithChecks {
                     service: agent_service,
-                    checks: None, // Health checks not implemented yet
+                    checks: Some(checks),
                 };
                 return HttpResponse::Ok().json(response);
             }
@@ -243,6 +245,51 @@ pub async fn get_service(
         "Service not found: {}",
         service_id
     )))
+}
+
+// ============================================================================
+// Health Check Helper Functions
+// ============================================================================
+
+/// Create a health check for a service instance based on its status
+/// Integrates with Nacos naming service health status
+fn create_service_health_check(
+    instance: &NacosInstance,
+    service_name: &str,
+) -> crate::model::AgentCheck {
+    use crate::model::AgentCheck;
+
+    // Determine health status based on instance health and enabled state
+    let (status, output, notes) = if instance.healthy && instance.enabled {
+        (
+            "passing",
+            format!("Service '{}' is healthy", service_name),
+            "Service is running and accepting connections".to_string(),
+        )
+    } else if !instance.enabled {
+        (
+            "critical",
+            format!("Service '{}' is in maintenance mode", service_name),
+            "Service has been disabled or is in maintenance".to_string(),
+        )
+    } else {
+        (
+            "critical",
+            format!("Service '{}' is unhealthy", service_name),
+            "Service is not responding or health check failed".to_string(),
+        )
+    };
+
+    AgentCheck {
+        check_id: format!("service:{}:{}", service_name, instance.instance_id),
+        name: format!("{} Health Check", service_name),
+        status: status.to_string(),
+        notes,
+        output,
+        service_id: instance.instance_id.clone(),
+        service_name: service_name.to_string(),
+        check_type: "service".to_string(),
+    }
 }
 
 /// PUT /v1/agent/service/maintenance/{service_id}

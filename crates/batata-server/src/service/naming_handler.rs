@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use batata_core::model::Connection;
 use tonic::Status;
+use tracing::{info, warn};
 
 use crate::{
     api::{
@@ -20,18 +21,19 @@ use crate::{
         },
         remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
-    service::{naming::NamingService, rpc::{AuthRequirement, PayloadHandler}},
+    service::{naming::NamingService, naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern}, rpc::{AuthRequirement, PayloadHandler}},
 };
 
 // Handler for InstanceRequest - registers or deregisters a service instance
 #[derive(Clone)]
 pub struct InstanceRequestHandler {
     pub naming_service: Arc<NamingService>,
+    pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
 impl PayloadHandler for InstanceRequestHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = InstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -40,6 +42,8 @@ impl PayloadHandler for InstanceRequestHandler {
         let service_name = &request.naming_request.service_name;
         let instance = request.instance;
         let req_type = &request.r#type;
+
+        let src_ip = connection.meta_info.client_ip.as_str();
 
         let result = if req_type == REGISTER_INSTANCE {
             self.naming_service
@@ -50,6 +54,19 @@ impl PayloadHandler for InstanceRequestHandler {
         } else {
             false
         };
+
+        // Notify fuzzy watchers about service change
+        if result {
+            if let Err(e) = self.notify_fuzzy_watchers(
+                namespace,
+                group_name,
+                service_name,
+                req_type.as_str(),
+                src_ip,
+            ).await {
+                warn!("Failed to notify fuzzy watchers: {}", e);
+            }
+        }
 
         let mut response = InstanceResponse::new();
         response.response.request_id = request_id;
@@ -71,6 +88,55 @@ impl PayloadHandler for InstanceRequestHandler {
 
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Authenticated
+    }
+}
+
+impl InstanceRequestHandler {
+    /// Notify fuzzy watchers about service change
+    async fn notify_fuzzy_watchers(
+        &self,
+        namespace: &str,
+        group: &str,
+        service_name: &str,
+        change_type: &str,
+        source_ip: &str,
+    ) -> anyhow::Result<()> {
+        // Get watchers for this service
+        let watchers = self.naming_fuzzy_watch_manager.get_watchers_for_service(
+            namespace,
+            group,
+            service_name,
+        );
+
+        if watchers.is_empty() {
+            return Ok(());
+        }
+
+        // Build group key
+        let group_key = NamingFuzzyWatchPattern::build_group_key(namespace, group, service_name);
+
+        info!(
+            "Notifying {} fuzzy watchers for service {} change: {}",
+            watchers.len(),
+            change_type,
+            group_key
+        );
+
+        // For each watcher, mark the service as received
+        // Future enhancement: Send actual notification payload via connection manager
+        for connection_id in watchers {
+            // Mark the group key as received by this connection
+            self.naming_fuzzy_watch_manager.mark_received(&connection_id, &group_key);
+
+            info!(
+                "Notified connection {} about service {} change: {}",
+                connection_id,
+                change_type,
+                group_key
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -334,6 +400,7 @@ impl PayloadHandler for NotifySubscriberHandler {
 #[derive(Clone)]
 pub struct NamingFuzzyWatchHandler {
     pub naming_service: Arc<NamingService>,
+    pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
@@ -348,14 +415,23 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
         let service_pattern = &request.service_name_pattern;
         let watch_type = &request.watch_type;
 
+        // Build group key pattern
+        let group_key_pattern = format!("{}+{}+{}", namespace, group_pattern, service_pattern);
+
         // Register the fuzzy watch pattern for this connection
-        self.naming_service.register_fuzzy_watch(
+        let registered = self.naming_fuzzy_watch_manager.register_watch(
             connection_id,
-            namespace,
-            group_pattern,
-            service_pattern,
+            &group_key_pattern,
             watch_type,
         );
+
+        if !registered {
+            warn!(
+                "Failed to register fuzzy watch for connection {}: {}",
+                connection_id,
+                group_key_pattern
+            );
+        }
 
         // Return matching service keys if this is an initializing request
         let mut response = NamingFuzzyWatchResponse::new();
@@ -373,13 +449,21 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
 #[derive(Clone)]
 pub struct NamingFuzzyWatchChangeNotifyHandler {
     pub naming_service: Arc<NamingService>,
+    pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchChangeNotifyHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchChangeNotifyRequest::from(payload);
         let request_id = request.request_id();
+
+        let connection_id = &connection.meta_info.connection_id;
+        // service_key is the group_key (format: namespace+group+service_name)
+        let group_key = &request.service_key;
+
+        // Mark the group key as received by this connection
+        self.naming_fuzzy_watch_manager.mark_received(connection_id, group_key);
 
         let mut response = NamingFuzzyWatchChangeNotifyResponse::new();
         response.response.request_id = request_id;
@@ -396,6 +480,7 @@ impl PayloadHandler for NamingFuzzyWatchChangeNotifyHandler {
 #[derive(Clone)]
 pub struct NamingFuzzyWatchSyncHandler {
     pub naming_service: Arc<NamingService>,
+    pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
 }
 
 #[tonic::async_trait]
@@ -410,6 +495,9 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
         let service_pattern = &request.pattern_service_name;
         let sync_type = &request.sync_type;
 
+        // Build group key pattern
+        let group_key_pattern = format!("{}+{}+{}", namespace, group_pattern, service_pattern);
+
         // For initial sync, get all matching services
         if sync_type == "all" || request.current_batch == 0 {
             // Get all services matching the pattern
@@ -422,14 +510,20 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
             // This handler acknowledges the sync request
         }
 
-        // Also register the pattern if not already registered
-        self.naming_service.register_fuzzy_watch(
+        // Register the pattern if not already registered
+        let registered = self.naming_fuzzy_watch_manager.register_watch(
             connection_id,
-            namespace,
-            group_pattern,
-            service_pattern,
+            &group_key_pattern,
             sync_type,
         );
+
+        if !registered {
+            warn!(
+                "Failed to register fuzzy watch sync for connection {}: {}",
+                connection_id,
+                group_key_pattern
+            );
+        }
 
         let mut response = NamingFuzzyWatchSyncResponse::new();
         response.response.request_id = request_id;

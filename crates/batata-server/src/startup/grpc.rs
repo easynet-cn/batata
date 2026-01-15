@@ -37,6 +37,7 @@ use crate::{
             ServerReloadHandler, SetupAckHandler,
         },
         naming::NamingService,
+        naming_fuzzy_watch::NamingFuzzyWatchManager,
         naming_handler::{
             BatchInstanceRequestHandler, InstanceRequestHandler,
             NamingFuzzyWatchChangeNotifyHandler, NamingFuzzyWatchHandler,
@@ -69,7 +70,13 @@ fn register_internal_handlers(
     registry.register_handler(Arc::new(ConnectionSetupHandler {}));
     registry.register_handler(Arc::new(ClientDetectionHandler {}));
     registry.register_handler(Arc::new(ServerLoaderInfoHandler { connection_manager }));
-    registry.register_handler(Arc::new(ServerReloadHandler {}));
+    // ServerReloadHandler with config path
+    let config_path = std::env::current_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("conf/application.yml")
+        .to_string_lossy()
+        .to_string();
+    registry.register_handler(Arc::new(ServerReloadHandler { config_path }));
     registry.register_handler(Arc::new(ConnectResetHandler {}));
     registry.register_handler(Arc::new(SetupAckHandler {}));
     registry.register_handler(Arc::new(PushAckHandler {}));
@@ -86,9 +93,11 @@ fn register_config_handlers(
     }));
     registry.register_handler(Arc::new(ConfigPublishHandler {
         app_state: app_state.clone(),
+        fuzzy_watch_manager: fuzzy_watch_manager.clone(),
     }));
     registry.register_handler(Arc::new(ConfigRemoveHandler {
         app_state: app_state.clone(),
+        fuzzy_watch_manager: fuzzy_watch_manager.clone(),
     }));
     registry.register_handler(Arc::new(ConfigBatchListenHandler {
         app_state: app_state.clone(),
@@ -117,9 +126,14 @@ fn register_config_handlers(
 }
 
 /// Registers all naming handlers.
-fn register_naming_handlers(registry: &mut HandlerRegistry, naming_service: Arc<NamingService>) {
+fn register_naming_handlers(
+    registry: &mut HandlerRegistry,
+    naming_service: Arc<NamingService>,
+    naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
+) {
     registry.register_handler(Arc::new(InstanceRequestHandler {
         naming_service: naming_service.clone(),
+        naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
     }));
     registry.register_handler(Arc::new(BatchInstanceRequestHandler {
         naming_service: naming_service.clone(),
@@ -141,11 +155,16 @@ fn register_naming_handlers(registry: &mut HandlerRegistry, naming_service: Arc<
     }));
     registry.register_handler(Arc::new(NamingFuzzyWatchHandler {
         naming_service: naming_service.clone(),
+        naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
     }));
     registry.register_handler(Arc::new(NamingFuzzyWatchChangeNotifyHandler {
         naming_service: naming_service.clone(),
+        naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
     }));
-    registry.register_handler(Arc::new(NamingFuzzyWatchSyncHandler { naming_service }));
+    registry.register_handler(Arc::new(NamingFuzzyWatchSyncHandler {
+        naming_service,
+        naming_fuzzy_watch_manager,
+    }));
 }
 
 /// Registers all distro protocol handlers.
@@ -242,11 +261,14 @@ pub fn start_grpc_servers(
     // Create config fuzzy watch manager
     let config_fuzzy_watch_manager = Arc::new(ConfigFuzzyWatchManager::new());
 
+    // Create naming fuzzy watch manager
+    let naming_fuzzy_watch_manager = Arc::new(NamingFuzzyWatchManager::new());
+
     register_internal_handlers(&mut handler_registry, connection_manager.clone());
     register_config_handlers(&mut handler_registry, app_state.clone(), config_fuzzy_watch_manager);
 
     let naming_service = Arc::new(NamingService::new());
-    register_naming_handlers(&mut handler_registry, naming_service.clone());
+    register_naming_handlers(&mut handler_registry, naming_service.clone(), naming_fuzzy_watch_manager);
 
     // Create local address for distro protocol
     let local_ip = "127.0.0.1"; // Will be updated with actual cluster member discovery

@@ -120,6 +120,12 @@ pub struct KVQueryParams {
 
     /// Separator for keys listing
     pub separator: Option<String>,
+
+    /// Wait for index to be >= this value (blocking wait for watch)
+    pub index: Option<u64>,
+
+    /// Wait time in milliseconds for blocking wait
+    pub wait: Option<u64>,
 }
 
 /// Transaction operation
@@ -200,6 +206,31 @@ impl ConsulKVService {
     /// Get the next index
     fn next_index(&self) -> u64 {
         self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Get current index for watch operations
+    pub fn current_index(&self) -> u64 {
+        self.index.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Wait for index to be >= target (simple blocking watch implementation)
+    /// Returns true if index reached, false on timeout
+    pub async fn wait_for_index(&self, target_index: u64, timeout_ms: u64) -> bool {
+        let start = std::time::Instant::now();
+        let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+
+        loop {
+            if self.current_index() >= target_index {
+                return true;
+            }
+
+            if start.elapsed() >= timeout_duration {
+                return false;
+            }
+
+            // Poll every 100ms to avoid busy waiting
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
     }
 
     /// Get a single key
@@ -479,6 +510,25 @@ pub async fn get_kv(
     let keys_only = query.keys.unwrap_or(false);
     let recurse = query.recurse.unwrap_or(false);
 
+    // Handle blocking watch request
+    if let Some(target_index) = query.index {
+        let wait_ms = query.wait.unwrap_or(5000); // Default 5 second timeout
+        // Wait for index to be reached
+        let reached = kv_service.wait_for_index(target_index, wait_ms).await;
+        if !reached {
+            // Timeout - return 404 or empty response based on existing data
+            let has_data = kv_service.get(&key).is_some()
+                || kv_service
+                    .get_prefix(&key)
+                    .iter()
+                    .any(|p| !p.key.is_empty());
+            if !has_data {
+                return HttpResponse::NotFound().finish();
+            }
+            // Return current data even though timeout occurred
+        }
+    }
+
     // Handle keys-only request
     if keys_only {
         let keys = kv_service.get_keys(&key, query.separator.as_deref());
@@ -722,47 +772,143 @@ mod tests {
         assert!(service.get("prefix/key2").is_none());
         assert!(service.get("prefix/key3").is_none());
     }
-
-    #[test]
-    fn test_kv_transaction() {
-        let service = ConsulKVService::new();
-
-        let ops = vec![
-            TxnOp {
-                kv: Some(KVTxnOp {
-                    verb: "set".to_string(),
-                    key: "txn/key1".to_string(),
-                    value: Some(BASE64.encode("value1".as_bytes())),
-                    flags: None,
-                    index: None,
-                }),
-            },
-            TxnOp {
-                kv: Some(KVTxnOp {
-                    verb: "set".to_string(),
-                    key: "txn/key2".to_string(),
-                    value: Some(BASE64.encode("value2".as_bytes())),
-                    flags: None,
-                    index: None,
-                }),
-            },
-            TxnOp {
-                kv: Some(KVTxnOp {
-                    verb: "get".to_string(),
-                    key: "txn/key1".to_string(),
-                    value: None,
-                    flags: None,
-                    index: None,
-                }),
-            },
-        ];
-
-        let result = service.transaction(ops);
-        assert!(result.errors.is_none());
-        assert_eq!(result.results.as_ref().unwrap().len(), 3);
-
-        // Verify the keys exist
-        assert!(service.get("txn/key1").is_some());
-        assert!(service.get("txn/key2").is_some());
-    }
 }
+
+// ============================================================================
+// Export/Import Handlers
+// ============================================================================
+
+/// Export all KV pairs as JSON
+    /// Returns a complete snapshot of the KV store
+    pub async fn export_kv(
+        kv_service: web::Data<ConsulKVService>,
+        acl_service: web::Data<AclService>,
+        req: HttpRequest,
+    ) -> HttpResponse {
+        // Check ACL authorization for read access to all keys
+        let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", false);
+        if !authz.allowed {
+            return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        }
+
+        // Collect all KV pairs
+        let pairs: Vec<KVPair> = kv_service
+            .store
+            .iter()
+            .map(|entry| entry.value().pair.clone())
+            .collect();
+
+        let count = pairs.len();
+
+        // Return as JSON with metadata
+        #[derive(Serialize)]
+        struct ExportResult {
+            pairs: Vec<KVPair>,
+            count: usize,
+            export_time: i64,
+        }
+
+        let result = ExportResult {
+            pairs,
+            count,
+            export_time: current_timestamp(),
+        };
+
+        HttpResponse::Ok().json(result)
+    }
+
+    /// Import KV pairs from JSON
+    /// Accepts a list of KV pairs and imports them
+    pub async fn import_kv(
+        kv_service: web::Data<ConsulKVService>,
+        acl_service: web::Data<AclService>,
+        req: HttpRequest,
+        body: web::Json<Vec<KVPair>>,
+    ) -> HttpResponse {
+        // Check ACL authorization for write access to all keys
+        let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", true);
+        if !authz.allowed {
+            return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+        }
+
+        let pairs_to_import = body.into_inner();
+        let mut success_count = 0;
+        let mut failed_count = 0;
+
+        // Import each KV pair
+        for pair in pairs_to_import {
+            // Decode value if present
+            if let Some(decoded) = pair.decoded_value() {
+                // Store the pair with original flags
+                kv_service.put(pair.key.clone(), &decoded, Some(pair.flags));
+                success_count += 1;
+            } else {
+                failed_count += 1;
+            }
+        }
+
+        #[derive(Serialize)]
+        struct ImportResult {
+            success_count: usize,
+            failed_count: usize,
+            total_count: usize,
+            import_time: i64,
+        }
+
+        let result = ImportResult {
+            success_count,
+            failed_count,
+            total_count: success_count + failed_count,
+            import_time: current_timestamp(),
+        };
+
+        HttpResponse::Ok().json(result)
+    }
+
+#[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_kv_transaction() {
+            let service = ConsulKVService::new();
+
+            let ops = vec![
+                TxnOp {
+                    kv: Some(KVTxnOp {
+                        verb: "set".to_string(),
+                        key: "txn/key1".to_string(),
+                        value: Some(BASE64.encode("value1".as_bytes())),
+                        flags: None,
+                        index: None,
+                    }),
+                },
+                TxnOp {
+                    kv: Some(KVTxnOp {
+                        verb: "set".to_string(),
+                        key: "txn/key2".to_string(),
+                        value: Some(BASE64.encode("value2".as_bytes())),
+                        flags: None,
+                        index: None,
+                    }),
+                },
+                TxnOp {
+                    kv: Some(KVTxnOp {
+                        verb: "get".to_string(),
+                        key: "txn/key1".to_string(),
+                        value: None,
+                        flags: None,
+                        index: None,
+                    }),
+                },
+            ];
+
+            let result = service.transaction(ops);
+            assert!(result.errors.is_none());
+            assert_eq!(result.results.as_ref().unwrap().len(), 3);
+
+            // Verify the keys exist
+            assert!(service.get("txn/key1").is_some());
+            assert!(service.get("txn/key2").is_some());
+        }
+    }

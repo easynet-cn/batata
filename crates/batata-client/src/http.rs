@@ -479,6 +479,40 @@ impl BatataHttpClient {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All servers failed")))
     }
 
+    /// Make a POST request with multipart form data (for file uploads)
+    /// Note: multipart requests cannot be retried across servers since Form cannot be cloned
+    pub async fn post_multipart<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> anyhow::Result<T> {
+        let url = self.build_url(path).clone();
+        let token = self.ensure_token().await?;
+
+        match self
+            .client
+            .post(url)
+            .header("accessToken", &token)
+            .multipart(form)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    warn!("Token expired, re-authenticating...");
+                    self.authenticate().await?;
+                    // Token expired, caller should retry
+                    return Err(anyhow::anyhow!("Token expired, please retry"));
+                }
+                self.handle_response(response).await
+            }
+            Err(e) => {
+                warn!("Request failed: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
     /// Generic request with retry logic
     async fn request_with_retry<T, F, Fut>(&self, request_fn: F, path: &str) -> anyhow::Result<T>
     where
