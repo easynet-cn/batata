@@ -25,10 +25,31 @@ use super::{
 use crate::model::{ClusterHealthResponse, ClusterHealthSummary, Member, SelfMemberResponse};
 
 /// Extension trait for RwLock that handles poison recovery gracefully
+///
+/// Lock poisoning occurs when a thread panics while holding a lock. By default,
+/// Rust marks the lock as "poisoned" to indicate the data may be in an inconsistent state.
+///
+/// This trait provides recovery methods that:
+/// 1. Log the poisoning event for debugging/monitoring
+/// 2. Clear the poisoned state and continue operation
+///
+/// This is appropriate for caches and non-critical data that can tolerate inconsistency.
+/// For critical data, consider using alternative synchronization methods or proper error handling.
 trait RwLockExt<T> {
     /// Acquire a read lock, recovering from poison if necessary
+    ///
+    /// # Safety
+    ///
+    /// The data behind the lock may be in an inconsistent state if the lock was poisoned.
+    /// Only use this for data that can tolerate such inconsistency (e.g., caches).
     fn read_recover(&self, name: &str) -> RwLockReadGuard<'_, T>;
+
     /// Acquire a write lock, recovering from poison if necessary
+    ///
+    /// # Safety
+    ///
+    /// The data behind the lock may be in an inconsistent state if the lock was poisoned.
+    /// Only use this for data that can tolerate such inconsistency (e.g., caches).
     fn write_recover(&self, name: &str) -> RwLockWriteGuard<'_, T>;
 }
 
@@ -36,10 +57,12 @@ impl<T> RwLockExt<T> for RwLock<T> {
     fn read_recover(&self, name: &str) -> RwLockReadGuard<'_, T> {
         self.read().unwrap_or_else(|poisoned| {
             // Lock poisoning indicates a panic occurred while holding the lock.
-            // Log at warn level to ensure visibility in production.
-            warn!(
+            // Log at error level since this indicates a serious issue.
+            tracing::error!(
                 lock_name = name,
-                "Recovering from poisoned read lock - a thread panicked while holding this lock"
+                "Lock poisoning detected on read lock '{}'. A thread panicked while holding this lock. \
+                 Data may be in an inconsistent state. Recovering and continuing operation.",
+                name
             );
             poisoned.into_inner()
         })
@@ -48,10 +71,12 @@ impl<T> RwLockExt<T> for RwLock<T> {
     fn write_recover(&self, name: &str) -> RwLockWriteGuard<'_, T> {
         self.write().unwrap_or_else(|poisoned| {
             // Lock poisoning indicates a panic occurred while holding the lock.
-            // Log at warn level to ensure visibility in production.
-            warn!(
+            // Log at error level since this indicates a serious issue.
+            tracing::error!(
                 lock_name = name,
-                "Recovering from poisoned write lock - a thread panicked while holding this lock"
+                "Lock poisoning detected on write lock '{}'. A thread panicked while holding this lock. \
+                 Data may be in an inconsistent state. Recovering and continuing operation.",
+                name
             );
             poisoned.into_inner()
         })
@@ -930,12 +955,12 @@ impl ConsoleDataSource for RemoteDataSource {
             .read_recover("cached_self")
             .clone()
             .unwrap_or(SelfMemberResponse {
-                ip: "unknown".to_string(),
+                ip: "0.0.0.0".to_string(),
                 port: 0,
-                address: "unknown".to_string(),
-                state: "unknown".to_string(),
+                address: "not-initialized".to_string(),
+                state: "STARTING".to_string(),
                 is_standalone: true,
-                version: "unknown".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
             })
     }
 

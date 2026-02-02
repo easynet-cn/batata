@@ -22,6 +22,9 @@ async-trait = "0.1"
 # Validation
 regex = "1.11"
 
+# Caching
+moka = { version = "0.12", features = ["sync"] }
+
 # Network
 if-addrs = "0.14"
 

@@ -310,12 +310,13 @@ impl RaftManagementService for RaftManagementGrpcService {
             Err(e) => {
                 // Check if we need to redirect to leader
                 if let Some(leader_id) = raft_node.leader_id() {
+                    let leader_addr = raft_node.leader_addr();
                     Ok(Response::new(ClientWriteResponse {
                         success: false,
                         data: Vec::new(),
                         message: format!("Not leader, redirect to leader {}", leader_id),
                         leader_id: Some(leader_id),
-                        leader_addr: None, // Leader address not available in metrics
+                        leader_addr,
                     }))
                 } else {
                     Err(Status::unavailable(format!("Write failed: {}", e)))
@@ -390,21 +391,29 @@ impl RaftManagementService for RaftManagementGrpcService {
             openraft::ServerState::Shutdown => "shutdown",
         };
 
-        let members: Vec<ProtoRaftNodeInfo> = metrics
-            .membership_config
-            .membership()
+        let membership = metrics.membership_config.membership();
+        let members: Vec<ProtoRaftNodeInfo> = membership
             .voter_ids()
-            .map(|id| ProtoRaftNodeInfo {
-                node_id: id,
-                addr: String::new(), // Address not directly available from membership
+            .map(|id| {
+                let addr = membership
+                    .get_node(&id)
+                    .map(|n| n.addr.clone())
+                    .unwrap_or_default();
+                ProtoRaftNodeInfo { node_id: id, addr }
             })
             .collect();
+
+        // Get leader address if available
+        let leader_addr = metrics
+            .current_leader
+            .and_then(|id| membership.get_node(&id).map(|n| n.addr.clone()));
 
         Ok(Response::new(GetMetricsResponse {
             node_id: metrics.id,
             state: state.to_string(),
             current_term: metrics.current_term,
             leader_id: metrics.current_leader,
+            leader_addr,
             last_log_index: metrics.last_log_index.unwrap_or(0),
             commit_index: metrics.last_applied.map(|l| l.index).unwrap_or(0), // Using last_applied as commit proxy
             applied_index: metrics.last_applied.map(|l| l.index).unwrap_or(0),

@@ -29,6 +29,7 @@ use crate::{
 pub struct InstanceRequestHandler {
     pub naming_service: Arc<NamingService>,
     pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
+    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -99,7 +100,7 @@ impl InstanceRequestHandler {
         group: &str,
         service_name: &str,
         change_type: &str,
-        source_ip: &str,
+        _source_ip: &str,
     ) -> anyhow::Result<()> {
         // Get watchers for this service
         let watchers = self.naming_fuzzy_watch_manager.get_watchers_for_service(
@@ -115,6 +116,24 @@ impl InstanceRequestHandler {
         // Build group key
         let group_key = NamingFuzzyWatchPattern::build_group_key(namespace, group, service_name);
 
+        // Get current service info for the notification
+        let service_info = self.naming_service.get_service(
+            namespace,
+            group,
+            service_name,
+            "",
+            false,
+        );
+
+        // Build notification payload
+        let notification = NotifySubscriberRequest::for_service(
+            namespace,
+            group,
+            service_name,
+            service_info,
+        );
+        let payload = notification.build_server_push_payload();
+
         info!(
             "Notifying {} fuzzy watchers for service {} change: {}",
             watchers.len(),
@@ -122,19 +141,35 @@ impl InstanceRequestHandler {
             group_key
         );
 
-        // For each watcher, mark the service as received
-        // Future enhancement: Send actual notification payload via connection manager
-        for connection_id in watchers {
+        // Push notification to each watcher
+        for connection_id in &watchers {
             // Mark the group key as received by this connection
-            self.naming_fuzzy_watch_manager.mark_received(&connection_id, &group_key);
+            self.naming_fuzzy_watch_manager.mark_received(connection_id, &group_key);
 
-            info!(
-                "Notified connection {} about service {} change: {}",
-                connection_id,
-                change_type,
-                group_key
-            );
+            // Push the actual notification payload
+            if self.connection_manager.push_message(connection_id, payload.clone()).await {
+                tracing::debug!(
+                    "Pushed service {} notification to connection {}: {}",
+                    change_type,
+                    connection_id,
+                    group_key
+                );
+            } else {
+                warn!(
+                    "Failed to push service {} notification to connection {}: {}",
+                    change_type,
+                    connection_id,
+                    group_key
+                );
+            }
         }
+
+        info!(
+            "Notified {} fuzzy watchers for service {} change: {}",
+            watchers.len(),
+            change_type,
+            group_key
+        );
 
         Ok(())
     }

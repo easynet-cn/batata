@@ -1,4 +1,23 @@
-// Data models module
-// This module contains all data models, structures, and shared types used across the application
+//! Data models module
+//!
+//! This module contains all data models, structures, and shared types used across the application.
+//!
+//! # Module Structure
+//!
+//! - `constants` - Server-specific constants and re-exports from batata_api
+//! - `config` - Configuration management
+//! - `response` - HTTP response types (Result, ErrorResult, ConsoleException)
+//! - `app_state` - Application state shared across handlers
+//! - `common` - Re-exports for backward compatibility
 
-pub mod common; // Common models and shared structures
+pub mod app_state;
+pub mod common;
+pub mod config;
+pub mod constants;
+pub mod response;
+
+// Re-export commonly used types at the module level
+pub use app_state::AppState;
+pub use config::Configuration;
+pub use constants::*;
+pub use response::{ConsoleException, ErrorResult, Result};

@@ -64,7 +64,7 @@ async fn readiness(data: web::Data<AppState>) -> impl Responder {
     let cluster_status = ClusterStatus {
         status: "UP".to_string(),
         member_count: data.member_manager().all_members().len(),
-        is_leader: true, // Simplified - in production would check Raft leader status
+        is_leader: data.member_manager().is_leader(),
     };
 
     let overall_status = if db_status.status == "UP" && cluster_status.status == "UP" {
@@ -93,7 +93,7 @@ async fn health_check(data: web::Data<AppState>) -> impl Responder {
     let cluster_status = ClusterStatus {
         status: "UP".to_string(),
         member_count: data.member_manager().all_members().len(),
-        is_leader: true, // Simplified - in production would check Raft leader status
+        is_leader: data.member_manager().is_leader(),
     };
 
     let overall_status = if db_status.status == "UP" && cluster_status.status == "UP" {

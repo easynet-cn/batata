@@ -28,5 +28,8 @@ async-trait = "0.1"
 bytes = "1.11"
 chrono = "0.4"
 
+# Input validation
+validator = { version = "0.18", features = ["derive"] }
+
 [build-dependencies]
 tonic-prost-build = "0.14"

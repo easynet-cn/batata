@@ -3,12 +3,98 @@
 //! Common helper functions used across the codebase.
 
 use std::sync::LazyLock;
+use std::time::Duration;
 
 use if_addrs::IfAddr;
+use moka::sync::Cache;
 
 /// Regex pattern for validating identifiers (dataId, group, etc.)
 static VALID_PATTERN: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new("^[a-zA-Z0-9_.:-]*$").expect("Invalid regex pattern"));
+
+/// Global regex cache with TTL of 1 hour and max 10,000 entries
+/// This prevents repeated compilation of the same regex patterns
+static REGEX_CACHE: LazyLock<Cache<String, regex::Regex>> = LazyLock::new(|| {
+    Cache::builder()
+        .max_capacity(10_000)
+        .time_to_live(Duration::from_secs(3600))
+        .build()
+});
+
+/// Get or compile a regex pattern with caching
+///
+/// This function caches compiled regex patterns to avoid repeated compilation.
+/// Returns None if the pattern is invalid.
+///
+/// # Examples
+///
+/// ```
+/// use batata_common::utils::get_or_compile_regex;
+///
+/// let re = get_or_compile_regex("^test.*$");
+/// assert!(re.is_some());
+/// assert!(re.unwrap().is_match("test123"));
+///
+/// // Invalid pattern returns None
+/// let invalid = get_or_compile_regex("[invalid");
+/// assert!(invalid.is_none());
+/// ```
+pub fn get_or_compile_regex(pattern: &str) -> Option<regex::Regex> {
+    if let Some(re) = REGEX_CACHE.get(pattern) {
+        return Some(re);
+    }
+
+    match regex::Regex::new(pattern) {
+        Ok(re) => {
+            REGEX_CACHE.insert(pattern.to_string(), re.clone());
+            Some(re)
+        }
+        Err(_) => None,
+    }
+}
+
+/// Check if a text matches a cached regex pattern
+///
+/// This is a convenience function that combines caching and matching.
+/// Returns false if the pattern is invalid.
+///
+/// # Examples
+///
+/// ```
+/// use batata_common::utils::regex_matches;
+///
+/// assert!(regex_matches("^test.*", "test123"));
+/// assert!(!regex_matches("^test.*", "hello"));
+/// assert!(!regex_matches("[invalid", "any")); // Invalid pattern returns false
+/// ```
+pub fn regex_matches(pattern: &str, text: &str) -> bool {
+    get_or_compile_regex(pattern)
+        .map(|re| re.is_match(text))
+        .unwrap_or(false)
+}
+
+/// Convert a glob-style pattern (with * and ?) to a regex pattern and match
+///
+/// Supports:
+/// - `*` matches any sequence of characters
+/// - `?` matches any single character
+///
+/// # Examples
+///
+/// ```
+/// use batata_common::utils::glob_matches;
+///
+/// assert!(glob_matches("test*", "test123"));
+/// assert!(glob_matches("test?", "testA"));
+/// assert!(!glob_matches("test?", "test"));
+/// ```
+pub fn glob_matches(pattern: &str, text: &str) -> bool {
+    let regex_pattern = format!(
+        "^{}$",
+        regex::escape(pattern).replace("\\*", ".*").replace("\\?", ".")
+    );
+    regex_matches(&regex_pattern, text)
+}
 
 /// Validate a string contains only allowed characters
 ///

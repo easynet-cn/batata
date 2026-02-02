@@ -223,6 +223,9 @@ pub struct GetMetricsResponse {
     pub current_term: u64,
     #[prost(uint64, optional, tag = "4")]
     pub leader_id: ::core::option::Option<u64>,
+    /// Leader's address if known
+    #[prost(string, optional, tag = "9")]
+    pub leader_addr: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(uint64, tag = "5")]
     pub last_log_index: u64,
     #[prost(uint64, tag = "6")]

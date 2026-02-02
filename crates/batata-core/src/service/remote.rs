@@ -70,4 +70,53 @@ impl ConnectionManager {
     pub fn connection_count(&self) -> usize {
         self.clients.len()
     }
+
+    /// Push a message to a specific connection
+    ///
+    /// Returns true if the message was sent successfully, false if the connection doesn't exist
+    /// or the send failed
+    pub async fn push_message(&self, connection_id: &str, payload: batata_api::grpc::Payload) -> bool {
+        if let Some(client) = self.clients.get(connection_id) {
+            match client.tx.send(Ok(payload)).await {
+                Ok(_) => {
+                    tracing::debug!(connection_id, "Message pushed successfully");
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(connection_id, error = %e, "Failed to push message");
+                    false
+                }
+            }
+        } else {
+            tracing::debug!(connection_id, "Connection not found for push");
+            false
+        }
+    }
+
+    /// Push a message to multiple connections
+    ///
+    /// Returns the number of successful sends
+    pub async fn push_message_to_many(
+        &self,
+        connection_ids: &[String],
+        payload: batata_api::grpc::Payload,
+    ) -> usize {
+        let mut success_count = 0;
+        for connection_id in connection_ids {
+            if self.push_message(connection_id, payload.clone()).await {
+                success_count += 1;
+            }
+        }
+        success_count
+    }
+
+    /// Get a client by connection ID
+    pub fn get_client(&self, connection_id: &str) -> Option<GrpcClient> {
+        self.clients.get(connection_id).map(|r| (*r).clone())
+    }
+
+    /// Check if a connection exists
+    pub fn has_connection(&self, connection_id: &str) -> bool {
+        self.clients.contains_key(connection_id)
+    }
 }

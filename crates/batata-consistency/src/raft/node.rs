@@ -109,6 +109,26 @@ impl RaftNode {
         metrics.current_leader
     }
 
+    /// Get the current leader's address (if known)
+    pub fn leader_addr(&self) -> Option<String> {
+        let metrics = self.metrics();
+        if let Some(leader_id) = metrics.current_leader {
+            // Look up the leader's address in the membership config
+            let membership = metrics.membership_config.membership();
+            if let Some(node) = membership.get_node(&leader_id) {
+                return Some(node.addr.clone());
+            }
+        }
+        None
+    }
+
+    /// Get a node's address by ID from the current membership
+    pub fn get_node_addr(&self, node_id: NodeId) -> Option<String> {
+        let metrics = self.metrics();
+        let membership = metrics.membership_config.membership();
+        membership.get_node(&node_id).map(|n| n.addr.clone())
+    }
+
     /// Initialize the cluster with the given members
     /// This should only be called on the first node of a new cluster
     pub async fn initialize(

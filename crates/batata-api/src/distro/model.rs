@@ -53,6 +53,9 @@ impl std::fmt::Display for DistroDataType {
 pub struct DistroDataItem {
     /// Data type
     pub data_type: DistroDataType,
+    /// Custom type name (only used when data_type is Custom)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_type_name: Option<String>,
     /// Unique key for this data (e.g., service_key for naming instances)
     pub key: String,
     /// Serialized data content (JSON encoded)
@@ -67,10 +70,39 @@ impl DistroDataItem {
     pub fn new(data_type: DistroDataType, key: String, content: String, source: String) -> Self {
         Self {
             data_type,
+            custom_type_name: None,
             key,
             content,
             version: chrono::Utc::now().timestamp_millis(),
             source,
+        }
+    }
+
+    /// Create a new DistroDataItem with a custom type name
+    pub fn with_custom_type(
+        custom_type_name: String,
+        key: String,
+        content: String,
+        source: String,
+    ) -> Self {
+        Self {
+            data_type: DistroDataType::Custom,
+            custom_type_name: Some(custom_type_name),
+            key,
+            content,
+            version: chrono::Utc::now().timestamp_millis(),
+            source,
+        }
+    }
+
+    /// Get the effective type name (returns custom_type_name for Custom type)
+    pub fn effective_type_name(&self) -> String {
+        match self.data_type {
+            DistroDataType::Custom => self
+                .custom_type_name
+                .clone()
+                .unwrap_or_else(|| "CUSTOM".to_string()),
+            _ => self.data_type.to_string(),
         }
     }
 }
@@ -140,6 +172,9 @@ pub struct DistroDataVerifyRequest {
     pub internal_request: InternalRequest,
     /// Data type to verify
     pub data_type: DistroDataType,
+    /// Custom type name (only used when data_type is Custom)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_type_name: Option<String>,
     /// Keys and their versions to verify
     pub verify_data: HashMap<String, i64>,
     #[serde(
@@ -154,8 +189,31 @@ impl DistroDataVerifyRequest {
         Self {
             internal_request: InternalRequest::new(),
             data_type: DistroDataType::NamingInstance,
+            custom_type_name: None,
             verify_data: HashMap::new(),
             module: NAMING_MODULE.to_string(),
+        }
+    }
+
+    /// Create a verify request for a custom type
+    pub fn for_custom_type(custom_type_name: &str) -> Self {
+        Self {
+            internal_request: InternalRequest::new(),
+            data_type: DistroDataType::Custom,
+            custom_type_name: Some(custom_type_name.to_string()),
+            verify_data: HashMap::new(),
+            module: NAMING_MODULE.to_string(),
+        }
+    }
+
+    /// Get the effective type name
+    pub fn effective_type_name(&self) -> String {
+        match self.data_type {
+            DistroDataType::Custom => self
+                .custom_type_name
+                .clone()
+                .unwrap_or_else(|| "CUSTOM".to_string()),
+            _ => self.data_type.to_string(),
         }
     }
 }
@@ -192,6 +250,9 @@ pub struct DistroDataSnapshotRequest {
     pub internal_request: InternalRequest,
     /// Data type to get snapshot for
     pub data_type: DistroDataType,
+    /// Custom type name (only used when data_type is Custom)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_type_name: Option<String>,
     #[serde(
         serialize_with = "serialize_naming_module",
         deserialize_with = "deserialize_naming_module"
@@ -204,7 +265,29 @@ impl DistroDataSnapshotRequest {
         Self {
             internal_request: InternalRequest::new(),
             data_type,
+            custom_type_name: None,
             module: NAMING_MODULE.to_string(),
+        }
+    }
+
+    /// Create a snapshot request for a custom type
+    pub fn for_custom_type(custom_type_name: &str) -> Self {
+        Self {
+            internal_request: InternalRequest::new(),
+            data_type: DistroDataType::Custom,
+            custom_type_name: Some(custom_type_name.to_string()),
+            module: NAMING_MODULE.to_string(),
+        }
+    }
+
+    /// Get the effective type name
+    pub fn effective_type_name(&self) -> String {
+        match self.data_type {
+            DistroDataType::Custom => self
+                .custom_type_name
+                .clone()
+                .unwrap_or_else(|| "CUSTOM".to_string()),
+            _ => self.data_type.to_string(),
         }
     }
 }
@@ -395,6 +478,44 @@ mod tests {
         assert_eq!(item.data_type, DistroDataType::NamingInstance);
         assert_eq!(item.key, "public@@DEFAULT_GROUP@@test-service");
         assert!(item.version > 0);
+        assert!(item.custom_type_name.is_none());
+        assert_eq!(item.effective_type_name(), "NAMING_INSTANCE");
+    }
+
+    #[test]
+    fn test_distro_data_item_with_custom_type() {
+        let item = DistroDataItem::with_custom_type(
+            "my_custom_type".to_string(),
+            "custom-key".to_string(),
+            r#"{"data":"value"}"#.to_string(),
+            "192.168.1.1:8848".to_string(),
+        );
+
+        assert_eq!(item.data_type, DistroDataType::Custom);
+        assert_eq!(item.custom_type_name, Some("my_custom_type".to_string()));
+        assert_eq!(item.key, "custom-key");
+        assert!(item.version > 0);
+        assert_eq!(item.effective_type_name(), "my_custom_type");
+    }
+
+    #[test]
+    fn test_distro_data_item_custom_serialization() {
+        let item = DistroDataItem::with_custom_type(
+            "test_type".to_string(),
+            "key".to_string(),
+            "content".to_string(),
+            "source".to_string(),
+        );
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("customTypeName"));
+        assert!(json.contains("test_type"));
+
+        // Deserialize back
+        let deserialized: DistroDataItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.custom_type_name, Some("test_type".to_string()));
+        assert_eq!(deserialized.effective_type_name(), "test_type");
     }
 
     #[test]

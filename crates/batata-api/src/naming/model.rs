@@ -447,6 +447,23 @@ impl NotifySubscriberRequest {
             ..Default::default()
         }
     }
+
+    /// Create a notification for a service change
+    pub fn for_service(
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        service_info: Service,
+    ) -> Self {
+        Self {
+            server_request: ServerRequest::new(),
+            namespace: namespace.to_string(),
+            group_name: group_name.to_string(),
+            service_name: service_name.to_string(),
+            service_info,
+            module: "naming".to_string(),
+        }
+    }
 }
 
 impl RequestTrait for NotifySubscriberRequest {

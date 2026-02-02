@@ -383,6 +383,59 @@ impl ServerMemberManager {
         healthy > total / 2
     }
 
+    /// Check if this node is the leader
+    ///
+    /// In standalone mode, this always returns true.
+    /// In cluster mode, the leader is determined by:
+    /// - The first healthy node (by sorted address) is considered the leader
+    /// - This provides a simple deterministic leader election without Raft overhead
+    ///
+    /// Note: For CP (consistent) operations, use the Raft consensus layer instead.
+    /// This method is suitable for AP (available) operations and cluster status reporting.
+    pub fn is_leader(&self) -> bool {
+        if self.is_standalone {
+            return true;
+        }
+
+        // Get all healthy members and sort by address
+        let mut healthy_addresses: Vec<String> = self
+            .server_list
+            .iter()
+            .filter(|e| matches!(e.value().state, NodeState::Up))
+            .map(|e| e.key().clone())
+            .collect();
+
+        healthy_addresses.sort();
+
+        // The first healthy node (by sorted address) is the leader
+        healthy_addresses
+            .first()
+            .map(|addr| addr == &self.local_address)
+            .unwrap_or(false)
+    }
+
+    /// Get the current leader address
+    ///
+    /// Returns the address of the current leader node.
+    /// In standalone mode, returns the local address.
+    /// In cluster mode, returns the first healthy node by sorted address.
+    pub fn leader_address(&self) -> Option<String> {
+        if self.is_standalone {
+            return Some(self.local_address.clone());
+        }
+
+        // Get all healthy members and sort by address
+        let mut healthy_addresses: Vec<String> = self
+            .server_list
+            .iter()
+            .filter(|e| matches!(e.value().state, NodeState::Up))
+            .map(|e| e.key().clone())
+            .collect();
+
+        healthy_addresses.sort();
+        healthy_addresses.into_iter().next()
+    }
+
     /// Get cluster health summary
     pub fn health_summary(&self) -> ClusterHealthSummary {
         let mut summary = ClusterHealthSummary {
@@ -442,6 +495,19 @@ impl ClusterHealthSummary {
 mod tests {
     use super::*;
 
+    fn test_config() -> Configuration {
+        let config = config::Config::builder()
+            .set_default("nacos.standalone", true)
+            .unwrap()
+            .set_default("nacos.server.main.port", 8848)
+            .unwrap()
+            .set_default("nacos.version", "1.0.0")
+            .unwrap()
+            .build()
+            .unwrap();
+        Configuration::from_config(config)
+    }
+
     #[test]
     fn test_cluster_health_summary() {
         let summary = ClusterHealthSummary {
@@ -465,5 +531,27 @@ mod tests {
         };
 
         assert!(!unhealthy.is_healthy());
+    }
+
+    #[test]
+    fn test_is_leader_standalone() {
+        // In standalone mode, node is always the leader
+        let config = test_config();
+        let manager = ServerMemberManager::new(&config);
+
+        // Standalone mode should always return true
+        assert!(manager.is_standalone());
+        assert!(manager.is_leader());
+    }
+
+    #[test]
+    fn test_leader_address_standalone() {
+        let config = test_config();
+        let manager = ServerMemberManager::new(&config);
+
+        // Standalone mode should return local address
+        let leader = manager.leader_address();
+        assert!(leader.is_some());
+        assert_eq!(leader.unwrap(), manager.local_address());
     }
 }

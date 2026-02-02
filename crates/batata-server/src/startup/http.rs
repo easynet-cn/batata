@@ -3,12 +3,15 @@
 use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::{
     api::consul::{
         AclService, agent::ConsulAgentService, catalog::ConsulCatalogService,
         health::ConsulHealthService, kv::ConsulKVService, route::consul_routes,
     },
+    api::openapi::ApiDoc,
     auth, console,
     middleware::{auth::Authentication, rate_limit::RateLimiter},
     model::common::AppState,
@@ -68,6 +71,7 @@ pub fn console_server(
 ///
 /// The main server provides the core Nacos-compatible API endpoints
 /// including config management, service discovery, and Consul compatibility.
+/// It also serves Swagger UI at `/swagger-ui/` for API documentation.
 pub fn main_server(
     app_state: Arc<AppState>,
     naming_service: Arc<NamingService>,
@@ -88,6 +92,11 @@ pub fn main_server(
             .app_data(web::Data::new(consul_services.kv.clone()))
             .app_data(web::Data::new(consul_services.catalog.clone()))
             .app_data(web::Data::new(consul_services.acl.clone()))
+            // Swagger UI for API documentation
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi()),
+            )
             .service(
                 web::scope(&context_path)
                     .service(auth::v1::route::routes())

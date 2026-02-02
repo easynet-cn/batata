@@ -69,6 +69,40 @@ pub trait RequestTrait {
         serde_json::from_slice::<T>(&value.body.clone().unwrap_or_default().value.to_vec())
             .unwrap_or_default()
     }
+
+    /// Convert the request to a protobuf Any type for gRPC transmission
+    fn to_any(&self) -> Any
+    where
+        Self: Serialize,
+    {
+        Any {
+            type_url: String::default(),
+            value: self.body(),
+        }
+    }
+
+    /// Convert the request to a gRPC payload with metadata
+    fn to_payload(&self, metadata: Option<Metadata>) -> Payload
+    where
+        Self: Serialize,
+    {
+        Payload {
+            metadata,
+            body: Some(self.to_any()),
+        }
+    }
+
+    /// Build a complete gRPC payload with auto-generated metadata (for server push)
+    fn build_server_push_payload(&self) -> Payload
+    where
+        Self: Serialize,
+    {
+        let metadata = Metadata {
+            r#type: self.request_type().to_string(),
+            ..Default::default()
+        };
+        self.to_payload(Some(metadata))
+    }
 }
 
 /// Base request structure

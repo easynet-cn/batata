@@ -87,6 +87,7 @@ fn register_config_handlers(
     registry: &mut HandlerRegistry,
     app_state: Arc<AppState>,
     fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+    connection_manager: Arc<ConnectionManager>,
 ) {
     registry.register_handler(Arc::new(ConfigQueryHandler {
         app_state: app_state.clone(),
@@ -94,10 +95,12 @@ fn register_config_handlers(
     registry.register_handler(Arc::new(ConfigPublishHandler {
         app_state: app_state.clone(),
         fuzzy_watch_manager: fuzzy_watch_manager.clone(),
+        connection_manager: connection_manager.clone(),
     }));
     registry.register_handler(Arc::new(ConfigRemoveHandler {
         app_state: app_state.clone(),
         fuzzy_watch_manager: fuzzy_watch_manager.clone(),
+        connection_manager: connection_manager.clone(),
     }));
     registry.register_handler(Arc::new(ConfigBatchListenHandler {
         app_state: app_state.clone(),
@@ -130,10 +133,12 @@ fn register_naming_handlers(
     registry: &mut HandlerRegistry,
     naming_service: Arc<NamingService>,
     naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
+    connection_manager: Arc<ConnectionManager>,
 ) {
     registry.register_handler(Arc::new(InstanceRequestHandler {
         naming_service: naming_service.clone(),
         naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
+        connection_manager: connection_manager.clone(),
     }));
     registry.register_handler(Arc::new(BatchInstanceRequestHandler {
         naming_service: naming_service.clone(),
@@ -265,10 +270,20 @@ pub fn start_grpc_servers(
     let naming_fuzzy_watch_manager = Arc::new(NamingFuzzyWatchManager::new());
 
     register_internal_handlers(&mut handler_registry, connection_manager.clone());
-    register_config_handlers(&mut handler_registry, app_state.clone(), config_fuzzy_watch_manager);
+    register_config_handlers(
+        &mut handler_registry,
+        app_state.clone(),
+        config_fuzzy_watch_manager,
+        connection_manager.clone(),
+    );
 
     let naming_service = Arc::new(NamingService::new());
-    register_naming_handlers(&mut handler_registry, naming_service.clone(), naming_fuzzy_watch_manager);
+    register_naming_handlers(
+        &mut handler_registry,
+        naming_service.clone(),
+        naming_fuzzy_watch_manager,
+        connection_manager.clone(),
+    );
 
     // Create local address for distro protocol
     let local_ip = "127.0.0.1"; // Will be updated with actual cluster member discovery

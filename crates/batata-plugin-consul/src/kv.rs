@@ -772,6 +772,49 @@ mod tests {
         assert!(service.get("prefix/key2").is_none());
         assert!(service.get("prefix/key3").is_none());
     }
+
+    #[test]
+    fn test_kv_transaction() {
+        let service = ConsulKVService::new();
+
+        let ops = vec![
+            TxnOp {
+                kv: Some(KVTxnOp {
+                    verb: "set".to_string(),
+                    key: "txn/key1".to_string(),
+                    value: Some(BASE64.encode("value1".as_bytes())),
+                    flags: None,
+                    index: None,
+                }),
+            },
+            TxnOp {
+                kv: Some(KVTxnOp {
+                    verb: "set".to_string(),
+                    key: "txn/key2".to_string(),
+                    value: Some(BASE64.encode("value2".as_bytes())),
+                    flags: None,
+                    index: None,
+                }),
+            },
+            TxnOp {
+                kv: Some(KVTxnOp {
+                    verb: "get".to_string(),
+                    key: "txn/key1".to_string(),
+                    value: None,
+                    flags: None,
+                    index: None,
+                }),
+            },
+        ];
+
+        let result = service.transaction(ops);
+        assert!(result.errors.is_none());
+        assert_eq!(result.results.as_ref().unwrap().len(), 3);
+
+        // Verify the keys exist
+        assert!(service.get("txn/key1").is_some());
+        assert!(service.get("txn/key2").is_some());
+    }
 }
 
 // ============================================================================
@@ -863,52 +906,4 @@ mod tests {
         };
 
         HttpResponse::Ok().json(result)
-    }
-
-#[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn test_kv_transaction() {
-            let service = ConsulKVService::new();
-
-            let ops = vec![
-                TxnOp {
-                    kv: Some(KVTxnOp {
-                        verb: "set".to_string(),
-                        key: "txn/key1".to_string(),
-                        value: Some(BASE64.encode("value1".as_bytes())),
-                        flags: None,
-                        index: None,
-                    }),
-                },
-                TxnOp {
-                    kv: Some(KVTxnOp {
-                        verb: "set".to_string(),
-                        key: "txn/key2".to_string(),
-                        value: Some(BASE64.encode("value2".as_bytes())),
-                        flags: None,
-                        index: None,
-                    }),
-                },
-                TxnOp {
-                    kv: Some(KVTxnOp {
-                        verb: "get".to_string(),
-                        key: "txn/key1".to_string(),
-                        value: None,
-                        flags: None,
-                        index: None,
-                    }),
-                },
-            ];
-
-            let result = service.transaction(ops);
-            assert!(result.errors.is_none());
-            assert_eq!(result.results.as_ref().unwrap().len(), 3);
-
-            // Verify the keys exist
-            assert!(service.get("txn/key1").is_some());
-            assert!(service.get("txn/key2").is_some());
-        }
     }

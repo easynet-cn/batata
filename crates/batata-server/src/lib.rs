@@ -230,9 +230,10 @@ macro_rules! secured {
                                 );
                             }
 
-                            let regex_match = regex::Regex::new(&permission_resource)
-                                .map(|re| re.is_match(&$crate::join_resource(&resource)))
-                                .unwrap_or(false);
+                            let regex_match = batata_common::regex_matches(
+                                &permission_resource,
+                                &$crate::join_resource(&resource),
+                            );
 
                             e.action.contains($secured.action.as_str()) && regex_match
                         })

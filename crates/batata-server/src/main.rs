@@ -3,15 +3,16 @@
 //! This file sets up and starts the HTTP and gRPC servers with their respective services.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use batata_core::cluster::ServerMemberManager;
 use batata_server::{
     console::datasource,
     middleware::rate_limit,
     model::{self, common::AppState},
-    startup::{self, ConsulServices, OtelConfig},
+    startup::{self, ConsulServices, GracefulShutdown, OtelConfig},
 };
-use tracing::info;
+use tracing::{error, info};
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -87,19 +88,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         console_datasource,
     });
 
+    // Initialize graceful shutdown handler
+    let shutdown_signal = startup::wait_for_shutdown_signal().await;
+    let graceful_shutdown = GracefulShutdown::new(shutdown_signal.clone(), Duration::from_secs(30));
+
     // For console remote mode, only start console server
     if is_console_remote {
         info!(
             "Starting console server in remote mode on port {}",
             console_server_port
         );
-        startup::console_server(
+
+        let console_server = startup::console_server(
             app_state.clone(),
             console_context_path,
             console_server_address,
             console_server_port,
-        )?
-        .await?;
+        )?;
+
+        tokio::select! {
+            result = console_server => {
+                if let Err(e) = result {
+                    error!("Console server error: {}", e);
+                }
+            }
+            _ = graceful_shutdown.wait_for_shutdown() => {
+                info!("Console server shutting down gracefully");
+            }
+        }
+
         return Ok(());
     }
 
@@ -115,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !app_state.configuration.is_standalone() {
             info!("Initializing cluster management...");
             if let Err(e) = smm.start().await {
-                tracing::error!("Failed to start cluster manager: {}", e);
+                error!("Failed to start cluster manager: {}", e);
                 return Err(e.to_string().into());
             }
             info!("Cluster management started successfully");
@@ -125,27 +142,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create Consul service adapters
     let consul_services = ConsulServices::new(grpc_servers.naming_service.clone());
 
-    // Start HTTP servers based on deployment type
+    // Start HTTP servers based on deployment type with graceful shutdown support
     match deployment_type.as_str() {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
-            startup::console_server(
+            let console_server = startup::console_server(
                 app_state.clone(),
                 console_context_path,
                 console_server_address,
                 console_server_port,
-            )?
-            .await?;
+            )?;
+
+            tokio::select! {
+                result = console_server => {
+                    if let Err(e) = result {
+                        error!("Console server error: {}", e);
+                    }
+                }
+                _ = graceful_shutdown.wait_for_shutdown() => {
+                    info!("Console server shutting down gracefully");
+                }
+            }
         }
         model::common::NACOS_DEPLOYMENT_TYPE_SERVER => {
-            startup::main_server(
+            let main_server = startup::main_server(
                 app_state.clone(),
                 grpc_servers.naming_service,
                 consul_services,
                 server_context_path,
                 server_address,
                 server_main_port,
-            )?
-            .await?;
+            )?;
+
+            tokio::select! {
+                result = main_server => {
+                    if let Err(e) = result {
+                        error!("Main server error: {}", e);
+                    }
+                }
+                _ = graceful_shutdown.wait_for_shutdown() => {
+                    info!("Main server shutting down gracefully");
+                }
+            }
         }
         _ => {
             // Start both console and main servers
@@ -156,16 +193,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 console_server_port,
             )?;
             let main = startup::main_server(
-                app_state,
+                app_state.clone(),
                 grpc_servers.naming_service,
                 consul_services,
                 server_context_path,
                 server_address,
                 server_main_port,
             )?;
-            tokio::try_join!(console, main)?;
+
+            tokio::select! {
+                result = async { tokio::try_join!(console, main) } => {
+                    if let Err(e) = result {
+                        error!("Server error: {}", e);
+                    }
+                }
+                _ = graceful_shutdown.wait_for_shutdown() => {
+                    info!("All servers shutting down gracefully");
+                }
+            }
         }
     }
 
+    // Cleanup: stop cluster manager if running
+    if let Some(ref smm) = app_state.server_member_manager {
+        if !app_state.configuration.is_standalone() {
+            info!("Stopping cluster manager...");
+            smm.stop().await;
+            info!("Cluster manager stopped");
+        }
+    }
+
+    info!("Batata server shutdown complete");
     Ok(())
 }

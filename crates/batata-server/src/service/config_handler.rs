@@ -95,6 +95,7 @@ impl PayloadHandler for ConfigQueryHandler {
 pub struct ConfigPublishHandler {
     pub app_state: Arc<AppState>,
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -219,8 +220,12 @@ impl ConfigPublishHandler {
         data_id: &str,
         group: &str,
         tenant: &str,
-        source_ip: &str,
+        _source_ip: &str,
     ) -> anyhow::Result<()> {
+        // Build the notification payload once for reuse
+        let notification = ConfigChangeNotifyRequest::for_config(data_id, group, tenant);
+        let payload = notification.build_server_push_payload();
+
         // Notify fuzzy watchers
         let fuzzy_watchers = self.fuzzy_watch_manager.get_watchers_for_config(
             tenant,
@@ -238,18 +243,30 @@ impl ConfigPublishHandler {
                 group_key
             );
 
-            // For each watcher, mark the config as received
-            // Future enhancement: Send actual notification payload via connection manager
-            for connection_id in fuzzy_watchers {
+            // Push notification to each fuzzy watcher
+            for connection_id in &fuzzy_watchers {
                 // Mark the group key as received by this connection
-                self.fuzzy_watch_manager.mark_received(&connection_id, &group_key);
+                self.fuzzy_watch_manager.mark_received(connection_id, &group_key);
 
-                info!(
-                    "Notified connection {} about config change (fuzzy watch): {}",
-                    connection_id,
-                    group_key
-                );
+                // Push the actual notification payload
+                if self.connection_manager.push_message(connection_id, payload.clone()).await {
+                    debug!(
+                        "Pushed config change notification to connection {} (fuzzy watch): {}",
+                        connection_id, group_key
+                    );
+                } else {
+                    warn!(
+                        "Failed to push config change notification to connection {}: {}",
+                        connection_id, group_key
+                    );
+                }
             }
+
+            info!(
+                "Notified {} fuzzy watchers for config change: {}",
+                fuzzy_watchers.len(),
+                group_key
+            );
         }
 
         // Notify regular subscribers via ConfigSubscriberManager
@@ -265,14 +282,28 @@ impl ConfigPublishHandler {
                 data_id
             );
 
-            // Future enhancement: Send actual notification payload via connection manager
-            for subscriber in subscribers {
-                info!(
-                    "Notified connection {} about config change (subscriber): {}",
-                    subscriber.connection_id,
-                    config_key.to_key_string()
-                );
+            // Push notification to each subscriber
+            for subscriber in &subscribers {
+                if self.connection_manager.push_message(&subscriber.connection_id, payload.clone()).await {
+                    debug!(
+                        "Pushed config change notification to connection {} (subscriber): {}",
+                        subscriber.connection_id,
+                        config_key.to_key_string()
+                    );
+                } else {
+                    warn!(
+                        "Failed to push config change notification to connection {}: {}",
+                        subscriber.connection_id,
+                        config_key.to_key_string()
+                    );
+                }
             }
+
+            info!(
+                "Notified {} regular subscribers for config change: {}",
+                subscribers.len(),
+                config_key.to_key_string()
+            );
         }
 
         Ok(())
@@ -284,6 +315,7 @@ impl ConfigPublishHandler {
 pub struct ConfigRemoveHandler {
     pub app_state: Arc<AppState>,
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -348,8 +380,12 @@ impl ConfigRemoveHandler {
         data_id: &str,
         group: &str,
         tenant: &str,
-        source_ip: &str,
+        _source_ip: &str,
     ) -> anyhow::Result<()> {
+        // Build the notification payload once for reuse
+        let notification = ConfigChangeNotifyRequest::for_config(data_id, group, tenant);
+        let payload = notification.build_server_push_payload();
+
         // Notify fuzzy watchers
         let fuzzy_watchers = self.fuzzy_watch_manager.get_watchers_for_config(
             tenant,
@@ -367,18 +403,30 @@ impl ConfigRemoveHandler {
                 group_key
             );
 
-            // For each watcher, mark the config as received
-            // Future enhancement: Send actual notification payload via connection manager
-            for connection_id in fuzzy_watchers {
+            // Push notification to each fuzzy watcher
+            for connection_id in &fuzzy_watchers {
                 // Mark the group key as received by this connection
-                self.fuzzy_watch_manager.mark_received(&connection_id, &group_key);
+                self.fuzzy_watch_manager.mark_received(connection_id, &group_key);
 
-                info!(
-                    "Notified connection {} about config removal (fuzzy watch): {}",
-                    connection_id,
-                    group_key
-                );
+                // Push the actual notification payload
+                if self.connection_manager.push_message(connection_id, payload.clone()).await {
+                    debug!(
+                        "Pushed config removal notification to connection {} (fuzzy watch): {}",
+                        connection_id, group_key
+                    );
+                } else {
+                    warn!(
+                        "Failed to push config removal notification to connection {}: {}",
+                        connection_id, group_key
+                    );
+                }
             }
+
+            info!(
+                "Notified {} fuzzy watchers for config removal: {}",
+                fuzzy_watchers.len(),
+                group_key
+            );
         }
 
         // Notify regular subscribers via ConfigSubscriberManager
@@ -394,14 +442,28 @@ impl ConfigRemoveHandler {
                 data_id
             );
 
-            // Future enhancement: Send actual notification payload via connection manager
-            for subscriber in subscribers {
-                info!(
-                    "Notified connection {} about config removal (subscriber): {}",
-                    subscriber.connection_id,
-                    config_key.to_key_string()
-                );
+            // Push notification to each subscriber
+            for subscriber in &subscribers {
+                if self.connection_manager.push_message(&subscriber.connection_id, payload.clone()).await {
+                    debug!(
+                        "Pushed config removal notification to connection {} (subscriber): {}",
+                        subscriber.connection_id,
+                        config_key.to_key_string()
+                    );
+                } else {
+                    warn!(
+                        "Failed to push config removal notification to connection {}: {}",
+                        subscriber.connection_id,
+                        config_key.to_key_string()
+                    );
+                }
             }
+
+            info!(
+                "Notified {} regular subscribers for config removal: {}",
+                subscribers.len(),
+                config_key.to_key_string()
+            );
         }
 
         Ok(())

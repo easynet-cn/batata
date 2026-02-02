@@ -3,8 +3,14 @@
 
 use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
-use std::sync::{Arc, RwLock};
-use tracing::warn;
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
+    time::Duration,
+};
+use tracing::{debug, info, warn};
 
 use batata_core::cluster::ServerMemberManager;
 
@@ -28,32 +34,161 @@ use crate::{
 
 use super::ConsoleDataSource;
 
+/// Configuration for auto-refresh behavior
+#[derive(Clone, Debug)]
+pub struct AutoRefreshConfig {
+    /// Whether auto-refresh is enabled
+    pub enabled: bool,
+    /// Refresh interval
+    pub interval: Duration,
+    /// Initial delay before starting refresh
+    pub initial_delay: Duration,
+}
+
+impl Default for AutoRefreshConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval: Duration::from_secs(30),
+            initial_delay: Duration::from_secs(5),
+        }
+    }
+}
+
 /// Remote data source - HTTP-based access to remote server
 pub struct RemoteDataSource {
-    api_client: ConsoleApiClient,
+    api_client: Arc<ConsoleApiClient>,
     // Cached cluster info (refreshed periodically)
-    cached_members: RwLock<Vec<Member>>,
-    cached_health: RwLock<Option<ClusterHealthResponse>>,
-    cached_self: RwLock<Option<SelfMemberResponse>>,
+    cached_members: Arc<RwLock<Vec<Member>>>,
+    cached_health: Arc<RwLock<Option<ClusterHealthResponse>>>,
+    cached_self: Arc<RwLock<Option<SelfMemberResponse>>>,
+    // Auto-refresh state
+    auto_refresh_config: AutoRefreshConfig,
+    running: Arc<AtomicBool>,
 }
 
 impl RemoteDataSource {
     pub async fn new(configuration: &Configuration) -> anyhow::Result<Self> {
+        Self::with_auto_refresh(configuration, AutoRefreshConfig::default()).await
+    }
+
+    /// Create with custom auto-refresh configuration
+    pub async fn with_auto_refresh(
+        configuration: &Configuration,
+        auto_refresh_config: AutoRefreshConfig,
+    ) -> anyhow::Result<Self> {
         let remote_config = RemoteConsoleConfig::from_configuration(configuration);
         let http_client = ConsoleHttpClient::new(remote_config).await?;
-        let api_client = ConsoleApiClient::new(http_client);
+        let api_client = Arc::new(ConsoleApiClient::new(http_client));
 
         let datasource = Self {
             api_client,
-            cached_members: RwLock::new(Vec::new()),
-            cached_health: RwLock::new(None),
-            cached_self: RwLock::new(None),
+            cached_members: Arc::new(RwLock::new(Vec::new())),
+            cached_health: Arc::new(RwLock::new(None)),
+            cached_self: Arc::new(RwLock::new(None)),
+            auto_refresh_config,
+            running: Arc::new(AtomicBool::new(false)),
         };
 
         // Pre-fetch cluster info
         datasource.refresh_cluster_cache().await;
 
+        // Start auto-refresh if enabled
+        if datasource.auto_refresh_config.enabled {
+            datasource.start_auto_refresh();
+        }
+
         Ok(datasource)
+    }
+
+    /// Start the auto-refresh background task
+    pub fn start_auto_refresh(&self) {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            debug!("Auto-refresh already running");
+            return;
+        }
+
+        info!(
+            "Starting remote data source auto-refresh (interval: {:?})",
+            self.auto_refresh_config.interval
+        );
+
+        let api_client = self.api_client.clone();
+        let cached_members = self.cached_members.clone();
+        let cached_health = self.cached_health.clone();
+        let cached_self = self.cached_self.clone();
+        let config = self.auto_refresh_config.clone();
+        let running = self.running.clone();
+
+        tokio::spawn(async move {
+            // Initial delay
+            tokio::time::sleep(config.initial_delay).await;
+
+            while running.load(Ordering::SeqCst) {
+                debug!("Refreshing remote data source cache");
+
+                // Refresh members
+                match api_client.cluster_all_members().await {
+                    Ok(members) => {
+                        if let Ok(mut cache) = cached_members.write() {
+                            *cache = members;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to refresh cluster members: {}", e);
+                    }
+                }
+
+                // Refresh health
+                match api_client.cluster_get_health().await {
+                    Ok(health) => {
+                        if let Ok(mut cache) = cached_health.write() {
+                            *cache = Some(health);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to refresh cluster health: {}", e);
+                    }
+                }
+
+                // Refresh self
+                match api_client.cluster_get_self().await {
+                    Ok(self_member) => {
+                        if let Ok(mut cache) = cached_self.write() {
+                            *cache = Some(self_member);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to refresh self member: {}", e);
+                    }
+                }
+
+                // Wait for next refresh
+                tokio::time::sleep(config.interval).await;
+            }
+
+            info!("Remote data source auto-refresh stopped");
+        });
+    }
+
+    /// Stop the auto-refresh background task
+    pub fn stop_auto_refresh(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        info!("Stopping remote data source auto-refresh");
+    }
+
+    /// Check if auto-refresh is running
+    pub fn is_auto_refresh_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Manually trigger a cache refresh
+    pub async fn trigger_refresh(&self) {
+        self.refresh_cluster_cache().await;
     }
 
     /// Refresh cached cluster information
@@ -83,37 +218,6 @@ impl RemoteDataSource {
         }
     }
 
-    /// Safely refresh cluster cache with error handling
-    /// Used for async refresh tasks
-    async fn refresh_cluster_cache_safe(&self) -> anyhow::Result<()> {
-        // Fetch members
-        let members = self.api_client.cluster_all_members().await?;
-        let mut cache = self
-            .cached_members
-            .write()
-            .map_err(|e| anyhow::anyhow!("Failed to acquire cache lock: {}", e))?;
-        *cache = members;
-        drop(cache);
-
-        // Fetch health
-        let health = self.api_client.cluster_get_health().await?;
-        let mut cache = self
-            .cached_health
-            .write()
-            .map_err(|e| anyhow::anyhow!("Failed to acquire cache lock: {}", e))?;
-        *cache = Some(health);
-        drop(cache);
-
-        // Fetch self
-        let self_member = self.api_client.cluster_get_self().await?;
-        let mut cache = self
-            .cached_self
-            .write()
-            .map_err(|e| anyhow::anyhow!("Failed to acquire cache lock: {}", e))?;
-        *cache = Some(self_member);
-
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -379,12 +483,12 @@ impl ConsoleDataSource for RemoteDataSource {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
             .unwrap_or(SelfMemberResponse {
-                ip: "unknown".to_string(),
+                ip: "0.0.0.0".to_string(),
                 port: 0,
-                address: "unknown".to_string(),
-                state: "unknown".to_string(),
+                address: "not-initialized".to_string(),
+                state: "STARTING".to_string(),
                 is_standalone: true,
-                version: "unknown".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
             })
     }
 

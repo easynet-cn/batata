@@ -39,7 +39,9 @@ impl PayloadHandler for DistroDataSyncHandler {
         let data_type = match request.distro_data.data_type {
             crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
             crate::api::distro::DistroDataType::Custom => {
-                DistroDataType::Custom("unknown".to_string())
+                let type_name = request.distro_data.custom_type_name.clone()
+                    .unwrap_or_else(|| "CUSTOM".to_string());
+                DistroDataType::Custom(type_name)
             }
         };
 
@@ -88,7 +90,9 @@ impl PayloadHandler for DistroDataVerifyHandler {
         let data_type = match request.data_type {
             crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
             crate::api::distro::DistroDataType::Custom => {
-                DistroDataType::Custom("unknown".to_string())
+                let type_name = request.custom_type_name.clone()
+                    .unwrap_or_else(|| "CUSTOM".to_string());
+                DistroDataType::Custom(type_name)
             }
         };
 
@@ -148,7 +152,9 @@ impl PayloadHandler for DistroDataSnapshotHandler {
         let data_type = match request.data_type {
             crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
             crate::api::distro::DistroDataType::Custom => {
-                DistroDataType::Custom("unknown".to_string())
+                let type_name = request.custom_type_name.clone()
+                    .unwrap_or_else(|| "CUSTOM".to_string());
+                DistroDataType::Custom(type_name)
             }
         };
 
@@ -158,17 +164,23 @@ impl PayloadHandler for DistroDataSnapshotHandler {
         // Convert to API format
         let api_snapshot: Vec<crate::api::distro::DistroDataItem> = snapshot
             .into_iter()
-            .map(|d| crate::api::distro::DistroDataItem {
-                data_type: match &d.data_type {
+            .map(|d| {
+                let (api_data_type, custom_name) = match &d.data_type {
                     DistroDataType::NamingInstance => {
-                        crate::api::distro::DistroDataType::NamingInstance
+                        (crate::api::distro::DistroDataType::NamingInstance, None)
                     }
-                    DistroDataType::Custom(_) => crate::api::distro::DistroDataType::Custom,
-                },
-                key: d.key,
-                content: String::from_utf8(d.content).unwrap_or_default(),
-                version: d.version,
-                source: d.source,
+                    DistroDataType::Custom(name) => {
+                        (crate::api::distro::DistroDataType::Custom, Some(name.clone()))
+                    }
+                };
+                crate::api::distro::DistroDataItem {
+                    data_type: api_data_type,
+                    custom_type_name: custom_name,
+                    key: d.key,
+                    content: String::from_utf8(d.content).unwrap_or_default(),
+                    version: d.version,
+                    source: d.source,
+                }
             })
             .collect();
 

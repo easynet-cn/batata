@@ -516,6 +516,17 @@ impl ConfigChangeNotifyRequest {
             ..Default::default()
         }
     }
+
+    /// Create a new config change notification for a specific config
+    pub fn for_config(data_id: &str, group: &str, tenant: &str) -> Self {
+        Self {
+            server_request: ServerRequest::new(),
+            data_id: data_id.to_string(),
+            group: group.to_string(),
+            tenant: tenant.to_string(),
+            module: "config".to_string(),
+        }
+    }
 }
 
 impl RequestTrait for ConfigChangeNotifyRequest {

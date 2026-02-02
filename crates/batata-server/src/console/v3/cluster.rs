@@ -1,7 +1,8 @@
 // Console cluster management API endpoints
 // This module provides web console endpoints for cluster node management and monitoring
 
-use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, post, web};
+use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, post, put, web};
+use batata_api::model::NodeState;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -24,13 +25,26 @@ struct GetNodesParam {
     pub with_health: Option<bool>,
 }
 
-// Parameters for member state update (reserved for future use)
+/// Parameters for member state update
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
-struct UpdateMemberStateParam {
-    pub address: String,
+pub struct UpdateMemberStateParam {
+    /// New state for the member (UP, DOWN, SUSPICIOUS, STARTING, ISOLATION)
     pub state: String,
+}
+
+/// Response for member state update
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateMemberStateResponse {
+    /// Whether the update was successful
+    pub success: bool,
+    /// Previous state
+    pub previous_state: String,
+    /// New state
+    pub new_state: String,
+    /// Member address
+    pub address: String,
 }
 
 /// Get all cluster nodes
@@ -206,6 +220,100 @@ async fn refresh_self(req: HttpRequest, data: web::Data<AppState>) -> impl Respo
     model::common::Result::<bool>::http_success(true)
 }
 
+/// Update member state
+///
+/// Updates the state of a specific cluster member.
+/// Valid states are: UP, DOWN, SUSPICIOUS, STARTING, ISOLATION
+#[put("node/{address}/state")]
+async fn update_member_state(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    path: web::Path<String>,
+    body: web::Json<UpdateMemberStateParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "/v3/core/cluster")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let address = path.into_inner();
+
+    // Parse the state string to NodeState
+    let new_state = match body.state.to_uppercase().as_str() {
+        "UP" => NodeState::Up,
+        "DOWN" => NodeState::Down,
+        "SUSPICIOUS" => NodeState::Suspicious,
+        "STARTING" => NodeState::Starting,
+        "ISOLATION" => NodeState::Isolation,
+        _ => {
+            return model::common::Result::<String>::http_response(
+                400,
+                400,
+                format!("Invalid state: {}. Valid states are: UP, DOWN, SUSPICIOUS, STARTING, ISOLATION", body.state),
+                String::new(),
+            );
+        }
+    };
+
+    // Get the current member state before update
+    let previous_state = match data.member_manager().get_member(&address) {
+        Some(member) => member.state.to_string(),
+        None => {
+            return model::common::Result::<String>::http_response(
+                404,
+                404,
+                format!("Member not found: {}", address),
+                String::new(),
+            );
+        }
+    };
+
+    // Update the member state
+    data.member_manager().update_member_state(&address, new_state).await;
+
+    let response = UpdateMemberStateResponse {
+        success: true,
+        previous_state,
+        new_state: body.state.to_uppercase(),
+        address,
+    };
+
+    model::common::Result::<UpdateMemberStateResponse>::http_success(response)
+}
+
+/// Get leader information
+///
+/// Returns the current leader node address and whether this node is the leader.
+#[get("leader")]
+async fn get_leader(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "/v3/core/cluster")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LeaderResponse {
+        is_leader: bool,
+        leader_address: Option<String>,
+        local_address: String,
+    }
+
+    let response = LeaderResponse {
+        is_leader: data.member_manager().is_leader(),
+        leader_address: data.member_manager().leader_address(),
+        local_address: data.member_manager().local_address().to_string(),
+    };
+
+    model::common::Result::<LeaderResponse>::http_success(response)
+}
+
 pub fn routes() -> Scope {
     web::scope("/core/cluster")
         .service(get_nodes)
@@ -216,4 +324,6 @@ pub fn routes() -> Scope {
         .service(get_member_count)
         .service(check_standalone)
         .service(refresh_self)
+        .service(update_member_state)
+        .service(get_leader)
 }

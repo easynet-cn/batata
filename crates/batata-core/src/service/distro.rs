@@ -341,13 +341,18 @@ impl DistroProtocol {
         );
 
         // Convert internal DistroData to API DistroDataItem
+        let (api_data_type, custom_type_name) = match &data.data_type {
+            DistroDataType::NamingInstance => {
+                (batata_api::distro::DistroDataType::NamingInstance, None)
+            }
+            DistroDataType::Custom(name) => {
+                (batata_api::distro::DistroDataType::Custom, Some(name.clone()))
+            }
+        };
+
         let data_item = DistroDataItem {
-            data_type: match &data.data_type {
-                DistroDataType::NamingInstance => {
-                    batata_api::distro::DistroDataType::NamingInstance
-                }
-                DistroDataType::Custom(_) => batata_api::distro::DistroDataType::Custom,
-            },
+            data_type: api_data_type,
+            custom_type_name,
             key: data.key.clone(),
             content: String::from_utf8(data.content.clone()).unwrap_or_default(),
             version: data.version,

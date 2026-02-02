@@ -59,17 +59,8 @@ impl NamingFuzzyWatchPattern {
             return true;
         }
 
-        // Convert glob to regex: * -> .*, ? -> .
-        let regex_pattern = format!(
-            "^{}$",
-            regex::escape(pattern)
-                .replace("\\*", ".*")
-                .replace("\\?", ".")
-        );
-
-        regex::Regex::new(&regex_pattern)
-            .map(|re| re.is_match(text))
-            .unwrap_or(false)
+        // Use cached regex matching from batata-common
+        batata_common::glob_matches(pattern, text)
     }
 
     /// Build group key from service identifiers

@@ -39,3 +39,4 @@ anyhow = "1.0"
 # Utils
 md5 = "0.8"
 chrono = "0.4"
+regex = "1.11"

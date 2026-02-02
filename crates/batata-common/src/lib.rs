@@ -15,7 +15,7 @@ pub mod utils;
 // Re-exports for convenience
 pub use error::{AppError, BatataError, ErrorCode};
 pub use traits::*;
-pub use utils::{is_valid, local_ip};
+pub use utils::{get_or_compile_regex, glob_matches, is_valid, local_ip, regex_matches};
 
 /// Default namespace ID used when no namespace is specified
 pub const DEFAULT_NAMESPACE_ID: &str = "public";

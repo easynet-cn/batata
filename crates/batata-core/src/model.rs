@@ -148,6 +148,7 @@ pub struct Connection {
 
 impl Connection {}
 
+#[derive(Clone)]
 pub struct GrpcClient {
     pub connection: Connection,
     pub tx: Sender<Result<Payload, Status>>,

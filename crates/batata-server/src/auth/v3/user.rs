@@ -64,7 +64,14 @@ async fn search_page(
     .await
     {
         Ok(page) => page,
-        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+        Err(e) => {
+            tracing::error!("Failed to search users: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "code": 500,
+                "message": "Failed to search users from database",
+                "data": null
+            }));
+        }
     };
 
     common::Result::<Page<User>>::http_success(result)
@@ -84,7 +91,14 @@ async fn search(
 
     let result = match auth::service::user::search(data.db(), &params.username).await {
         Ok(users) => users,
-        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+        Err(e) => {
+            tracing::error!("Failed to search users: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "code": 500,
+                "message": "Failed to search users from database",
+                "data": null
+            }));
+        }
     };
 
     common::Result::<Vec<String>>::http_success(result)
@@ -110,7 +124,14 @@ async fn create(
 
     let user = match auth::service::user::find_by_username(data.db(), &params.username).await {
         Ok(u) => u,
-        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+        Err(e) => {
+            tracing::error!("Failed to check if user '{}' exists: {}", params.username, e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "code": 500,
+                "message": "Failed to check user existence in database",
+                "data": null
+            }));
+        }
     };
 
     if user.is_some() {
@@ -122,7 +143,14 @@ async fn create(
 
     let password = match bcrypt::hash(params.password.clone(), 10u32) {
         Ok(hash) => hash,
-        Err(_) => return HttpResponse::InternalServerError().body("Failed to hash password"),
+        Err(e) => {
+            tracing::error!("Failed to hash password: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "code": 500,
+                "message": "Failed to hash password",
+                "data": null
+            }));
+        }
     };
 
     let result = auth::service::user::create(data.db(), &params.username, &password).await;

@@ -9,7 +9,6 @@ use std::{
 };
 
 use dashmap::DashMap;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Instance, Service};
@@ -25,6 +24,33 @@ pub struct ServiceMetadata {
     pub selector_type: String,
     /// Service selector expression
     pub selector_expression: String,
+}
+
+/// Protection threshold information
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ProtectionInfo {
+    /// Configured protection threshold (0.0 to 1.0)
+    pub threshold: f32,
+    /// Total number of instances
+    pub total_instances: usize,
+    /// Number of healthy instances
+    pub healthy_instances: usize,
+    /// Current healthy ratio (healthy_instances / total_instances)
+    pub healthy_ratio: f32,
+    /// Whether protection threshold was triggered
+    pub triggered: bool,
+}
+
+impl ProtectionInfo {
+    /// Check if the service is degraded (protection triggered)
+    pub fn is_degraded(&self) -> bool {
+        self.triggered
+    }
+
+    /// Get the number of unhealthy instances
+    pub fn unhealthy_instances(&self) -> usize {
+        self.total_instances.saturating_sub(self.healthy_instances)
+    }
 }
 
 /// Cluster-level configuration
@@ -96,15 +122,8 @@ impl FuzzyWatchPattern {
             return true;
         }
 
-        // Convert glob to regex: * -> .*, ? -> .
-        let regex_pattern = format!(
-            "^{}$",
-            regex::escape(pattern).replace("\\*", ".*").replace("\\?", ".")
-        );
-
-        Regex::new(&regex_pattern)
-            .map(|re| re.is_match(text))
-            .unwrap_or(false)
+        // Use cached regex matching from batata-common
+        batata_common::glob_matches(pattern, text)
     }
 }
 
@@ -211,6 +230,10 @@ impl NamingService {
     }
 
     /// Get service info with instances
+    ///
+    /// This method implements protection threshold logic:
+    /// - If healthy_ratio < protect_threshold, return ALL instances (including unhealthy)
+    /// - This prevents cascading failures when too many instances become unhealthy
     pub fn get_service(
         &self,
         namespace: &str,
@@ -221,23 +244,54 @@ impl NamingService {
     ) -> Service {
         let service_key = build_service_key(namespace, group_name, service_name);
 
-        let (instances, has_any_instances) =
+        // Get protection threshold from service metadata
+        let protect_threshold = self
+            .service_metadata
+            .get(&service_key)
+            .map(|m| m.protect_threshold)
+            .unwrap_or(0.0);
+
+        let (instances, has_any_instances, reach_protection) =
             if let Some(all_instances) = self.services.get(&service_key) {
                 let has_any = !all_instances.is_empty();
-                let filtered: Vec<Instance> = all_instances
+
+                // First filter by cluster
+                let cluster_filtered: Vec<Instance> = all_instances
                     .iter()
                     .filter(|entry| {
                         let inst = entry.value();
-                        let cluster_match =
-                            cluster.is_empty() || inst.cluster_name == cluster || cluster == "*";
-                        let health_match = !healthy_only || inst.healthy;
-                        cluster_match && health_match
+                        cluster.is_empty() || inst.cluster_name == cluster || cluster == "*"
                     })
                     .map(|entry| entry.value().clone())
                     .collect();
-                (filtered, has_any)
+
+                let total = cluster_filtered.len();
+                let healthy_count = cluster_filtered.iter().filter(|i| i.healthy).count();
+
+                // Check if protection threshold is reached
+                let healthy_ratio = if total > 0 {
+                    healthy_count as f32 / total as f32
+                } else {
+                    1.0 // No instances means 100% healthy ratio
+                };
+
+                let protection_triggered =
+                    protect_threshold > 0.0 && healthy_ratio < protect_threshold;
+
+                // If protection is triggered, return all instances regardless of health
+                // Otherwise, filter by health if requested
+                let final_instances = if protection_triggered {
+                    // Return all instances including unhealthy to prevent total service outage
+                    cluster_filtered
+                } else if healthy_only {
+                    cluster_filtered.into_iter().filter(|i| i.healthy).collect()
+                } else {
+                    cluster_filtered
+                };
+
+                (final_instances, has_any, protection_triggered)
             } else {
-                (Vec::new(), false)
+                (Vec::new(), false, false)
             };
 
         let now = SystemTime::now()
@@ -254,8 +308,71 @@ impl NamingService {
             last_ref_time: now,
             checksum: String::new(),
             all_ips: has_any_instances,
-            reach_protection_threshold: false,
+            reach_protection_threshold: reach_protection,
         }
+    }
+
+    /// Get service info with protection threshold check
+    ///
+    /// Returns additional information about protection threshold status
+    pub fn get_service_with_protection_info(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster: &str,
+        healthy_only: bool,
+    ) -> (Service, ProtectionInfo) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+
+        // Get protection threshold from service metadata
+        let protect_threshold = self
+            .service_metadata
+            .get(&service_key)
+            .map(|m| m.protect_threshold)
+            .unwrap_or(0.0);
+
+        let mut protection_info = ProtectionInfo {
+            threshold: protect_threshold,
+            total_instances: 0,
+            healthy_instances: 0,
+            healthy_ratio: 1.0,
+            triggered: false,
+        };
+
+        let service = self.get_service(namespace, group_name, service_name, cluster, healthy_only);
+
+        // Calculate protection info by counting directly (avoids collecting references)
+        if let Some(all_instances) = self.services.get(&service_key) {
+            let total: usize = all_instances
+                .iter()
+                .filter(|entry| {
+                    let inst = entry.value();
+                    cluster.is_empty() || inst.cluster_name == cluster || cluster == "*"
+                })
+                .count();
+
+            let healthy: usize = all_instances
+                .iter()
+                .filter(|entry| {
+                    let inst = entry.value();
+                    let cluster_match =
+                        cluster.is_empty() || inst.cluster_name == cluster || cluster == "*";
+                    cluster_match && inst.healthy
+                })
+                .count();
+
+            protection_info.total_instances = total;
+            protection_info.healthy_instances = healthy;
+            protection_info.healthy_ratio = if total > 0 {
+                healthy as f32 / total as f32
+            } else {
+                1.0
+            };
+            protection_info.triggered = service.reach_protection_threshold;
+        }
+
+        (service, protection_info)
     }
 
     /// Get all service keys (for distro protocol sync)
@@ -1440,5 +1557,145 @@ mod tests {
         assert_eq!(matched.len(), 2);
         assert!(matched.iter().any(|s| s.contains("app-service")));
         assert!(matched.iter().any(|s| s.contains("app-config")));
+    }
+
+    // === Protection Threshold Tests ===
+
+    #[test]
+    fn test_protection_threshold_not_triggered() {
+        let naming = NamingService::new();
+
+        // Register instances - all healthy
+        let instance1 = create_test_instance("127.0.0.1", 8080);
+        let instance2 = create_test_instance("127.0.0.2", 8081);
+        let instance3 = create_test_instance("127.0.0.3", 8082);
+
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance1);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance2);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance3);
+
+        // Set protection threshold to 50%
+        naming.update_service_protect_threshold("public", "DEFAULT_GROUP", "test-service", 0.5);
+
+        // Get service - protection should NOT be triggered (100% healthy > 50%)
+        let service = naming.get_service("public", "DEFAULT_GROUP", "test-service", "", true);
+        assert!(!service.reach_protection_threshold);
+        assert_eq!(service.hosts.len(), 3);
+    }
+
+    #[test]
+    fn test_protection_threshold_triggered() {
+        let naming = NamingService::new();
+
+        // Register instances - 1 healthy, 2 unhealthy
+        let instance1 = create_test_instance("127.0.0.1", 8080);
+        let mut instance2 = create_test_instance("127.0.0.2", 8081);
+        instance2.healthy = false;
+        let mut instance3 = create_test_instance("127.0.0.3", 8082);
+        instance3.healthy = false;
+
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance1);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance2);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance3);
+
+        // Set protection threshold to 50%
+        naming.update_service_protect_threshold("public", "DEFAULT_GROUP", "test-service", 0.5);
+
+        // Get service with healthy_only - protection should be triggered
+        // Because healthy ratio is 33% < 50% threshold
+        let service = naming.get_service("public", "DEFAULT_GROUP", "test-service", "", true);
+        assert!(service.reach_protection_threshold);
+        // Should return ALL instances (including unhealthy) when protection is triggered
+        assert_eq!(service.hosts.len(), 3);
+    }
+
+    #[test]
+    fn test_protection_threshold_zero_means_disabled() {
+        let naming = NamingService::new();
+
+        // Register instances - only 1 healthy
+        let instance1 = create_test_instance("127.0.0.1", 8080);
+        let mut instance2 = create_test_instance("127.0.0.2", 8081);
+        instance2.healthy = false;
+
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance1);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance2);
+
+        // Protection threshold is 0 (default - disabled)
+        // Should only return healthy instances
+        let service = naming.get_service("public", "DEFAULT_GROUP", "test-service", "", true);
+        assert!(!service.reach_protection_threshold);
+        assert_eq!(service.hosts.len(), 1);
+    }
+
+    #[test]
+    fn test_protection_info() {
+        let naming = NamingService::new();
+
+        // Register instances
+        let instance1 = create_test_instance("127.0.0.1", 8080);
+        let mut instance2 = create_test_instance("127.0.0.2", 8081);
+        instance2.healthy = false;
+        let instance3 = create_test_instance("127.0.0.3", 8082);
+
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance1);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance2);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance3);
+
+        // Set protection threshold
+        naming.update_service_protect_threshold("public", "DEFAULT_GROUP", "test-service", 0.8);
+
+        // Get protection info
+        let (service, info) = naming.get_service_with_protection_info(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "",
+            true,
+        );
+
+        assert_eq!(info.threshold, 0.8);
+        assert_eq!(info.total_instances, 3);
+        assert_eq!(info.healthy_instances, 2);
+        assert!((info.healthy_ratio - 0.6666667).abs() < 0.001);
+        assert!(info.triggered); // 66% < 80%
+        assert!(info.is_degraded());
+        assert_eq!(info.unhealthy_instances(), 1);
+        // Service should return all instances due to protection trigger
+        assert_eq!(service.hosts.len(), 3);
+    }
+
+    #[test]
+    fn test_protection_threshold_boundary() {
+        let naming = NamingService::new();
+
+        // Register 2 healthy, 2 unhealthy (50% healthy ratio)
+        let instance1 = create_test_instance("127.0.0.1", 8080);
+        let instance2 = create_test_instance("127.0.0.2", 8081);
+        let mut instance3 = create_test_instance("127.0.0.3", 8082);
+        instance3.healthy = false;
+        let mut instance4 = create_test_instance("127.0.0.4", 8083);
+        instance4.healthy = false;
+
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance1);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance2);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance3);
+        naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance4);
+
+        // Set threshold to exactly 50%
+        naming.update_service_protect_threshold("public", "DEFAULT_GROUP", "test-service", 0.5);
+
+        // healthy ratio (50%) is NOT less than threshold (50%), so protection NOT triggered
+        let service = naming.get_service("public", "DEFAULT_GROUP", "test-service", "", true);
+        assert!(!service.reach_protection_threshold);
+        assert_eq!(service.hosts.len(), 2); // Only healthy instances
+
+        // Set threshold to 51%
+        naming.update_service_protect_threshold("public", "DEFAULT_GROUP", "test-service", 0.51);
+
+        // Now healthy ratio (50%) < threshold (51%), protection IS triggered
+        let service = naming.get_service("public", "DEFAULT_GROUP", "test-service", "", true);
+        assert!(service.reach_protection_threshold);
+        assert_eq!(service.hosts.len(), 4); // All instances
     }
 }

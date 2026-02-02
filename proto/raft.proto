@@ -200,6 +200,7 @@ message GetMetricsResponse {
     string state = 2;  // leader, follower, candidate
     uint64 current_term = 3;
     optional uint64 leader_id = 4;
+    optional string leader_addr = 9;  // Leader's address if known
     uint64 last_log_index = 5;
     uint64 commit_index = 6;
     uint64 applied_index = 7;

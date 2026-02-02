@@ -61,7 +61,14 @@ async fn login(
 
     let user_option = match auth::service::user::find_by_username(data.db(), &username).await {
         Ok(user) => user,
-        Err(_) => return HttpResponse::InternalServerError().body("Database error"),
+        Err(e) => {
+            tracing::error!("Failed to query user '{}': {}", username, e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "code": 500,
+                "message": "Failed to query user from database",
+                "data": null
+            }));
+        }
     };
 
     let user = match user_option {

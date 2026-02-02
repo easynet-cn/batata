@@ -26,6 +26,9 @@ pub mod remote {
     pub mod model;
 }
 
+// OpenAPI documentation
+pub mod openapi;
+
 // Raft consensus gRPC service definitions - re-exported from batata-api crate
 pub use batata_api::raft;
 

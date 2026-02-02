@@ -35,10 +35,23 @@ spring.sql.init.platform: mysql
 # db.num=1
 
 ### Connect URL of DB:
+### Use environment variable for security (e.g., export DATABASE_URL="mysql://user:pass@localhost:3306/batata")
 ### For MySQL:
-db.url: mysql://nacos:1._dKHgqf(6tXcIZ@localhost:3306/batata
-### For PostgreSQL (uncomment and modify):
-# db.url: postgres://nacos:password@localhost:5432/batata
+# db.url: mysql://user:password@localhost:3306/batata
+### For PostgreSQL:
+# db.url: postgres://user:password@localhost:5432/batata
+### Default: use DATABASE_URL environment variable
+db.url: ${DATABASE_URL:mysql://nacos:nacos@localhost:3306/batata}
+
+### Database connection pool configuration
+db.pool.config.maximumPoolSize: 100
+db.pool.config.minimumPoolSize: 10
+db.pool.config.connectionTimeout: 30
+db.pool.config.initializationFailTimeout: 8
+db.pool.config.idleTimeout: 300
+db.pool.config.maxLifetime: 1800
+### Enable SQL logging (true in dev, false in production)
+db.pool.config.sqlxLogging: false
 
 #*************** Metrics Related Configurations ***************#
 ### Metrics for prometheus
@@ -276,6 +289,23 @@ nacos.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtM
 #nacos.core.auth.ldap.filter.prefix=uid
 #nacos.core.auth.ldap.case.sensitive=true
 #nacos.core.auth.ldap.ignore.partial.result.exception=false
+
+#*************** Rate Limiting Configurations ***************#
+### Enable API rate limiting
+nacos.ratelimit.enabled: true
+### Maximum requests per minute per IP for general API
+nacos.ratelimit.max_requests: 100
+### Rate limit window duration in seconds
+nacos.ratelimit.window_seconds: 60
+
+### Authentication rate limiting (brute force protection)
+nacos.ratelimit.auth.enabled: true
+### Maximum login attempts before lockout
+nacos.ratelimit.auth.max_attempts: 5
+### Login attempt window in seconds
+nacos.ratelimit.auth.window_seconds: 60
+### Lockout duration in seconds after exceeding max attempts
+nacos.ratelimit.auth.lockout_seconds: 300
 
 #*************** Control Plugin Related Configurations ***************#
 # plugin type

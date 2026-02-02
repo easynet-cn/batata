@@ -21,5 +21,6 @@ pub mod naming_fuzzy_watch;
 pub mod config_handler; // Config module gRPC handlers
 pub mod distro_handler; // Distro protocol gRPC handlers
 pub mod handler; // Request handlers for gRPC communication
+pub mod handler_macros; // gRPC handler macros and utilities
 pub mod naming_handler; // Naming module gRPC handlers
 pub mod rpc; // Remote procedure call services
