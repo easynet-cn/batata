@@ -822,88 +822,88 @@ mod tests {
 // ============================================================================
 
 /// Export all KV pairs as JSON
-    /// Returns a complete snapshot of the KV store
-    pub async fn export_kv(
-        kv_service: web::Data<ConsulKVService>,
-        acl_service: web::Data<AclService>,
-        req: HttpRequest,
-    ) -> HttpResponse {
-        // Check ACL authorization for read access to all keys
-        let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", false);
-        if !authz.allowed {
-            return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-        }
-
-        // Collect all KV pairs
-        let pairs: Vec<KVPair> = kv_service
-            .store
-            .iter()
-            .map(|entry| entry.value().pair.clone())
-            .collect();
-
-        let count = pairs.len();
-
-        // Return as JSON with metadata
-        #[derive(Serialize)]
-        struct ExportResult {
-            pairs: Vec<KVPair>,
-            count: usize,
-            export_time: i64,
-        }
-
-        let result = ExportResult {
-            pairs,
-            count,
-            export_time: current_timestamp(),
-        };
-
-        HttpResponse::Ok().json(result)
+/// Returns a complete snapshot of the KV store
+pub async fn export_kv(
+    kv_service: web::Data<ConsulKVService>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+) -> HttpResponse {
+    // Check ACL authorization for read access to all keys
+    let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    /// Import KV pairs from JSON
-    /// Accepts a list of KV pairs and imports them
-    pub async fn import_kv(
-        kv_service: web::Data<ConsulKVService>,
-        acl_service: web::Data<AclService>,
-        req: HttpRequest,
-        body: web::Json<Vec<KVPair>>,
-    ) -> HttpResponse {
-        // Check ACL authorization for write access to all keys
-        let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", true);
-        if !authz.allowed {
-            return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-        }
+    // Collect all KV pairs
+    let pairs: Vec<KVPair> = kv_service
+        .store
+        .iter()
+        .map(|entry| entry.value().pair.clone())
+        .collect();
 
-        let pairs_to_import = body.into_inner();
-        let mut success_count = 0;
-        let mut failed_count = 0;
+    let count = pairs.len();
 
-        // Import each KV pair
-        for pair in pairs_to_import {
-            // Decode value if present
-            if let Some(decoded) = pair.decoded_value() {
-                // Store the pair with original flags
-                kv_service.put(pair.key.clone(), &decoded, Some(pair.flags));
-                success_count += 1;
-            } else {
-                failed_count += 1;
-            }
-        }
-
-        #[derive(Serialize)]
-        struct ImportResult {
-            success_count: usize,
-            failed_count: usize,
-            total_count: usize,
-            import_time: i64,
-        }
-
-        let result = ImportResult {
-            success_count,
-            failed_count,
-            total_count: success_count + failed_count,
-            import_time: current_timestamp(),
-        };
-
-        HttpResponse::Ok().json(result)
+    // Return as JSON with metadata
+    #[derive(Serialize)]
+    struct ExportResult {
+        pairs: Vec<KVPair>,
+        count: usize,
+        export_time: i64,
     }
+
+    let result = ExportResult {
+        pairs,
+        count,
+        export_time: current_timestamp(),
+    };
+
+    HttpResponse::Ok().json(result)
+}
+
+/// Import KV pairs from JSON
+/// Accepts a list of KV pairs and imports them
+pub async fn import_kv(
+    kv_service: web::Data<ConsulKVService>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    body: web::Json<Vec<KVPair>>,
+) -> HttpResponse {
+    // Check ACL authorization for write access to all keys
+    let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let pairs_to_import = body.into_inner();
+    let mut success_count = 0;
+    let mut failed_count = 0;
+
+    // Import each KV pair
+    for pair in pairs_to_import {
+        // Decode value if present
+        if let Some(decoded) = pair.decoded_value() {
+            // Store the pair with original flags
+            kv_service.put(pair.key.clone(), &decoded, Some(pair.flags));
+            success_count += 1;
+        } else {
+            failed_count += 1;
+        }
+    }
+
+    #[derive(Serialize)]
+    struct ImportResult {
+        success_count: usize,
+        failed_count: usize,
+        total_count: usize,
+        import_time: i64,
+    }
+
+    let result = ImportResult {
+        success_count,
+        failed_count,
+        total_count: success_count + failed_count,
+        import_time: current_timestamp(),
+    };
+
+    HttpResponse::Ok().json(result)
+}

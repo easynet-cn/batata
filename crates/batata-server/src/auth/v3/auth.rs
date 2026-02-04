@@ -1,6 +1,8 @@
 use actix_web::{HttpResponse, Responder, post, web};
 use serde::{Deserialize, Serialize};
 
+use batata_auth::service::ldap::LdapAuthService;
+
 use crate::{
     auth::{
         self,
@@ -54,7 +56,96 @@ async fn login(
         return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
-    let user_option = match auth::service::user::find_by_username(data.db(), &username).await {
+    // Check if LDAP authentication is enabled
+    if data.configuration.is_ldap_auth_enabled() {
+        return ldap_login(&data, &username, &password).await;
+    }
+
+    // Standard Nacos authentication
+    nacos_login(&data, &username, &password).await
+}
+
+/// Perform LDAP authentication
+async fn ldap_login(data: &web::Data<AppState>, username: &str, password: &str) -> HttpResponse {
+    let ldap_config = data.configuration.ldap_config();
+
+    if !ldap_config.is_configured() {
+        tracing::error!("LDAP authentication is enabled but not configured");
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "code": 500,
+            "message": "LDAP is not properly configured",
+            "data": null
+        }));
+    }
+
+    let ldap_service = LdapAuthService::new(ldap_config);
+    let auth_result = ldap_service.authenticate(username, password).await;
+
+    if !auth_result.success {
+        tracing::warn!(
+            username = %username,
+            error = ?auth_result.error_message,
+            "LDAP authentication failed"
+        );
+        return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
+    }
+
+    // LDAP authentication successful, now check if user exists in local database
+    let local_user =
+        match auth::service::user::find_by_username(data.db(), &auth_result.username).await {
+            Ok(user) => user,
+            Err(e) => {
+                tracing::error!("Failed to query user '{}': {}", auth_result.username, e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "code": 500,
+                    "message": "Failed to query user from database",
+                    "data": null
+                }));
+            }
+        };
+
+    // If user doesn't exist locally, create a placeholder user
+    // This allows LDAP users to be assigned roles/permissions locally
+    if local_user.is_none() {
+        // Create user with LDAP prefix to indicate it's an LDAP user
+        // The password is set to a placeholder since auth is via LDAP
+        let placeholder_password = format!("LDAP_{}", uuid::Uuid::new_v4());
+        let hashed_password = match bcrypt::hash(&placeholder_password, 10u32) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::error!("Failed to hash placeholder password: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "code": 500,
+                    "message": "Failed to create LDAP user mapping",
+                    "data": null
+                }));
+            }
+        };
+
+        if let Err(e) =
+            auth::service::user::create(data.db(), &auth_result.username, &hashed_password).await
+        {
+            tracing::error!(
+                "Failed to create LDAP user '{}': {}",
+                auth_result.username,
+                e
+            );
+            // Continue anyway - user can still authenticate, just won't have local record
+        } else {
+            tracing::info!(
+                username = %auth_result.username,
+                "Created local user mapping for LDAP user"
+            );
+        }
+    }
+
+    // Generate JWT token
+    generate_token_response(data, &auth_result.username).await
+}
+
+/// Perform standard Nacos authentication
+async fn nacos_login(data: &web::Data<AppState>, username: &str, password: &str) -> HttpResponse {
+    let user_option = match auth::service::user::find_by_username(data.db(), username).await {
         Ok(user) => user,
         Err(e) => {
             tracing::error!("Failed to query user '{}': {}", username, e);
@@ -71,41 +162,44 @@ async fn login(
         None => return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE),
     };
 
-    let token_secret_key = data.configuration.token_secret_key();
-
     let bcrypt_result = bcrypt::verify(password, &user.password).unwrap_or(false);
 
     if bcrypt_result {
-        let token_expire_seconds = data.configuration.auth_token_expire_seconds();
-
-        let access_token =
-            match encode_jwt_token(&username, token_secret_key.as_str(), token_expire_seconds) {
-                Ok(token) => token,
-                Err(_) => {
-                    return HttpResponse::InternalServerError().body("Failed to generate token");
-                }
-            };
-
-        let global_admin =
-            auth::service::role::has_global_admin_role_by_username(data.db(), &user.username)
-                .await
-                .ok()
-                .unwrap_or_default();
-
-        let login_result = LoginResult {
-            access_token: access_token.clone(),
-            token_ttl: token_expire_seconds,
-            global_admin,
-            username: user.username,
-        };
-
-        return HttpResponse::Ok()
-            .append_header((
-                AUTHORIZATION_HEADER,
-                format!("{}{}", TOKEN_PREFIX, access_token),
-            ))
-            .json(login_result);
+        return generate_token_response(data, &user.username).await;
     }
 
-    HttpResponse::Forbidden().body("USER_NOT_FOUND_MESSAGE")
+    HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE)
+}
+
+/// Generate JWT token and return login response
+async fn generate_token_response(data: &web::Data<AppState>, username: &str) -> HttpResponse {
+    let token_secret_key = data.configuration.token_secret_key();
+    let token_expire_seconds = data.configuration.auth_token_expire_seconds();
+
+    let access_token =
+        match encode_jwt_token(username, token_secret_key.as_str(), token_expire_seconds) {
+            Ok(token) => token,
+            Err(_) => {
+                return HttpResponse::InternalServerError().body("Failed to generate token");
+            }
+        };
+
+    let global_admin = auth::service::role::has_global_admin_role_by_username(data.db(), username)
+        .await
+        .ok()
+        .unwrap_or_default();
+
+    let login_result = LoginResult {
+        access_token: access_token.clone(),
+        token_ttl: token_expire_seconds,
+        global_admin,
+        username: username.to_string(),
+    };
+
+    HttpResponse::Ok()
+        .append_header((
+            AUTHORIZATION_HEADER,
+            format!("{}{}", TOKEN_PREFIX, access_token),
+        ))
+        .json(login_result)
 }

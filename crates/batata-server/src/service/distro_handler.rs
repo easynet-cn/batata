@@ -39,7 +39,10 @@ impl PayloadHandler for DistroDataSyncHandler {
         let data_type = match request.distro_data.data_type {
             crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
             crate::api::distro::DistroDataType::Custom => {
-                let type_name = request.distro_data.custom_type_name.clone()
+                let type_name = request
+                    .distro_data
+                    .custom_type_name
+                    .clone()
                     .unwrap_or_else(|| "CUSTOM".to_string());
                 DistroDataType::Custom(type_name)
             }
@@ -90,7 +93,9 @@ impl PayloadHandler for DistroDataVerifyHandler {
         let data_type = match request.data_type {
             crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
             crate::api::distro::DistroDataType::Custom => {
-                let type_name = request.custom_type_name.clone()
+                let type_name = request
+                    .custom_type_name
+                    .clone()
                     .unwrap_or_else(|| "CUSTOM".to_string());
                 DistroDataType::Custom(type_name)
             }
@@ -152,7 +157,9 @@ impl PayloadHandler for DistroDataSnapshotHandler {
         let data_type = match request.data_type {
             crate::api::distro::DistroDataType::NamingInstance => DistroDataType::NamingInstance,
             crate::api::distro::DistroDataType::Custom => {
-                let type_name = request.custom_type_name.clone()
+                let type_name = request
+                    .custom_type_name
+                    .clone()
                     .unwrap_or_else(|| "CUSTOM".to_string());
                 DistroDataType::Custom(type_name)
             }
@@ -169,9 +176,10 @@ impl PayloadHandler for DistroDataSnapshotHandler {
                     DistroDataType::NamingInstance => {
                         (crate::api::distro::DistroDataType::NamingInstance, None)
                     }
-                    DistroDataType::Custom(name) => {
-                        (crate::api::distro::DistroDataType::Custom, Some(name.clone()))
-                    }
+                    DistroDataType::Custom(name) => (
+                        crate::api::distro::DistroDataType::Custom,
+                        Some(name.clone()),
+                    ),
                 };
                 crate::api::distro::DistroDataItem {
                     data_type: api_data_type,

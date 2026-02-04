@@ -14,8 +14,7 @@ use std::sync::Arc;
 use batata_api::Page;
 use batata_config::{
     ConfigAllInfo, ConfigBasicInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
-    ImportResult, Namespace, SameConfigPolicy,
-    service::config::CloneResult,
+    ImportResult, Namespace, SameConfigPolicy, service::config::CloneResult,
 };
 use batata_core::cluster::ServerMemberManager;
 use batata_naming::Instance;
@@ -275,10 +274,7 @@ pub trait ConsoleDataSource: Send + Sync {
     ) -> anyhow::Result<Vec<ConfigListenerInfo>>;
 
     /// Get config listeners by client IP
-    async fn config_listeners_by_ip(
-        &self,
-        ip: &str,
-    ) -> anyhow::Result<Vec<ConfigListenerInfo>>;
+    async fn config_listeners_by_ip(&self, ip: &str) -> anyhow::Result<Vec<ConfigListenerInfo>>;
 
     // ============== Naming/Service Operations ==============
 

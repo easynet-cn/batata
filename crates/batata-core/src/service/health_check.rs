@@ -114,7 +114,11 @@ impl MemberHealthChecker {
     /// Start the health check service
     pub async fn start(&self) {
         // Use compare_exchange to atomically check and set running flag
-        if self.running.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
             return; // Already running
         }
 

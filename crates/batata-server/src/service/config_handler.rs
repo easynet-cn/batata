@@ -177,12 +177,10 @@ impl PayloadHandler for ConfigPublishHandler {
         {
             Ok(_) => {
                 // Notify fuzzy watchers about config change
-                if let Err(e) = self.notify_fuzzy_watchers(
-                    data_id,
-                    group,
-                    tenant,
-                    src_ip,
-                ).await {
+                if let Err(e) = self
+                    .notify_fuzzy_watchers(data_id, group, tenant, src_ip)
+                    .await
+                {
                     warn!("Failed to notify fuzzy watchers: {}", e);
                 }
 
@@ -227,11 +225,9 @@ impl ConfigPublishHandler {
         let payload = notification.build_server_push_payload();
 
         // Notify fuzzy watchers
-        let fuzzy_watchers = self.fuzzy_watch_manager.get_watchers_for_config(
-            tenant,
-            group,
-            data_id,
-        );
+        let fuzzy_watchers = self
+            .fuzzy_watch_manager
+            .get_watchers_for_config(tenant, group, data_id);
 
         if !fuzzy_watchers.is_empty() {
             // Build group key
@@ -246,10 +242,15 @@ impl ConfigPublishHandler {
             // Push notification to each fuzzy watcher
             for connection_id in &fuzzy_watchers {
                 // Mark the group key as received by this connection
-                self.fuzzy_watch_manager.mark_received(connection_id, &group_key);
+                self.fuzzy_watch_manager
+                    .mark_received(connection_id, &group_key);
 
                 // Push the actual notification payload
-                if self.connection_manager.push_message(connection_id, payload.clone()).await {
+                if self
+                    .connection_manager
+                    .push_message(connection_id, payload.clone())
+                    .await
+                {
                     debug!(
                         "Pushed config change notification to connection {} (fuzzy watch): {}",
                         connection_id, group_key
@@ -271,7 +272,10 @@ impl ConfigPublishHandler {
 
         // Notify regular subscribers via ConfigSubscriberManager
         let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
-        let subscribers = self.app_state.config_subscriber_manager.get_subscribers(&config_key);
+        let subscribers = self
+            .app_state
+            .config_subscriber_manager
+            .get_subscribers(&config_key);
 
         if !subscribers.is_empty() {
             info!(
@@ -284,7 +288,11 @@ impl ConfigPublishHandler {
 
             // Push notification to each subscriber
             for subscriber in &subscribers {
-                if self.connection_manager.push_message(&subscriber.connection_id, payload.clone()).await {
+                if self
+                    .connection_manager
+                    .push_message(&subscriber.connection_id, payload.clone())
+                    .await
+                {
                     debug!(
                         "Pushed config change notification to connection {} (subscriber): {}",
                         subscriber.connection_id,
@@ -337,12 +345,10 @@ impl PayloadHandler for ConfigRemoveHandler {
         match config::delete(db, data_id, group, tenant, "", src_ip, src_user).await {
             Ok(_) => {
                 // Notify fuzzy watchers about config removal
-                if let Err(e) = self.notify_fuzzy_watchers(
-                    data_id,
-                    group,
-                    tenant,
-                    src_ip,
-                ).await {
+                if let Err(e) = self
+                    .notify_fuzzy_watchers(data_id, group, tenant, src_ip)
+                    .await
+                {
                     warn!("Failed to notify fuzzy watchers: {}", e);
                 }
 
@@ -387,11 +393,9 @@ impl ConfigRemoveHandler {
         let payload = notification.build_server_push_payload();
 
         // Notify fuzzy watchers
-        let fuzzy_watchers = self.fuzzy_watch_manager.get_watchers_for_config(
-            tenant,
-            group,
-            data_id,
-        );
+        let fuzzy_watchers = self
+            .fuzzy_watch_manager
+            .get_watchers_for_config(tenant, group, data_id);
 
         if !fuzzy_watchers.is_empty() {
             // Build group key
@@ -406,10 +410,15 @@ impl ConfigRemoveHandler {
             // Push notification to each fuzzy watcher
             for connection_id in &fuzzy_watchers {
                 // Mark the group key as received by this connection
-                self.fuzzy_watch_manager.mark_received(connection_id, &group_key);
+                self.fuzzy_watch_manager
+                    .mark_received(connection_id, &group_key);
 
                 // Push the actual notification payload
-                if self.connection_manager.push_message(connection_id, payload.clone()).await {
+                if self
+                    .connection_manager
+                    .push_message(connection_id, payload.clone())
+                    .await
+                {
                     debug!(
                         "Pushed config removal notification to connection {} (fuzzy watch): {}",
                         connection_id, group_key
@@ -431,7 +440,10 @@ impl ConfigRemoveHandler {
 
         // Notify regular subscribers via ConfigSubscriberManager
         let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
-        let subscribers = self.app_state.config_subscriber_manager.get_subscribers(&config_key);
+        let subscribers = self
+            .app_state
+            .config_subscriber_manager
+            .get_subscribers(&config_key);
 
         if !subscribers.is_empty() {
             info!(
@@ -444,7 +456,11 @@ impl ConfigRemoveHandler {
 
             // Push notification to each subscriber
             for subscriber in &subscribers {
-                if self.connection_manager.push_message(&subscriber.connection_id, payload.clone()).await {
+                if self
+                    .connection_manager
+                    .push_message(&subscriber.connection_id, payload.clone())
+                    .await
+                {
                     debug!(
                         "Pushed config removal notification to connection {} (subscriber): {}",
                         subscriber.connection_id,
@@ -587,12 +603,7 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
         // Log the cluster sync event for observability
         info!(
             "Config cluster sync from {}: dataId={}, group={}, tenant={}, lastModified={}, grayName={}",
-            connection.meta_info.remote_ip,
-            data_id,
-            group,
-            tenant,
-            last_modified,
-            gray_name
+            connection.meta_info.remote_ip, data_id, group, tenant, last_modified, gray_name
         );
 
         // In a distributed cluster, this notification indicates another node has
@@ -603,13 +614,16 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
         // 3. Metrics/audit logging
 
         // Notify config subscribers about change
-        if let Err(e) = self.notify_config_change(
-            data_id,
-            group,
-            tenant,
-            gray_name.as_str(),
-            connection.meta_info.remote_ip.as_str(),
-        ).await {
+        if let Err(e) = self
+            .notify_config_change(
+                data_id,
+                group,
+                tenant,
+                gray_name.as_str(),
+                connection.meta_info.remote_ip.as_str(),
+            )
+            .await
+        {
             warn!("Failed to notify config subscribers: {}", e);
         }
 
@@ -678,11 +692,9 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
         let watch_type = &request.watch_type;
 
         // Register the fuzzy watch pattern for this connection
-        let registered = self.fuzzy_watch_manager.register_watch(
-            connection_id,
-            group_key_pattern,
-            watch_type,
-        );
+        let registered =
+            self.fuzzy_watch_manager
+                .register_watch(connection_id, group_key_pattern, watch_type);
 
         if registered {
             debug!(
@@ -692,10 +704,8 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
         }
 
         // Mark received group keys as already sent to client
-        self.fuzzy_watch_manager.mark_received_batch(
-            connection_id,
-            &request.received_group_keys,
-        );
+        self.fuzzy_watch_manager
+            .mark_received_batch(connection_id, &request.received_group_keys);
 
         let mut response = ConfigFuzzyWatchResponse::new();
         response.response.request_id = request_id;
@@ -749,11 +759,8 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
         let sync_type = &request.sync_type;
 
         // Register the pattern if not already registered
-        self.fuzzy_watch_manager.register_watch(
-            connection_id,
-            group_key_pattern,
-            sync_type,
-        );
+        self.fuzzy_watch_manager
+            .register_watch(connection_id, group_key_pattern, sync_type);
 
         debug!(
             "Config fuzzy watch sync for connection {}: pattern={}, sync_type={}, batch={}/{}",

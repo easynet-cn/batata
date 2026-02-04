@@ -183,7 +183,6 @@ impl RemoteDataSource {
             }
         }
     }
-
 }
 
 #[async_trait]
@@ -531,10 +530,7 @@ impl ConsoleDataSource for RemoteDataSource {
             .collect())
     }
 
-    async fn config_listeners_by_ip(
-        &self,
-        ip: &str,
-    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+    async fn config_listeners_by_ip(&self, ip: &str) -> anyhow::Result<Vec<ConfigListenerInfo>> {
         let result = self.api_client.config_listeners_by_ip(ip).await?;
 
         Ok(result

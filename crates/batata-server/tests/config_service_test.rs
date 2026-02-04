@@ -2,7 +2,9 @@
 //!
 //! Tests configuration CRUD operations and related functionality.
 
-use batata_server::service::config_fuzzy_watch::{ConfigFuzzyWatchManager, ConfigFuzzyWatchPattern};
+use batata_server::service::config_fuzzy_watch::{
+    ConfigFuzzyWatchManager, ConfigFuzzyWatchPattern,
+};
 
 // ============================================================================
 // ConfigFuzzyWatchPattern Tests
@@ -168,7 +170,8 @@ fn test_manager_mark_received() {
 
     manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
 
-    let group_key = ConfigFuzzyWatchPattern::build_group_key("public", "DEFAULT_GROUP", "app-config");
+    let group_key =
+        ConfigFuzzyWatchPattern::build_group_key("public", "DEFAULT_GROUP", "app-config");
 
     // Initially not received
     assert!(!manager.is_received("conn-1", &group_key));
@@ -291,7 +294,8 @@ fn test_manager_concurrent_read_write() {
         let manager_clone = manager.clone();
         handles.push(thread::spawn(move || {
             for _ in 0..100 {
-                let _ = manager_clone.get_watchers_for_config("public", "DEFAULT_GROUP", "app-config");
+                let _ =
+                    manager_clone.get_watchers_for_config("public", "DEFAULT_GROUP", "app-config");
             }
         }));
     }

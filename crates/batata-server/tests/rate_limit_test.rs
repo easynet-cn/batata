@@ -296,7 +296,10 @@ fn test_auth_rate_limiter_concurrent_different_users() {
 
     // Each user should get exactly max_attempts - 1 allowed (5th attempt triggers lockout)
     for &allowed in &results {
-        assert_eq!(allowed, 4, "Each user should get 4 allowed attempts before lockout (5th triggers)");
+        assert_eq!(
+            allowed, 4,
+            "Each user should get 4 allowed attempts before lockout (5th triggers)"
+        );
     }
 }
 

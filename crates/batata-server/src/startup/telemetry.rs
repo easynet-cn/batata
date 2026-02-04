@@ -5,8 +5,8 @@
 
 use std::time::Duration;
 
-use opentelemetry::trace::TracerProvider;
 use opentelemetry::KeyValue;
+use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     Resource,
@@ -85,10 +85,8 @@ impl OtelConfig {
             enabled: std::env::var("OTEL_ENABLED")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(enabled),
-            otlp_endpoint: std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-                .unwrap_or(endpoint),
-            service_name: std::env::var("OTEL_SERVICE_NAME")
-                .unwrap_or(service_name),
+            otlp_endpoint: std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap_or(endpoint),
+            service_name: std::env::var("OTEL_SERVICE_NAME").unwrap_or(service_name),
             service_version: std::env::var("OTEL_SERVICE_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
             sampling_ratio: std::env::var("OTEL_SAMPLING_RATIO")
@@ -104,7 +102,9 @@ impl OtelConfig {
 }
 
 /// Initialize OpenTelemetry tracer provider
-fn init_tracer_provider(config: &OtelConfig) -> Result<SdkTracerProvider, Box<dyn std::error::Error>> {
+fn init_tracer_provider(
+    config: &OtelConfig,
+) -> Result<SdkTracerProvider, Box<dyn std::error::Error>> {
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .with_endpoint(&config.otlp_endpoint)

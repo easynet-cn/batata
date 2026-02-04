@@ -13,6 +13,7 @@ members = [
     "crates/batata-plugin-consul",
     "crates/batata-console",
     "crates/batata-client",
+    "crates/batata-mesh",
     "crates/batata-server",
 ]
 

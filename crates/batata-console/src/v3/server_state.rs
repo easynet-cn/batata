@@ -108,7 +108,10 @@ pub async fn get_state(
     let standalone = datasource.cluster_is_standalone();
 
     let mut state: HashMap<String, String> = HashMap::new();
-    state.insert(SERVER_PORT_STATE.to_string(), config.server_port.to_string());
+    state.insert(
+        SERVER_PORT_STATE.to_string(),
+        config.server_port.to_string(),
+    );
     state.insert(
         CONSOLE_UI_ENABLED.to_string(),
         config.console_ui_enabled.to_string(),

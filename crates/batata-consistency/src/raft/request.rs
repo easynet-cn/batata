@@ -159,6 +159,45 @@ pub enum RaftRequest {
         metadata: Option<String>,
     },
 
+    // ==================== Distributed Lock Operations (ADV-005) ====================
+    /// Acquire a distributed lock
+    LockAcquire {
+        namespace: String,
+        name: String,
+        owner: String,
+        ttl_ms: u64,
+        fence_token: u64,
+        owner_metadata: Option<String>,
+    },
+
+    /// Release a distributed lock
+    LockRelease {
+        namespace: String,
+        name: String,
+        owner: String,
+        fence_token: Option<u64>,
+    },
+
+    /// Renew a distributed lock
+    LockRenew {
+        namespace: String,
+        name: String,
+        owner: String,
+        ttl_ms: Option<u64>,
+    },
+
+    /// Force release a distributed lock (admin operation)
+    LockForceRelease {
+        namespace: String,
+        name: String,
+    },
+
+    /// Expire a lock (internal operation)
+    LockExpire {
+        namespace: String,
+        name: String,
+    },
+
     // ==================== No-op for membership changes ====================
     /// No-operation command, used internally
     Noop,
@@ -186,6 +225,11 @@ impl RaftRequest {
             RaftRequest::PersistentInstanceRegister { .. } => "PersistentInstanceRegister",
             RaftRequest::PersistentInstanceDeregister { .. } => "PersistentInstanceDeregister",
             RaftRequest::PersistentInstanceUpdate { .. } => "PersistentInstanceUpdate",
+            RaftRequest::LockAcquire { .. } => "LockAcquire",
+            RaftRequest::LockRelease { .. } => "LockRelease",
+            RaftRequest::LockRenew { .. } => "LockRenew",
+            RaftRequest::LockForceRelease { .. } => "LockForceRelease",
+            RaftRequest::LockExpire { .. } => "LockExpire",
             RaftRequest::Noop => "Noop",
         }
     }

@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use actix_web::{get, put, web, Responder, Scope};
+use actix_web::{Responder, Scope, get, put, web};
 use serde::Deserialize;
 
 use batata_api::Page;

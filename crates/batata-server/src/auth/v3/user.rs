@@ -125,7 +125,11 @@ async fn create(
     let user = match auth::service::user::find_by_username(data.db(), &params.username).await {
         Ok(u) => u,
         Err(e) => {
-            tracing::error!("Failed to check if user '{}' exists: {}", params.username, e);
+            tracing::error!(
+                "Failed to check if user '{}' exists: {}",
+                params.username,
+                e
+            );
             return HttpResponse::InternalServerError().json(serde_json::json!({
                 "code": 500,
                 "message": "Failed to check user existence in database",

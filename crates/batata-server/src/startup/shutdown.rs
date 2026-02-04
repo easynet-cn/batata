@@ -123,7 +123,10 @@ impl GracefulShutdown {
 /// Run a future with graceful shutdown support
 ///
 /// The future will be cancelled when a shutdown signal is received
-pub async fn run_with_shutdown<F, T>(future: F, mut shutdown_rx: broadcast::Receiver<()>) -> Option<T>
+pub async fn run_with_shutdown<F, T>(
+    future: F,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> Option<T>
 where
     F: std::future::Future<Output = T>,
 {

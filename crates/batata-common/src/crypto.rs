@@ -4,11 +4,11 @@
 //! Compatible with Nacos encryption plugin interface.
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use rand::{rngs::OsRng, Rng, RngCore};
+use rand::{Rng, RngCore, rngs::OsRng};
 use thiserror::Error;
 
 /// Error types for encryption operations
@@ -121,9 +121,7 @@ impl ConfigEncryptionService {
             .map_err(|e| CryptoError::Base64Error(e.to_string()))?;
 
         if combined.len() < 12 {
-            return Err(CryptoError::InvalidData(
-                "Ciphertext too short".to_string(),
-            ));
+            return Err(CryptoError::InvalidData("Ciphertext too short".to_string()));
         }
 
         // Extract nonce and ciphertext
@@ -203,9 +201,7 @@ impl ConfigEncryptionService {
             .map_err(|e| CryptoError::Base64Error(e.to_string()))?;
 
         if combined.len() < 12 {
-            return Err(CryptoError::InvalidData(
-                "Ciphertext too short".to_string(),
-            ));
+            return Err(CryptoError::InvalidData("Ciphertext too short".to_string()));
         }
 
         let (nonce_bytes, ciphertext_bytes) = combined.split_at(12);

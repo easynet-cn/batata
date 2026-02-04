@@ -10,15 +10,14 @@ use batata_api::Page;
 use batata_api::model::Member as ApiMember;
 use batata_config::{
     ConfigAllInfo, ConfigBasicInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
-    ImportResult, Namespace, SameConfigPolicy,
-    service::config::CloneResult,
+    ImportResult, Namespace, SameConfigPolicy, service::config::CloneResult,
 };
 use batata_core::cluster::ServerMemberManager;
 use batata_naming::NamingService;
 
 use super::{
-    ClusterInfo, ConfigListenerInfo, ConsoleDataSource, HealthChecker, InstanceInfo,
-    ServiceDetail, ServiceListItem, ServiceSelector, SubscriberInfo,
+    ClusterInfo, ConfigListenerInfo, ConsoleDataSource, HealthChecker, InstanceInfo, ServiceDetail,
+    ServiceListItem, ServiceSelector, SubscriberInfo,
 };
 use crate::model::{ClusterHealthResponse, ClusterHealthSummary, Member, SelfMemberResponse};
 
@@ -317,13 +316,8 @@ impl ConsoleDataSource for LocalDataSource {
         client_ip: &str,
         src_user: &str,
     ) -> anyhow::Result<usize> {
-        batata_config::service::batch_delete(
-            &self.database_connection,
-            ids,
-            client_ip,
-            src_user,
-        )
-        .await
+        batata_config::service::batch_delete(&self.database_connection, ids, client_ip, src_user)
+            .await
     }
 
     async fn config_gray_delete(
@@ -372,8 +366,7 @@ impl ConsoleDataSource for LocalDataSource {
     ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
         // Use ConfigSubscriberManager if available
         if let Some(ref manager) = self.config_subscriber_manager {
-            let config_key =
-                batata_core::ConfigKey::new(data_id, group_name, namespace_id);
+            let config_key = batata_core::ConfigKey::new(data_id, group_name, namespace_id);
             let subscribers = manager.get_subscribers(&config_key);
 
             return Ok(subscribers
@@ -393,10 +386,7 @@ impl ConsoleDataSource for LocalDataSource {
         Ok(Vec::new())
     }
 
-    async fn config_listeners_by_ip(
-        &self,
-        ip: &str,
-    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+    async fn config_listeners_by_ip(&self, ip: &str) -> anyhow::Result<Vec<ConfigListenerInfo>> {
         // Use ConfigSubscriberManager if available
         if let Some(ref manager) = self.config_subscriber_manager {
             let subscribers = manager.get_subscribers_by_ip(ip);
@@ -466,8 +456,12 @@ impl ConsoleDataSource for LocalDataSource {
         };
 
         // Store service metadata (this creates the service)
-        self.naming_service
-            .set_service_metadata(namespace_id, group_name, service_name, service_metadata);
+        self.naming_service.set_service_metadata(
+            namespace_id,
+            group_name,
+            service_name,
+            service_metadata,
+        );
 
         Ok(true)
     }
@@ -483,8 +477,12 @@ impl ConsoleDataSource for LocalDataSource {
             self.naming_service
                 .get_instances(namespace_id, group_name, service_name, "", false);
         for instance in &instances {
-            self.naming_service
-                .deregister_instance(namespace_id, group_name, service_name, instance);
+            self.naming_service.deregister_instance(
+                namespace_id,
+                group_name,
+                service_name,
+                instance,
+            );
         }
 
         // Delete service metadata
@@ -539,8 +537,12 @@ impl ConsoleDataSource for LocalDataSource {
             selector_expression,
         };
 
-        self.naming_service
-            .set_service_metadata(namespace_id, group_name, service_name, service_metadata);
+        self.naming_service.set_service_metadata(
+            namespace_id,
+            group_name,
+            service_name,
+            service_metadata,
+        );
 
         Ok(true)
     }
@@ -564,9 +566,9 @@ impl ConsoleDataSource for LocalDataSource {
                 .get_service(namespace_id, group_name, service_name, "", false);
 
         // Get stored service metadata
-        let svc_metadata = self
-            .naming_service
-            .get_service_metadata(namespace_id, group_name, service_name);
+        let svc_metadata =
+            self.naming_service
+                .get_service_metadata(namespace_id, group_name, service_name);
 
         // Extract unique clusters from instances
         let mut cluster_names: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -613,16 +615,15 @@ impl ConsoleDataSource for LocalDataSource {
             group_name: group_name.to_string(),
             service_name: service_name.to_string(),
             protect_threshold: svc_metadata.as_ref().map_or(0.0, |m| m.protect_threshold),
-            metadata: svc_metadata.as_ref().map_or_else(
-                std::collections::HashMap::new,
-                |m| m.metadata.clone(),
-            ),
-            selector: svc_metadata.as_ref().map_or_else(ServiceSelector::default, |m| {
-                ServiceSelector {
+            metadata: svc_metadata
+                .as_ref()
+                .map_or_else(std::collections::HashMap::new, |m| m.metadata.clone()),
+            selector: svc_metadata
+                .as_ref()
+                .map_or_else(ServiceSelector::default, |m| ServiceSelector {
                     selector_type: m.selector_type.clone(),
                     expression: m.selector_expression.clone(),
-                }
-            }),
+                }),
             clusters,
         }))
     }
@@ -646,13 +647,9 @@ impl ConsoleDataSource for LocalDataSource {
         let items: Vec<ServiceListItem> = service_names
             .into_iter()
             .map(|name| {
-                let instances = self.naming_service.get_instances(
-                    namespace_id,
-                    group_name,
-                    &name,
-                    "",
-                    false,
-                );
+                let instances =
+                    self.naming_service
+                        .get_instances(namespace_id, group_name, &name, "", false);
                 let healthy_count = instances.iter().filter(|i| i.healthy).count() as u32;
 
                 // Extract unique clusters
@@ -725,10 +722,7 @@ impl ConsoleDataSource for LocalDataSource {
     }
 
     fn service_selector_types(&self) -> Vec<String> {
-        vec![
-            "none".to_string(),
-            "label".to_string(),
-        ]
+        vec!["none".to_string(), "label".to_string()]
     }
 
     async fn service_cluster_update(
@@ -818,7 +812,12 @@ impl ConsoleDataSource for LocalDataSource {
             vec![]
         };
 
-        Ok(Page::new(total as u64, page_no as u64, page_size as u64, page_data))
+        Ok(Page::new(
+            total as u64,
+            page_no as u64,
+            page_size as u64,
+            page_data,
+        ))
     }
 
     async fn instance_update(
@@ -857,12 +856,8 @@ impl ConsoleDataSource for LocalDataSource {
         };
 
         // Register will update if instance exists
-        self.naming_service.register_instance(
-            namespace_id,
-            group_name,
-            service_name,
-            instance,
-        );
+        self.naming_service
+            .register_instance(namespace_id, group_name, service_name, instance);
 
         Ok(true)
     }

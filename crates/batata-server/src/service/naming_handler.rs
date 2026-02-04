@@ -21,7 +21,11 @@ use crate::{
         },
         remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
-    service::{naming::NamingService, naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern}, rpc::{AuthRequirement, PayloadHandler}},
+    service::{
+        naming::NamingService,
+        naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern},
+        rpc::{AuthRequirement, PayloadHandler},
+    },
 };
 
 // Handler for InstanceRequest - registers or deregisters a service instance
@@ -58,13 +62,16 @@ impl PayloadHandler for InstanceRequestHandler {
 
         // Notify fuzzy watchers about service change
         if result {
-            if let Err(e) = self.notify_fuzzy_watchers(
-                namespace,
-                group_name,
-                service_name,
-                req_type.as_str(),
-                src_ip,
-            ).await {
+            if let Err(e) = self
+                .notify_fuzzy_watchers(
+                    namespace,
+                    group_name,
+                    service_name,
+                    req_type.as_str(),
+                    src_ip,
+                )
+                .await
+            {
                 warn!("Failed to notify fuzzy watchers: {}", e);
             }
         }
@@ -117,21 +124,13 @@ impl InstanceRequestHandler {
         let group_key = NamingFuzzyWatchPattern::build_group_key(namespace, group, service_name);
 
         // Get current service info for the notification
-        let service_info = self.naming_service.get_service(
-            namespace,
-            group,
-            service_name,
-            "",
-            false,
-        );
+        let service_info =
+            self.naming_service
+                .get_service(namespace, group, service_name, "", false);
 
         // Build notification payload
-        let notification = NotifySubscriberRequest::for_service(
-            namespace,
-            group,
-            service_name,
-            service_info,
-        );
+        let notification =
+            NotifySubscriberRequest::for_service(namespace, group, service_name, service_info);
         let payload = notification.build_server_push_payload();
 
         info!(
@@ -144,10 +143,15 @@ impl InstanceRequestHandler {
         // Push notification to each watcher
         for connection_id in &watchers {
             // Mark the group key as received by this connection
-            self.naming_fuzzy_watch_manager.mark_received(connection_id, &group_key);
+            self.naming_fuzzy_watch_manager
+                .mark_received(connection_id, &group_key);
 
             // Push the actual notification payload
-            if self.connection_manager.push_message(connection_id, payload.clone()).await {
+            if self
+                .connection_manager
+                .push_message(connection_id, payload.clone())
+                .await
+            {
                 tracing::debug!(
                     "Pushed service {} notification to connection {}: {}",
                     change_type,
@@ -157,9 +161,7 @@ impl InstanceRequestHandler {
             } else {
                 warn!(
                     "Failed to push service {} notification to connection {}: {}",
-                    change_type,
-                    connection_id,
-                    group_key
+                    change_type, connection_id, group_key
                 );
             }
         }
@@ -463,8 +465,7 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
         if !registered {
             warn!(
                 "Failed to register fuzzy watch for connection {}: {}",
-                connection_id,
-                group_key_pattern
+                connection_id, group_key_pattern
             );
         }
 
@@ -498,7 +499,8 @@ impl PayloadHandler for NamingFuzzyWatchChangeNotifyHandler {
         let group_key = &request.service_key;
 
         // Mark the group key as received by this connection
-        self.naming_fuzzy_watch_manager.mark_received(connection_id, group_key);
+        self.naming_fuzzy_watch_manager
+            .mark_received(connection_id, group_key);
 
         let mut response = NamingFuzzyWatchChangeNotifyResponse::new();
         response.response.request_id = request_id;
@@ -555,8 +557,7 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
         if !registered {
             warn!(
                 "Failed to register fuzzy watch sync for connection {}: {}",
-                connection_id,
-                group_key_pattern
+                connection_id, group_key_pattern
             );
         }
 

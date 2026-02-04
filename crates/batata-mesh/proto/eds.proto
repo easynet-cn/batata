@@ -1,0 +1,197 @@
+// Endpoint Discovery Service (EDS) Protocol Definitions
+// Based on Envoy EDS API v3
+
+syntax = "proto3";
+
+package envoy.config.endpoint.v3;
+
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/duration.proto";
+
+option java_multiple_files = true;
+option java_package = "io.envoyproxy.envoy.config.endpoint.v3";
+
+// Cluster load assignment - the primary resource type for EDS
+message ClusterLoadAssignment {
+  // Name of the cluster.
+  string cluster_name = 1;
+
+  // List of endpoints to load balance to.
+  repeated LocalityLbEndpoints endpoints = 2;
+
+  // Load balancing policy.
+  Policy policy = 4;
+}
+
+// Load balancing policy for the cluster
+message Policy {
+  // Action to take when a host set is overprovisioned.
+  message DropOverload {
+    // Identifier for the policy.
+    string category = 1;
+
+    // Percentage of traffic to drop.
+    FractionalPercent drop_percentage = 2;
+  }
+
+  // Drop overloads.
+  repeated DropOverload drop_overloads = 2;
+
+  // Priority for routing.
+  google.protobuf.UInt32Value overprovisioning_factor = 3;
+
+  // Per-endpoint load reporting.
+  bool endpoint_stale_after = 4;
+}
+
+// Endpoints for a specific locality
+message LocalityLbEndpoints {
+  // Locality for these endpoints.
+  Locality locality = 1;
+
+  // The group of endpoints belonging to this locality.
+  repeated LbEndpoint lb_endpoints = 2;
+
+  // Optional: the load balancing weight for this locality.
+  google.protobuf.UInt32Value load_balancing_weight = 3;
+
+  // Optional: the priority for this locality.
+  uint32 priority = 5;
+
+  // Optional: proximity of this locality.
+  google.protobuf.UInt32Value proximity = 6;
+}
+
+// Single endpoint with load balancing configuration
+message LbEndpoint {
+  // Health status of the endpoint.
+  HealthStatus health_status = 2;
+
+  // Metadata for the endpoint.
+  Metadata metadata = 3;
+
+  // Load balancing weight for this endpoint.
+  google.protobuf.UInt32Value load_balancing_weight = 4;
+
+  // Endpoint address.
+  oneof host_identifier {
+    Endpoint endpoint = 1;
+    string endpoint_name = 5;
+  }
+}
+
+// Endpoint address and configuration
+message Endpoint {
+  // Address of the endpoint.
+  Address address = 1;
+
+  // Health check configuration.
+  HealthCheckConfig health_check_config = 2;
+
+  // Hostname for the endpoint (for SNI).
+  string hostname = 3;
+}
+
+// Health check configuration for an endpoint
+message HealthCheckConfig {
+  // Port for health check.
+  uint32 port_value = 1;
+
+  // Hostname for health check.
+  string hostname = 2;
+}
+
+// Network address
+message Address {
+  oneof address {
+    SocketAddress socket_address = 1;
+    Pipe pipe = 2;
+    EnvoyInternalAddress envoy_internal_address = 3;
+  }
+}
+
+// IP socket address
+message SocketAddress {
+  enum Protocol {
+    TCP = 0;
+    UDP = 1;
+  }
+
+  // Protocol type.
+  Protocol protocol = 1;
+
+  // IP address or hostname.
+  string address = 2;
+
+  // Port specification.
+  oneof port_specifier {
+    uint32 port_value = 3;
+    string named_port = 4;
+  }
+
+  // Resolver name.
+  string resolver_name = 5;
+
+  // IPv4 compatibility flag.
+  bool ipv4_compat = 6;
+}
+
+// Unix domain socket path
+message Pipe {
+  // Path to the Unix domain socket.
+  string path = 1;
+
+  // Mode for the socket.
+  uint32 mode = 2;
+}
+
+// Envoy internal address
+message EnvoyInternalAddress {
+  oneof address_name_specifier {
+    string server_listener_name = 1;
+    string endpoint_id = 2;
+  }
+}
+
+// Health status for endpoints
+enum HealthStatus {
+  UNKNOWN = 0;
+  HEALTHY = 1;
+  UNHEALTHY = 2;
+  DRAINING = 3;
+  TIMEOUT = 4;
+  DEGRADED = 5;
+}
+
+// Locality identifier
+message Locality {
+  // Region.
+  string region = 1;
+
+  // Zone within region.
+  string zone = 2;
+
+  // Sub-zone.
+  string sub_zone = 3;
+}
+
+// Metadata for endpoints
+message Metadata {
+  // Filter metadata.
+  map<string, google.protobuf.Struct> filter_metadata = 1;
+}
+
+// Fractional percent for drop policies
+message FractionalPercent {
+  // Numerator.
+  uint32 numerator = 1;
+
+  enum DenominatorType {
+    HUNDRED = 0;
+    TEN_THOUSAND = 1;
+    MILLION = 2;
+  }
+
+  // Denominator type.
+  DenominatorType denominator = 2;
+}

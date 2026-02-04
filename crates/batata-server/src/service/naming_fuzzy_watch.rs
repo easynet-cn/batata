@@ -99,7 +99,8 @@ impl NamingFuzzyWatchManager {
         group_key_pattern: &str,
         watch_type: &str,
     ) -> bool {
-        if let Some(mut pattern) = NamingFuzzyWatchPattern::from_group_key_pattern(group_key_pattern)
+        if let Some(mut pattern) =
+            NamingFuzzyWatchPattern::from_group_key_pattern(group_key_pattern)
         {
             pattern.watch_type = watch_type.to_string();
 
@@ -179,10 +180,7 @@ impl NamingFuzzyWatchManager {
 
     /// Get total pattern count across all connections
     pub fn pattern_count(&self) -> usize {
-        self.watchers
-            .iter()
-            .map(|entry| entry.value().len())
-            .sum()
+        self.watchers.iter().map(|entry| entry.value().len()).sum()
     }
 }
 
@@ -192,7 +190,8 @@ mod tests {
 
     #[test]
     fn test_pattern_from_group_key() {
-        let pattern = NamingFuzzyWatchPattern::from_group_key_pattern("public+DEFAULT_GROUP+test-service");
+        let pattern =
+            NamingFuzzyWatchPattern::from_group_key_pattern("public+DEFAULT_GROUP+test-service");
         assert!(pattern.is_some());
         let p = pattern.unwrap();
         assert_eq!(p.namespace, "public");
@@ -212,7 +211,8 @@ mod tests {
 
     #[test]
     fn test_pattern_matches() {
-        let pattern = NamingFuzzyWatchPattern::from_group_key_pattern("public+DEFAULT_GROUP+*").unwrap();
+        let pattern =
+            NamingFuzzyWatchPattern::from_group_key_pattern("public+DEFAULT_GROUP+*").unwrap();
         assert!(pattern.matches("public", "DEFAULT_GROUP", "service1"));
         assert!(pattern.matches("public", "DEFAULT_GROUP", "service2"));
         assert!(!pattern.matches("dev", "DEFAULT_GROUP", "service1"));

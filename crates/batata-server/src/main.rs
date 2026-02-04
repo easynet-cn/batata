@@ -10,7 +10,9 @@ use batata_server::{
     console::datasource,
     middleware::rate_limit,
     model::{self, common::AppState},
-    startup::{self, ConsulServices, GracefulShutdown, OtelConfig},
+    startup::{
+        self, ConsulServices, GracefulShutdown, OtelConfig, XdsServerHandle, start_xds_service,
+    },
 };
 use tracing::{error, info};
 
@@ -139,6 +141,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Start xDS service for service mesh support (if enabled)
+    let xds_handle: Option<XdsServerHandle> = {
+        let xds_config = app_state.configuration.xds_config();
+        if xds_config.enabled {
+            info!(
+                port = xds_config.port,
+                server_id = %xds_config.server_id,
+                "Starting xDS service for service mesh support"
+            );
+            match start_xds_service(xds_config, grpc_servers.naming_service.clone()).await {
+                Ok(handle) => {
+                    info!("xDS service started successfully");
+                    Some(handle)
+                }
+                Err(e) => {
+                    error!("Failed to start xDS service: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
     // Create Consul service adapters
     let consul_services = ConsulServices::new(grpc_servers.naming_service.clone());
 
@@ -167,6 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main_server = startup::main_server(
                 app_state.clone(),
                 grpc_servers.naming_service,
+                grpc_servers.connection_manager,
                 consul_services,
                 server_context_path,
                 server_address,
@@ -195,6 +222,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = startup::main_server(
                 app_state.clone(),
                 grpc_servers.naming_service,
+                grpc_servers.connection_manager,
                 consul_services,
                 server_context_path,
                 server_address,
@@ -212,6 +240,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+    }
+
+    // Cleanup: stop xDS service if running
+    if let Some(handle) = xds_handle {
+        info!("Stopping xDS service...");
+        handle.shutdown().await;
+        info!("xDS service stopped");
     }
 
     // Cleanup: stop cluster manager if running

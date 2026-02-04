@@ -91,7 +91,9 @@ pub fn regex_matches(pattern: &str, text: &str) -> bool {
 pub fn glob_matches(pattern: &str, text: &str) -> bool {
     let regex_pattern = format!(
         "^{}$",
-        regex::escape(pattern).replace("\\*", ".*").replace("\\?", ".")
+        regex::escape(pattern)
+            .replace("\\*", ".*")
+            .replace("\\?", ".")
     );
     regex_matches(&regex_pattern, text)
 }

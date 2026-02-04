@@ -118,12 +118,7 @@ pub struct ConfigChangeEvent {
 
 impl ConfigChangeEvent {
     /// Create a new config change event
-    pub fn new(
-        namespace: &str,
-        group: &str,
-        data_id: &str,
-        change_type: ConfigChangeType,
-    ) -> Self {
+    pub fn new(namespace: &str, group: &str, data_id: &str, change_type: ConfigChangeType) -> Self {
         Self {
             namespace: namespace.to_string(),
             group: group.to_string(),
@@ -212,7 +207,8 @@ impl ConfigFuzzyWatchManager {
         group_key_pattern: &str,
         watch_type: &str,
     ) -> bool {
-        if let Some(mut pattern) = ConfigFuzzyWatchPattern::from_group_key_pattern(group_key_pattern)
+        if let Some(mut pattern) =
+            ConfigFuzzyWatchPattern::from_group_key_pattern(group_key_pattern)
         {
             pattern.watch_type = watch_type.to_string();
 
@@ -292,10 +288,7 @@ impl ConfigFuzzyWatchManager {
 
     /// Get total pattern count across all connections
     pub fn pattern_count(&self) -> usize {
-        self.watchers
-            .iter()
-            .map(|entry| entry.value().len())
-            .sum()
+        self.watchers.iter().map(|entry| entry.value().len()).sum()
     }
 
     // ========== Notification Methods ==========
@@ -312,8 +305,7 @@ impl ConfigFuzzyWatchManager {
     /// 2. Return the list of connection IDs that match the pattern
     pub fn notify_change(&self, event: ConfigChangeEvent) -> Vec<String> {
         let group_key = event.group_key();
-        let watchers =
-            self.get_watchers_for_config(&event.namespace, &event.group, &event.data_id);
+        let watchers = self.get_watchers_for_config(&event.namespace, &event.group, &event.data_id);
 
         debug!(
             "Config change notification: {} {} - {} watchers",
@@ -353,8 +345,7 @@ impl ConfigFuzzyWatchManager {
     /// This returns the list of notifications that should be sent to each connection
     /// that matches the given config change event
     pub fn get_notifications(&self, event: &ConfigChangeEvent) -> Vec<ConfigWatchNotification> {
-        let watchers =
-            self.get_watchers_for_config(&event.namespace, &event.group, &event.data_id);
+        let watchers = self.get_watchers_for_config(&event.namespace, &event.group, &event.data_id);
 
         watchers
             .into_iter()
@@ -462,8 +453,8 @@ mod tests {
 
     #[test]
     fn test_config_change_event_with_md5() {
-        let event = ConfigChangeEvent::modify("public", "DEFAULT_GROUP", "app.yaml")
-            .with_md5("abc123");
+        let event =
+            ConfigChangeEvent::modify("public", "DEFAULT_GROUP", "app.yaml").with_md5("abc123");
         assert_eq!(event.md5, Some("abc123".to_string()));
     }
 

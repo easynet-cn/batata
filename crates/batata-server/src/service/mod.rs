@@ -20,6 +20,7 @@ pub mod naming_fuzzy_watch;
 // Local implementations (gRPC handlers and RPC)
 pub mod config_handler; // Config module gRPC handlers
 pub mod distro_handler; // Distro protocol gRPC handlers
+pub mod encryption_manager; // Encryption manager with hot reload
 pub mod handler; // Request handlers for gRPC communication
 pub mod handler_macros; // gRPC handler macros and utilities
 pub mod naming_handler; // Naming module gRPC handlers

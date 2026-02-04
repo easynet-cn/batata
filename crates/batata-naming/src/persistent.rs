@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use sea_orm::{
-    prelude::Expr, ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter,
-    QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+    prelude::Expr,
 };
 use tracing::{info, warn};
 
@@ -224,11 +224,7 @@ impl PersistentNamingService {
     }
 
     /// Update instance health status
-    pub async fn update_instance_health(
-        &self,
-        instance_id: &str,
-        healthy: bool,
-    ) -> Result<bool> {
+    pub async fn update_instance_health(&self, instance_id: &str, healthy: bool) -> Result<bool> {
         let now = chrono::Utc::now().naive_utc();
 
         let result = instance_info::Entity::update_many()
@@ -309,8 +305,7 @@ impl PersistentNamingService {
 
     /// Clean up stale ephemeral instances (optional - for instances that have timeout)
     pub async fn cleanup_stale_ephemeral_instances(&self, timeout_ms: i64) -> Result<u64> {
-        let cutoff = chrono::Utc::now().naive_utc()
-            - chrono::Duration::milliseconds(timeout_ms);
+        let cutoff = chrono::Utc::now().naive_utc() - chrono::Duration::milliseconds(timeout_ms);
 
         let result = instance_info::Entity::delete_many()
             .filter(instance_info::Column::Ephemeral.eq(true))
@@ -330,11 +325,7 @@ impl PersistentNamingService {
 
     /// Get or create a cluster
     #[allow(dead_code)]
-    pub async fn get_or_create_cluster(
-        &self,
-        service_id: i64,
-        cluster_name: &str,
-    ) -> Result<i64> {
+    pub async fn get_or_create_cluster(&self, service_id: i64, cluster_name: &str) -> Result<i64> {
         // Try to find existing cluster
         if let Some(cluster) = cluster_info::Entity::find()
             .filter(cluster_info::Column::ServiceId.eq(service_id))

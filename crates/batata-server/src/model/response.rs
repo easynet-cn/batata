@@ -2,7 +2,7 @@
 //!
 //! This module provides common response structures for API responses.
 
-use actix_web::{http::StatusCode, HttpResponse, HttpResponseBuilder};
+use actix_web::{HttpResponse, HttpResponseBuilder, http::StatusCode};
 use serde::{Deserialize, Serialize};
 
 use super::constants::NACOS_SERVER_VERSION_V2;
@@ -86,6 +86,35 @@ impl ErrorResult {
             format!("Code: {}, Message: {}", code, message).as_str(),
             path,
         ))
+    }
+}
+
+/// REST API result type with convenient builder methods
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestResult<T> {
+    pub code: i32,
+    pub message: Option<String>,
+    pub data: Option<T>,
+}
+
+impl<T> RestResult<T> {
+    /// Create a successful result with data
+    pub fn ok(data: Option<T>) -> Self {
+        RestResult {
+            code: 0,
+            message: Some("success".to_string()),
+            data,
+        }
+    }
+
+    /// Create an error result
+    pub fn err(code: i32, message: &str) -> Self {
+        RestResult {
+            code,
+            message: Some(message.to_string()),
+            data: None,
+        }
     }
 }
 

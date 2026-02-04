@@ -345,9 +345,10 @@ impl DistroProtocol {
             DistroDataType::NamingInstance => {
                 (batata_api::distro::DistroDataType::NamingInstance, None)
             }
-            DistroDataType::Custom(name) => {
-                (batata_api::distro::DistroDataType::Custom, Some(name.clone()))
-            }
+            DistroDataType::Custom(name) => (
+                batata_api::distro::DistroDataType::Custom,
+                Some(name.clone()),
+            ),
         };
 
         let data_item = DistroDataItem {

@@ -2,6 +2,22 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Rules
+
+**IMPORTANT**: These rules MUST be followed at all times:
+
+1. **Language**: All documentation, code comments, commit messages, and any written content MUST be in **English**.
+
+2. **Task Tracking**: Always provide **honest and accurate** feedback on task completion status. Never mark a task as completed unless it is fully implemented and tested. Update `docs/TASK_TRACKER.md` with real progress.
+
+3. **Code Quality**: Follow Rust best practices, run `cargo fmt` and `cargo clippy` before considering a task complete.
+
+4. **Testing**: Write tests for new functionality. A feature is not complete without tests.
+
+5. **API Compatibility**: Batata follows **Nacos 3.x direction**, which focuses on **V2 and V3 APIs**. **V1 API is NOT supported**. Do not implement V1 endpoints or heartbeat-based HTTP APIs. Modern clients should use V2 HTTP APIs or gRPC for service discovery and configuration management.
+
+6. **No Frontend Work**: Batata is a backend-only implementation. No frontend/UI work is needed. The console API provides JSON responses for third-party UI integration.
+
 ## Project Overview
 
 Batata is a Rust implementation of a Nacos-compatible service discovery, configuration management, and service management platform. It provides HTTP and gRPC APIs for configuration management, service discovery, and cluster coordination. It also supports Consul API compatibility.
@@ -128,8 +144,9 @@ batata/
 **Configuration**: Loaded from `conf/application.yml` with environment variable overrides via clap.
 
 ### API Versioning
-- `v1`: Legacy endpoints
-- `v3`: Current endpoints
+- `v2`: Nacos V2 Open API (fully implemented)
+- `v3`: Nacos V3 Console API (fully implemented)
+- `v1`: **NOT SUPPORTED** - following Nacos 3.x direction
 
 ### Permission Model
 Resource format: `namespace_id:group_id:resource_type/resource_name`

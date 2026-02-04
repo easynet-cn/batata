@@ -240,6 +240,83 @@ impl Configuration {
             .unwrap_or(DEFAULT_TOKEN_EXPIRE_SECONDS)
     }
 
+    /// Check if LDAP authentication is enabled
+    pub fn is_ldap_auth_enabled(&self) -> bool {
+        self.auth_system_type().to_lowercase() == "ldap"
+    }
+
+    /// Get LDAP URL
+    pub fn ldap_url(&self) -> Option<String> {
+        self.config.get_string("nacos.core.auth.ldap.url").ok()
+    }
+
+    /// Get LDAP base DN
+    pub fn ldap_base_dn(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.ldap.basedc")
+            .unwrap_or_default()
+    }
+
+    /// Get LDAP bind DN (admin user)
+    pub fn ldap_bind_dn(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.ldap.userDn")
+            .unwrap_or_default()
+    }
+
+    /// Get LDAP bind password
+    pub fn ldap_bind_password(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.ldap.password")
+            .unwrap_or_default()
+    }
+
+    /// Get LDAP user DN pattern
+    pub fn ldap_user_dn_pattern(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.ldap.userdn")
+            .unwrap_or_default()
+    }
+
+    /// Get LDAP filter prefix (default: uid)
+    pub fn ldap_filter_prefix(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.ldap.filter.prefix")
+            .unwrap_or_else(|_| "uid".to_string())
+    }
+
+    /// Get LDAP connection timeout in milliseconds
+    pub fn ldap_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("nacos.core.auth.ldap.timeout")
+            .unwrap_or(5000) as u64
+    }
+
+    /// Check if LDAP username comparison is case-sensitive
+    pub fn ldap_case_sensitive(&self) -> bool {
+        self.config
+            .get_bool("nacos.core.auth.ldap.case.sensitive")
+            .unwrap_or(true)
+    }
+
+    /// Get LDAP configuration as LdapConfig struct
+    pub fn ldap_config(&self) -> batata_auth::LdapConfig {
+        batata_auth::LdapConfig {
+            url: self.ldap_url().unwrap_or_default(),
+            base_dn: self.ldap_base_dn(),
+            bind_dn: self.ldap_bind_dn(),
+            bind_password: self.ldap_bind_password(),
+            user_dn_pattern: self.ldap_user_dn_pattern(),
+            filter_prefix: self.ldap_filter_prefix(),
+            timeout_ms: self.ldap_timeout_ms(),
+            case_sensitive: self.ldap_case_sensitive(),
+            ignore_partial_result_exception: self
+                .config
+                .get_bool("nacos.core.auth.ldap.ignore.partial.result.exception")
+                .unwrap_or(false),
+        }
+    }
+
     // ========================================================================
     // Database Configuration
     // ========================================================================
@@ -381,9 +458,7 @@ impl Configuration {
     // ========================================================================
 
     pub fn otel_enabled(&self) -> bool {
-        self.config
-            .get_bool("nacos.otel.enabled")
-            .unwrap_or(false)
+        self.config.get_bool("nacos.otel.enabled").unwrap_or(false)
     }
 
     pub fn otel_endpoint(&self) -> String {
@@ -483,6 +558,100 @@ impl Configuration {
     }
 
     // ========================================================================
+    // Encryption Configuration
+    // ========================================================================
+
+    /// Check if configuration encryption is enabled
+    pub fn encryption_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.config.encryption.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Get the encryption plugin type
+    pub fn encryption_plugin_type(&self) -> String {
+        self.config
+            .get_string("nacos.config.encryption.plugin.type")
+            .unwrap_or_else(|_| "aes-gcm".to_string())
+    }
+
+    /// Get the encryption key (Base64-encoded)
+    pub fn encryption_key(&self) -> Option<String> {
+        self.config.get_string("nacos.config.encryption.key").ok()
+    }
+
+    /// Get the encryption hot reload interval in milliseconds (0 = disabled)
+    pub fn encryption_reload_interval_ms(&self) -> u64 {
+        self.config
+            .get_int("nacos.config.encryption.reload.interval.ms")
+            .unwrap_or(0) as u64
+    }
+
+    /// Check if encryption hot reload is enabled
+    pub fn encryption_hot_reload_enabled(&self) -> bool {
+        self.encryption_reload_interval_ms() > 0
+    }
+
+    // ========================================================================
+    // gRPC TLS Configuration
+    // ========================================================================
+
+    /// Check if TLS is enabled for SDK gRPC server
+    pub fn grpc_sdk_tls_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.remote.server.grpc.sdk.tls.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Check if TLS is enabled for cluster gRPC server
+    pub fn grpc_cluster_tls_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.remote.server.grpc.cluster.tls.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Get the path to the server certificate file
+    pub fn grpc_tls_cert_path(&self) -> Option<String> {
+        self.config
+            .get_string("nacos.remote.server.grpc.tls.cert.path")
+            .ok()
+    }
+
+    /// Get the path to the server private key file
+    pub fn grpc_tls_key_path(&self) -> Option<String> {
+        self.config
+            .get_string("nacos.remote.server.grpc.tls.key.path")
+            .ok()
+    }
+
+    /// Get the path to the CA certificate for mTLS
+    pub fn grpc_tls_ca_cert_path(&self) -> Option<String> {
+        self.config
+            .get_string("nacos.remote.server.grpc.tls.ca.cert.path")
+            .ok()
+    }
+
+    /// Check if mutual TLS is enabled
+    pub fn grpc_mtls_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.remote.server.grpc.tls.mtls.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Get gRPC TLS configuration
+    pub fn grpc_tls_config(&self) -> super::tls::GrpcTlsConfig {
+        super::tls::GrpcTlsConfig {
+            sdk_enabled: self.grpc_sdk_tls_enabled(),
+            cluster_enabled: self.grpc_cluster_tls_enabled(),
+            cert_path: self.grpc_tls_cert_path().map(std::path::PathBuf::from),
+            key_path: self.grpc_tls_key_path().map(std::path::PathBuf::from),
+            ca_cert_path: self.grpc_tls_ca_cert_path().map(std::path::PathBuf::from),
+            mtls_enabled: self.grpc_mtls_enabled(),
+            alpn_protocols: vec!["h2".to_string()],
+        }
+    }
+
+    // ========================================================================
     // Core Config Conversion
     // ========================================================================
 
@@ -490,4 +659,113 @@ impl Configuration {
     pub fn to_core_config(&self) -> batata_core::model::Configuration {
         batata_core::model::Configuration::from_config(self.config.clone())
     }
+
+    // ========================================================================
+    // xDS Server Configuration (Service Mesh Support)
+    // ========================================================================
+
+    /// Check if xDS server is enabled
+    pub fn xds_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.mesh.xds.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Get xDS server port (default: 15010)
+    pub fn xds_server_port(&self) -> u16 {
+        self.config.get_int("nacos.mesh.xds.port").unwrap_or(15010) as u16
+    }
+
+    /// Get xDS server ID
+    pub fn xds_server_id(&self) -> String {
+        self.config
+            .get_string("nacos.mesh.xds.server.id")
+            .unwrap_or_else(|_| "batata-xds-server".to_string())
+    }
+
+    /// Get xDS sync interval in milliseconds
+    pub fn xds_sync_interval_ms(&self) -> u64 {
+        self.config
+            .get_int("nacos.mesh.xds.sync.interval.ms")
+            .unwrap_or(5000) as u64
+    }
+
+    /// Check if xDS should generate default listeners
+    pub fn xds_generate_listeners(&self) -> bool {
+        self.config
+            .get_bool("nacos.mesh.xds.generate.listeners")
+            .unwrap_or(true)
+    }
+
+    /// Check if xDS should generate default routes
+    pub fn xds_generate_routes(&self) -> bool {
+        self.config
+            .get_bool("nacos.mesh.xds.generate.routes")
+            .unwrap_or(true)
+    }
+
+    /// Get default listener port for xDS generated listeners
+    pub fn xds_default_listener_port(&self) -> u16 {
+        self.config
+            .get_int("nacos.mesh.xds.default.listener.port")
+            .unwrap_or(15001) as u16
+    }
+
+    /// Check if xDS TLS is enabled
+    pub fn xds_tls_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.mesh.xds.tls.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Get xDS TLS certificate path
+    pub fn xds_tls_cert_path(&self) -> Option<String> {
+        self.config.get_string("nacos.mesh.xds.tls.cert.path").ok()
+    }
+
+    /// Get xDS TLS key path
+    pub fn xds_tls_key_path(&self) -> Option<String> {
+        self.config.get_string("nacos.mesh.xds.tls.key.path").ok()
+    }
+
+    /// Get xDS configuration
+    pub fn xds_config(&self) -> XdsConfig {
+        XdsConfig {
+            enabled: self.xds_enabled(),
+            port: self.xds_server_port(),
+            server_id: self.xds_server_id(),
+            sync_interval_ms: self.xds_sync_interval_ms(),
+            generate_listeners: self.xds_generate_listeners(),
+            generate_routes: self.xds_generate_routes(),
+            default_listener_port: self.xds_default_listener_port(),
+            tls_enabled: self.xds_tls_enabled(),
+            tls_cert_path: self.xds_tls_cert_path().map(std::path::PathBuf::from),
+            tls_key_path: self.xds_tls_key_path().map(std::path::PathBuf::from),
+        }
+    }
+}
+
+/// xDS server configuration
+#[derive(Debug, Clone)]
+pub struct XdsConfig {
+    /// Whether xDS server is enabled
+    pub enabled: bool,
+    /// xDS server port
+    pub port: u16,
+    /// xDS server ID
+    pub server_id: String,
+    /// Sync interval in milliseconds
+    pub sync_interval_ms: u64,
+    /// Generate default listeners
+    pub generate_listeners: bool,
+    /// Generate default routes
+    pub generate_routes: bool,
+    /// Default listener port
+    pub default_listener_port: u16,
+    /// TLS enabled
+    pub tls_enabled: bool,
+    /// TLS certificate path
+    pub tls_cert_path: Option<std::path::PathBuf>,
+    /// TLS key path
+    pub tls_key_path: Option<std::path::PathBuf>,
 }

@@ -297,7 +297,10 @@ impl DatacenterManager {
     }
 
     /// Select one member per datacenter for cross-DC replication
-    pub fn select_cross_dc_replication_targets(&self, exclude_self: Option<&str>) -> Vec<Arc<Member>> {
+    pub fn select_cross_dc_replication_targets(
+        &self,
+        exclude_self: Option<&str>,
+    ) -> Vec<Arc<Member>> {
         if !self.config.cross_dc_replication_enabled {
             return Vec::new();
         }
@@ -359,8 +362,14 @@ impl DatacenterManager {
             total_regions: self.get_all_regions().len(),
             total_members: self.members_by_dc.iter().map(|e| e.value().len()).sum(),
             local_datacenter: self.config.local_datacenter.clone(),
-            local_members: local_dc_info.as_ref().map(|i| i.total_member_count).unwrap_or(0),
-            local_healthy_members: local_dc_info.as_ref().map(|i| i.healthy_member_count).unwrap_or(0),
+            local_members: local_dc_info
+                .as_ref()
+                .map(|i| i.total_member_count)
+                .unwrap_or(0),
+            local_healthy_members: local_dc_info
+                .as_ref()
+                .map(|i| i.healthy_member_count)
+                .unwrap_or(0),
             remote_datacenters: self.datacenter_info.len().saturating_sub(1),
         }
     }

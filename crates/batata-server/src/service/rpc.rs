@@ -10,9 +10,9 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{info, warn};
 
 use batata_core::{
+    GrpcAuthContext, GrpcAuthService, GrpcResource, PermissionAction,
     model::{Connection, GrpcClient},
     service::remote::ConnectionManager,
-    GrpcAuthContext, GrpcAuthService, GrpcResource, PermissionAction,
 };
 
 use crate::api::{
@@ -102,13 +102,18 @@ pub fn check_permission(
         Ok(())
     } else {
         Err(Status::permission_denied(
-            result.message.unwrap_or_else(|| "permission denied".to_string()),
+            result
+                .message
+                .unwrap_or_else(|| "permission denied".to_string()),
         ))
     }
 }
 
 /// Check if request comes from an authorized cluster node (internal operation)
-pub fn check_server_identity(auth_service: &GrpcAuthService, payload: &Payload) -> Result<(), Status> {
+pub fn check_server_identity(
+    auth_service: &GrpcAuthService,
+    payload: &Payload,
+) -> Result<(), Status> {
     // If auth is not enabled, skip the check
     if !auth_service.is_auth_enabled() {
         return Ok(());
@@ -300,8 +305,10 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                     check_server_identity(self.handler_registry.auth_service(), payload)?;
                 }
                 AuthRequirement::Authenticated | AuthRequirement::Permission => {
-                    let auth_context =
-                        extract_auth_context_from_payload(self.handler_registry.auth_service(), payload);
+                    let auth_context = extract_auth_context_from_payload(
+                        self.handler_registry.auth_service(),
+                        payload,
+                    );
                     check_authentication(&auth_context)?;
                 }
             }

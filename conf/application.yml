@@ -159,6 +159,35 @@ management.metrics.export.influx.enabled: false
 ### Idle connection timeout in milliseconds. Connections unused for this duration will be removed. Default 5 minutes.
 #nacos.remote.server.grpc.cluster.idle-timeout=300000
 
+#*************** gRPC TLS Configurations ***************#
+### Enable TLS for SDK gRPC server (client connections)
+#nacos.remote.server.grpc.sdk.tls.enabled=false
+### Enable TLS for cluster gRPC server (inter-node communication)
+#nacos.remote.server.grpc.cluster.tls.enabled=false
+
+### Path to the server certificate file (PEM format)
+#nacos.remote.server.grpc.tls.cert.path=/path/to/server.crt
+### Path to the server private key file (PEM format)
+#nacos.remote.server.grpc.tls.key.path=/path/to/server.key
+
+### Mutual TLS (mTLS) configuration
+### Enable mTLS to require client certificates
+#nacos.remote.server.grpc.tls.mtls.enabled=false
+### Path to the CA certificate for verifying client certificates
+#nacos.remote.server.grpc.tls.ca.cert.path=/path/to/ca.crt
+
+#*************** gRPC Client TLS Configurations (Cluster) ***************#
+### Enable TLS for cluster client connections (inter-node communication)
+#nacos.remote.client.grpc.cluster.tls.enabled=false
+### Path to client certificate for mTLS (optional)
+#nacos.remote.client.grpc.cluster.tls.cert.path=/path/to/client.crt
+### Path to client private key for mTLS (optional)
+#nacos.remote.client.grpc.cluster.tls.key.path=/path/to/client.key
+### Path to CA certificate for server verification
+#nacos.remote.client.grpc.cluster.tls.ca.cert.path=/path/to/ca.crt
+### Domain name for TLS SNI verification (optional)
+#nacos.remote.client.grpc.cluster.tls.domain=cluster.local
+
 #*************** Config Module Related Configurations ***************#
 
 ### the maximum retry times for push
@@ -307,6 +336,22 @@ nacos.ratelimit.auth.window_seconds: 60
 ### Lockout duration in seconds after exceeding max attempts
 nacos.ratelimit.auth.lockout_seconds: 300
 
+#*************** Encryption Plugin Related Configurations ***************#
+### Enable configuration encryption
+nacos.config.encryption.enabled: false
+### Encryption plugin type (aes-gcm is the default and only supported type currently)
+nacos.config.encryption.plugin.type: aes-gcm
+### Encryption key (32-byte Base64-encoded key for AES-256)
+### Generate with: openssl rand -base64 32
+#nacos.config.encryption.key: YOUR_BASE64_ENCODED_32_BYTE_KEY
+### Encryption patterns - data_ids matching these patterns will be encrypted
+### Pattern type: prefix, suffix, contains, exact, regex
+nacos.config.encryption.patterns:
+  - type: prefix
+    value: "cipher-"
+### Hot reload interval for encryption plugin configuration (milliseconds, 0 to disable)
+nacos.config.encryption.reload.interval.ms: 0
+
 #*************** Control Plugin Related Configurations ***************#
 # plugin type
 #nacos.plugin.control.manager.type=nacos
@@ -335,6 +380,28 @@ nacos.ratelimit.auth.lockout_seconds: 300
 #*************** Istio Plugin Related Configurations ***************#
 ### If turn on the MCP server:
 nacos.istio.mcp.server.enabled: false
+
+#*************** Service Mesh / xDS Configurations ***************#
+### Enable xDS server for Envoy/Istio integration
+nacos.mesh.xds.enabled: false
+### xDS server port (default: 15010, standard xDS port)
+nacos.mesh.xds.port: 15010
+### xDS server identifier
+nacos.mesh.xds.server.id: batata-xds-server
+### Sync interval in milliseconds (how often to sync services to xDS)
+nacos.mesh.xds.sync.interval.ms: 5000
+### Whether to auto-generate default listeners for services
+nacos.mesh.xds.generate.listeners: true
+### Whether to auto-generate default routes for services
+nacos.mesh.xds.generate.routes: true
+### Default listener port for generated listeners
+nacos.mesh.xds.default.listener.port: 15001
+### Enable TLS for xDS server
+#nacos.mesh.xds.tls.enabled: false
+### Path to xDS server TLS certificate
+#nacos.mesh.xds.tls.cert.path: /path/to/xds-server.crt
+### Path to xDS server TLS private key
+#nacos.mesh.xds.tls.key.path: /path/to/xds-server.key
 
 #--------------- Nacos Experimental Features Configurations ---------------#
 

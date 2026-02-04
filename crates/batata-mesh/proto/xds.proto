@@ -1,0 +1,194 @@
+// xDS Protocol Definitions for Batata Service Mesh
+// Based on Envoy xDS API v3
+
+syntax = "proto3";
+
+package envoy.service.discovery.v3;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+
+option java_multiple_files = true;
+option java_package = "io.envoyproxy.envoy.service.discovery.v3";
+
+// Discovery Request - sent by Envoy to request resources
+message DiscoveryRequest {
+  // The version_info provided in the request messages will be the version_info
+  // received with the most recent successfully processed response or empty on
+  // the first request.
+  string version_info = 1;
+
+  // The node making the request.
+  Node node = 2;
+
+  // List of resources to subscribe to.
+  repeated string resource_names = 3;
+
+  // Type of the resource that is being requested.
+  string type_url = 4;
+
+  // ACK/NACK response to a DiscoveryResponse.
+  string response_nonce = 5;
+
+  // This is populated when the previous DiscoveryResponse failed to update
+  // configuration.
+  Status error_detail = 6;
+}
+
+// Discovery Response - sent by xDS server with resources
+message DiscoveryResponse {
+  // The version of the response data.
+  string version_info = 1;
+
+  // The response resources.
+  repeated google.protobuf.Any resources = 2;
+
+  // Canary is used to support two Envoy command line flags.
+  bool canary = 3;
+
+  // Type URL for resources.
+  string type_url = 4;
+
+  // For gRPC based subscriptions, the nonce provides a way to explicitly ack a
+  // specific DiscoveryResponse.
+  string nonce = 5;
+
+  // The control plane instance that sent the response.
+  ControlPlane control_plane = 6;
+}
+
+// Delta Discovery Request - for incremental xDS
+message DeltaDiscoveryRequest {
+  // The node making the request.
+  Node node = 1;
+
+  // Type of the resource that is being requested.
+  string type_url = 2;
+
+  // Resources to subscribe to.
+  repeated string resource_names_subscribe = 3;
+
+  // Resources to unsubscribe from.
+  repeated string resource_names_unsubscribe = 4;
+
+  // Map of resources to their versions.
+  map<string, string> initial_resource_versions = 5;
+
+  // ACK/NACK response nonce.
+  string response_nonce = 6;
+
+  // Error detail for NACK.
+  Status error_detail = 7;
+}
+
+// Delta Discovery Response - for incremental xDS
+message DeltaDiscoveryResponse {
+  // System version info.
+  string system_version_info = 1;
+
+  // The response resources.
+  repeated Resource resources = 2;
+
+  // Type URL for resources.
+  string type_url = 4;
+
+  // Resources to remove.
+  repeated string removed_resources = 6;
+
+  // Nonce for this response.
+  string nonce = 5;
+
+  // The control plane instance.
+  ControlPlane control_plane = 7;
+}
+
+// Resource wrapper for delta xDS
+message Resource {
+  // Resource name.
+  string name = 3;
+
+  // Aliases for this resource.
+  repeated string aliases = 4;
+
+  // Resource version.
+  string version = 1;
+
+  // The resource being tracked.
+  google.protobuf.Any resource = 2;
+
+  // TTL for the resource.
+  google.protobuf.Duration ttl = 6;
+
+  // Cache control.
+  CacheControl cache_control = 7;
+}
+
+// Cache control directives
+message CacheControl {
+  // If true, client may not cache this resource.
+  bool do_not_cache = 1;
+}
+
+// Node identifier
+message Node {
+  // Unique node identifier.
+  string id = 1;
+
+  // Cluster the node belongs to.
+  string cluster = 2;
+
+  // Opaque metadata for the node.
+  google.protobuf.Struct metadata = 3;
+
+  // Locality specifying where the node is running.
+  Locality locality = 4;
+
+  // User agent name.
+  string user_agent_name = 6;
+
+  // User agent version.
+  string user_agent_version = 7;
+
+  // Client feature support list.
+  repeated string client_features = 10;
+}
+
+// Locality - identifies where a service is running
+message Locality {
+  // Region.
+  string region = 1;
+
+  // Zone.
+  string zone = 2;
+
+  // Sub-zone.
+  string sub_zone = 3;
+}
+
+// Status for error responses
+message Status {
+  // Status code.
+  int32 code = 1;
+
+  // Status message.
+  string message = 2;
+
+  // Details.
+  repeated google.protobuf.Any details = 3;
+}
+
+// Control plane identifier
+message ControlPlane {
+  // Identifier.
+  string identifier = 1;
+}
+
+// Aggregated Discovery Service
+service AggregatedDiscoveryService {
+  // Full-state streaming aggregated discovery.
+  rpc StreamAggregatedResources(stream DiscoveryRequest) returns (stream DiscoveryResponse);
+
+  // Delta streaming aggregated discovery.
+  rpc DeltaAggregatedResources(stream DeltaDiscoveryRequest) returns (stream DeltaDiscoveryResponse);
+}

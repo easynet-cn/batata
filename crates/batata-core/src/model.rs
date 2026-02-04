@@ -266,4 +266,41 @@ impl Configuration {
             .get_int("nacos.remote.server.grpc.sdk.keep-alive-timeout")
             .unwrap_or(20000) as u64
     }
+
+    // ===================== Cluster Client TLS Configuration =====================
+
+    /// Check if TLS is enabled for cluster client connections
+    pub fn cluster_client_tls_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.remote.client.grpc.cluster.tls.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Get cluster client TLS certificate path (for mTLS)
+    pub fn cluster_client_tls_cert_path(&self) -> Option<String> {
+        self.config
+            .get_string("nacos.remote.client.grpc.cluster.tls.cert.path")
+            .ok()
+    }
+
+    /// Get cluster client TLS private key path (for mTLS)
+    pub fn cluster_client_tls_key_path(&self) -> Option<String> {
+        self.config
+            .get_string("nacos.remote.client.grpc.cluster.tls.key.path")
+            .ok()
+    }
+
+    /// Get cluster client TLS CA certificate path for server verification
+    pub fn cluster_client_tls_ca_cert_path(&self) -> Option<String> {
+        self.config
+            .get_string("nacos.remote.client.grpc.cluster.tls.ca.cert.path")
+            .ok()
+    }
+
+    /// Get cluster client TLS domain name for SNI verification
+    pub fn cluster_client_tls_domain(&self) -> Option<String> {
+        self.config
+            .get_string("nacos.remote.client.grpc.cluster.tls.domain")
+            .ok()
+    }
 }

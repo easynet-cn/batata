@@ -395,10 +395,8 @@ impl ConsoleApiClient {
             .mime_str("application/zip")?;
         let form = reqwest::multipart::Form::new().part("file", part);
 
-        let response: ApiResponse<ImportResult> = self
-            .http_client
-            .post_multipart(&path, form)
-            .await?;
+        let response: ApiResponse<ImportResult> =
+            self.http_client.post_multipart(&path, form).await?;
         Ok(response.data)
     }
 

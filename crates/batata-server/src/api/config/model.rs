@@ -3,7 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::model::{ConfigAllInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper};
+use crate::config::model::{
+    ConfigAllInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
+};
 
 // Re-export all config API types from batata-api
 pub use batata_api::config::{
@@ -210,4 +212,3 @@ impl From<ConfigHistoryInfo> for ConfigHistoryDetailInfo {
         }
     }
 }
-

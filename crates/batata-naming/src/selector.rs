@@ -109,30 +109,22 @@ impl LabelRequirement {
     /// Check if an instance's metadata matches this requirement
     pub fn matches(&self, metadata: &HashMap<String, String>) -> bool {
         match &self.operator {
-            LabelOperator::Equals => {
-                metadata
-                    .get(&self.key)
-                    .map(|v| self.values.first().map_or(false, |expected| v == expected))
-                    .unwrap_or(false)
-            }
-            LabelOperator::NotEquals => {
-                metadata
-                    .get(&self.key)
-                    .map(|v| self.values.first().map_or(true, |expected| v != expected))
-                    .unwrap_or(true)
-            }
-            LabelOperator::In => {
-                metadata
-                    .get(&self.key)
-                    .map(|v| self.values.contains(v))
-                    .unwrap_or(false)
-            }
-            LabelOperator::NotIn => {
-                metadata
-                    .get(&self.key)
-                    .map(|v| !self.values.contains(v))
-                    .unwrap_or(true)
-            }
+            LabelOperator::Equals => metadata
+                .get(&self.key)
+                .map(|v| self.values.first().map_or(false, |expected| v == expected))
+                .unwrap_or(false),
+            LabelOperator::NotEquals => metadata
+                .get(&self.key)
+                .map(|v| self.values.first().map_or(true, |expected| v != expected))
+                .unwrap_or(true),
+            LabelOperator::In => metadata
+                .get(&self.key)
+                .map(|v| self.values.contains(v))
+                .unwrap_or(false),
+            LabelOperator::NotIn => metadata
+                .get(&self.key)
+                .map(|v| !self.values.contains(v))
+                .unwrap_or(true),
             LabelOperator::Exists => metadata.contains_key(&self.key),
             LabelOperator::DoesNotExist => !metadata.contains_key(&self.key),
             LabelOperator::Regex => {
@@ -467,7 +459,8 @@ impl SelectorBuilder {
 
     /// Add a regex requirement
     pub fn regex(mut self, key: &str, pattern: &str) -> Self {
-        self.requirements.push(LabelRequirement::regex(key, pattern));
+        self.requirements
+            .push(LabelRequirement::regex(key, pattern));
         self
     }
 

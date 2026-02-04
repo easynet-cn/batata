@@ -1,0 +1,728 @@
+// Cluster Discovery Service (CDS) Protocol Definitions
+// Based on Envoy CDS API v3
+
+syntax = "proto3";
+
+package envoy.config.cluster.v3;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/struct.proto";
+
+option java_multiple_files = true;
+option java_package = "io.envoyproxy.envoy.config.cluster.v3";
+
+// Cluster configuration
+message Cluster {
+  // Name of the cluster.
+  string name = 1;
+
+  // How the cluster should discover endpoints.
+  enum DiscoveryType {
+    STATIC = 0;
+    STRICT_DNS = 1;
+    LOGICAL_DNS = 2;
+    EDS = 3;
+    ORIGINAL_DST = 4;
+  }
+  DiscoveryType type = 2;
+
+  // EDS configuration when type is EDS.
+  EdsClusterConfig eds_cluster_config = 3;
+
+  // Connection timeout.
+  google.protobuf.Duration connect_timeout = 4;
+
+  // Per connection buffer limit.
+  google.protobuf.UInt32Value per_connection_buffer_limit_bytes = 5;
+
+  // Load balancing policy.
+  enum LbPolicy {
+    ROUND_ROBIN = 0;
+    LEAST_REQUEST = 1;
+    RING_HASH = 2;
+    RANDOM = 3;
+    MAGLEV = 5;
+    CLUSTER_PROVIDED = 6;
+    LOAD_BALANCING_POLICY_CONFIG = 7;
+  }
+  LbPolicy lb_policy = 6;
+
+  // Static endpoints (when type is STATIC).
+  ClusterLoadAssignment load_assignment = 33;
+
+  // Health checks for this cluster.
+  repeated HealthCheck health_checks = 8;
+
+  // Maximum requests per connection.
+  google.protobuf.UInt32Value max_requests_per_connection = 9;
+
+  // Circuit breakers configuration.
+  CircuitBreakers circuit_breakers = 10;
+
+  // TLS configuration.
+  UpstreamTlsContext upstream_tls_context = 11;
+
+  // HTTP protocol options.
+  oneof protocol_selection {
+    HttpProtocolOptions http_protocol_options = 13;
+    Http2ProtocolOptions http2_protocol_options = 14;
+  }
+
+  // DNS refresh rate.
+  google.protobuf.Duration dns_refresh_rate = 16;
+
+  // DNS failure refresh rate.
+  RefreshRate dns_failure_refresh_rate = 44;
+
+  // Respect DNS TTL.
+  bool respect_dns_ttl = 39;
+
+  // DNS lookup family.
+  enum DnsLookupFamily {
+    AUTO = 0;
+    V4_ONLY = 1;
+    V6_ONLY = 2;
+    V4_PREFERRED = 3;
+    ALL = 4;
+  }
+  DnsLookupFamily dns_lookup_family = 17;
+
+  // Outlier detection configuration.
+  OutlierDetection outlier_detection = 19;
+
+  // Cleanup interval for connections.
+  google.protobuf.Duration cleanup_interval = 20;
+
+  // Metadata for the cluster.
+  Metadata metadata = 25;
+
+  // Common LB configuration.
+  CommonLbConfig common_lb_config = 27;
+
+  // Transport socket configuration.
+  TransportSocket transport_socket = 24;
+
+  // Load balancing subset configuration.
+  LbSubsetConfig lb_subset_config = 22;
+
+  // Ring hash configuration.
+  RingHashLbConfig ring_hash_lb_config = 23;
+
+  // Maglev configuration.
+  MaglevLbConfig maglev_lb_config = 52;
+
+  // Least request configuration.
+  LeastRequestLbConfig least_request_lb_config = 37;
+
+  // Round robin configuration.
+  RoundRobinLbConfig round_robin_lb_config = 56;
+}
+
+// EDS cluster configuration
+message EdsClusterConfig {
+  // EDS configuration source.
+  ConfigSource eds_config = 1;
+
+  // Service name for EDS.
+  string service_name = 2;
+}
+
+// Configuration source
+message ConfigSource {
+  // Path to configuration file.
+  string path = 1;
+
+  // API configuration source.
+  ApiConfigSource api_config_source = 2;
+
+  // ADS configuration source.
+  AggregatedConfigSource ads = 3;
+
+  // Self configuration source.
+  SelfConfigSource self = 5;
+
+  // Initial fetch timeout.
+  google.protobuf.Duration initial_fetch_timeout = 4;
+
+  // Resource API version.
+  ApiVersion resource_api_version = 6;
+}
+
+// API configuration source
+message ApiConfigSource {
+  // API type.
+  enum ApiType {
+    DEPRECATED_AND_UNAVAILABLE_DO_NOT_USE = 0;
+    REST = 1;
+    GRPC = 2;
+    DELTA_GRPC = 3;
+    AGGREGATED_GRPC = 5;
+    AGGREGATED_DELTA_GRPC = 6;
+  }
+  ApiType api_type = 1;
+
+  // Transport API version.
+  ApiVersion transport_api_version = 8;
+
+  // Cluster names.
+  repeated string cluster_names = 2;
+
+  // gRPC services.
+  repeated GrpcService grpc_services = 4;
+
+  // Refresh delay.
+  google.protobuf.Duration refresh_delay = 3;
+
+  // Request timeout.
+  google.protobuf.Duration request_timeout = 5;
+
+  // Rate limit settings.
+  RateLimitSettings rate_limit_settings = 6;
+
+  // Set node on first message only.
+  bool set_node_on_first_message_only = 7;
+}
+
+// Aggregated config source (ADS)
+message AggregatedConfigSource {}
+
+// Self config source
+message SelfConfigSource {
+  // Transport API version.
+  ApiVersion transport_api_version = 1;
+}
+
+// API version
+enum ApiVersion {
+  AUTO = 0;
+  V2 = 1;
+  V3 = 2;
+}
+
+// gRPC service configuration
+message GrpcService {
+  // Envoy gRPC.
+  EnvoyGrpc envoy_grpc = 1;
+
+  // Google gRPC.
+  GoogleGrpc google_grpc = 2;
+
+  // Timeout.
+  google.protobuf.Duration timeout = 3;
+
+  // Initial metadata.
+  repeated HeaderValue initial_metadata = 5;
+}
+
+// Envoy gRPC configuration
+message EnvoyGrpc {
+  // Cluster name.
+  string cluster_name = 1;
+
+  // Authority.
+  string authority = 2;
+}
+
+// Google gRPC configuration
+message GoogleGrpc {
+  // Target URI.
+  string target_uri = 1;
+
+  // Channel credentials.
+  ChannelCredentials channel_credentials = 2;
+
+  // Call credentials.
+  repeated CallCredentials call_credentials = 3;
+
+  // Stat prefix.
+  string stat_prefix = 4;
+
+  // Credentials factory name.
+  string credentials_factory_name = 5;
+
+  // Channel configuration.
+  google.protobuf.Struct config = 6;
+}
+
+// Channel credentials
+message ChannelCredentials {
+  oneof credential_specifier {
+    SslCredentials ssl_credentials = 1;
+    Empty google_default = 2;
+    LocalCredentials local_credentials = 3;
+  }
+}
+
+// SSL credentials
+message SslCredentials {
+  DataSource root_certs = 1;
+  DataSource private_key = 2;
+  DataSource cert_chain = 3;
+}
+
+// Local credentials
+message LocalCredentials {}
+
+// Call credentials
+message CallCredentials {
+  oneof credential_specifier {
+    string access_token = 1;
+    MetadataCredentialsFromPlugin from_plugin = 6;
+    StsService sts_service = 7;
+  }
+}
+
+// Metadata credentials from plugin
+message MetadataCredentialsFromPlugin {
+  string name = 1;
+  google.protobuf.Any typed_config = 3;
+}
+
+// STS service
+message StsService {
+  string token_exchange_service_uri = 1;
+  string resource = 2;
+  string audience = 3;
+  string scope = 4;
+  string requested_token_type = 5;
+  string subject_token_path = 6;
+  string subject_token_type = 7;
+  string actor_token_path = 8;
+  string actor_token_type = 9;
+}
+
+// Data source
+message DataSource {
+  oneof specifier {
+    string filename = 1;
+    bytes inline_bytes = 2;
+    string inline_string = 3;
+    string environment_variable = 4;
+  }
+}
+
+// Empty message
+message Empty {}
+
+// Rate limit settings
+message RateLimitSettings {
+  google.protobuf.UInt32Value max_tokens = 1;
+  google.protobuf.DoubleValue fill_rate = 2;
+}
+
+// Health check configuration
+message HealthCheck {
+  google.protobuf.Duration timeout = 1;
+  google.protobuf.Duration interval = 2;
+  google.protobuf.Duration initial_jitter = 20;
+  google.protobuf.Duration interval_jitter = 3;
+  google.protobuf.UInt32Value interval_jitter_percent = 18;
+  google.protobuf.UInt32Value unhealthy_threshold = 4;
+  google.protobuf.UInt32Value healthy_threshold = 5;
+  google.protobuf.UInt32Value alt_port = 6;
+  google.protobuf.BoolValue reuse_connection = 7;
+
+  oneof health_checker {
+    HttpHealthCheck http_health_check = 8;
+    TcpHealthCheck tcp_health_check = 9;
+    GrpcHealthCheck grpc_health_check = 11;
+    CustomHealthCheck custom_health_check = 13;
+  }
+
+  google.protobuf.Duration no_traffic_interval = 12;
+  google.protobuf.Duration no_traffic_healthy_interval = 24;
+  google.protobuf.Duration unhealthy_interval = 14;
+  google.protobuf.Duration unhealthy_edge_interval = 15;
+  google.protobuf.Duration healthy_edge_interval = 16;
+  string event_log_path = 17;
+  bool always_log_health_check_failures = 19;
+  google.protobuf.Duration tls_options = 21;
+  TransportSocketMatchCriteria transport_socket_match_criteria = 23;
+}
+
+// HTTP health check
+message HttpHealthCheck {
+  string host = 1;
+  string path = 2;
+  RequestHeadersToAdd request_headers_to_add = 6;
+  repeated string request_headers_to_remove = 8;
+  repeated string expected_statuses = 9;
+  CodecClientType codec_client_type = 10;
+  ServiceNameMatcher service_name_matcher = 11;
+}
+
+// TCP health check
+message TcpHealthCheck {
+  bytes send = 1;
+  repeated bytes receive = 2;
+}
+
+// gRPC health check
+message GrpcHealthCheck {
+  string service_name = 1;
+  string authority = 2;
+}
+
+// Custom health check
+message CustomHealthCheck {
+  string name = 1;
+  google.protobuf.Any typed_config = 3;
+}
+
+// Request headers to add
+message RequestHeadersToAdd {
+  repeated HeaderValueOption headers = 1;
+}
+
+// Header value option
+message HeaderValueOption {
+  HeaderValue header = 1;
+  google.protobuf.BoolValue append = 2;
+}
+
+// Header value
+message HeaderValue {
+  string key = 1;
+  string value = 2;
+}
+
+// Service name matcher
+message ServiceNameMatcher {
+  string prefix = 1;
+  string suffix = 2;
+}
+
+// Codec client type
+enum CodecClientType {
+  HTTP1 = 0;
+  HTTP2 = 1;
+  HTTP3 = 2;
+}
+
+// Transport socket match criteria
+message TransportSocketMatchCriteria {
+  google.protobuf.Struct match = 1;
+}
+
+// Circuit breakers configuration
+message CircuitBreakers {
+  message Thresholds {
+    RoutingPriority priority = 1;
+    google.protobuf.UInt32Value max_connections = 2;
+    google.protobuf.UInt32Value max_pending_requests = 3;
+    google.protobuf.UInt32Value max_requests = 4;
+    google.protobuf.UInt32Value max_retries = 5;
+    bool track_remaining = 6;
+    google.protobuf.UInt32Value max_connection_pools = 7;
+    RetryBudget retry_budget = 8;
+  }
+  repeated Thresholds thresholds = 1;
+}
+
+// Routing priority
+enum RoutingPriority {
+  DEFAULT = 0;
+  HIGH = 1;
+}
+
+// Retry budget
+message RetryBudget {
+  Percent budget_percent = 1;
+  google.protobuf.UInt32Value min_retry_concurrency = 2;
+}
+
+// Percent
+message Percent {
+  double value = 1;
+}
+
+// Upstream TLS context
+message UpstreamTlsContext {
+  CommonTlsContext common_tls_context = 1;
+  string sni = 2;
+  bool allow_renegotiation = 3;
+  google.protobuf.UInt32Value max_session_keys = 4;
+}
+
+// Common TLS context
+message CommonTlsContext {
+  TlsParameters tls_params = 1;
+  repeated TlsCertificate tls_certificates = 2;
+  CertificateValidationContext validation_context = 3;
+  repeated string alpn_protocols = 4;
+}
+
+// TLS parameters
+message TlsParameters {
+  TlsProtocol tls_minimum_protocol_version = 1;
+  TlsProtocol tls_maximum_protocol_version = 2;
+  repeated string cipher_suites = 3;
+  repeated string ecdh_curves = 4;
+}
+
+// TLS protocol
+enum TlsProtocol {
+  TLS_AUTO = 0;
+  TLSv1_0 = 1;
+  TLSv1_1 = 2;
+  TLSv1_2 = 3;
+  TLSv1_3 = 4;
+}
+
+// TLS certificate
+message TlsCertificate {
+  DataSource certificate_chain = 1;
+  DataSource private_key = 2;
+  DataSource password = 3;
+  DataSource ocsp_staple = 4;
+  repeated DataSource signed_certificate_timestamp = 5;
+}
+
+// Certificate validation context
+message CertificateValidationContext {
+  DataSource trusted_ca = 1;
+  repeated string verify_certificate_spki = 3;
+  repeated string verify_certificate_hash = 2;
+  repeated string match_subject_alt_names = 9;
+  google.protobuf.BoolValue require_ocsp_staple = 5;
+  google.protobuf.BoolValue require_signed_certificate_timestamp = 6;
+  DataSource crl = 7;
+  bool allow_expired_certificate = 8;
+  TrustChainVerification trust_chain_verification = 10;
+}
+
+// Trust chain verification
+enum TrustChainVerification {
+  VERIFY_TRUST_CHAIN = 0;
+  ACCEPT_UNTRUSTED = 1;
+}
+
+// HTTP protocol options
+message HttpProtocolOptions {
+  google.protobuf.Duration idle_timeout = 1;
+  google.protobuf.UInt32Value max_headers_count = 2;
+  google.protobuf.Duration max_connection_duration = 3;
+  google.protobuf.Duration max_stream_duration = 4;
+}
+
+// HTTP2 protocol options
+message Http2ProtocolOptions {
+  google.protobuf.UInt32Value hpack_table_size = 1;
+  google.protobuf.UInt32Value max_concurrent_streams = 2;
+  google.protobuf.UInt32Value initial_stream_window_size = 3;
+  google.protobuf.UInt32Value initial_connection_window_size = 4;
+  bool allow_connect = 5;
+  bool allow_metadata = 6;
+  google.protobuf.UInt32Value max_outbound_frames = 7;
+  google.protobuf.UInt32Value max_outbound_control_frames = 8;
+  google.protobuf.UInt32Value max_consecutive_inbound_frames_with_empty_payload = 9;
+  google.protobuf.UInt32Value max_inbound_priority_frames_per_stream = 10;
+  google.protobuf.UInt32Value max_inbound_window_update_frames_per_data_frame_sent = 11;
+  bool stream_error_on_invalid_http_messaging = 12;
+}
+
+// Refresh rate
+message RefreshRate {
+  google.protobuf.Duration base_interval = 1;
+  google.protobuf.Duration max_interval = 2;
+}
+
+// Outlier detection
+message OutlierDetection {
+  google.protobuf.UInt32Value consecutive_5xx = 1;
+  google.protobuf.Duration interval = 2;
+  google.protobuf.Duration base_ejection_time = 3;
+  google.protobuf.UInt32Value max_ejection_percent = 4;
+  google.protobuf.UInt32Value enforcing_consecutive_5xx = 5;
+  google.protobuf.UInt32Value enforcing_success_rate = 6;
+  google.protobuf.UInt32Value success_rate_minimum_hosts = 7;
+  google.protobuf.UInt32Value success_rate_request_volume = 8;
+  google.protobuf.UInt32Value success_rate_stdev_factor = 9;
+  google.protobuf.UInt32Value consecutive_gateway_failure = 10;
+  google.protobuf.UInt32Value enforcing_consecutive_gateway_failure = 11;
+  bool split_external_local_origin_errors = 12;
+  google.protobuf.UInt32Value consecutive_local_origin_failure = 13;
+  google.protobuf.UInt32Value enforcing_consecutive_local_origin_failure = 14;
+  google.protobuf.UInt32Value enforcing_local_origin_success_rate = 15;
+  google.protobuf.UInt32Value failure_percentage_threshold = 16;
+  google.protobuf.UInt32Value enforcing_failure_percentage = 17;
+  google.protobuf.UInt32Value enforcing_failure_percentage_local_origin = 18;
+  google.protobuf.UInt32Value failure_percentage_minimum_hosts = 19;
+  google.protobuf.UInt32Value failure_percentage_request_volume = 20;
+  google.protobuf.Duration max_ejection_time = 21;
+}
+
+// Cluster metadata
+message Metadata {
+  map<string, google.protobuf.Struct> filter_metadata = 1;
+}
+
+// Common LB config
+message CommonLbConfig {
+  HealthyPanicThreshold healthy_panic_threshold = 1;
+  ZoneAwareLbConfig zone_aware_lb_config = 2;
+  LocalityWeightedLbConfig locality_weighted_lb_config = 3;
+  google.protobuf.Duration update_merge_window = 4;
+  bool ignore_new_hosts_until_first_hc = 5;
+  bool close_connections_on_host_set_change = 6;
+  ConsistentHashingLbConfig consistent_hashing_lb_config = 7;
+}
+
+// Healthy panic threshold
+message HealthyPanicThreshold {
+  Percent value = 1;
+}
+
+// Zone aware LB config
+message ZoneAwareLbConfig {
+  Percent routing_enabled = 1;
+  google.protobuf.UInt64Value min_cluster_size = 2;
+  bool fail_traffic_on_panic = 3;
+}
+
+// Locality weighted LB config
+message LocalityWeightedLbConfig {}
+
+// Consistent hashing LB config
+message ConsistentHashingLbConfig {
+  bool use_hostname_for_hashing = 1;
+  google.protobuf.UInt32Value hash_balance_factor = 2;
+}
+
+// Transport socket
+message TransportSocket {
+  string name = 1;
+  google.protobuf.Any typed_config = 3;
+}
+
+// LB subset config
+message LbSubsetConfig {
+  enum LbSubsetFallbackPolicy {
+    NO_FALLBACK = 0;
+    ANY_ENDPOINT = 1;
+    DEFAULT_SUBSET = 2;
+  }
+  LbSubsetFallbackPolicy fallback_policy = 1;
+  google.protobuf.Struct default_subset = 2;
+  repeated LbSubsetSelector subset_selectors = 3;
+  bool locality_weight_aware = 4;
+  bool scale_locality_weight = 5;
+  bool panic_mode_any = 6;
+  bool list_as_any = 7;
+}
+
+// LB subset selector
+message LbSubsetSelector {
+  repeated string keys = 1;
+  bool single_host_per_subset = 4;
+  LbSubsetSelectorFallbackPolicy fallback_policy = 2;
+  repeated string fallback_keys_subset = 3;
+}
+
+// LB subset selector fallback policy
+enum LbSubsetSelectorFallbackPolicy {
+  NOT_DEFINED = 0;
+  NO_FALLBACK = 1;
+  ANY_ENDPOINT = 2;
+  DEFAULT_SUBSET = 3;
+  KEYS_SUBSET = 4;
+}
+
+// Ring hash LB config
+message RingHashLbConfig {
+  google.protobuf.UInt64Value minimum_ring_size = 1;
+  HashFunction hash_function = 3;
+  google.protobuf.UInt64Value maximum_ring_size = 4;
+}
+
+// Hash function
+enum HashFunction {
+  XX_HASH = 0;
+  MURMUR_HASH_2 = 1;
+}
+
+// Maglev LB config
+message MaglevLbConfig {
+  google.protobuf.UInt64Value table_size = 1;
+}
+
+// Least request LB config
+message LeastRequestLbConfig {
+  google.protobuf.UInt32Value choice_count = 1;
+  RuntimeDouble active_request_bias = 2;
+  SlowStartConfig slow_start_config = 3;
+}
+
+// Runtime double
+message RuntimeDouble {
+  double default_value = 1;
+  string runtime_key = 2;
+}
+
+// Slow start config
+message SlowStartConfig {
+  google.protobuf.Duration slow_start_window = 1;
+  RuntimeDouble aggression = 2;
+  Percent min_weight_percent = 3;
+}
+
+// Round robin LB config
+message RoundRobinLbConfig {
+  SlowStartConfig slow_start_config = 1;
+}
+
+// Cluster load assignment (imported from EDS)
+message ClusterLoadAssignment {
+  string cluster_name = 1;
+  repeated LocalityLbEndpoints endpoints = 2;
+}
+
+// Locality LB endpoints (imported from EDS)
+message LocalityLbEndpoints {
+  Locality locality = 1;
+  repeated LbEndpoint lb_endpoints = 2;
+  google.protobuf.UInt32Value load_balancing_weight = 3;
+  uint32 priority = 5;
+}
+
+// LB endpoint (imported from EDS)
+message LbEndpoint {
+  Endpoint endpoint = 1;
+  HealthStatus health_status = 2;
+  google.protobuf.UInt32Value load_balancing_weight = 4;
+}
+
+// Endpoint (imported from EDS)
+message Endpoint {
+  Address address = 1;
+}
+
+// Address (imported from EDS)
+message Address {
+  SocketAddress socket_address = 1;
+}
+
+// Socket address (imported from EDS)
+message SocketAddress {
+  string address = 2;
+  uint32 port_value = 3;
+}
+
+// Locality (imported from EDS)
+message Locality {
+  string region = 1;
+  string zone = 2;
+  string sub_zone = 3;
+}
+
+// Health status (imported from EDS)
+enum HealthStatus {
+  UNKNOWN = 0;
+  HEALTHY = 1;
+  UNHEALTHY = 2;
+  DRAINING = 3;
+  TIMEOUT = 4;
+  DEGRADED = 5;
+}

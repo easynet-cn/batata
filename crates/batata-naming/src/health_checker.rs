@@ -7,8 +7,8 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -158,10 +158,12 @@ impl InstanceHealthChecker {
                 let (namespace, group_name, service_name) = (parts[0], parts[1], parts[2]);
 
                 // Get all clusters for this service
-                let cluster_configs = naming_service.get_all_cluster_configs(namespace, group_name, service_name);
+                let cluster_configs =
+                    naming_service.get_all_cluster_configs(namespace, group_name, service_name);
 
                 // Get all instances for this service
-                let instances = naming_service.get_instances(namespace, group_name, service_name, "", false);
+                let instances =
+                    naming_service.get_instances(namespace, group_name, service_name, "", false);
 
                 // Group instances by cluster
                 let mut instances_by_cluster: HashMap<String, Vec<Instance>> = HashMap::new();
@@ -529,13 +531,15 @@ impl InstanceHealthChecker {
         port: i32,
         cluster_name: &str,
     ) -> Option<HealthCheckResult> {
-        let instances =
-            self.naming_service
-                .get_instances(namespace, group_name, service_name, cluster_name, false);
+        let instances = self.naming_service.get_instances(
+            namespace,
+            group_name,
+            service_name,
+            cluster_name,
+            false,
+        );
 
-        let instance = instances
-            .iter()
-            .find(|i| i.ip == ip && i.port == port)?;
+        let instance = instances.iter().find(|i| i.ip == ip && i.port == port)?;
 
         let cluster_config = self
             .naming_service
@@ -601,12 +605,9 @@ mod tests {
     #[tokio::test]
     async fn test_tcp_health_check_connection_refused() {
         // Use localhost with a port that's very unlikely to be listening
-        let result = InstanceHealthChecker::tcp_health_check(
-            "127.0.0.1",
-            59999,
-            Duration::from_millis(500),
-        )
-        .await;
+        let result =
+            InstanceHealthChecker::tcp_health_check("127.0.0.1", 59999, Duration::from_millis(500))
+                .await;
         // Should fail - either connection refused or timeout
         assert!(!result.success);
         assert!(result.message.is_some());

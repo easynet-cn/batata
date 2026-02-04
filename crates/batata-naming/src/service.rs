@@ -140,6 +140,8 @@ pub struct NamingService {
     subscribers: Arc<DashMap<String, HashSet<String>>>,
     /// Key: connection_id, Value: list of fuzzy watch patterns
     fuzzy_watchers: Arc<DashMap<String, Vec<FuzzyWatchPattern>>>,
+    /// Key: connection_id, Value: set of published service keys (for V2 Client API)
+    publishers: Arc<DashMap<String, HashSet<String>>>,
 }
 
 /// Build cluster config key format: service_key##clusterName
@@ -155,6 +157,7 @@ impl NamingService {
             cluster_configs: Arc::new(DashMap::new()),
             subscribers: Arc::new(DashMap::new()),
             fuzzy_watchers: Arc::new(DashMap::new()),
+            publishers: Arc::new(DashMap::new()),
         }
     }
 
@@ -251,48 +254,48 @@ impl NamingService {
             .map(|m| m.protect_threshold)
             .unwrap_or(0.0);
 
-        let (instances, has_any_instances, reach_protection) =
-            if let Some(all_instances) = self.services.get(&service_key) {
-                let has_any = !all_instances.is_empty();
+        let (instances, has_any_instances, reach_protection) = if let Some(all_instances) =
+            self.services.get(&service_key)
+        {
+            let has_any = !all_instances.is_empty();
 
-                // First filter by cluster
-                let cluster_filtered: Vec<Instance> = all_instances
-                    .iter()
-                    .filter(|entry| {
-                        let inst = entry.value();
-                        cluster.is_empty() || inst.cluster_name == cluster || cluster == "*"
-                    })
-                    .map(|entry| entry.value().clone())
-                    .collect();
+            // First filter by cluster
+            let cluster_filtered: Vec<Instance> = all_instances
+                .iter()
+                .filter(|entry| {
+                    let inst = entry.value();
+                    cluster.is_empty() || inst.cluster_name == cluster || cluster == "*"
+                })
+                .map(|entry| entry.value().clone())
+                .collect();
 
-                let total = cluster_filtered.len();
-                let healthy_count = cluster_filtered.iter().filter(|i| i.healthy).count();
+            let total = cluster_filtered.len();
+            let healthy_count = cluster_filtered.iter().filter(|i| i.healthy).count();
 
-                // Check if protection threshold is reached
-                let healthy_ratio = if total > 0 {
-                    healthy_count as f32 / total as f32
-                } else {
-                    1.0 // No instances means 100% healthy ratio
-                };
-
-                let protection_triggered =
-                    protect_threshold > 0.0 && healthy_ratio < protect_threshold;
-
-                // If protection is triggered, return all instances regardless of health
-                // Otherwise, filter by health if requested
-                let final_instances = if protection_triggered {
-                    // Return all instances including unhealthy to prevent total service outage
-                    cluster_filtered
-                } else if healthy_only {
-                    cluster_filtered.into_iter().filter(|i| i.healthy).collect()
-                } else {
-                    cluster_filtered
-                };
-
-                (final_instances, has_any, protection_triggered)
+            // Check if protection threshold is reached
+            let healthy_ratio = if total > 0 {
+                healthy_count as f32 / total as f32
             } else {
-                (Vec::new(), false, false)
+                1.0 // No instances means 100% healthy ratio
             };
+
+            let protection_triggered = protect_threshold > 0.0 && healthy_ratio < protect_threshold;
+
+            // If protection is triggered, return all instances regardless of health
+            // Otherwise, filter by health if requested
+            let final_instances = if protection_triggered {
+                // Return all instances including unhealthy to prevent total service outage
+                cluster_filtered
+            } else if healthy_only {
+                cluster_filtered.into_iter().filter(|i| i.healthy).collect()
+            } else {
+                cluster_filtered
+            };
+
+            (final_instances, has_any, protection_triggered)
+        } else {
+            (Vec::new(), false, false)
+        };
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -476,6 +479,79 @@ impl NamingService {
     pub fn remove_subscriber(&self, connection_id: &str) {
         self.subscribers.remove(connection_id);
         self.fuzzy_watchers.remove(connection_id);
+        self.publishers.remove(connection_id);
+    }
+
+    // ============== Publisher Tracking (for V2 Client API) ==============
+
+    /// Track that a connection published a service
+    pub fn add_publisher(
+        &self,
+        connection_id: &str,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.publishers
+            .entry(connection_id.to_string())
+            .or_default()
+            .insert(service_key);
+    }
+
+    /// Remove publisher tracking for a service
+    pub fn remove_publisher(
+        &self,
+        connection_id: &str,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        if let Some(mut pubs) = self.publishers.get_mut(connection_id) {
+            pubs.remove(&service_key);
+        }
+    }
+
+    /// Get all services published by a connection
+    pub fn get_published_services(&self, connection_id: &str) -> Vec<String> {
+        self.publishers
+            .get(connection_id)
+            .map(|pubs| pubs.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get all connections that published a specific service
+    pub fn get_publishers(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Vec<String> {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        self.publishers
+            .iter()
+            .filter(|entry| entry.value().contains(&service_key))
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    /// Get all services subscribed by a connection
+    pub fn get_subscribed_services(&self, connection_id: &str) -> Vec<String> {
+        self.subscribers
+            .get(connection_id)
+            .map(|subs| subs.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get all connection IDs that are publishers
+    pub fn get_all_publisher_ids(&self) -> Vec<String> {
+        self.publishers.iter().map(|e| e.key().clone()).collect()
+    }
+
+    /// Get all connection IDs that are subscribers
+    pub fn get_all_subscriber_ids(&self) -> Vec<String> {
+        self.subscribers.iter().map(|e| e.key().clone()).collect()
     }
 
     /// Register a fuzzy watch pattern for a connection
@@ -569,9 +645,10 @@ impl NamingService {
         self.fuzzy_watchers
             .iter()
             .filter(|entry| {
-                entry.value().iter().any(|pattern| {
-                    pattern.matches(namespace, group_name, service_name)
-                })
+                entry
+                    .value()
+                    .iter()
+                    .any(|pattern| pattern.matches(namespace, group_name, service_name))
             })
             .map(|entry| entry.key().clone())
             .collect()
@@ -622,6 +699,29 @@ impl NamingService {
             && let Some(mut entry) = instances.get_mut(&instance_key)
         {
             entry.healthy = true;
+            return true;
+        }
+        false
+    }
+
+    /// Update instance health status (for V2 Health API)
+    pub fn update_instance_health(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        cluster_name: &str,
+        healthy: bool,
+    ) -> bool {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let instance_key = format!("{}#{}#{}", ip, port, cluster_name);
+
+        if let Some(instances) = self.services.get(&service_key)
+            && let Some(mut entry) = instances.get_mut(&instance_key)
+        {
+            entry.healthy = healthy;
             return true;
         }
         false
@@ -728,12 +828,7 @@ impl NamingService {
     }
 
     /// Delete service metadata
-    pub fn delete_service_metadata(
-        &self,
-        namespace: &str,
-        group_name: &str,
-        service_name: &str,
-    ) {
+    pub fn delete_service_metadata(&self, namespace: &str, group_name: &str, service_name: &str) {
         let service_key = build_service_key(namespace, group_name, service_name);
         self.service_metadata.remove(&service_key);
     }
@@ -798,12 +893,13 @@ impl NamingService {
         let service_key = build_service_key(namespace, group_name, service_name);
         let cluster_key = build_cluster_key(&service_key, cluster_name);
 
-        let mut entry = self.cluster_configs.entry(cluster_key).or_insert_with(|| {
-            ClusterConfig {
+        let mut entry = self
+            .cluster_configs
+            .entry(cluster_key)
+            .or_insert_with(|| ClusterConfig {
                 name: cluster_name.to_string(),
                 ..Default::default()
-            }
-        });
+            });
         entry.health_check_type = health_check_type.to_string();
         entry.check_port = check_port;
         entry.use_instance_port = use_instance_port;
@@ -844,15 +940,13 @@ impl NamingService {
     }
 
     /// Check if a service exists (has metadata or instances)
-    pub fn service_exists(
-        &self,
-        namespace: &str,
-        group_name: &str,
-        service_name: &str,
-    ) -> bool {
+    pub fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool {
         let service_key = build_service_key(namespace, group_name, service_name);
         self.service_metadata.contains_key(&service_key)
-            || self.services.get(&service_key).is_some_and(|s| !s.is_empty())
+            || self
+                .services
+                .get(&service_key)
+                .is_some_and(|s| !s.is_empty())
     }
 }
 
@@ -1507,7 +1601,8 @@ mod tests {
         naming.register_fuzzy_watch("conn-2", "public", "*", "*", "add");
         naming.register_fuzzy_watch("conn-3", "public", "OTHER_GROUP", "*", "add");
 
-        let watchers = naming.get_fuzzy_watchers_for_service("public", "DEFAULT_GROUP", "service-a");
+        let watchers =
+            naming.get_fuzzy_watchers_for_service("public", "DEFAULT_GROUP", "service-a");
         assert_eq!(watchers.len(), 2);
         assert!(watchers.contains(&"conn-1".to_string()));
         assert!(watchers.contains(&"conn-2".to_string()));

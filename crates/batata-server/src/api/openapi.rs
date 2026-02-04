@@ -424,7 +424,6 @@ pub fn configure_swagger(cfg: &mut actix_web::web::ServiceConfig) {
     use utoipa_swagger_ui::SwaggerUi;
 
     cfg.service(
-        SwaggerUi::new("/swagger-ui/{_:.*}")
-            .url("/api-docs/openapi.json", ApiDoc::openapi()),
+        SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", ApiDoc::openapi()),
     );
 }

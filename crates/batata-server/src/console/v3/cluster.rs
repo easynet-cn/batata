@@ -252,7 +252,10 @@ async fn update_member_state(
             return model::common::Result::<String>::http_response(
                 400,
                 400,
-                format!("Invalid state: {}. Valid states are: UP, DOWN, SUSPICIOUS, STARTING, ISOLATION", body.state),
+                format!(
+                    "Invalid state: {}. Valid states are: UP, DOWN, SUSPICIOUS, STARTING, ISOLATION",
+                    body.state
+                ),
                 String::new(),
             );
         }
@@ -272,7 +275,9 @@ async fn update_member_state(
     };
 
     // Update the member state
-    data.member_manager().update_member_state(&address, new_state).await;
+    data.member_manager()
+        .update_member_state(&address, new_state)
+        .await;
 
     let response = UpdateMemberStateResponse {
         success: true,

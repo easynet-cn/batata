@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use sea_orm::DatabaseConnection;
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -217,7 +217,6 @@ impl RemoteDataSource {
             *cache = Some(self_member);
         }
     }
-
 }
 
 #[async_trait]

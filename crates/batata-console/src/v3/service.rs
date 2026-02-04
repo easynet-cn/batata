@@ -4,14 +4,12 @@
 
 use std::sync::Arc;
 
-use actix_web::{delete, get, post, put, web, Responder, Scope};
+use actix_web::{Responder, Scope, delete, get, post, put, web};
 use serde::Deserialize;
 
 use batata_api::Page;
 
-use crate::datasource::{
-    ConsoleDataSource, ServiceDetail, ServiceListItem, SubscriberInfo,
-};
+use crate::datasource::{ConsoleDataSource, ServiceDetail, ServiceListItem, SubscriberInfo};
 
 use super::namespace::ApiResult;
 

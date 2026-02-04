@@ -17,6 +17,8 @@ use batata_core::{
     },
 };
 
+use crate::model::tls::validate_tls_config;
+
 use crate::{
     api::grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
     model::common::AppState,
@@ -58,6 +60,8 @@ pub struct GrpcServers {
     cluster_server: tokio::task::JoinHandle<()>,
     /// The naming service used by handlers.
     pub naming_service: Arc<NamingService>,
+    /// The connection manager for tracking client connections.
+    pub connection_manager: Arc<ConnectionManager>,
 }
 
 /// Registers all internal handlers (health check, connection setup, etc.).
@@ -190,8 +194,10 @@ fn create_distro_protocol(
 ) -> Arc<DistroProtocol> {
     // Create cluster client manager for inter-node communication
     let cluster_client_config = ClusterClientConfig::default();
-    let cluster_client_manager =
-        Arc::new(ClusterClientManager::new(local_address.to_string(), cluster_client_config));
+    let cluster_client_manager = Arc::new(ClusterClientManager::new(
+        local_address.to_string(),
+        cluster_client_config,
+    ));
 
     // Create cluster members map (will be populated dynamically)
     let members: Arc<DashMap<String, Member>> = Arc::new(DashMap::new());
@@ -206,7 +212,8 @@ fn create_distro_protocol(
     );
 
     // Create and register naming instance handler
-    let naming_handler = NamingInstanceDistroHandler::new(local_address.to_string(), naming_service);
+    let naming_handler =
+        NamingInstanceDistroHandler::new(local_address.to_string(), naming_service);
     distro_protocol.register_handler(Arc::new(naming_handler));
 
     Arc::new(distro_protocol)
@@ -226,6 +233,26 @@ pub fn start_grpc_servers(
     sdk_server_port: u16,
     cluster_server_port: u16,
 ) -> Result<GrpcServers, Box<dyn std::error::Error>> {
+    // Get TLS configuration
+    let tls_config = app_state.configuration.grpc_tls_config();
+
+    // Validate TLS configuration if enabled
+    if tls_config.sdk_enabled || tls_config.cluster_enabled {
+        let validation = validate_tls_config(&tls_config);
+        if !validation.valid {
+            for error in &validation.errors {
+                tracing::error!("TLS configuration error: {}", error);
+            }
+            return Err(format!(
+                "TLS configuration validation failed: {:?}",
+                validation.errors
+            )
+            .into());
+        }
+        for warning in &validation.warnings {
+            tracing::warn!("TLS configuration warning: {}", warning);
+        }
+    }
     // Setup gRPC interceptor layer
     let layer = ServiceBuilder::new()
         .load_shed()
@@ -234,6 +261,8 @@ pub fn start_grpc_servers(
 
     // Create connection manager first (needed by handlers and stream service)
     let connection_manager = Arc::new(ConnectionManager::new());
+    // Keep a clone for the HTTP server
+    let connection_manager_for_http = connection_manager.clone();
 
     // Create gRPC auth service based on configuration
     let auth_enabled = app_state.configuration.auth_enabled();
@@ -315,19 +344,40 @@ pub fn start_grpc_servers(
 
     // Start SDK gRPC server
     let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;
-    info!("Starting SDK gRPC server on {}", grpc_sdk_addr);
+    let sdk_tls_config = tls_config.clone();
+    let sdk_use_tls = sdk_tls_config.should_use_sdk_tls();
+    info!(
+        "Starting SDK gRPC server on {} (TLS: {})",
+        grpc_sdk_addr, sdk_use_tls
+    );
     let sdk_server = {
         let grpc_request_service = grpc_request_service.clone();
         let grpc_bi_request_stream_service = grpc_bi_request_stream_service.clone();
         let layer = layer.clone();
         tokio::spawn(async move {
-            if let Err(e) = tonic::transport::Server::builder()
-                .layer(layer)
-                .add_service(RequestServer::new(grpc_request_service))
-                .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
-                .serve(grpc_sdk_addr)
-                .await
-            {
+            let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                if sdk_use_tls {
+                    info!("SDK gRPC server starting with TLS enabled");
+                    let server_tls_config = sdk_tls_config.create_server_tls_config().await?;
+                    tonic::transport::Server::builder()
+                        .tls_config(server_tls_config)?
+                        .layer(layer)
+                        .add_service(RequestServer::new(grpc_request_service))
+                        .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+                        .serve(grpc_sdk_addr)
+                        .await?;
+                } else {
+                    tonic::transport::Server::builder()
+                        .layer(layer)
+                        .add_service(RequestServer::new(grpc_request_service))
+                        .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+                        .serve(grpc_sdk_addr)
+                        .await?;
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(e) = result {
                 tracing::error!("SDK gRPC server error: {}", e);
             }
         })
@@ -335,15 +385,36 @@ pub fn start_grpc_servers(
 
     // Start cluster gRPC server
     let grpc_cluster_addr = format!("0.0.0.0:{}", cluster_server_port).parse()?;
-    info!("Starting cluster gRPC server on {}", grpc_cluster_addr);
+    let cluster_tls_config = tls_config;
+    let cluster_use_tls = cluster_tls_config.should_use_cluster_tls();
+    info!(
+        "Starting cluster gRPC server on {} (TLS: {})",
+        grpc_cluster_addr, cluster_use_tls
+    );
     let cluster_server = tokio::spawn(async move {
-        if let Err(e) = tonic::transport::Server::builder()
-            .layer(layer)
-            .add_service(RequestServer::new(grpc_request_service))
-            .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
-            .serve(grpc_cluster_addr)
-            .await
-        {
+        let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+            if cluster_use_tls {
+                info!("Cluster gRPC server starting with TLS enabled");
+                let server_tls_config = cluster_tls_config.create_server_tls_config().await?;
+                tonic::transport::Server::builder()
+                    .tls_config(server_tls_config)?
+                    .layer(layer)
+                    .add_service(RequestServer::new(grpc_request_service))
+                    .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+                    .serve(grpc_cluster_addr)
+                    .await?;
+            } else {
+                tonic::transport::Server::builder()
+                    .layer(layer)
+                    .add_service(RequestServer::new(grpc_request_service))
+                    .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+                    .serve(grpc_cluster_addr)
+                    .await?;
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(e) = result {
             tracing::error!("Cluster gRPC server error: {}", e);
         }
     });
@@ -352,5 +423,6 @@ pub fn start_grpc_servers(
         sdk_server,
         cluster_server,
         naming_service,
+        connection_manager: connection_manager_for_http,
     })
 }

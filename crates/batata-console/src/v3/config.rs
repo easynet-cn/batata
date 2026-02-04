@@ -10,9 +10,12 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use batata_api::Page;
-use batata_config::{ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper, SameConfigPolicy, service::config::CloneResult};
+use batata_config::{
+    ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper, SameConfigPolicy,
+    service::config::CloneResult,
+};
 
-use crate::datasource::{ConsoleDataSource, ConfigListenerInfo};
+use crate::datasource::{ConfigListenerInfo, ConsoleDataSource};
 
 use super::namespace::ApiResult;
 
@@ -495,7 +498,13 @@ pub async fn delete_beta(
     let ip = src_ip.unwrap_or_default();
 
     match datasource
-        .config_gray_delete(&params.data_id, &params.group_name, &namespace_id, &ip, &user)
+        .config_gray_delete(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            &ip,
+            &user,
+        )
         .await
     {
         Ok(deleted) => ApiResult::<bool>::http_success(deleted),

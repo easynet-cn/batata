@@ -75,7 +75,11 @@ impl ConnectionManager {
     ///
     /// Returns true if the message was sent successfully, false if the connection doesn't exist
     /// or the send failed
-    pub async fn push_message(&self, connection_id: &str, payload: batata_api::grpc::Payload) -> bool {
+    pub async fn push_message(
+        &self,
+        connection_id: &str,
+        payload: batata_api::grpc::Payload,
+    ) -> bool {
         if let Some(client) = self.clients.get(connection_id) {
             match client.tx.send(Ok(payload)).await {
                 Ok(_) => {
@@ -118,5 +122,21 @@ impl ConnectionManager {
     /// Check if a connection exists
     pub fn has_connection(&self, connection_id: &str) -> bool {
         self.clients.contains_key(connection_id)
+    }
+
+    /// Get all connection IDs
+    pub fn get_all_connection_ids(&self) -> Vec<String> {
+        self.clients
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    /// Get all clients as a list
+    pub fn get_all_clients(&self) -> Vec<GrpcClient> {
+        self.clients
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 }

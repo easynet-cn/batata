@@ -151,7 +151,11 @@ impl ConsoleDataSource for LocalDataSource {
             result.total_count,
             result.page_number,
             result.pages_available,
-            result.page_items.into_iter().map(ConfigBasicInfo::from).collect(),
+            result
+                .page_items
+                .into_iter()
+                .map(ConfigBasicInfo::from)
+                .collect(),
         ))
     }
 

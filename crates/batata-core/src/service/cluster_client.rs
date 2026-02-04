@@ -2,6 +2,7 @@
 // Provides methods to communicate with other cluster nodes via gRPC
 
 use std::{
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicI64, Ordering},
@@ -21,6 +22,95 @@ use batata_api::{
 };
 use prost_types::Any;
 
+/// TLS configuration for cluster client
+#[derive(Clone, Debug, Default)]
+pub struct ClusterClientTlsConfig {
+    /// Enable TLS for cluster client connections
+    pub enabled: bool,
+    /// Path to client certificate (for mTLS)
+    pub cert_path: Option<PathBuf>,
+    /// Path to client private key (for mTLS)
+    pub key_path: Option<PathBuf>,
+    /// Path to CA certificate for server verification
+    pub ca_cert_path: Option<PathBuf>,
+    /// Domain name to verify (SNI)
+    pub domain: Option<String>,
+}
+
+impl ClusterClientTlsConfig {
+    /// Check if TLS is properly configured
+    pub fn is_configured(&self) -> bool {
+        self.enabled && self.ca_cert_path.is_some()
+    }
+
+    /// Check if mTLS (client certificate) is configured
+    pub fn is_mtls_configured(&self) -> bool {
+        self.enabled && self.cert_path.is_some() && self.key_path.is_some()
+    }
+
+    /// Load CA certificate
+    pub async fn load_ca_cert(&self) -> anyhow::Result<Vec<u8>> {
+        match &self.ca_cert_path {
+            Some(path) => {
+                let contents = tokio::fs::read(path).await?;
+                Ok(contents)
+            }
+            None => anyhow::bail!("CA certificate path not configured"),
+        }
+    }
+
+    /// Load client certificate
+    pub async fn load_cert(&self) -> anyhow::Result<Vec<u8>> {
+        match &self.cert_path {
+            Some(path) => {
+                let contents = tokio::fs::read(path).await?;
+                Ok(contents)
+            }
+            None => anyhow::bail!("Client certificate path not configured"),
+        }
+    }
+
+    /// Load client private key
+    pub async fn load_key(&self) -> anyhow::Result<Vec<u8>> {
+        match &self.key_path {
+            Some(path) => {
+                let contents = tokio::fs::read(path).await?;
+                Ok(contents)
+            }
+            None => anyhow::bail!("Client private key path not configured"),
+        }
+    }
+
+    /// Create tonic ClientTlsConfig
+    pub async fn create_client_tls_config(
+        &self,
+    ) -> anyhow::Result<tonic::transport::ClientTlsConfig> {
+        let mut tls_config = tonic::transport::ClientTlsConfig::new();
+
+        // Set CA certificate for server verification
+        if let Some(_) = &self.ca_cert_path {
+            let ca_cert = self.load_ca_cert().await?;
+            let ca = tonic::transport::Certificate::from_pem(ca_cert);
+            tls_config = tls_config.ca_certificate(ca);
+        }
+
+        // Set client identity for mTLS
+        if self.is_mtls_configured() {
+            let cert = self.load_cert().await?;
+            let key = self.load_key().await?;
+            let identity = tonic::transport::Identity::from_pem(cert, key);
+            tls_config = tls_config.identity(identity);
+        }
+
+        // Set domain name for SNI
+        if let Some(domain) = &self.domain {
+            tls_config = tls_config.domain_name(domain.clone());
+        }
+
+        Ok(tls_config)
+    }
+}
+
 /// Configuration for cluster client
 #[derive(Clone, Debug)]
 pub struct ClusterClientConfig {
@@ -34,6 +124,8 @@ pub struct ClusterClientConfig {
     pub retry_delay: Duration,
     /// Idle connection timeout - connections unused for this duration will be removed
     pub idle_timeout: Duration,
+    /// TLS configuration
+    pub tls_config: ClusterClientTlsConfig,
 }
 
 impl Default for ClusterClientConfig {
@@ -44,6 +136,7 @@ impl Default for ClusterClientConfig {
             max_retries: 3,
             retry_delay: Duration::from_millis(500),
             idle_timeout: Duration::from_secs(300), // 5 minutes default
+            tls_config: ClusterClientTlsConfig::default(),
         }
     }
 }
@@ -57,6 +150,13 @@ impl ClusterClientConfig {
             max_retries: config.cluster_max_retries(),
             retry_delay: Duration::from_millis(config.cluster_retry_delay_ms()),
             idle_timeout: Duration::from_millis(config.cluster_idle_timeout_ms()),
+            tls_config: ClusterClientTlsConfig {
+                enabled: config.cluster_client_tls_enabled(),
+                cert_path: config.cluster_client_tls_cert_path().map(PathBuf::from),
+                key_path: config.cluster_client_tls_key_path().map(PathBuf::from),
+                ca_cert_path: config.cluster_client_tls_ca_cert_path().map(PathBuf::from),
+                domain: config.cluster_client_tls_domain(),
+            },
         }
     }
 }
@@ -74,7 +174,8 @@ pub struct ClusterConnection {
 impl ClusterConnection {
     /// Update the last used timestamp (lock-free)
     pub fn update_last_used(&self) {
-        self.last_used.store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+        self.last_used
+            .store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
     }
 
     /// Get the last used timestamp (lock-free)
@@ -106,7 +207,7 @@ impl ClusterClientManager {
     }
 
     /// Get gRPC address from member address
-    fn get_grpc_address(address: &str) -> Option<String> {
+    fn get_grpc_address(address: &str, use_tls: bool) -> Option<String> {
         let parts: Vec<&str> = address.split(':').collect();
         if parts.len() != 2 {
             return None;
@@ -116,7 +217,8 @@ impl ClusterClientManager {
         let main_port: u16 = parts[1].parse().ok()?;
         let grpc_port = Self::calculate_grpc_port(main_port);
 
-        Some(format!("http://{}:{}", ip, grpc_port))
+        let scheme = if use_tls { "https" } else { "http" };
+        Some(format!("{}://{}:{}", scheme, ip, grpc_port))
     }
 
     /// Get or create a connection to a cluster node
@@ -136,16 +238,38 @@ impl ClusterClientManager {
         }
 
         // Create new connection
-        let grpc_address = Self::get_grpc_address(address)
+        let use_tls = self.config.tls_config.enabled;
+        let grpc_address = Self::get_grpc_address(address, use_tls)
             .ok_or_else(|| format!("Invalid address format: {}", address))?;
 
-        info!("Creating cluster connection to {}", grpc_address);
+        info!(
+            "Creating cluster connection to {} (TLS: {})",
+            grpc_address, use_tls
+        );
 
-        let channel = Channel::from_shared(grpc_address.clone())?
-            .connect_timeout(self.config.connect_timeout)
-            .timeout(self.config.request_timeout)
-            .connect()
-            .await?;
+        let channel = if use_tls && self.config.tls_config.is_configured() {
+            // Create TLS-enabled channel
+            let tls_config = self
+                .config
+                .tls_config
+                .create_client_tls_config()
+                .await
+                .map_err(|e| format!("Failed to create TLS config: {}", e))?;
+
+            Channel::from_shared(grpc_address.clone())?
+                .connect_timeout(self.config.connect_timeout)
+                .timeout(self.config.request_timeout)
+                .tls_config(tls_config)?
+                .connect()
+                .await?
+        } else {
+            // Create plain channel
+            Channel::from_shared(grpc_address.clone())?
+                .connect_timeout(self.config.connect_timeout)
+                .timeout(self.config.request_timeout)
+                .connect()
+                .await?
+        };
 
         let client = RequestClient::new(channel);
 
@@ -415,10 +539,13 @@ mod tests {
 
     #[test]
     fn test_get_grpc_address() {
-        let addr = ClusterClientManager::get_grpc_address("192.168.1.1:8848");
+        let addr = ClusterClientManager::get_grpc_address("192.168.1.1:8848", false);
         assert_eq!(addr, Some("http://192.168.1.1:9849".to_string()));
 
-        let addr = ClusterClientManager::get_grpc_address("invalid");
+        let addr_tls = ClusterClientManager::get_grpc_address("192.168.1.1:8848", true);
+        assert_eq!(addr_tls, Some("https://192.168.1.1:9849".to_string()));
+
+        let addr = ClusterClientManager::get_grpc_address("invalid", false);
         assert_eq!(addr, None);
     }
 
@@ -430,6 +557,7 @@ mod tests {
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.retry_delay, Duration::from_millis(500));
         assert_eq!(config.idle_timeout, Duration::from_secs(300));
+        assert!(!config.tls_config.enabled);
     }
 
     #[test]

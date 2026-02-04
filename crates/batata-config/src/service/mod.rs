@@ -16,6 +16,4 @@ pub mod import;
 pub mod namespace;
 
 pub use config::*;
-pub use encryption::{
-    ConfigEncryptionService, ConfigEncryptionServiceBuilder, EncryptionPattern,
-};
+pub use encryption::{ConfigEncryptionService, ConfigEncryptionServiceBuilder, EncryptionPattern};

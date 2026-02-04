@@ -462,7 +462,10 @@ mod tests {
 
     #[test]
     fn test_distro_data_type_display() {
-        assert_eq!(DistroDataType::NamingInstance.to_string(), "NAMING_INSTANCE");
+        assert_eq!(
+            DistroDataType::NamingInstance.to_string(),
+            "NAMING_INSTANCE"
+        );
         assert_eq!(DistroDataType::Custom.to_string(), "CUSTOM");
     }
 

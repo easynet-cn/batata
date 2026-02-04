@@ -332,7 +332,10 @@ impl Member {
 
     /// Set the datacenter for this member
     pub fn set_datacenter(&self, datacenter: &str) {
-        self.set_extend_info(Self::DATACENTER, serde_json::Value::String(datacenter.to_string()));
+        self.set_extend_info(
+            Self::DATACENTER,
+            serde_json::Value::String(datacenter.to_string()),
+        );
     }
 
     /// Get the region this member belongs to
@@ -376,7 +379,10 @@ impl Member {
 
     /// Set the cluster group
     pub fn set_cluster_group(&self, group: &str) {
-        self.set_extend_info(Self::CLUSTER_GROUP, serde_json::Value::String(group.to_string()));
+        self.set_extend_info(
+            Self::CLUSTER_GROUP,
+            serde_json::Value::String(group.to_string()),
+        );
     }
 
     /// Check if this member is in the same datacenter
@@ -462,7 +468,10 @@ impl MemberBuilder {
     /// Set the datacenter for this member
     pub fn datacenter(self, datacenter: &str) -> Self {
         if let Ok(mut info) = self.extend_info.write() {
-            info.insert(Member::DATACENTER.to_string(), Value::String(datacenter.to_string()));
+            info.insert(
+                Member::DATACENTER.to_string(),
+                Value::String(datacenter.to_string()),
+            );
         }
         self
     }
@@ -470,7 +479,10 @@ impl MemberBuilder {
     /// Set the region for this member
     pub fn region(self, region: &str) -> Self {
         if let Ok(mut info) = self.extend_info.write() {
-            info.insert(Member::REGION.to_string(), Value::String(region.to_string()));
+            info.insert(
+                Member::REGION.to_string(),
+                Value::String(region.to_string()),
+            );
         }
         self
     }
@@ -486,7 +498,10 @@ impl MemberBuilder {
     /// Set the locality weight
     pub fn locality_weight(self, weight: f64) -> Self {
         if let Ok(mut info) = self.extend_info.write() {
-            info.insert(Member::LOCALITY_WEIGHT.to_string(), serde_json::json!(weight));
+            info.insert(
+                Member::LOCALITY_WEIGHT.to_string(),
+                serde_json::json!(weight),
+            );
         }
         self
     }
@@ -494,7 +509,10 @@ impl MemberBuilder {
     /// Set the cluster group
     pub fn cluster_group(self, group: &str) -> Self {
         if let Ok(mut info) = self.extend_info.write() {
-            info.insert(Member::CLUSTER_GROUP.to_string(), Value::String(group.to_string()));
+            info.insert(
+                Member::CLUSTER_GROUP.to_string(),
+                Value::String(group.to_string()),
+            );
         }
         self
     }

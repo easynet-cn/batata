@@ -6,8 +6,8 @@ use serde::Serialize;
 
 use crate::http::BatataHttpClient;
 use crate::model::{
-    ApiResponse, CloneResult, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo, ConfigGrayInfo,
-    ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, ConfigListenerInfo,
+    ApiResponse, CloneResult, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo,
+    ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, ConfigListenerInfo,
     ImportResult, InstanceInfo, Member, Namespace, Page, SelfMemberResponse, ServiceDetail,
     ServiceListItem, SubscriberInfo,
 };
@@ -381,10 +381,8 @@ impl BatataApiClient {
         policy: &str,
     ) -> anyhow::Result<ImportResult> {
         // Build query parameters
-        let query_string = serde_urlencoded::to_string(&[
-            ("namespace_id", namespace_id),
-            ("policy", policy),
-        ])?;
+        let query_string =
+            serde_urlencoded::to_string(&[("namespace_id", namespace_id), ("policy", policy)])?;
         let path = format!("/v3/console/cs/config/import?{}", query_string);
 
         // Create multipart form
@@ -393,10 +391,8 @@ impl BatataApiClient {
             .mime_str("application/zip")?;
         let form = reqwest::multipart::Form::new().part("file", part);
 
-        let response: ApiResponse<ImportResult> = self
-            .http_client
-            .post_multipart(&path, form)
-            .await?;
+        let response: ApiResponse<ImportResult> =
+            self.http_client.post_multipart(&path, form).await?;
         Ok(response.data)
     }
 
@@ -415,7 +411,10 @@ impl BatataApiClient {
 
         let response: ApiResponse<usize> = self
             .http_client
-            .delete_with_query("/v3/console/cs/config/batchDelete", &Query { ids: &ids_str })
+            .delete_with_query(
+                "/v3/console/cs/config/batchDelete",
+                &Query { ids: &ids_str },
+            )
             .await?;
         Ok(response.data)
     }
@@ -1037,7 +1036,10 @@ impl BatataApiClient {
     }
 
     /// Get config listeners by IP
-    pub async fn config_listeners_by_ip(&self, ip: &str) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+    pub async fn config_listeners_by_ip(
+        &self,
+        ip: &str,
+    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {

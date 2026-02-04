@@ -163,7 +163,11 @@ impl GrpcResource {
             Self::SPLITTER,
             self.resource_type,
             "/",
-            if self.name.is_empty() { Self::ANY } else { &self.name }
+            if self.name.is_empty() {
+                Self::ANY
+            } else {
+                &self.name
+            }
         )
     }
 }
@@ -286,8 +290,10 @@ impl GrpcAuthService {
         let decoding_key = DecodingKey::from_base64_secret(&self.token_secret_key)
             .map_err(|e| format!("invalid secret key: {}", e))?;
 
-        let token_data = decode::<Claims>(token, &decoding_key, &Validation::default())
-            .map_err(|e| match e.kind() {
+        let token_data =
+            decode::<Claims>(token, &decoding_key, &Validation::default()).map_err(|e| match e
+                .kind()
+            {
                 jsonwebtoken::errors::ErrorKind::ExpiredSignature => "token expired!".to_string(),
                 _ => format!("token invalid: {}", e),
             })?;
@@ -498,7 +504,8 @@ mod tests {
 
     #[test]
     fn test_auth_service_no_token() {
-        let service = GrpcAuthService::new(true, "secret".to_string(), "".to_string(), "".to_string());
+        let service =
+            GrpcAuthService::new(true, "secret".to_string(), "".to_string(), "".to_string());
         let headers = HashMap::new();
         let ctx = service.parse_identity(&headers);
         assert!(!ctx.is_authenticated());
@@ -507,7 +514,8 @@ mod tests {
 
     #[test]
     fn test_permission_check_admin_bypass() {
-        let service = GrpcAuthService::new(true, "secret".to_string(), "".to_string(), "".to_string());
+        let service =
+            GrpcAuthService::new(true, "secret".to_string(), "".to_string(), "".to_string());
         let ctx = GrpcAuthContext::authenticated(
             "admin".to_string(),
             false,

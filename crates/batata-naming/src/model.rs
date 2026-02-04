@@ -5,9 +5,17 @@
 // Re-export all naming model types from batata-api
 pub use batata_api::naming::model::{
     // Constants
-    DE_REGISTER_INSTANCE, INSTANCE_TYPE_EPHEMERAL, INSTANCE_TYPE_PERSISTENT, REGISTER_INSTANCE,
+    DE_REGISTER_INSTANCE,
     // Core types
-    HeartbeatForm, Instance, InstanceRegisterForm, Service, ServiceInfo, ServiceQuery,
+    HeartbeatForm,
+    INSTANCE_TYPE_EPHEMERAL,
+    INSTANCE_TYPE_PERSISTENT,
+    Instance,
+    InstanceRegisterForm,
+    REGISTER_INSTANCE,
+    Service,
+    ServiceInfo,
+    ServiceQuery,
 };
 
 #[cfg(test)]

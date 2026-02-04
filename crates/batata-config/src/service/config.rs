@@ -554,7 +554,9 @@ pub async fn clone_configs(
         // Check if target config exists
         let existing = config_info::Entity::find()
             .filter(config_info::Column::DataId.eq(&entity.data_id))
-            .filter(config_info::Column::GroupId.eq(entity.group_id.as_ref().unwrap_or(&String::new())))
+            .filter(
+                config_info::Column::GroupId.eq(entity.group_id.as_ref().unwrap_or(&String::new())),
+            )
             .filter(config_info::Column::TenantId.eq(target_namespace_id))
             .one(&tx)
             .await?;

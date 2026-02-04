@@ -24,6 +24,9 @@ prost = "0.14"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Concurrency
+dashmap = "6"
+
 # Async
 async-trait = "0.1"
 tokio = { version = "1.49", features = ["full"] }

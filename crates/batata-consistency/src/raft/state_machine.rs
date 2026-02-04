@@ -41,6 +41,7 @@ const CF_USERS: &str = "users";
 const CF_ROLES: &str = "roles";
 const CF_PERMISSIONS: &str = "permissions";
 const CF_INSTANCES: &str = "instances";
+const CF_LOCKS: &str = "locks";
 const CF_META: &str = "meta";
 
 // Meta keys
@@ -92,6 +93,7 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_ROLES, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_PERMISSIONS, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_INSTANCES, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_LOCKS, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_META, cf_opts),
         ];
 
@@ -179,6 +181,12 @@ impl RocksStateMachine {
             .expect("CF_INSTANCES must exist - database may be corrupted")
     }
 
+    fn cf_locks(&self) -> &ColumnFamily {
+        self.db
+            .cf_handle(CF_LOCKS)
+            .expect("CF_LOCKS must exist - database may be corrupted")
+    }
+
     fn cf_meta(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_META)
@@ -221,6 +229,11 @@ impl RocksStateMachine {
             "{}@@{}@@{}@@{}",
             namespace_id, group_name, service_name, instance_id
         )
+    }
+
+    /// Generate lock key
+    fn lock_key(namespace: &str, name: &str) -> String {
+        format!("{}::{}", namespace, name)
     }
 
     /// Apply a single request to the state machine
@@ -375,6 +388,36 @@ impl RocksStateMachine {
             ),
 
             RaftRequest::Noop => RaftResponse::success(),
+
+            // Lock operations (ADV-005)
+            RaftRequest::LockAcquire {
+                namespace,
+                name,
+                owner,
+                ttl_ms,
+                fence_token,
+                owner_metadata,
+            } => self.apply_lock_acquire(&namespace, &name, &owner, ttl_ms, fence_token, owner_metadata),
+
+            RaftRequest::LockRelease {
+                namespace,
+                name,
+                owner,
+                fence_token,
+            } => self.apply_lock_release(&namespace, &name, &owner, fence_token),
+
+            RaftRequest::LockRenew {
+                namespace,
+                name,
+                owner,
+                ttl_ms,
+            } => self.apply_lock_renew(&namespace, &name, &owner, ttl_ms),
+
+            RaftRequest::LockForceRelease { namespace, name } => {
+                self.apply_lock_force_release(&namespace, &name)
+            }
+
+            RaftRequest::LockExpire { namespace, name } => self.apply_lock_expire(&namespace, &name),
         }
     }
 
@@ -812,6 +855,295 @@ impl RocksStateMachine {
         }
     }
 
+    // Lock operations (ADV-005)
+    fn apply_lock_acquire(
+        &self,
+        namespace: &str,
+        name: &str,
+        owner: &str,
+        ttl_ms: u64,
+        fence_token: u64,
+        owner_metadata: Option<String>,
+    ) -> RaftResponse {
+        let key = Self::lock_key(namespace, name);
+        let now = chrono::Utc::now().timestamp_millis();
+        let expires_at = now + ttl_ms as i64;
+
+        // Check if lock exists and is held
+        if let Ok(Some(bytes)) = self.db.get_cf(self.cf_locks(), key.as_bytes()) {
+            if let Ok(existing) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                // Check if lock is still valid (not expired)
+                if let Some(exp) = existing["expires_at"].as_i64() {
+                    if exp > now {
+                        // Lock is held, check if same owner
+                        if existing["owner"].as_str() == Some(owner) {
+                            // Same owner, renew the lock
+                            let value = serde_json::json!({
+                                "namespace": namespace,
+                                "name": name,
+                                "owner": owner,
+                                "state": "Locked",
+                                "fence_token": fence_token,
+                                "ttl_ms": ttl_ms,
+                                "acquired_at": existing["acquired_at"],
+                                "expires_at": expires_at,
+                                "renewal_count": existing["renewal_count"].as_u64().unwrap_or(0),
+                                "owner_metadata": owner_metadata,
+                            });
+
+                            match self.db.put_cf(
+                                self.cf_locks(),
+                                key.as_bytes(),
+                                value.to_string().as_bytes(),
+                            ) {
+                                Ok(_) => {
+                                    debug!("Lock re-acquired by same owner: {}", key);
+                                    return RaftResponse::success_with_data(
+                                        serde_json::to_vec(&value).unwrap_or_default(),
+                                    );
+                                }
+                                Err(e) => {
+                                    error!("Failed to acquire lock: {}", e);
+                                    return RaftResponse::failure(format!(
+                                        "Failed to acquire lock: {}",
+                                        e
+                                    ));
+                                }
+                            }
+                        }
+                        // Lock is held by different owner
+                        return RaftResponse::failure(format!(
+                            "Lock is held by {}",
+                            existing["owner"].as_str().unwrap_or("unknown")
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Lock is free or expired, acquire it
+        let value = serde_json::json!({
+            "namespace": namespace,
+            "name": name,
+            "owner": owner,
+            "state": "Locked",
+            "fence_token": fence_token,
+            "ttl_ms": ttl_ms,
+            "acquired_at": now,
+            "expires_at": expires_at,
+            "renewal_count": 0,
+            "owner_metadata": owner_metadata,
+        });
+
+        match self.db.put_cf(
+            self.cf_locks(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
+            Ok(_) => {
+                debug!("Lock acquired: {}", key);
+                RaftResponse::success_with_data(serde_json::to_vec(&value).unwrap_or_default())
+            }
+            Err(e) => {
+                error!("Failed to acquire lock: {}", e);
+                RaftResponse::failure(format!("Failed to acquire lock: {}", e))
+            }
+        }
+    }
+
+    fn apply_lock_release(
+        &self,
+        namespace: &str,
+        name: &str,
+        owner: &str,
+        fence_token: Option<u64>,
+    ) -> RaftResponse {
+        let key = Self::lock_key(namespace, name);
+
+        // Get existing lock
+        let existing = match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
+            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            _ => None,
+        };
+
+        let Some(existing) = existing else {
+            return RaftResponse::failure("Lock not found");
+        };
+
+        // Check owner
+        if existing["owner"].as_str() != Some(owner) {
+            return RaftResponse::failure("Not the lock owner");
+        }
+
+        // Check fence token if provided
+        if let Some(expected_token) = fence_token {
+            if existing["fence_token"].as_u64() != Some(expected_token) {
+                return RaftResponse::failure("Fence token mismatch");
+            }
+        }
+
+        // Release the lock
+        let value = serde_json::json!({
+            "namespace": namespace,
+            "name": name,
+            "owner": null,
+            "state": "Free",
+            "fence_token": existing["fence_token"],
+            "ttl_ms": existing["ttl_ms"],
+            "acquired_at": null,
+            "expires_at": null,
+            "renewal_count": 0,
+            "owner_metadata": null,
+        });
+
+        match self.db.put_cf(
+            self.cf_locks(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
+            Ok(_) => {
+                debug!("Lock released: {}", key);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to release lock: {}", e);
+                RaftResponse::failure(format!("Failed to release lock: {}", e))
+            }
+        }
+    }
+
+    fn apply_lock_renew(
+        &self,
+        namespace: &str,
+        name: &str,
+        owner: &str,
+        ttl_ms: Option<u64>,
+    ) -> RaftResponse {
+        let key = Self::lock_key(namespace, name);
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // Get existing lock
+        let existing = match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
+            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            _ => None,
+        };
+
+        let Some(mut existing) = existing else {
+            return RaftResponse::failure("Lock not found");
+        };
+
+        // Check owner
+        if existing["owner"].as_str() != Some(owner) {
+            return RaftResponse::failure("Not the lock owner");
+        }
+
+        // Check if lock is still valid
+        if let Some(exp) = existing["expires_at"].as_i64() {
+            if exp <= now {
+                return RaftResponse::failure("Lock has expired");
+            }
+        }
+
+        // Update TTL and expires_at
+        let new_ttl = ttl_ms.unwrap_or_else(|| existing["ttl_ms"].as_u64().unwrap_or(30000));
+        let expires_at = now + new_ttl as i64;
+        let renewal_count = existing["renewal_count"].as_u64().unwrap_or(0) + 1;
+
+        existing["ttl_ms"] = serde_json::json!(new_ttl);
+        existing["expires_at"] = serde_json::json!(expires_at);
+        existing["renewal_count"] = serde_json::json!(renewal_count);
+
+        match self.db.put_cf(
+            self.cf_locks(),
+            key.as_bytes(),
+            existing.to_string().as_bytes(),
+        ) {
+            Ok(_) => {
+                debug!("Lock renewed: {} (renewal #{})", key, renewal_count);
+                RaftResponse::success_with_data(serde_json::to_vec(&existing).unwrap_or_default())
+            }
+            Err(e) => {
+                error!("Failed to renew lock: {}", e);
+                RaftResponse::failure(format!("Failed to renew lock: {}", e))
+            }
+        }
+    }
+
+    fn apply_lock_force_release(&self, namespace: &str, name: &str) -> RaftResponse {
+        let key = Self::lock_key(namespace, name);
+
+        // Force release regardless of owner
+        let value = serde_json::json!({
+            "namespace": namespace,
+            "name": name,
+            "owner": null,
+            "state": "Free",
+            "fence_token": 0,
+            "ttl_ms": 0,
+            "acquired_at": null,
+            "expires_at": null,
+            "renewal_count": 0,
+            "owner_metadata": null,
+        });
+
+        match self.db.put_cf(
+            self.cf_locks(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
+            Ok(_) => {
+                debug!("Lock force released: {}", key);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to force release lock: {}", e);
+                RaftResponse::failure(format!("Failed to force release lock: {}", e))
+            }
+        }
+    }
+
+    fn apply_lock_expire(&self, namespace: &str, name: &str) -> RaftResponse {
+        let key = Self::lock_key(namespace, name);
+
+        // Mark lock as expired
+        let existing = match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
+            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            _ => None,
+        };
+
+        if existing.is_none() {
+            return RaftResponse::success(); // Nothing to expire
+        }
+
+        let value = serde_json::json!({
+            "namespace": namespace,
+            "name": name,
+            "owner": null,
+            "state": "Expired",
+            "fence_token": 0,
+            "ttl_ms": 0,
+            "acquired_at": null,
+            "expires_at": null,
+            "renewal_count": 0,
+            "owner_metadata": null,
+        });
+
+        match self.db.put_cf(
+            self.cf_locks(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
+            Ok(_) => {
+                debug!("Lock expired: {}", key);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to expire lock: {}", e);
+                RaftResponse::failure(format!("Failed to expire lock: {}", e))
+            }
+        }
+    }
+
     /// Save last applied log ID
     async fn save_last_applied(&self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
         let bytes = serde_json::to_vec(&log_id).map_err(|e| sm_error(e, ErrorVerb::Write))?;
@@ -867,6 +1199,7 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             CF_ROLES,
             CF_PERMISSIONS,
             CF_INSTANCES,
+            CF_LOCKS,
         ] {
             if let Some(cf) = self.db.cf_handle(cf_name) {
                 let mut cf_data = Vec::new();

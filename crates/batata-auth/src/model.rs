@@ -191,6 +191,81 @@ impl AuthContext {
     }
 }
 
+/// LDAP configuration for authentication
+#[derive(Debug, Clone)]
+pub struct LdapConfig {
+    /// LDAP server URL (e.g., ldap://localhost:389 or ldaps://localhost:636)
+    pub url: String,
+    /// Base DN for user search (e.g., dc=example,dc=org)
+    pub base_dn: String,
+    /// Admin/bind user DN for initial connection
+    pub bind_dn: String,
+    /// Admin/bind user password
+    pub bind_password: String,
+    /// User DN pattern for authentication (e.g., cn={0},dc=example,dc=org)
+    /// {0} will be replaced with the username
+    pub user_dn_pattern: String,
+    /// Filter prefix for user search (default: uid)
+    pub filter_prefix: String,
+    /// Connection timeout in milliseconds
+    pub timeout_ms: u64,
+    /// Case-sensitive username comparison
+    pub case_sensitive: bool,
+    /// Ignore partial result exceptions
+    pub ignore_partial_result_exception: bool,
+}
+
+impl Default for LdapConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            base_dn: String::new(),
+            bind_dn: String::new(),
+            bind_password: String::new(),
+            user_dn_pattern: String::new(),
+            filter_prefix: "uid".to_string(),
+            timeout_ms: 5000,
+            case_sensitive: true,
+            ignore_partial_result_exception: false,
+        }
+    }
+}
+
+impl LdapConfig {
+    /// Check if LDAP is configured (has a URL)
+    pub fn is_configured(&self) -> bool {
+        !self.url.is_empty()
+    }
+
+    /// Build the user DN from the pattern and username
+    pub fn build_user_dn(&self, username: &str) -> String {
+        if self.user_dn_pattern.is_empty() {
+            // Default pattern: uid=username,base_dn
+            format!("{}={},{}", self.filter_prefix, username, self.base_dn)
+        } else {
+            self.user_dn_pattern.replace("{0}", username)
+        }
+    }
+
+    /// Build the search filter for a user
+    pub fn build_search_filter(&self, username: &str) -> String {
+        format!("({}={})", self.filter_prefix, username)
+    }
+}
+
+/// Authentication result from any auth provider
+#[derive(Debug, Clone)]
+pub struct AuthResult {
+    /// Whether authentication was successful
+    pub success: bool,
+    /// Username (may be normalized)
+    pub username: String,
+    /// Error message if authentication failed
+    pub error_message: Option<String>,
+    /// Whether this is an LDAP user (for potential sync)
+    pub is_ldap_user: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +277,14 @@ mod tests {
         assert_eq!(TOKEN_PREFIX, "Bearer ");
         assert_eq!(DEFAULT_USER, "nacos");
         assert_eq!(DEFAULT_TOKEN_EXPIRE_SECONDS, 18000);
+    }
+
+    #[test]
+    fn test_ldap_constants() {
+        assert_eq!(LDAP_AUTH_PLUGIN_TYPE, "ldap");
+        assert_eq!(NACOS_CORE_AUTH_LDAP_URL, "nacos.core.auth.ldap.url");
+        assert_eq!(NACOS_CORE_AUTH_LDAP_BASEDC, "nacos.core.auth.ldap.basedc");
+        assert_eq!(LDAP_PREFIX, "LDAP_");
     }
 
     #[test]
@@ -217,5 +300,51 @@ mod tests {
         assert!(ctx.username.is_empty());
         assert!(ctx.jwt_error.is_none());
         assert_eq!(ctx.jwt_error_string(), "");
+    }
+
+    #[test]
+    fn test_ldap_config_default() {
+        let config = LdapConfig::default();
+        assert!(!config.is_configured());
+        assert_eq!(config.filter_prefix, "uid");
+        assert_eq!(config.timeout_ms, 5000);
+        assert!(config.case_sensitive);
+    }
+
+    #[test]
+    fn test_ldap_config_build_user_dn() {
+        let mut config = LdapConfig::default();
+        config.base_dn = "dc=example,dc=org".to_string();
+        config.filter_prefix = "uid".to_string();
+
+        // Default pattern
+        assert_eq!(config.build_user_dn("john"), "uid=john,dc=example,dc=org");
+
+        // Custom pattern
+        config.user_dn_pattern = "cn={0},ou=users,dc=example,dc=org".to_string();
+        assert_eq!(
+            config.build_user_dn("john"),
+            "cn=john,ou=users,dc=example,dc=org"
+        );
+    }
+
+    #[test]
+    fn test_ldap_config_build_search_filter() {
+        let mut config = LdapConfig::default();
+        config.filter_prefix = "uid".to_string();
+
+        assert_eq!(config.build_search_filter("john"), "(uid=john)");
+
+        config.filter_prefix = "cn".to_string();
+        assert_eq!(config.build_search_filter("john"), "(cn=john)");
+    }
+
+    #[test]
+    fn test_user_creation() {
+        let user = User {
+            username: "test".to_string(),
+            password: "password".to_string(),
+        };
+        assert_eq!(user.username, "test");
     }
 }

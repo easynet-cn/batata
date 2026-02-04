@@ -161,11 +161,7 @@ pub struct ServerReloadHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ServerReloadHandler {
-    async fn handle(
-        &self,
-        connection: &Connection,
-        _payload: &Payload,
-    ) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, _payload: &Payload) -> Result<Payload, Status> {
         info!(
             "Server reload requested from client: {} ({}:{})",
             connection.meta_info.connection_id,
@@ -223,7 +219,9 @@ impl ServerReloadHandler {
         let content = tokio::fs::read_to_string(&self.config_path).await?;
 
         // Basic validation: check for required sections
-        if !content.contains("nacos.server.main.port") && !content.contains("nacos.server.main-port") {
+        if !content.contains("nacos.server.main.port")
+            && !content.contains("nacos.server.main-port")
+        {
             return Err(anyhow::anyhow!(
                 "Invalid configuration: missing required 'nacos.server.main.port' section"
             ));
@@ -253,11 +251,7 @@ pub struct ConnectResetHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for ConnectResetHandler {
-    async fn handle(
-        &self,
-        connection: &Connection,
-        _payload: &Payload,
-    ) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, _payload: &Payload) -> Result<Payload, Status> {
         // Log the connection reset request
         info!(
             "Connection reset requested: {} from {}:{}",

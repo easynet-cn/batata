@@ -107,11 +107,7 @@ impl ConfigEncryptionService {
     /// Returns (possibly encrypted content, encrypted_data_key)
     /// If encryption is disabled or the data_id doesn't match encryption pattern,
     /// returns the original content with an empty data key.
-    pub async fn encrypt_if_needed(
-        &self,
-        data_id: &str,
-        content: &str,
-    ) -> (String, String) {
+    pub async fn encrypt_if_needed(&self, data_id: &str, content: &str) -> (String, String) {
         // Check if this config should be encrypted
         if !self.is_enabled() || !self.should_encrypt(data_id) {
             return (content.to_string(), String::new());
@@ -160,11 +156,7 @@ impl ConfigEncryptionService {
     }
 
     /// Decrypt content directly (for explicit decryption requests)
-    pub async fn decrypt(
-        &self,
-        content: &str,
-        encrypted_data_key: &str,
-    ) -> CryptoResult<String> {
+    pub async fn decrypt(&self, content: &str, encrypted_data_key: &str) -> CryptoResult<String> {
         self.plugin.decrypt(content, encrypted_data_key).await
     }
 }
@@ -200,31 +192,36 @@ impl ConfigEncryptionServiceBuilder {
 
     /// Add a prefix pattern (e.g., "cipher-" matches "cipher-password")
     pub fn prefix_pattern(mut self, prefix: &str) -> Self {
-        self.patterns.push(EncryptionPattern::Prefix(prefix.to_string()));
+        self.patterns
+            .push(EncryptionPattern::Prefix(prefix.to_string()));
         self
     }
 
     /// Add a suffix pattern (e.g., "-secret" matches "db-secret")
     pub fn suffix_pattern(mut self, suffix: &str) -> Self {
-        self.patterns.push(EncryptionPattern::Suffix(suffix.to_string()));
+        self.patterns
+            .push(EncryptionPattern::Suffix(suffix.to_string()));
         self
     }
 
     /// Add a contains pattern (e.g., "password" matches "db-password-config")
     pub fn contains_pattern(mut self, substring: &str) -> Self {
-        self.patterns.push(EncryptionPattern::Contains(substring.to_string()));
+        self.patterns
+            .push(EncryptionPattern::Contains(substring.to_string()));
         self
     }
 
     /// Add an exact match pattern
     pub fn exact_pattern(mut self, exact: &str) -> Self {
-        self.patterns.push(EncryptionPattern::Exact(exact.to_string()));
+        self.patterns
+            .push(EncryptionPattern::Exact(exact.to_string()));
         self
     }
 
     /// Add a regex pattern (e.g., "^secret-.*-key$")
     pub fn regex_pattern(mut self, regex: &str) -> Self {
-        self.patterns.push(EncryptionPattern::Regex(regex.to_string()));
+        self.patterns
+            .push(EncryptionPattern::Regex(regex.to_string()));
         self
     }
 
@@ -262,9 +259,7 @@ mod tests {
         let service = ConfigEncryptionService::disabled();
         assert!(!service.is_enabled());
 
-        let (encrypted, key) = service
-            .encrypt_if_needed("cipher-test", "secret")
-            .await;
+        let (encrypted, key) = service.encrypt_if_needed("cipher-test", "secret").await;
         assert_eq!(encrypted, "secret");
         assert!(key.is_empty());
     }
@@ -277,9 +272,7 @@ mod tests {
         assert!(service.is_enabled());
 
         // Test non-cipher data_id (should not encrypt)
-        let (content, key) = service
-            .encrypt_if_needed("normal-config", "value")
-            .await;
+        let (content, key) = service.encrypt_if_needed("normal-config", "value").await;
         assert_eq!(content, "value");
         assert!(key.is_empty());
 
@@ -396,16 +389,12 @@ mod tests {
             .unwrap();
 
         // Should encrypt with suffix pattern
-        let (encrypted, key) = service
-            .encrypt_if_needed("db-secret", "password123")
-            .await;
+        let (encrypted, key) = service.encrypt_if_needed("db-secret", "password123").await;
         assert_ne!(encrypted, "password123");
         assert!(!key.is_empty());
 
         // Should not encrypt without matching pattern
-        let (content, key2) = service
-            .encrypt_if_needed("normal-config", "value")
-            .await;
+        let (content, key2) = service.encrypt_if_needed("normal-config", "value").await;
         assert_eq!(content, "value");
         assert!(key2.is_empty());
     }
