@@ -13,6 +13,7 @@ batata-plugin = { path = "../batata-plugin" }
 batata-api = { path = "../batata-api" }
 batata-naming = { path = "../batata-naming" }
 batata-config = { path = "../batata-config" }
+batata-core = { path = "../batata-core" }
 
 # Web framework
 actix-web = "4"
@@ -35,6 +36,9 @@ tracing = "0.1"
 # Error handling
 anyhow = "1.0"
 
+# Database
+sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+
 # Caching
 moka = { version = "0.12", features = ["sync"] }
 
@@ -43,3 +47,9 @@ chrono = "0.4"
 
 # UUID
 uuid = { version = "1.20", features = ["v4"] }
+
+# System info
+sysinfo = "0.33"
+
+# Hostname
+hostname = "0.4"

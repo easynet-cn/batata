@@ -311,7 +311,11 @@ pub async fn batch_publish_aggr(
 ) -> anyhow::Result<u32> {
     let mut count = 0;
     for (datum_id, content) in items {
-        if publish_aggr(db, data_id, group_id, tenant_id, &datum_id, &content, app_name).await? {
+        if publish_aggr(
+            db, data_id, group_id, tenant_id, &datum_id, &content, app_name,
+        )
+        .await?
+        {
             count += 1;
         }
     }

@@ -1,5 +1,6 @@
 // Consul KV Store API HTTP handlers
 // Implements Consul-compatible key-value store endpoints
+// Supports both in-memory storage and persistent storage via ConfigService
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,10 +8,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use actix_web::{HttpRequest, HttpResponse, web};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use dashmap::DashMap;
+use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
 
 use crate::acl::{AclService, ResourceType};
 use crate::model::ConsulError;
+
+// Constants for ConfigService mapping
+const CONSUL_KV_NAMESPACE: &str = "public";
+const CONSUL_KV_GROUP: &str = "consul-kv";
 
 // ============================================================================
 // KV Store Models
@@ -486,6 +492,455 @@ impl Default for ConsulKVService {
 }
 
 // ============================================================================
+// Persistent KV Store Service (Using ConfigService)
+// ============================================================================
+
+/// Stored KV metadata for persistent storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct KVMetadata {
+    value: String, // Base64 encoded
+    flags: u64,
+    session: Option<String>,
+    create_index: u64,
+    modify_index: u64,
+    lock_index: u64,
+}
+
+/// Consul KV Store service with database persistence
+/// Uses Batata's ConfigService for storage
+#[derive(Clone)]
+pub struct ConsulKVServicePersistent {
+    db: Arc<DatabaseConnection>,
+    /// In-memory cache for performance
+    cache: Arc<DashMap<String, StoredKV>>,
+    /// Global index counter
+    index: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl ConsulKVServicePersistent {
+    pub fn new(db: Arc<DatabaseConnection>) -> Self {
+        Self {
+            db,
+            cache: Arc::new(DashMap::new()),
+            index: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        }
+    }
+
+    /// Convert Consul key to ConfigService dataId
+    /// Replaces "/" with ":" to avoid path issues
+    fn key_to_data_id(key: &str) -> String {
+        format!("kv:{}", key.replace('/', ":"))
+    }
+
+    /// Convert ConfigService dataId back to Consul key
+    fn data_id_to_key(data_id: &str) -> String {
+        data_id
+            .strip_prefix("kv:")
+            .unwrap_or(data_id)
+            .replace(':', "/")
+    }
+
+    /// Get the next index
+    fn next_index(&self) -> u64 {
+        self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Get current index
+    pub fn current_index(&self) -> u64 {
+        self.index.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Get a single key from database
+    pub async fn get(&self, key: &str) -> Option<KVPair> {
+        // Check cache first
+        if let Some(cached) = self.cache.get(key) {
+            return Some(cached.pair.clone());
+        }
+
+        // Query from database
+        let data_id = Self::key_to_data_id(key);
+        match batata_config::service::config::find_one(
+            &self.db,
+            &data_id,
+            CONSUL_KV_GROUP,
+            CONSUL_KV_NAMESPACE,
+        )
+        .await
+        {
+            Ok(Some(config)) => {
+                // Parse metadata from content
+                if let Ok(metadata) =
+                    serde_json::from_str::<KVMetadata>(&config.config_info.config_info_base.content)
+                {
+                    let pair = KVPair {
+                        key: key.to_string(),
+                        create_index: metadata.create_index,
+                        modify_index: metadata.modify_index,
+                        lock_index: metadata.lock_index,
+                        flags: metadata.flags,
+                        value: Some(metadata.value),
+                        session: metadata.session,
+                    };
+
+                    // Update cache
+                    self.cache.insert(
+                        key.to_string(),
+                        StoredKV {
+                            pair: pair.clone(),
+                            created_at: config.create_time,
+                            modified_at: config.modify_time,
+                        },
+                    );
+
+                    Some(pair)
+                } else {
+                    // Fallback: treat content as raw value
+                    let pair = KVPair::new(
+                        key.to_string(),
+                        &config.config_info.config_info_base.content,
+                    );
+                    Some(pair)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get keys with prefix (recursive)
+    pub async fn get_prefix(&self, prefix: &str) -> Vec<KVPair> {
+        let data_id_prefix = Self::key_to_data_id(prefix);
+
+        // Search for configs with prefix
+        match batata_config::service::config::search_page(
+            &self.db,
+            1,
+            1000, // Get up to 1000 results
+            CONSUL_KV_NAMESPACE,
+            &format!("{}*", data_id_prefix),
+            CONSUL_KV_GROUP,
+            "",
+            vec![],
+            vec![],
+            "",
+        )
+        .await
+        {
+            Ok(page) => {
+                let mut pairs = Vec::new();
+                for info in page.page_items {
+                    let key = Self::data_id_to_key(&info.data_id);
+                    if key.starts_with(prefix)
+                        && let Some(pair) = self.get(&key).await
+                    {
+                        pairs.push(pair);
+                    }
+                }
+                pairs
+            }
+            Err(_) => vec![],
+        }
+    }
+
+    /// Get keys only (no values)
+    pub async fn get_keys(&self, prefix: &str, separator: Option<&str>) -> Vec<String> {
+        let pairs = self.get_prefix(prefix).await;
+        let mut keys: Vec<String> = pairs.into_iter().map(|p| p.key).collect();
+
+        // Handle separator for folder-like listing
+        if let Some(sep) = separator {
+            let prefix_len = prefix.len();
+            let mut unique_keys: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+
+            for key in keys.drain(..) {
+                let remainder = &key[prefix_len..];
+                if let Some(pos) = remainder.find(sep) {
+                    unique_keys.insert(format!("{}{}", prefix, &remainder[..=pos]));
+                } else {
+                    unique_keys.insert(key);
+                }
+            }
+
+            keys = unique_keys.into_iter().collect();
+        }
+
+        keys.sort();
+        keys
+    }
+
+    /// Put a key-value pair
+    pub async fn put(&self, key: String, value: &str, flags: Option<u64>) -> Option<KVPair> {
+        let index = self.next_index();
+        let now = current_timestamp();
+        let data_id = Self::key_to_data_id(&key);
+
+        // Get existing for create_index
+        let (create_index, lock_index, session) = if let Some(existing) = self.get(&key).await {
+            (existing.create_index, existing.lock_index, existing.session)
+        } else {
+            (index, 0, None)
+        };
+
+        let metadata = KVMetadata {
+            value: BASE64.encode(value.as_bytes()),
+            flags: flags.unwrap_or(0),
+            session,
+            create_index,
+            modify_index: index,
+            lock_index,
+        };
+
+        let content = serde_json::to_string(&metadata).ok()?;
+
+        // Save to database
+        match batata_config::service::config::create_or_update(
+            &self.db,
+            &data_id,
+            CONSUL_KV_GROUP,
+            CONSUL_KV_NAMESPACE,
+            &content,
+            "consul-kv",
+            "system",
+            "127.0.0.1",
+            "",
+            &format!("Consul KV: {}", key),
+            "",
+            "",
+            "json",
+            "",
+            "",
+        )
+        .await
+        {
+            Ok(_) => {
+                let pair = KVPair {
+                    key: key.clone(),
+                    create_index,
+                    modify_index: index,
+                    lock_index,
+                    flags: flags.unwrap_or(0),
+                    value: Some(metadata.value),
+                    session: metadata.session,
+                };
+
+                // Update cache
+                self.cache.insert(
+                    key,
+                    StoredKV {
+                        pair: pair.clone(),
+                        created_at: now,
+                        modified_at: now,
+                    },
+                );
+
+                Some(pair)
+            }
+            Err(e) => {
+                tracing::error!("Failed to save KV to database: {}", e);
+                None
+            }
+        }
+    }
+
+    /// Check-and-set: only update if modify_index matches
+    pub async fn cas(&self, key: String, value: &str, cas_index: u64, flags: Option<u64>) -> bool {
+        if let Some(existing) = self.get(&key).await {
+            if existing.modify_index == cas_index {
+                return self.put(key, value, flags).await.is_some();
+            }
+            false
+        } else if cas_index == 0 {
+            // cas=0 means create only if doesn't exist
+            self.put(key, value, flags).await.is_some()
+        } else {
+            false
+        }
+    }
+
+    /// Delete a key
+    pub async fn delete(&self, key: &str) -> bool {
+        let data_id = Self::key_to_data_id(key);
+
+        // Remove from cache
+        self.cache.remove(key);
+
+        // Delete from database
+        match batata_config::service::config::delete(
+            &self.db,
+            &data_id,
+            CONSUL_KV_GROUP,
+            CONSUL_KV_NAMESPACE,
+            "",
+            "127.0.0.1",
+            "system",
+        )
+        .await
+        {
+            Ok(deleted) => deleted,
+            Err(e) => {
+                tracing::error!("Failed to delete KV from database: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Delete keys with prefix
+    pub async fn delete_prefix(&self, prefix: &str) -> u32 {
+        let keys = self.get_keys(prefix, None).await;
+        let mut count = 0;
+
+        for key in keys {
+            if self.delete(&key).await {
+                count += 1;
+            }
+        }
+
+        count
+    }
+
+    /// Execute a transaction
+    pub async fn transaction(&self, ops: Vec<TxnOp>) -> TxnResult {
+        let mut results: Vec<TxnResultItem> = Vec::new();
+        let mut errors: Vec<TxnError> = Vec::new();
+
+        for (idx, op) in ops.into_iter().enumerate() {
+            if let Some(kv_op) = op.kv {
+                match kv_op.verb.to_lowercase().as_str() {
+                    "get" => {
+                        if let Some(pair) = self.get(&kv_op.key).await {
+                            results.push(TxnResultItem { kv: pair });
+                        } else {
+                            errors.push(TxnError {
+                                op_index: idx as u32,
+                                what: format!("key '{}' not found", kv_op.key),
+                            });
+                        }
+                    }
+                    "set" => {
+                        let value = kv_op
+                            .value
+                            .as_ref()
+                            .and_then(|v| BASE64.decode(v).ok())
+                            .and_then(|bytes| String::from_utf8(bytes).ok())
+                            .unwrap_or_default();
+
+                        if let Some(pair) = self.put(kv_op.key, &value, kv_op.flags).await {
+                            results.push(TxnResultItem { kv: pair });
+                        } else {
+                            errors.push(TxnError {
+                                op_index: idx as u32,
+                                what: "Failed to set key".to_string(),
+                            });
+                        }
+                    }
+                    "cas" => {
+                        let value = kv_op
+                            .value
+                            .as_ref()
+                            .and_then(|v| BASE64.decode(v).ok())
+                            .and_then(|bytes| String::from_utf8(bytes).ok())
+                            .unwrap_or_default();
+
+                        let cas_index = kv_op.index.unwrap_or(0);
+                        if self
+                            .cas(kv_op.key.clone(), &value, cas_index, kv_op.flags)
+                            .await
+                        {
+                            if let Some(pair) = self.get(&kv_op.key).await {
+                                results.push(TxnResultItem { kv: pair });
+                            }
+                        } else {
+                            errors.push(TxnError {
+                                op_index: idx as u32,
+                                what: "CAS failed: index mismatch".to_string(),
+                            });
+                        }
+                    }
+                    "delete" => {
+                        self.delete(&kv_op.key).await;
+                        results.push(TxnResultItem {
+                            kv: KVPair::key_only(kv_op.key),
+                        });
+                    }
+                    "delete-tree" => {
+                        let count = self.delete_prefix(&kv_op.key).await;
+                        results.push(TxnResultItem {
+                            kv: KVPair {
+                                key: kv_op.key,
+                                create_index: 0,
+                                modify_index: count as u64,
+                                lock_index: 0,
+                                flags: 0,
+                                value: None,
+                                session: None,
+                            },
+                        });
+                    }
+                    "delete-cas" => {
+                        let cas_index = kv_op.index.unwrap_or(0);
+                        if let Some(existing) = self.get(&kv_op.key).await {
+                            if existing.modify_index == cas_index {
+                                self.delete(&kv_op.key).await;
+                                results.push(TxnResultItem {
+                                    kv: KVPair::key_only(kv_op.key),
+                                });
+                            } else {
+                                errors.push(TxnError {
+                                    op_index: idx as u32,
+                                    what: "CAS failed: index mismatch".to_string(),
+                                });
+                            }
+                        } else {
+                            errors.push(TxnError {
+                                op_index: idx as u32,
+                                what: format!("key '{}' not found", kv_op.key),
+                            });
+                        }
+                    }
+                    verb => {
+                        errors.push(TxnError {
+                            op_index: idx as u32,
+                            what: format!("unknown verb: {}", verb),
+                        });
+                    }
+                }
+            }
+        }
+
+        TxnResult {
+            results: if results.is_empty() {
+                None
+            } else {
+                Some(results)
+            },
+            errors: if errors.is_empty() {
+                None
+            } else {
+                Some(errors)
+            },
+        }
+    }
+
+    /// Wait for index (blocking watch)
+    pub async fn wait_for_index(&self, target_index: u64, timeout_ms: u64) -> bool {
+        let start = std::time::Instant::now();
+        let timeout_duration = std::time::Duration::from_millis(timeout_ms);
+
+        loop {
+            if self.current_index() >= target_index {
+                return true;
+            }
+
+            if start.elapsed() >= timeout_duration {
+                return false;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+}
+
+// ============================================================================
 // HTTP Handlers
 // ============================================================================
 
@@ -652,9 +1107,248 @@ pub async fn txn(
     }
 }
 
-// NOTE: Export/Import handlers (export_kv, import_kv) are not included in this crate
-// because they require AppState which is application-specific.
-// These handlers should be implemented in the main crate that provides AppState.
+// ============================================================================
+// Persistent HTTP Handlers
+// ============================================================================
+
+/// GET /v1/kv/{key:.*} (Persistent version)
+/// Get a key or keys with prefix from database
+pub async fn get_kv_persistent(
+    kv_service: web::Data<ConsulKVServicePersistent>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    query: web::Query<KVQueryParams>,
+) -> HttpResponse {
+    let key = req.match_info().get("key").unwrap_or("").to_string();
+
+    // Check ACL authorization for key read
+    let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let raw = query.raw.unwrap_or(false);
+    let keys_only = query.keys.unwrap_or(false);
+    let recurse = query.recurse.unwrap_or(false);
+
+    // Handle blocking watch request
+    if let Some(target_index) = query.index {
+        let wait_ms = query.wait.unwrap_or(5000);
+        let reached = kv_service.wait_for_index(target_index, wait_ms).await;
+        if !reached {
+            let has_data = kv_service.get(&key).await.is_some()
+                || !kv_service.get_prefix(&key).await.is_empty();
+            if !has_data {
+                return HttpResponse::NotFound().finish();
+            }
+        }
+    }
+
+    // Handle keys-only request
+    if keys_only {
+        let keys = kv_service.get_keys(&key, query.separator.as_deref()).await;
+        if keys.is_empty() {
+            return HttpResponse::NotFound().finish();
+        }
+        return HttpResponse::Ok().json(keys);
+    }
+
+    // Handle recursive get
+    if recurse {
+        let pairs = kv_service.get_prefix(&key).await;
+        if pairs.is_empty() {
+            return HttpResponse::NotFound().finish();
+        }
+        return HttpResponse::Ok().json(pairs);
+    }
+
+    // Single key get
+    match kv_service.get(&key).await {
+        Some(pair) => {
+            if raw {
+                match pair.raw_value() {
+                    Some(bytes) => HttpResponse::Ok()
+                        .content_type("application/octet-stream")
+                        .body(bytes),
+                    None => HttpResponse::NotFound().finish(),
+                }
+            } else {
+                HttpResponse::Ok().json(vec![pair])
+            }
+        }
+        None => HttpResponse::NotFound().finish(),
+    }
+}
+
+/// PUT /v1/kv/{key:.*} (Persistent version)
+/// Put a key-value pair to database
+pub async fn put_kv_persistent(
+    kv_service: web::Data<ConsulKVServicePersistent>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    query: web::Query<KVQueryParams>,
+    body: web::Bytes,
+) -> HttpResponse {
+    let key = req.match_info().get("key").unwrap_or("").to_string();
+
+    if key.is_empty() {
+        return HttpResponse::BadRequest().json(ConsulError::new("Key cannot be empty"));
+    }
+
+    // Check ACL authorization for key write
+    let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let value = String::from_utf8_lossy(&body).to_string();
+
+    // Check-and-set if cas parameter is provided
+    if let Some(cas_index) = query.cas {
+        let success = kv_service.cas(key, &value, cas_index, query.flags).await;
+        return HttpResponse::Ok().json(success);
+    }
+
+    // Regular put
+    match kv_service.put(key, &value, query.flags).await {
+        Some(_) => HttpResponse::Ok().json(true),
+        None => HttpResponse::InternalServerError().json(ConsulError::new("Failed to store key")),
+    }
+}
+
+/// DELETE /v1/kv/{key:.*} (Persistent version)
+/// Delete a key or keys with prefix from database
+pub async fn delete_kv_persistent(
+    kv_service: web::Data<ConsulKVServicePersistent>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    query: web::Query<KVQueryParams>,
+) -> HttpResponse {
+    let key = req.match_info().get("key").unwrap_or("").to_string();
+
+    // Check ACL authorization for key write
+    let authz = acl_service.authorize_request(&req, ResourceType::Key, &key, true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let recurse = query.recurse.unwrap_or(false);
+
+    if recurse {
+        kv_service.delete_prefix(&key).await;
+    } else {
+        kv_service.delete(&key).await;
+    }
+
+    HttpResponse::Ok().json(true)
+}
+
+/// PUT /v1/txn (Persistent version)
+/// Execute a transaction against database
+pub async fn txn_persistent(
+    kv_service: web::Data<ConsulKVServicePersistent>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    body: web::Json<Vec<TxnOp>>,
+) -> HttpResponse {
+    // Check ACL authorization for key write
+    let authz = acl_service.authorize_request(&req, ResourceType::Key, "", true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let ops = body.into_inner();
+    let result = kv_service.transaction(ops).await;
+
+    if result.errors.is_some() {
+        HttpResponse::Conflict().json(result)
+    } else {
+        HttpResponse::Ok().json(result)
+    }
+}
+
+/// Export all KV pairs as JSON (Persistent version)
+pub async fn export_kv_persistent(
+    kv_service: web::Data<ConsulKVServicePersistent>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+) -> HttpResponse {
+    // Check ACL authorization for read access to all keys
+    let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    // Get all KV pairs by querying with empty prefix
+    let pairs = kv_service.get_prefix("").await;
+    let count = pairs.len();
+
+    #[derive(Serialize)]
+    struct ExportResult {
+        pairs: Vec<KVPair>,
+        count: usize,
+        export_time: i64,
+    }
+
+    let result = ExportResult {
+        pairs,
+        count,
+        export_time: current_timestamp(),
+    };
+
+    HttpResponse::Ok().json(result)
+}
+
+/// Import KV pairs from JSON (Persistent version)
+pub async fn import_kv_persistent(
+    kv_service: web::Data<ConsulKVServicePersistent>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    body: web::Json<Vec<KVPair>>,
+) -> HttpResponse {
+    // Check ACL authorization for write access to all keys
+    let authz = acl_service.authorize_request(&req, ResourceType::Key, "*", true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let pairs_to_import = body.into_inner();
+    let mut success_count = 0;
+    let mut failed_count = 0;
+
+    for pair in pairs_to_import {
+        if let Some(decoded) = pair.decoded_value() {
+            if kv_service
+                .put(pair.key.clone(), &decoded, Some(pair.flags))
+                .await
+                .is_some()
+            {
+                success_count += 1;
+            } else {
+                failed_count += 1;
+            }
+        } else {
+            failed_count += 1;
+        }
+    }
+
+    #[derive(Serialize)]
+    struct ImportResult {
+        success_count: usize,
+        failed_count: usize,
+        total_count: usize,
+        import_time: i64,
+    }
+
+    let result = ImportResult {
+        success_count,
+        failed_count,
+        total_count: success_count + failed_count,
+        import_time: current_timestamp(),
+    };
+
+    HttpResponse::Ok().json(result)
+}
 
 // ============================================================================
 // Helper Functions

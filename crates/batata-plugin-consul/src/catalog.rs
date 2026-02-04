@@ -736,6 +736,71 @@ pub async fn list_datacenters() -> HttpResponse {
     HttpResponse::Ok().json(vec!["dc1"])
 }
 
+/// GET /v1/catalog/connect/:service
+/// Returns the mesh-capable service instances (stub - returns same as /catalog/service)
+pub async fn get_connect_service(
+    req: HttpRequest,
+    catalog: web::Data<ConsulCatalogService>,
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    query: web::Query<CatalogQueryParams>,
+) -> HttpResponse {
+    // Connect/mesh services are not supported, return same as regular service query
+    let service_name = path.into_inner();
+    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let tag_filter = query.tag.as_deref();
+
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let services = catalog.get_service_instances(&namespace, &service_name, tag_filter);
+    HttpResponse::Ok().json(services)
+}
+
+/// GET /v1/catalog/node-services/:node
+/// Returns the services for a specific node (alternative format)
+pub async fn get_node_services(
+    req: HttpRequest,
+    catalog: web::Data<ConsulCatalogService>,
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    query: web::Query<CatalogQueryParams>,
+) -> HttpResponse {
+    let node_name = path.into_inner();
+    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+
+    let authz = acl_service.authorize_request(&req, ResourceType::Node, &node_name, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    match catalog.get_node(&namespace, &node_name) {
+        Some(node_services) => HttpResponse::Ok().json(node_services),
+        None => HttpResponse::NotFound()
+            .json(ConsulError::new(format!("Node not found: {}", node_name))),
+    }
+}
+
+/// GET /v1/catalog/gateway-services/:gateway
+/// Returns services for a gateway (stub - returns empty)
+pub async fn get_gateway_services(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let gateway_name = path.into_inner();
+
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, &gateway_name, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    // Gateway services are not supported, return empty array
+    HttpResponse::Ok().json(Vec::<CatalogService>::new())
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
