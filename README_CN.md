@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/easynet-cn/batata/ci.yml?branch=main)](https://github.com/easynet-cn/batata/actions)
 
-**Batata** 是一个基于 Rust 实现的高性能动态服务发现、配置管理和服务管理平台。完全兼容 [Nacos](https://nacos.io/) 和 [Consul](https://www.consul.io/) API，可作为云原生应用的理想替代方案。
+**Batata** 是一个基于 Rust 实现的高性能动态服务发现、配置管理和服务管理平台。完全兼容 [Nacos](https://nacos.io/) V2/V3 API 和 [Consul](https://www.consul.io/) API，可作为云原生应用的理想替代方案。
 
 [English Documentation](README.md)
 
@@ -19,7 +19,7 @@
 
 ### API 兼容性
 
-- **Nacos API** - 完全兼容 Nacos v1 和 v3 API
+- **Nacos API** - 完全兼容 Nacos V2 和 V3 API（V1 API 不支持）
 - **Consul API** - 兼容 Consul Agent、Health、Catalog、KV 和 ACL API
 - **gRPC 支持** - 高性能双向流式通信，支持 SDK 客户端
 
@@ -27,10 +27,15 @@
 
 - **配置导入/导出** - 支持 Nacos ZIP 和 Consul JSON 格式的批量配置迁移
 - **灰度发布** - 支持配置的渐进式发布
-- **认证与授权** - 基于 JWT 的认证和 RBAC 权限模型
+- **认证与授权** - 基于 JWT 的认证和 RBAC 权限模型，支持 LDAP、OAuth2/OIDC
 - **限流** - 可配置的 API 限流保护
 - **熔断器** - 故障容错的弹性模式
 - **监控与可观测性** - 兼容 Prometheus 的指标端点
+- **服务网格** - xDS 协议支持 (EDS, CDS, LDS, RDS, ADS)
+- **多数据中心** - 地域感知复制与跨数据中心同步
+- **DNS 服务** - 基于 UDP 的 DNS 服务发现
+- **分布式锁** - 基于 Raft 的分布式锁
+- **AI 集成** - MCP (模型内容协议) 和 A2A (Agent-to-Agent) 注册中心
 
 ### 性能优势
 
@@ -41,7 +46,7 @@
 
 ## 与 Nacos 功能对比
 
-Batata 已实现 **100% 的 Nacos 核心功能**，可作为生产环境的替代方案。
+Batata 已实现 **~98% 的 Nacos 功能**，可作为生产环境的替代方案。
 
 ### 核心功能
 
@@ -55,7 +60,9 @@ Batata 已实现 **100% 的 Nacos 核心功能**，可作为生产环境的替�
 | 灰度发布 | ✅ | ✅ | 完整 |
 | 配置导入/导出 (ZIP) | ✅ | ✅ | 完整 |
 | 配置标签 | ✅ | ✅ | 完整 |
-| 配置加密 | ✅ | ✅ | 完整 |
+| 配置加密 | ✅ | ✅ | 完整 (AES-128-CBC) |
+| 配置容量配额 | ✅ | ✅ | 完整 |
+| 聚合配置 (datumId) | ✅ | ✅ | 完整 |
 | **服务发现** | | | |
 | 实例注册/注销 | ✅ | ✅ | 完整 |
 | 服务发现查询 | ✅ | ✅ | 完整 |
@@ -66,6 +73,7 @@ Batata 已实现 **100% 的 Nacos 核心功能**，可作为生产环境的替�
 | 临时实例 | ✅ | ✅ | 完整 |
 | 持久实例 | ✅ | ✅ | 完整 |
 | 服务元数据 | ✅ | ✅ | 完整 |
+| DNS 服务发现 | ✅ | ✅ | 完整 |
 | **命名空间** | | | |
 | 命名空间 CRUD | ✅ | ✅ | 完整 |
 | 多租户隔离 | ✅ | ✅ | 完整 |
@@ -74,20 +82,25 @@ Batata 已实现 **100% 的 Nacos 核心功能**，可作为生产环境的替�
 | 节点健康检查 | ✅ | ✅ | 完整 |
 | Raft 共识 (CP) | ✅ | ✅ | 完整 |
 | Distro 协议 (AP) | ✅ | ✅ | 完整 |
+| 多数据中心同步 | ✅ | ✅ | 完整 |
 | **认证** | | | |
 | 用户管理 | ✅ | ✅ | 完整 |
 | 角色管理 | ✅ | ✅ | 完整 |
 | 权限 (RBAC) | ✅ | ✅ | 完整 |
 | JWT Token | ✅ | ✅ | 完整 |
+| LDAP 集成 | ✅ | ✅ | 完整 |
+| OAuth2/OIDC | ✅ | ✅ | 完整 |
 | **API** | | | |
-| Nacos v1 API | ✅ | ✅ | 完整 |
-| Nacos v3 API | ✅ | ✅ | 完整 |
+| Nacos V2 API | ✅ | ✅ | 完整 |
+| Nacos V3 API | ✅ | ✅ | 完整 |
+| Nacos V1 API | ✅ | ❌ | **不支持** |
 | gRPC 双向流 | ✅ | ✅ | 完整 |
 | Consul API 兼容 | ❌ | ✅ | **额外特性** |
 | **可观测性** | | | |
 | Prometheus 指标 | ✅ | ✅ | 完整 |
 | 健康检查端点 | ✅ | ✅ | 完整 |
 | OpenTelemetry | ✅ | ✅ | 完整 |
+| 操作审计日志 | ✅ | ✅ | 完整 |
 
 ### Batata 独有特性
 
@@ -99,17 +112,23 @@ Batata 已实现 **100% 的 Nacos 核心功能**，可作为生产环境的替�
 | **内置熔断器** | 集群健康检查弹性模式 |
 | **OpenTelemetry 分布式追踪** | OTLP 导出支持 (Jaeger、Zipkin 等) |
 | **多数据中心支持** | 本地优先同步的地域感知复制 |
+| **服务网格 (xDS)** | EDS、CDS、LDS、RDS、ADS 协议支持 |
+| **AI 集成** | MCP 服务器注册和 A2A 代理注册 |
+| **分布式锁** | 基于 Raft 的分布式锁机制 |
+| **Kubernetes 同步** | 与 Kubernetes 双向服务同步 |
 
 ### 功能完成度总结
 
 | 模块 | 完成度 | 备注 |
 |-----|-------|------|
 | 配置管理 | **100%** | 完整 AES-GCM 加密支持 |
-| 服务发现 | **100%** | 完整持久实例支持 |
+| 服务发现 | **95%** | UDP 推送未实现（使用 gRPC 推送） |
 | 命名空间 | **100%** | 完全支持 |
-| 集群管理 | **100%** | 完整 Distro 协议支持 |
-| 认证授权 | **100%** | 完全支持 |
-| API 兼容性 | **100%+** | 完整 Nacos + Consul API |
+| 集群管理 | **95%** | 单 Raft 组（多 Raft 部分支持） |
+| 认证授权 | **100%** | JWT、LDAP、OAuth2/OIDC |
+| API 兼容性 | **100%+** | 完整 Nacos V2/V3 + Consul API |
+| 云原生 | **85%** | K8s、Prometheus、xDS（基础） |
+| **总体** | **~98%** | 生产就绪 |
 
 ## 项目结构
 
@@ -130,6 +149,7 @@ batata/
 │   ├── batata-plugin-consul/     # Consul 兼容插件
 │   ├── batata-console/           # 控制台后端服务
 │   ├── batata-client/            # 客户端 SDK
+│   ├── batata-mesh/              # 服务网格 (xDS, Istio MCP)
 │   └── batata-server/            # 主服务器 (HTTP, gRPC, 控制台)
 │       ├── src/
 │       │   ├── api/              # API 处理器 (HTTP, gRPC, Consul)
@@ -154,11 +174,12 @@ batata/
 ```
 batata-server (主二进制)
 ├── batata-api (API 类型, gRPC proto)
-├── batata-auth (JWT, RBAC)
+├── batata-auth (JWT, RBAC, LDAP, OAuth2)
 ├── batata-config (配置服务)
 ├── batata-naming (服务发现)
 ├── batata-console (控制台后端)
-├── batata-core (集群, 连接)
+├── batata-core (集群, 连接, 数据中心)
+├── batata-mesh (xDS, Istio MCP)
 ├── batata-plugin-consul (Consul API)
 └── batata-persistence (数据库)
 ```
@@ -503,7 +524,7 @@ sea-orm-cli generate entity \
 ### 项目统计
 
 - **~50,000+ 行** Rust 代码
-- **13 个内部 crate** 工作空间
+- **14 个内部 crate** 工作空间
 - **333 个单元测试**，全面覆盖
 - **3 套性能基准测试**
 
@@ -574,10 +595,20 @@ batata_cluster_member_count 3
 
 - [x] 持久服务实例（数据库存储）
 - [x] Distro 协议完善（AP 模式）
-- [x] 配置静态加密（AES-256-GCM）
+- [x] 配置静态加密（AES-128-CBC）
 - [x] OpenTelemetry 集成（OTLP 导出）
 - [x] 多数据中心支持（地域感知同步）
+- [x] 服务网格 xDS 协议（EDS、CDS、LDS、RDS、ADS）
+- [x] AI 集成（MCP 服务器注册、A2A 代理注册）
+- [x] Kubernetes 同步（双向服务同步）
+- [x] LDAP 认证
+- [x] OAuth2/OIDC 认证（Google、GitHub、Microsoft）
+- [x] 分布式锁（基于 Raft）
+- [x] DNS 服务发现
+- [x] 灰度发布 API
+- [x] 操作审计日志
 - [ ] Kubernetes Operator
+- [ ] Web UI（仅后端 API，可使用 Nacos UI 或自定义前端）
 
 ## 贡献
 

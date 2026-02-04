@@ -21,7 +21,7 @@ Batata uses a multi-crate workspace architecture for modularity and maintainabil
 - Better testability with isolated unit tests
 - Flexible deployment options
 
-The project consists of **13 internal crates** following a layered architecture similar to Java Nacos while leveraging Rust's trait system for dependency injection.
+The project consists of **14 internal crates** following a layered architecture similar to Java Nacos while leveraging Rust's trait system for dependency injection.
 
 ---
 
@@ -43,6 +43,7 @@ batata/
 │   ├── batata-plugin-consul/  # Consul compatibility plugin
 │   ├── batata-console/        # Management console backend
 │   ├── batata-client/         # Rust SDK for clients
+│   ├── batata-mesh/           # Service mesh (xDS, Istio MCP)
 │   └── batata-server/         # Main application entry point
 │       ├── src/
 │       │   ├── api/           # API handlers (HTTP, gRPC, Consul)
@@ -198,7 +199,18 @@ batata/
 
 **Dependencies**: batata-common, batata-api, reqwest
 
-#### 13. `batata-server`
+#### 13. `batata-mesh`
+**Purpose**: Service mesh integration with xDS and Istio support.
+
+**Contents**:
+- xDS protocol implementation (EDS, CDS, LDS, RDS, ADS)
+- Istio MCP (Mesh Configuration Protocol) server
+- Service to Envoy resource conversion
+- Incremental/Delta discovery support
+
+**Dependencies**: batata-common, batata-naming, tonic, prost
+
+#### 14. `batata-server`
 **Purpose**: Main application entry point that assembles all components.
 
 **Contents**:
@@ -265,6 +277,7 @@ Client SDK:
 | L4 | batata-consistency | Consensus protocols, depends on L0-L2 |
 | L5 | batata-core | Cluster management, depends on L0-L4 |
 | L6 | batata-config, batata-naming | Business services, depends on L0-L5 |
+| L6.5 | batata-mesh | Service mesh (xDS), depends on L0-L6 |
 | L7 | batata-console | Console API, depends on L0-L6 |
 | L8 | batata-server | Entry point, depends on all |
 
@@ -290,6 +303,7 @@ members = [
     "crates/batata-plugin-consul",
     "crates/batata-console",
     "crates/batata-client",
+    "crates/batata-mesh",
     "crates/batata-server",
 ]
 
@@ -456,14 +470,15 @@ impl ConfigContext for AppState {
 | nacos-common | batata-common | Shared utilities and types |
 | nacos-api | batata-api | API definitions |
 | nacos-persistence | batata-persistence | Database layer |
-| nacos-auth | batata-auth | Authentication |
+| nacos-auth | batata-auth | Authentication (JWT, LDAP, OAuth2) |
 | nacos-consistency | batata-consistency | Raft protocols |
-| nacos-core | batata-core | Core services |
+| nacos-core | batata-core | Core services, datacenter |
 | nacos-config | batata-config | Config management |
 | nacos-naming | batata-naming | Service discovery |
 | nacos-plugin | batata-plugin | Plugin SPI |
 | nacos-console | batata-console | Console backend |
 | nacos-client | batata-client | Client SDK |
+| N/A | batata-mesh | Service mesh (xDS, Istio) |
 | nacos-server | batata-server | Server entry point |
 
 ---

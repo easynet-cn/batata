@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/easynet-cn/batata/ci.yml?branch=main)](https://github.com/easynet-cn/batata/actions)
 
-**Batata** is a high-performance, Rust-based implementation of a dynamic service discovery, configuration management, and service management platform. It is fully compatible with [Nacos](https://nacos.io/) and [Consul](https://www.consul.io/) APIs, making it an ideal drop-in replacement for cloud-native applications.
+**Batata** is a high-performance, Rust-based implementation of a dynamic service discovery, configuration management, and service management platform. It is fully compatible with [Nacos](https://nacos.io/) V2/V3 APIs and [Consul](https://www.consul.io/) APIs, making it an ideal drop-in replacement for cloud-native applications.
 
 [中文文档](README_CN.md)
 
@@ -19,7 +19,7 @@
 
 ### API Compatibility
 
-- **Nacos API** - Full compatibility with Nacos v1 and v3 APIs
+- **Nacos API** - Full compatibility with Nacos V2 and V3 APIs (V1 intentionally not supported)
 - **Consul API** - Compatible with Consul Agent, Health, Catalog, KV, and ACL APIs
 - **gRPC Support** - High-performance bidirectional streaming for SDK clients
 
@@ -27,10 +27,15 @@
 
 - **Config Import/Export** - Batch configuration migration in Nacos ZIP or Consul JSON format
 - **Gray/Beta Release** - Gradual configuration rollout with gray release support
-- **Authentication & Authorization** - JWT-based authentication with RBAC permission model
+- **Authentication & Authorization** - JWT-based authentication with RBAC permission model, LDAP, OAuth2/OIDC
 - **Rate Limiting** - Configurable rate limiting for API protection
 - **Circuit Breaker** - Resilience patterns for fault tolerance
 - **Metrics & Observability** - Prometheus-compatible metrics endpoint
+- **Service Mesh** - xDS protocol support (EDS, CDS, LDS, RDS, ADS)
+- **Multi-Datacenter** - Locality-aware replication with cross-DC sync
+- **DNS Service** - UDP-based DNS for service discovery
+- **Distributed Lock** - Raft-based distributed locking
+- **AI Integration** - MCP (Model Content Protocol) and A2A (Agent-to-Agent) registry
 
 ### Performance
 
@@ -41,7 +46,7 @@
 
 ## Feature Comparison with Nacos
 
-Batata implements **100% of Nacos core features** and can serve as a production-ready drop-in replacement.
+Batata implements **~98% of Nacos features** and can serve as a production-ready drop-in replacement.
 
 ### Core Features
 
@@ -55,7 +60,9 @@ Batata implements **100% of Nacos core features** and can serve as a production-
 | Gray/Beta Release | ✅ | ✅ | Full |
 | Config Import/Export (ZIP) | ✅ | ✅ | Full |
 | Config Tags | ✅ | ✅ | Full |
-| Config Encryption | ✅ | ✅ | Full |
+| Config Encryption | ✅ | ✅ | Full (AES-128-CBC) |
+| Config Capacity Quota | ✅ | ✅ | Full |
+| Aggregate Config (datumId) | ✅ | ✅ | Full |
 | **Service Discovery** | | | |
 | Instance Register/Deregister | ✅ | ✅ | Full |
 | Service Discovery Query | ✅ | ✅ | Full |
@@ -66,6 +73,7 @@ Batata implements **100% of Nacos core features** and can serve as a production-
 | Ephemeral Instances | ✅ | ✅ | Full |
 | Persistent Instances | ✅ | ✅ | Full |
 | Service Metadata | ✅ | ✅ | Full |
+| DNS-based Discovery | ✅ | ✅ | Full |
 | **Namespace** | | | |
 | Namespace CRUD | ✅ | ✅ | Full |
 | Multi-tenant Isolation | ✅ | ✅ | Full |
@@ -74,20 +82,25 @@ Batata implements **100% of Nacos core features** and can serve as a production-
 | Node Health Check | ✅ | ✅ | Full |
 | Raft Consensus (CP) | ✅ | ✅ | Full |
 | Distro Protocol (AP) | ✅ | ✅ | Full |
+| Multi-Datacenter Sync | ✅ | ✅ | Full |
 | **Auth** | | | |
 | User Management | ✅ | ✅ | Full |
 | Role Management | ✅ | ✅ | Full |
 | Permission (RBAC) | ✅ | ✅ | Full |
 | JWT Token | ✅ | ✅ | Full |
+| LDAP Integration | ✅ | ✅ | Full |
+| OAuth2/OIDC | ✅ | ✅ | Full |
 | **API** | | | |
-| Nacos v1 API | ✅ | ✅ | Full |
-| Nacos v3 API | ✅ | ✅ | Full |
+| Nacos V2 API | ✅ | ✅ | Full |
+| Nacos V3 API | ✅ | ✅ | Full |
+| Nacos V1 API | ✅ | ❌ | **Intentionally not supported** |
 | gRPC Bi-directional Streaming | ✅ | ✅ | Full |
 | Consul API Compatibility | ❌ | ✅ | **Extra** |
 | **Observability** | | | |
 | Prometheus Metrics | ✅ | ✅ | Full |
 | Health Endpoint | ✅ | ✅ | Full |
 | OpenTelemetry | ✅ | ✅ | Full |
+| Operation Audit Logs | ✅ | ✅ | Full |
 
 ### Batata Exclusive Features
 
@@ -99,17 +112,23 @@ Batata implements **100% of Nacos core features** and can serve as a production-
 | **Built-in Circuit Breaker** | Resilience pattern for cluster health checks |
 | **OpenTelemetry Tracing** | OTLP export for distributed tracing (Jaeger, Zipkin, etc.) |
 | **Multi-datacenter Support** | Locality-aware replication with local-first sync |
+| **Service Mesh (xDS)** | EDS, CDS, LDS, RDS, ADS protocol support |
+| **AI Integration** | MCP Server Registry and A2A Agent Registry |
+| **Distributed Lock** | Raft-based distributed locking mechanism |
+| **Kubernetes Sync** | Bidirectional service sync with Kubernetes |
 
 ### Feature Completeness Summary
 
 | Module | Completeness | Notes |
 |--------|--------------|-------|
 | Configuration Management | **100%** | Full AES-GCM encryption support |
-| Service Discovery | **100%** | Full persistent instance support |
+| Service Discovery | **95%** | UDP Push not implemented (gRPC push used) |
 | Namespace | **100%** | Fully supported |
-| Cluster Management | **100%** | Full Distro protocol support |
-| Authentication | **100%** | Fully supported |
-| API Compatibility | **100%+** | Full Nacos + Consul APIs |
+| Cluster Management | **95%** | Single Raft group (Multi-Raft partial) |
+| Authentication | **100%** | JWT, LDAP, OAuth2/OIDC |
+| API Compatibility | **100%+** | Full Nacos V2/V3 + Consul APIs |
+| Cloud Native | **85%** | K8s, Prometheus, xDS (basic) |
+| **Overall** | **~98%** | Production ready |
 
 ## Project Structure
 
@@ -130,6 +149,7 @@ batata/
 │   ├── batata-plugin-consul/     # Consul compatibility plugin
 │   ├── batata-console/           # Console backend service
 │   ├── batata-client/            # Client SDK
+│   ├── batata-mesh/              # Service mesh (xDS, Istio MCP)
 │   └── batata-server/            # Main server (HTTP, gRPC, Console)
 │       ├── src/
 │       │   ├── api/              # API handlers (HTTP, gRPC, Consul)
@@ -154,11 +174,12 @@ batata/
 ```
 batata-server (main binary)
 ├── batata-api (API types, gRPC proto)
-├── batata-auth (JWT, RBAC)
+├── batata-auth (JWT, RBAC, LDAP, OAuth2)
 ├── batata-config (config service)
 ├── batata-naming (service discovery)
 ├── batata-console (console backend)
-├── batata-core (cluster, connections)
+├── batata-core (cluster, connections, datacenter)
+├── batata-mesh (xDS, Istio MCP)
 ├── batata-plugin-consul (Consul API)
 └── batata-persistence (database)
 ```
@@ -495,7 +516,7 @@ sea-orm-cli generate entity \
 ### Project Statistics
 
 - **~50,000+ lines** of Rust code
-- **13 internal crates** in workspace
+- **14 internal crates** in workspace
 - **333 unit tests** with comprehensive coverage
 - **3 benchmark suites** for performance testing
 
@@ -566,10 +587,20 @@ batata_cluster_member_count 3
 
 - [x] Persistent service instances (database storage)
 - [x] Distro protocol enhancement (AP mode)
-- [x] Config encryption at rest (AES-256-GCM)
+- [x] Config encryption at rest (AES-128-CBC)
 - [x] OpenTelemetry integration (OTLP export)
 - [x] Multi-datacenter support (locality-aware sync)
+- [x] Service Mesh xDS protocol (EDS, CDS, LDS, RDS, ADS)
+- [x] AI Integration (MCP Server Registry, A2A Agent Registry)
+- [x] Kubernetes sync (bidirectional service sync)
+- [x] LDAP authentication
+- [x] OAuth2/OIDC authentication (Google, GitHub, Microsoft)
+- [x] Distributed locking (Raft-based)
+- [x] DNS-based service discovery
+- [x] Gray/Beta release API
+- [x] Operation audit logs
 - [ ] Kubernetes Operator
+- [ ] Web UI (backend API only, use Nacos UI or custom frontend)
 
 ## Contributing
 
