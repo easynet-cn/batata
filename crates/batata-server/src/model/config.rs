@@ -318,6 +318,66 @@ impl Configuration {
     }
 
     // ========================================================================
+    // OAuth2/OIDC Configuration
+    // ========================================================================
+
+    /// Check if OAuth2/OIDC authentication is enabled
+    pub fn is_oauth_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.core.auth.oauth.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Get OAuth user creation mode (auto or manual)
+    pub fn oauth_user_creation(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.oauth.user.creation")
+            .unwrap_or_else(|_| "auto".to_string())
+    }
+
+    /// Get OAuth role sync mode (on_login or periodic)
+    pub fn oauth_role_sync(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.oauth.role.sync")
+            .unwrap_or_else(|_| "on_login".to_string())
+    }
+
+    /// Get default OAuth redirect URI template
+    pub fn oauth_redirect_uri(&self) -> Option<String> {
+        self.config
+            .get_string("nacos.core.auth.oauth.redirect.uri")
+            .ok()
+    }
+
+    /// Get OAuth configuration as OAuthConfig struct
+    pub fn oauth_config(&self) -> batata_auth::service::oauth::OAuthConfig {
+        use std::collections::HashMap;
+
+        let mut providers = HashMap::new();
+
+        // Load providers from config (e.g., nacos.core.auth.oauth.providers.google)
+        // This is a simplified version - actual implementation would iterate over providers
+        if let Ok(provider_config) = self.config.get_table("nacos.core.auth.oauth.providers") {
+            for (name, value) in provider_config {
+                if let Ok(provider) = value
+                    .clone()
+                    .try_deserialize::<batata_auth::service::oauth::OAuthProviderConfig>()
+                {
+                    providers.insert(name, provider);
+                }
+            }
+        }
+
+        batata_auth::service::oauth::OAuthConfig {
+            enabled: self.is_oauth_enabled(),
+            providers,
+            user_creation: self.oauth_user_creation(),
+            role_sync: self.oauth_role_sync(),
+            redirect_uri: self.oauth_redirect_uri(),
+        }
+    }
+
+    // ========================================================================
     // Database Configuration
     // ========================================================================
 

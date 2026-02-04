@@ -4,7 +4,10 @@
 
 use actix_web::{Scope, web};
 
-use super::{client, cluster, config, health, history, instance, namespace, operator, service};
+use super::{
+    aggr, audit, capacity, client, cluster, config, health, history, instance, namespace, operator,
+    service,
+};
 
 /// Create the V2 Config Service routes
 ///
@@ -16,13 +19,31 @@ use super::{client, cluster, config, health, history, instance, namespace, opera
 /// - GET /nacos/v2/cs/history - Get specific history entry
 /// - GET /nacos/v2/cs/history/previous - Get previous history entry
 /// - GET /nacos/v2/cs/history/configs - Get all configs in namespace
+/// - GET /nacos/v2/cs/capacity - Get capacity
+/// - POST /nacos/v2/cs/capacity - Update capacity
+/// - DELETE /nacos/v2/cs/capacity - Delete capacity
+/// - POST /nacos/v2/cs/config/aggr - Publish aggregate config
+/// - DELETE /nacos/v2/cs/config/aggr - Delete aggregate config
+/// - GET /nacos/v2/cs/config/aggr - Get aggregate config
+/// - GET /nacos/v2/cs/config/aggr/list - List aggregate configs
+/// - GET /nacos/v2/cs/config/aggr/datumIds - List datum IDs
+/// - GET /nacos/v2/cs/config/aggr/count - Count aggregate configs
 pub fn config_routes() -> Scope {
     web::scope("/v2/cs")
         .service(
             web::scope("/config")
                 .service(config::get_config)
                 .service(config::publish_config)
-                .service(config::delete_config),
+                .service(config::delete_config)
+                .service(
+                    web::scope("/aggr")
+                        .service(aggr::publish_aggr_config)
+                        .service(aggr::delete_aggr_config)
+                        .service(aggr::get_aggr_config)
+                        .service(aggr::list_aggr_config)
+                        .service(aggr::list_datum_ids)
+                        .service(aggr::count_aggr_config),
+                ),
         )
         .service(
             web::scope("/history")
@@ -30,6 +51,12 @@ pub fn config_routes() -> Scope {
                 .service(history::get_history)
                 .service(history::get_previous_history)
                 .service(history::get_namespace_configs),
+        )
+        .service(
+            web::scope("/capacity")
+                .service(capacity::get_capacity)
+                .service(capacity::update_capacity)
+                .service(capacity::delete_capacity),
         )
 }
 
@@ -122,15 +149,25 @@ pub fn cluster_routes() -> Scope {
 /// - POST /nacos/v2/console/namespace - Create namespace
 /// - PUT /nacos/v2/console/namespace - Update namespace
 /// - DELETE /nacos/v2/console/namespace - Delete namespace
+/// - GET /nacos/v2/console/audit/list - List audit logs
+/// - GET /nacos/v2/console/audit - Get audit log detail
+/// - GET /nacos/v2/console/audit/stats - Get audit statistics
 pub fn console_routes() -> Scope {
-    web::scope("/v2/console").service(
-        web::scope("/namespace")
-            .service(namespace::get_namespace_list)
-            .service(namespace::get_namespace)
-            .service(namespace::create_namespace)
-            .service(namespace::update_namespace)
-            .service(namespace::delete_namespace),
-    )
+    web::scope("/v2/console")
+        .service(
+            web::scope("/namespace")
+                .service(namespace::get_namespace_list)
+                .service(namespace::get_namespace)
+                .service(namespace::create_namespace)
+                .service(namespace::update_namespace)
+                .service(namespace::delete_namespace),
+        )
+        .service(
+            web::scope("/audit")
+                .service(audit::get_audit_logs)
+                .service(audit::get_audit_log)
+                .service(audit::get_audit_stats),
+        )
 }
 
 /// Create all V2 API routes

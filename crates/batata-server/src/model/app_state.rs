@@ -6,6 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use sea_orm::DatabaseConnection;
 
+use batata_auth::service::oauth::OAuthService;
 use batata_core::cluster::ServerMemberManager;
 
 use crate::console::datasource::ConsoleDataSource;
@@ -37,6 +38,8 @@ pub struct AppState {
     pub server_member_manager: Option<Arc<ServerMemberManager>>,
     pub config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     pub console_datasource: Arc<dyn ConsoleDataSource>,
+    /// OAuth2/OIDC service for external authentication
+    pub oauth_service: Option<Arc<OAuthService>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -50,6 +53,7 @@ impl std::fmt::Debug for AppState {
             )
             .field("config_subscriber_manager", &"<ConfigSubscriberManager>")
             .field("console_datasource", &"<dyn ConsoleDataSource>")
+            .field("oauth_service", &self.oauth_service.is_some())
             .finish()
     }
 }
@@ -62,6 +66,7 @@ impl Clone for AppState {
             server_member_manager: self.server_member_manager.clone(),
             config_subscriber_manager: self.config_subscriber_manager.clone(),
             console_datasource: self.console_datasource.clone(),
+            oauth_service: self.oauth_service.clone(),
         }
     }
 }

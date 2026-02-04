@@ -17,6 +17,7 @@ use batata_api::{
 };
 
 use super::cluster_client::ClusterClientManager;
+use super::datacenter::DatacenterManager;
 
 /// Distro protocol configuration
 #[derive(Clone, Debug)]
@@ -134,6 +135,8 @@ pub struct DistroProtocol {
     running: Arc<RwLock<bool>>,
     client_manager: Arc<ClusterClientManager>,
     members: Arc<DashMap<String, Member>>,
+    /// Optional datacenter manager for locality-aware sync
+    datacenter_manager: Option<Arc<DatacenterManager>>,
 }
 
 impl DistroProtocol {
@@ -151,7 +154,33 @@ impl DistroProtocol {
             running: Arc::new(RwLock::new(false)),
             client_manager,
             members,
+            datacenter_manager: None,
         }
+    }
+
+    /// Create a new DistroProtocol with datacenter awareness
+    pub fn with_datacenter_manager(
+        local_address: String,
+        config: DistroConfig,
+        client_manager: Arc<ClusterClientManager>,
+        members: Arc<DashMap<String, Member>>,
+        datacenter_manager: Arc<DatacenterManager>,
+    ) -> Self {
+        Self {
+            config,
+            local_address,
+            handlers: Arc::new(DashMap::new()),
+            sync_tasks: Arc::new(DashMap::new()),
+            running: Arc::new(RwLock::new(false)),
+            client_manager,
+            members,
+            datacenter_manager: Some(datacenter_manager),
+        }
+    }
+
+    /// Set the datacenter manager
+    pub fn set_datacenter_manager(&mut self, manager: Arc<DatacenterManager>) {
+        self.datacenter_manager = Some(manager);
     }
 
     /// Register a data handler
@@ -187,30 +216,83 @@ impl DistroProtocol {
     }
 
     /// Schedule a sync task for data
+    ///
+    /// If a DatacenterManager is configured, uses locality-aware sync:
+    /// - Local datacenter members are synced immediately (with normal sync delay)
+    /// - Remote datacenter members are synced with cross-DC delay
     pub async fn sync_data(&self, data_type: DistroDataType, key: &str) {
-        let target_members: Vec<String> = self
-            .members
-            .iter()
-            .filter(|e| e.key() != &self.local_address)
-            .map(|e| e.key().clone())
-            .collect();
+        let now = chrono::Utc::now().timestamp_millis();
 
-        for target in target_members {
-            let task_key = format!("{}:{}:{}", data_type, key, target);
-            let task = DistroSyncTask {
-                data_type: data_type.clone(),
-                key: key.to_string(),
-                target_address: target,
-                scheduled_time: chrono::Utc::now().timestamp_millis()
-                    + self.config.sync_delay.as_millis() as i64,
-                retry_count: 0,
-            };
+        if let Some(ref dc_manager) = self.datacenter_manager {
+            // Datacenter-aware sync: local first, then cross-DC with delay
+            let local_targets = dc_manager.select_replication_targets(
+                Some(&self.local_address),
+                dc_manager.replication_factor(),
+            );
 
-            // Merge with existing task (reset scheduled time)
-            self.sync_tasks.insert(task_key, task);
+            for member in local_targets {
+                let task_key = format!("{}:{}:{}", data_type, key, member.address);
+                let task = DistroSyncTask {
+                    data_type: data_type.clone(),
+                    key: key.to_string(),
+                    target_address: member.address.clone(),
+                    scheduled_time: now + self.config.sync_delay.as_millis() as i64,
+                    retry_count: 0,
+                };
+                self.sync_tasks.insert(task_key, task);
+            }
+
+            // Schedule cross-DC sync with additional delay
+            if dc_manager.is_cross_dc_replication_enabled() {
+                let cross_dc_targets =
+                    dc_manager.select_cross_dc_replication_targets(Some(&self.local_address));
+                let cross_dc_delay = dc_manager.cross_dc_sync_delay_secs() * 1000;
+
+                for member in cross_dc_targets {
+                    let task_key = format!("{}:{}:{}", data_type, key, member.address);
+                    let task = DistroSyncTask {
+                        data_type: data_type.clone(),
+                        key: key.to_string(),
+                        target_address: member.address.clone(),
+                        scheduled_time: now
+                            + self.config.sync_delay.as_millis() as i64
+                            + cross_dc_delay as i64,
+                        retry_count: 0,
+                    };
+                    self.sync_tasks.insert(task_key, task);
+                }
+            }
+
+            debug!(
+                "Scheduled datacenter-aware sync for {}:{} (local: {}, cross-dc: {})",
+                data_type,
+                key,
+                dc_manager.replication_factor(),
+                dc_manager.is_cross_dc_replication_enabled()
+            );
+        } else {
+            // Legacy mode: sync to all members
+            let target_members: Vec<String> = self
+                .members
+                .iter()
+                .filter(|e| e.key() != &self.local_address)
+                .map(|e| e.key().clone())
+                .collect();
+
+            for target in target_members {
+                let task_key = format!("{}:{}:{}", data_type, key, target);
+                let task = DistroSyncTask {
+                    data_type: data_type.clone(),
+                    key: key.to_string(),
+                    target_address: target,
+                    scheduled_time: now + self.config.sync_delay.as_millis() as i64,
+                    retry_count: 0,
+                };
+                self.sync_tasks.insert(task_key, task);
+            }
+
+            debug!("Scheduled sync for {}:{}", data_type, key);
         }
-
-        debug!("Scheduled sync for {}:{}", data_type, key);
     }
 
     /// Start the sync task processor

@@ -448,6 +448,118 @@ impl BatataApiClient {
         Ok(response.data)
     }
 
+    /// Publish gray/beta configuration
+    #[allow(clippy::too_many_arguments)]
+    pub async fn config_gray_publish(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        content: &str,
+        gray_name: &str,
+        gray_rule: &str,
+        app_name: &str,
+        encrypted_data_key: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body<'a> {
+            data_id: &'a str,
+            group_name: &'a str,
+            namespace_id: &'a str,
+            content: &'a str,
+            gray_name: &'a str,
+            gray_rule: &'a str,
+            app_name: &'a str,
+            encrypted_data_key: &'a str,
+        }
+
+        let response: ApiResponse<bool> = self
+            .http_client
+            .post_json(
+                "/v3/console/cs/config/beta",
+                &Body {
+                    data_id,
+                    group_name,
+                    namespace_id,
+                    content,
+                    gray_name,
+                    gray_rule,
+                    app_name,
+                    encrypted_data_key,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Search gray/beta configurations with pagination
+    pub async fn config_gray_list(
+        &self,
+        page_no: u64,
+        page_size: u64,
+        namespace_id: &str,
+        data_id: &str,
+        group_name: &str,
+        app_name: &str,
+    ) -> anyhow::Result<Page<ConfigGrayInfo>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            page_no: u64,
+            page_size: u64,
+            namespace_id: &'a str,
+            data_id: &'a str,
+            group_name: &'a str,
+            app_name: &'a str,
+        }
+
+        let response: ApiResponse<Page<ConfigGrayInfo>> = self
+            .http_client
+            .get_with_query(
+                "/v3/console/cs/config/beta/list",
+                &Query {
+                    page_no,
+                    page_size,
+                    namespace_id,
+                    data_id,
+                    group_name,
+                    app_name,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Find all gray configs for a specific config
+    pub async fn config_gray_find_list(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigGrayInfo>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            data_id: &'a str,
+            group_name: &'a str,
+            namespace_id: &'a str,
+        }
+
+        let response: ApiResponse<Vec<ConfigGrayInfo>> = self
+            .http_client
+            .get_with_query(
+                "/v3/console/cs/config/beta/versions",
+                &Query {
+                    data_id,
+                    group_name,
+                    namespace_id,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
     /// Clone configurations to another namespace
     pub async fn config_clone(
         &self,

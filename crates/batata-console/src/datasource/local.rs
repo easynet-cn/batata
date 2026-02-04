@@ -339,6 +339,71 @@ impl ConsoleDataSource for LocalDataSource {
         .await
     }
 
+    async fn config_gray_publish(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        content: &str,
+        gray_name: &str,
+        gray_rule: &str,
+        src_user: &str,
+        src_ip: &str,
+        app_name: &str,
+        encrypted_data_key: &str,
+    ) -> anyhow::Result<bool> {
+        batata_config::service::create_or_update_gray(
+            &self.database_connection,
+            data_id,
+            group_name,
+            namespace_id,
+            content,
+            gray_name,
+            gray_rule,
+            src_user,
+            src_ip,
+            app_name,
+            encrypted_data_key,
+        )
+        .await
+    }
+
+    async fn config_gray_list(
+        &self,
+        page_no: u64,
+        page_size: u64,
+        namespace_id: &str,
+        data_id: &str,
+        group_name: &str,
+        app_name: &str,
+    ) -> anyhow::Result<Page<ConfigInfoGrayWrapper>> {
+        batata_config::service::search_gray_page(
+            &self.database_connection,
+            page_no,
+            page_size,
+            namespace_id,
+            data_id,
+            group_name,
+            app_name,
+        )
+        .await
+    }
+
+    async fn config_gray_find_list(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigInfoGrayWrapper>> {
+        batata_config::service::find_gray_list(
+            &self.database_connection,
+            data_id,
+            group_name,
+            namespace_id,
+        )
+        .await
+    }
+
     async fn config_clone(
         &self,
         ids: &[i64],

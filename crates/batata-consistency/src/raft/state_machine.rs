@@ -397,7 +397,14 @@ impl RocksStateMachine {
                 ttl_ms,
                 fence_token,
                 owner_metadata,
-            } => self.apply_lock_acquire(&namespace, &name, &owner, ttl_ms, fence_token, owner_metadata),
+            } => self.apply_lock_acquire(
+                &namespace,
+                &name,
+                &owner,
+                ttl_ms,
+                fence_token,
+                owner_metadata,
+            ),
 
             RaftRequest::LockRelease {
                 namespace,
@@ -417,7 +424,9 @@ impl RocksStateMachine {
                 self.apply_lock_force_release(&namespace, &name)
             }
 
-            RaftRequest::LockExpire { namespace, name } => self.apply_lock_expire(&namespace, &name),
+            RaftRequest::LockExpire { namespace, name } => {
+                self.apply_lock_expire(&namespace, &name)
+            }
         }
     }
 

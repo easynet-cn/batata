@@ -512,6 +512,153 @@ pub async fn delete_beta(
     }
 }
 
+/// Publish gray/beta configuration request
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BetaPublishRequest {
+    pub data_id: String,
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+    pub content: String,
+    #[serde(default = "default_gray_name")]
+    pub gray_name: String,
+    #[serde(default)]
+    pub gray_rule: String,
+    #[serde(default)]
+    pub app_name: String,
+    #[serde(default)]
+    pub encrypted_data_key: String,
+}
+
+fn default_gray_name() -> String {
+    "beta".to_string()
+}
+
+/// Search gray/beta configurations request
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BetaSearchRequest {
+    #[serde(default = "default_page_no")]
+    pub page_no: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+    #[serde(default)]
+    pub namespace_id: String,
+    #[serde(default)]
+    pub data_id: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub app_name: String,
+}
+
+fn default_page_no() -> u64 {
+    1
+}
+
+fn default_page_size() -> u64 {
+    10
+}
+
+#[post("beta")]
+pub async fn publish_beta(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    body: web::Json<BetaPublishRequest>,
+    src_user: Option<String>,
+    src_ip: Option<String>,
+) -> impl Responder {
+    let namespace_id = if body.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        body.namespace_id.clone()
+    };
+
+    let user = src_user.unwrap_or_default();
+    let ip = src_ip.unwrap_or_default();
+
+    match datasource
+        .config_gray_publish(
+            &body.data_id,
+            &body.group_name,
+            &namespace_id,
+            &body.content,
+            &body.gray_name,
+            &body.gray_rule,
+            &user,
+            &ip,
+            &body.app_name,
+            &body.encrypted_data_key,
+        )
+        .await
+    {
+        Ok(published) => ApiResult::<bool>::http_success(published),
+        Err(e) => ApiResult::http_internal_error(e),
+    }
+}
+
+#[get("beta/list")]
+pub async fn search_beta(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    params: web::Query<BetaSearchRequest>,
+) -> impl Responder {
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    match datasource
+        .config_gray_list(
+            params.page_no,
+            params.page_size,
+            &namespace_id,
+            &params.data_id,
+            &params.group_name,
+            &params.app_name,
+        )
+        .await
+    {
+        Ok(page) => {
+            let result: batata_api::Page<ConfigGrayInfo> = batata_api::Page::new(
+                page.total_count,
+                page.page_number,
+                params.page_size,
+                page.page_items
+                    .into_iter()
+                    .map(ConfigGrayInfo::from)
+                    .collect(),
+            );
+            ApiResult::<batata_api::Page<ConfigGrayInfo>>::http_success(result)
+        }
+        Err(e) => ApiResult::http_internal_error(e),
+    }
+}
+
+#[get("beta/versions")]
+pub async fn find_beta_versions(
+    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+    params: web::Query<ConfigForm>,
+) -> impl Responder {
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    match datasource
+        .config_gray_find_list(&params.data_id, &params.group_name, &namespace_id)
+        .await
+    {
+        Ok(configs) => {
+            let result: Vec<ConfigGrayInfo> =
+                configs.into_iter().map(ConfigGrayInfo::from).collect();
+            ApiResult::<Vec<ConfigGrayInfo>>::http_success(result)
+        }
+        Err(e) => ApiResult::http_internal_error(e),
+    }
+}
+
 #[post("clone")]
 pub async fn clone_configs(
     datasource: web::Data<Arc<dyn ConsoleDataSource>>,
@@ -589,6 +736,9 @@ pub fn routes() -> Scope {
         .service(create_or_update)
         .service(delete_config)
         .service(find_beta_one)
+        .service(publish_beta)
+        .service(search_beta)
+        .service(find_beta_versions)
         .service(delete_beta)
         .service(export_configs)
         .service(import_configs)

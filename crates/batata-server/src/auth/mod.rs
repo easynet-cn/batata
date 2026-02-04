@@ -10,6 +10,7 @@ pub mod v1 {
 // API version 3 (current) endpoints
 pub mod v3 {
     mod auth;
+    pub mod oauth;
     mod permission;
     mod role;
     pub mod route;

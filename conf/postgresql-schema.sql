@@ -396,3 +396,71 @@ CREATE TRIGGER update_cluster_info_modify_time
 CREATE TRIGGER update_instance_info_modify_time
     BEFORE UPDATE ON instance_info
     FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+/******************************************/
+/*   Operation Audit Log Table            */
+/******************************************/
+CREATE TABLE operation_log (
+    id BIGSERIAL PRIMARY KEY,
+    operation VARCHAR(32) NOT NULL,
+    resource_type VARCHAR(32) NOT NULL,
+    resource_id TEXT,
+    tenant_id TEXT,
+    operator VARCHAR(128) NOT NULL,
+    source_ip TEXT,
+    result VARCHAR(16) NOT NULL,
+    error_message TEXT,
+    details TEXT,
+    gmt_create TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_oplog_operation ON operation_log(operation);
+CREATE INDEX idx_oplog_resource_type ON operation_log(resource_type);
+CREATE INDEX idx_oplog_operator ON operation_log(operator);
+CREATE INDEX idx_oplog_result ON operation_log(result);
+CREATE INDEX idx_oplog_gmt_create ON operation_log(gmt_create);
+
+COMMENT ON TABLE operation_log IS 'Operation audit log table';
+COMMENT ON COLUMN operation_log.operation IS 'Operation type (CREATE, UPDATE, DELETE, QUERY, LOGIN, etc.)';
+COMMENT ON COLUMN operation_log.resource_type IS 'Resource type (CONFIG, SERVICE, INSTANCE, USER, etc.)';
+COMMENT ON COLUMN operation_log.resource_id IS 'Resource identifier';
+COMMENT ON COLUMN operation_log.tenant_id IS 'Tenant/Namespace ID';
+COMMENT ON COLUMN operation_log.operator IS 'User who performed the operation';
+COMMENT ON COLUMN operation_log.source_ip IS 'Source IP address';
+COMMENT ON COLUMN operation_log.result IS 'Result (SUCCESS, FAILURE)';
+COMMENT ON COLUMN operation_log.error_message IS 'Error message if operation failed';
+COMMENT ON COLUMN operation_log.details IS 'Additional details in JSON format';
+COMMENT ON COLUMN operation_log.gmt_create IS 'When the operation occurred';
+
+/******************************************/
+/*   Aggregate Config Table               */
+/******************************************/
+CREATE TABLE config_info_aggr (
+    id BIGSERIAL PRIMARY KEY,
+    data_id VARCHAR(255) NOT NULL,
+    group_id VARCHAR(128) NOT NULL,
+    datum_id VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    md5 VARCHAR(32) DEFAULT NULL,
+    tenant_id VARCHAR(128) NOT NULL DEFAULT '',
+    app_name VARCHAR(128) DEFAULT NULL,
+    gmt_create TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    gmt_modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_configinfoaggr_datagrouptenantdatum UNIQUE (data_id, group_id, tenant_id, datum_id)
+);
+
+CREATE INDEX idx_aggr_tenant_id ON config_info_aggr(tenant_id);
+
+COMMENT ON TABLE config_info_aggr IS 'Aggregate configuration table';
+COMMENT ON COLUMN config_info_aggr.data_id IS 'Parent configuration data ID';
+COMMENT ON COLUMN config_info_aggr.group_id IS 'Configuration group';
+COMMENT ON COLUMN config_info_aggr.datum_id IS 'Unique datum ID within the aggregate';
+COMMENT ON COLUMN config_info_aggr.content IS 'Configuration content';
+COMMENT ON COLUMN config_info_aggr.md5 IS 'MD5 hash of content';
+COMMENT ON COLUMN config_info_aggr.tenant_id IS 'Tenant/Namespace ID';
+COMMENT ON COLUMN config_info_aggr.app_name IS 'Application name';
+
+-- Apply update trigger to config_info_aggr
+CREATE TRIGGER update_config_info_aggr_modify_time
+    BEFORE UPDATE ON config_info_aggr
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();

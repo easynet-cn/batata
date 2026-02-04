@@ -293,3 +293,46 @@ CREATE TABLE `instance_info` (
     CONSTRAINT `fk_instance_service` FOREIGN KEY (`service_id`) REFERENCES `service_info` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Service instance table';
 
+/******************************************/
+/*   Operation Audit Log Table            */
+/******************************************/
+CREATE TABLE `operation_log` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
+    `operation` varchar(32) NOT NULL COMMENT 'Operation type (CREATE, UPDATE, DELETE, QUERY, LOGIN, etc.)',
+    `resource_type` varchar(32) NOT NULL COMMENT 'Resource type (CONFIG, SERVICE, INSTANCE, USER, etc.)',
+    `resource_id` text COMMENT 'Resource identifier',
+    `tenant_id` text COMMENT 'Tenant/Namespace ID',
+    `operator` varchar(128) NOT NULL COMMENT 'User who performed the operation',
+    `source_ip` text COMMENT 'Source IP address',
+    `result` varchar(16) NOT NULL COMMENT 'Result (SUCCESS, FAILURE)',
+    `error_message` text COMMENT 'Error message if operation failed',
+    `details` text COMMENT 'Additional details in JSON format',
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'When the operation occurred',
+    PRIMARY KEY (`id`),
+    KEY `idx_operation` (`operation`),
+    KEY `idx_resource_type` (`resource_type`),
+    KEY `idx_operator` (`operator`),
+    KEY `idx_result` (`result`),
+    KEY `idx_gmt_create` (`gmt_create`),
+    KEY `idx_tenant` (`tenant_id`(128))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Operation audit log table';
+
+/******************************************/
+/*   Aggregate Config Table               */
+/******************************************/
+CREATE TABLE `config_info_aggr` (
+    `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
+    `data_id` varchar(255) NOT NULL COMMENT 'Parent configuration data ID',
+    `group_id` varchar(128) NOT NULL COMMENT 'Configuration group',
+    `datum_id` varchar(255) NOT NULL COMMENT 'Unique datum ID within the aggregate',
+    `content` longtext NOT NULL COMMENT 'Configuration content',
+    `md5` varchar(32) DEFAULT NULL COMMENT 'MD5 hash of content',
+    `tenant_id` varchar(128) NOT NULL DEFAULT '' COMMENT 'Tenant/Namespace ID',
+    `app_name` varchar(128) DEFAULT NULL COMMENT 'Application name',
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation timestamp',
+    `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Modification timestamp',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_configinfoaggr_datagrouptenantdatum` (`data_id`, `group_id`, `tenant_id`, `datum_id`),
+    KEY `idx_tenant_id` (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Aggregate configuration table';
+

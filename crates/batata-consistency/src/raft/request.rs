@@ -187,16 +187,10 @@ pub enum RaftRequest {
     },
 
     /// Force release a distributed lock (admin operation)
-    LockForceRelease {
-        namespace: String,
-        name: String,
-    },
+    LockForceRelease { namespace: String, name: String },
 
     /// Expire a lock (internal operation)
-    LockExpire {
-        namespace: String,
-        name: String,
-    },
+    LockExpire { namespace: String, name: String },
 
     // ==================== No-op for membership changes ====================
     /// No-operation command, used internally

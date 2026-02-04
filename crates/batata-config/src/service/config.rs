@@ -972,6 +972,212 @@ async fn create_new_config(
     Ok(())
 }
 
+/// Create or update a gray/beta config
+#[allow(clippy::too_many_arguments)]
+pub async fn create_or_update_gray(
+    db: &DatabaseConnection,
+    data_id: &str,
+    group_id: &str,
+    tenant_id: &str,
+    content: &str,
+    gray_name: &str,
+    gray_rule: &str,
+    src_user: &str,
+    src_ip: &str,
+    app_name: &str,
+    encrypted_data_key: &str,
+) -> anyhow::Result<bool> {
+    let entity_option = config_info_gray::Entity::find()
+        .filter(config_info_gray::Column::DataId.eq(data_id))
+        .filter(config_info_gray::Column::GroupId.eq(group_id))
+        .filter(config_info_gray::Column::TenantId.eq(tenant_id))
+        .filter(config_info_gray::Column::GrayName.eq(gray_name))
+        .one(db)
+        .await?;
+
+    let tx = db.begin().await?;
+    let now = Local::now().naive_local();
+    let md5 = md5_digest(content);
+
+    match entity_option {
+        Some(entity) => {
+            // Update existing gray config
+            let mut model: config_info_gray::ActiveModel = entity.clone().into();
+            model.content = Set(content.to_string());
+            model.md5 = Set(Some(md5.clone()));
+            model.gray_rule = Set(gray_rule.to_string());
+            model.src_user = Set(Some(src_user.to_string()));
+            model.src_ip = Set(Some(src_ip.to_string()));
+            model.app_name = Set(Some(app_name.to_string()));
+            model.encrypted_data_key = Set(encrypted_data_key.to_string());
+            model.gmt_modified = Set(now);
+
+            config_info_gray::Entity::update(model).exec(&tx).await?;
+
+            // Record history
+            let his_config = his_config_info::ActiveModel {
+                id: Set(entity.id),
+                nid: Set(0),
+                data_id: Set(data_id.to_string()),
+                group_id: Set(group_id.to_string()),
+                app_name: Set(Some(app_name.to_string())),
+                content: Set(content.to_string()),
+                md5: Set(Some(md5)),
+                gmt_create: Set(entity.gmt_create),
+                gmt_modified: Set(now),
+                src_user: Set(Some(src_user.to_string())),
+                src_ip: Set(Some(src_ip.to_string())),
+                op_type: Set(Some("U".to_string())),
+                tenant_id: Set(Some(tenant_id.to_string())),
+                encrypted_data_key: Set(encrypted_data_key.to_string()),
+                publish_type: Set(Some("gray".to_string())),
+                gray_name: Set(Some(gray_name.to_string())),
+                ext_info: Set(Some(format!(r#"{{"gray_rule":"{}"}}"#, gray_rule))),
+            };
+
+            his_config_info::Entity::insert(his_config)
+                .exec(&tx)
+                .await?;
+        }
+        None => {
+            // Create new gray config
+            let model = config_info_gray::ActiveModel {
+                data_id: Set(data_id.to_string()),
+                group_id: Set(group_id.to_string()),
+                content: Set(content.to_string()),
+                md5: Set(Some(md5.clone())),
+                src_user: Set(Some(src_user.to_string())),
+                src_ip: Set(Some(src_ip.to_string())),
+                gmt_create: Set(now),
+                gmt_modified: Set(now),
+                app_name: Set(Some(app_name.to_string())),
+                tenant_id: Set(Some(tenant_id.to_string())),
+                gray_name: Set(gray_name.to_string()),
+                gray_rule: Set(gray_rule.to_string()),
+                encrypted_data_key: Set(encrypted_data_key.to_string()),
+                ..Default::default()
+            };
+
+            let insert_result = config_info_gray::Entity::insert(model).exec(&tx).await?;
+
+            // Record history
+            let his_config = his_config_info::ActiveModel {
+                id: Set(insert_result.last_insert_id),
+                nid: Set(0),
+                data_id: Set(data_id.to_string()),
+                group_id: Set(group_id.to_string()),
+                app_name: Set(Some(app_name.to_string())),
+                content: Set(content.to_string()),
+                md5: Set(Some(md5)),
+                gmt_create: Set(now),
+                gmt_modified: Set(now),
+                src_user: Set(Some(src_user.to_string())),
+                src_ip: Set(Some(src_ip.to_string())),
+                op_type: Set(Some("I".to_string())),
+                tenant_id: Set(Some(tenant_id.to_string())),
+                encrypted_data_key: Set(encrypted_data_key.to_string()),
+                publish_type: Set(Some("gray".to_string())),
+                gray_name: Set(Some(gray_name.to_string())),
+                ext_info: Set(Some(format!(r#"{{"gray_rule":"{}"}}"#, gray_rule))),
+            };
+
+            his_config_info::Entity::insert(his_config)
+                .exec(&tx)
+                .await?;
+        }
+    }
+
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// Search gray configs with pagination
+pub async fn search_gray_page(
+    db: &DatabaseConnection,
+    page_no: u64,
+    page_size: u64,
+    tenant_id: &str,
+    data_id: &str,
+    group_id: &str,
+    app_name: &str,
+) -> anyhow::Result<Page<ConfigInfoGrayWrapper>> {
+    let mut base_select =
+        config_info_gray::Entity::find().filter(config_info_gray::Column::TenantId.eq(tenant_id));
+
+    if !data_id.is_empty() {
+        if data_id.contains('*') {
+            let pattern = escape_sql_like_pattern(data_id);
+            base_select = base_select.filter(config_info_gray::Column::DataId.like(&pattern));
+        } else {
+            base_select = base_select.filter(config_info_gray::Column::DataId.contains(data_id));
+        }
+    }
+    if !group_id.is_empty() {
+        if group_id.contains('*') {
+            let pattern = escape_sql_like_pattern(group_id);
+            base_select = base_select.filter(config_info_gray::Column::GroupId.like(&pattern));
+        } else {
+            base_select = base_select.filter(config_info_gray::Column::GroupId.eq(group_id));
+        }
+    }
+    if !app_name.is_empty() {
+        base_select = base_select.filter(config_info_gray::Column::AppName.contains(app_name));
+    }
+
+    let count_select = base_select.clone();
+    let query_select = base_select;
+
+    let offset = (page_no - 1) * page_size;
+
+    let (count_result, data_result) = tokio::join!(
+        count_select
+            .select_only()
+            .column_as(Expr::col(Asterisk).count(), "count")
+            .into_tuple::<i64>()
+            .one(db),
+        query_select.offset(offset).limit(page_size).all(db)
+    );
+
+    let total_count = count_result?.unwrap_or_default() as u64;
+
+    if total_count > 0 {
+        let page_items = data_result?
+            .into_iter()
+            .map(ConfigInfoGrayWrapper::from)
+            .collect();
+
+        return Ok(Page::<ConfigInfoGrayWrapper>::new(
+            total_count,
+            page_no,
+            page_size,
+            page_items,
+        ));
+    }
+
+    let _ = data_result;
+    Ok(Page::<ConfigInfoGrayWrapper>::default())
+}
+
+/// Find all gray configs for a specific config (by data_id, group, namespace)
+pub async fn find_gray_list(
+    db: &DatabaseConnection,
+    data_id: &str,
+    group: &str,
+    namespace_id: &str,
+) -> anyhow::Result<Vec<ConfigInfoGrayWrapper>> {
+    let gray_results = config_info_gray::Entity::find()
+        .filter(config_info_gray::Column::DataId.eq(data_id))
+        .filter(config_info_gray::Column::GroupId.eq(group))
+        .filter(config_info_gray::Column::TenantId.eq(namespace_id))
+        .all(db)
+        .await?;
+
+    Ok(gray_results
+        .into_iter()
+        .map(ConfigInfoGrayWrapper::from)
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

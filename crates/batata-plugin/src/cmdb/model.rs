@@ -271,9 +271,10 @@ impl LabelTransform {
             LabelTransform::Prefix(prefix) => format!("{}{}", prefix, value),
             LabelTransform::Suffix(suffix) => format!("{}{}", value, suffix),
             LabelTransform::Replace { from, to } => value.replace(from, to),
-            LabelTransform::Map(mapping) => {
-                mapping.get(value).cloned().unwrap_or_else(|| value.to_string())
-            }
+            LabelTransform::Map(mapping) => mapping
+                .get(value)
+                .cloned()
+                .unwrap_or_else(|| value.to_string()),
         }
     }
 }
@@ -331,10 +332,7 @@ impl Default for CmdbConfig {
             sync_interval_seconds: 300,
             sync_direction: SyncDirection::BatataToOmdb,
             label_mappings: Vec::new(),
-            entity_types: vec![
-                CmdbEntityType::Service,
-                CmdbEntityType::Instance,
-            ],
+            entity_types: vec![CmdbEntityType::Service, CmdbEntityType::Instance],
             namespaces: Vec::new(),
             timeout_ms: 10000,
         }

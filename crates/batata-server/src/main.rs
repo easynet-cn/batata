@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use batata_auth::service::oauth::OAuthService;
 use batata_core::cluster::ServerMemberManager;
 use batata_server::{
     console::datasource,
@@ -81,6 +82,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    // Initialize OAuth service if enabled
+    let oauth_service = if configuration.is_oauth_enabled() {
+        let oauth_config = configuration.oauth_config();
+        info!(
+            "OAuth2/OIDC authentication enabled with {} providers",
+            oauth_config.providers.len()
+        );
+        Some(Arc::new(OAuthService::new(oauth_config)))
+    } else {
+        None
+    };
+
     // Create application state
     let app_state = Arc::new(AppState {
         configuration,
@@ -88,6 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server_member_manager,
         config_subscriber_manager,
         console_datasource,
+        oauth_service,
     });
 
     // Initialize graceful shutdown handler

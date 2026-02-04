@@ -8,8 +8,8 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio::time::interval;
@@ -201,7 +201,9 @@ impl DistributedLockService for MemoryLockService {
         // Try to acquire
         if lock.acquire(&request.owner) {
             lock.owner_metadata = request.owner_metadata.clone();
-            self.stats.total_acquisitions.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .total_acquisitions
+                .fetch_add(1, Ordering::Relaxed);
 
             return Ok(LockAcquireResult {
                 acquired: true,
@@ -217,7 +219,9 @@ impl DistributedLockService for MemoryLockService {
 
         // If no wait time, return immediately
         if request.wait_ms == 0 {
-            self.stats.failed_acquisitions.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .failed_acquisitions
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(LockAcquireResult {
                 acquired: false,
                 current_owner,
@@ -247,9 +251,13 @@ impl DistributedLockService for MemoryLockService {
         match tokio::time::timeout(timeout, rx.recv()).await {
             Ok(Some(result)) => {
                 if result.acquired {
-                    self.stats.total_acquisitions.fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .total_acquisitions
+                        .fetch_add(1, Ordering::Relaxed);
                 } else {
-                    self.stats.failed_acquisitions.fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .failed_acquisitions
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 Ok(result)
             }
@@ -258,7 +266,9 @@ impl DistributedLockService for MemoryLockService {
                 if let Some(mut waiters) = self.waiters.get_mut(&key) {
                     waiters.retain(|w| w.owner != request.owner);
                 }
-                self.stats.failed_acquisitions.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .failed_acquisitions
+                    .fetch_add(1, Ordering::Relaxed);
                 Ok(LockAcquireResult {
                     acquired: false,
                     current_owner,
@@ -295,7 +305,9 @@ impl DistributedLockService for MemoryLockService {
         // Calculate hold time
         if let Some(acquired_at) = lock.acquired_at {
             let hold_time = current_timestamp() - acquired_at;
-            self.stats.total_hold_time_ms.fetch_add(hold_time as u64, Ordering::Relaxed);
+            self.stats
+                .total_hold_time_ms
+                .fetch_add(hold_time as u64, Ordering::Relaxed);
             self.stats.completed_holds.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -437,13 +449,15 @@ impl DistributedLockService for MemoryLockService {
     }
 
     async fn get_stats(&self) -> LockStats {
-        let active_locks = self.locks.iter()
-            .filter(|l| l.is_locked())
-            .count() as u32;
+        let active_locks = self.locks.iter().filter(|l| l.is_locked()).count() as u32;
 
         let completed = self.stats.completed_holds.load(Ordering::Relaxed);
         let total_hold = self.stats.total_hold_time_ms.load(Ordering::Relaxed);
-        let avg_hold = if completed > 0 { total_hold / completed } else { 0 };
+        let avg_hold = if completed > 0 {
+            total_hold / completed
+        } else {
+            0
+        };
 
         LockStats {
             total_locks: self.stats.total_locks.load(Ordering::Relaxed),

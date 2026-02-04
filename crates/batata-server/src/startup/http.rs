@@ -10,7 +10,9 @@ use batata_core::service::remote::ConnectionManager;
 
 use crate::{
     api::ai::{AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp},
-    api::cloud::{K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus},
+    api::cloud::{
+        K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
+    },
     api::consul::{
         AclService, agent::ConsulAgentService, catalog::ConsulCatalogService,
         health::ConsulHealthService, kv::ConsulKVService, route::consul_routes,

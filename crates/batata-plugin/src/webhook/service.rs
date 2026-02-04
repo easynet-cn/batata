@@ -8,8 +8,8 @@
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
@@ -104,10 +104,7 @@ impl WebhookHttpClient {
             .map_err(|e| e.to_string())?;
 
         let status = response.status().as_u16();
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| String::new());
+        let body = response.text().await.unwrap_or_else(|_| String::new());
 
         // Truncate body if too large
         let body = if body.len() > 1024 {
@@ -131,8 +128,8 @@ fn compute_signature(payload: &str, secret: &str) -> String {
 
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(payload.as_bytes());
     let result = mac.finalize();
 
@@ -184,7 +181,15 @@ impl DefaultWebhookPlugin {
         // Start background delivery worker
 
         tokio::spawn(async move {
-            delivery_worker(queue_rx, http_client, deliveries, successful, failed, delivery_time).await;
+            delivery_worker(
+                queue_rx,
+                http_client,
+                deliveries,
+                successful,
+                failed,
+                delivery_time,
+            )
+            .await;
         });
 
         plugin
@@ -445,7 +450,11 @@ impl WebhookPlugin for DefaultWebhookPlugin {
 
         for webhook in matching_webhooks {
             // Queue for async delivery
-            if self.queue_tx.try_send((webhook.clone(), event.clone())).is_err() {
+            if self
+                .queue_tx
+                .try_send((webhook.clone(), event.clone()))
+                .is_err()
+            {
                 // Queue full, deliver synchronously
                 let result = self.deliver_with_retry(&webhook, &event).await;
                 if result.success {

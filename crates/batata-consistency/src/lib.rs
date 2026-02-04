@@ -17,8 +17,7 @@ pub use raft::types::*;
 
 // Re-export lock types
 pub use lock::{
-    DistributedLock, DistributedLockService, LockAcquireRequest, LockAcquireResult,
-    LockCommand, LockCommandResponse, LockQueryRequest, LockReleaseRequest,
-    LockReleaseResult, LockRenewRequest, LockRenewResult, LockState, LockStats,
-    MemoryLockService,
+    DistributedLock, DistributedLockService, LockAcquireRequest, LockAcquireResult, LockCommand,
+    LockCommandResponse, LockQueryRequest, LockReleaseRequest, LockReleaseResult, LockRenewRequest,
+    LockRenewResult, LockState, LockStats, MemoryLockService,
 };

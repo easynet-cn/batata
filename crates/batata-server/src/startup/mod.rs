@@ -3,12 +3,14 @@
 //! This module contains shared initialization code for both the root binary
 //! and the batata-server crate.
 
+mod dns;
 mod grpc;
 mod http;
 mod shutdown;
 mod telemetry;
 mod xds;
 
+pub use dns::{DnsConfig, DnsServer};
 pub use grpc::{GrpcServers, start_grpc_servers};
 pub use http::{ConsulServices, console_server, main_server};
 pub use shutdown::{GracefulShutdown, ShutdownSignal, run_with_shutdown, wait_for_shutdown_signal};

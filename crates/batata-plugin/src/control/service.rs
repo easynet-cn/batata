@@ -8,8 +8,8 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
 use regex::Regex;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
@@ -359,11 +359,7 @@ impl DefaultControlPlugin {
         let rule_store: Arc<dyn RuleStore> = Arc::new(MemoryRuleStore::new());
 
         Self {
-            connection_limiter: ConnectionLimiter::new(
-                config.default_max_connections,
-                100,
-                10,
-            ),
+            connection_limiter: ConnectionLimiter::new(config.default_max_connections, 100, 10),
             default_limiter: TokenBucket::new(config.default_tps, config.default_tps),
             config,
             rule_store,
@@ -386,16 +382,19 @@ impl DefaultControlPlugin {
         self
     }
 
-    fn match_rule_target(&self, rule_value: &str, target_value: &str, match_type: &RuleMatchType) -> bool {
+    fn match_rule_target(
+        &self,
+        rule_value: &str,
+        target_value: &str,
+        match_type: &RuleMatchType,
+    ) -> bool {
         match match_type {
             RuleMatchType::All => true,
             RuleMatchType::Exact => rule_value == target_value,
             RuleMatchType::Prefix => target_value.starts_with(rule_value),
-            RuleMatchType::Regex => {
-                Regex::new(rule_value)
-                    .map(|re| re.is_match(target_value))
-                    .unwrap_or(false)
-            }
+            RuleMatchType::Regex => Regex::new(rule_value)
+                .map(|re| re.is_match(target_value))
+                .unwrap_or(false),
         }
     }
 
@@ -545,10 +544,9 @@ impl ControlPlugin for DefaultControlPlugin {
             };
         }
 
-        let result = self.connection_limiter.try_acquire(
-            ctx.client_ip.as_deref(),
-            ctx.client_id.as_deref(),
-        );
+        let result = self
+            .connection_limiter
+            .try_acquire(ctx.client_ip.as_deref(), ctx.client_id.as_deref());
 
         if result.allowed {
             self.update_peak_connections();
@@ -560,10 +558,8 @@ impl ControlPlugin for DefaultControlPlugin {
     }
 
     async fn release_connection(&self, ctx: &ControlContext) {
-        self.connection_limiter.release(
-            ctx.client_ip.as_deref(),
-            ctx.client_id.as_deref(),
-        );
+        self.connection_limiter
+            .release(ctx.client_ip.as_deref(), ctx.client_id.as_deref());
     }
 
     async fn get_stats(&self) -> ControlStats {

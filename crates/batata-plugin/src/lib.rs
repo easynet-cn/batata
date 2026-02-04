@@ -9,26 +9,25 @@
 
 use async_trait::async_trait;
 
+pub mod cmdb;
 pub mod control;
 pub mod webhook;
-pub mod cmdb;
 
 pub use control::{
-    ControlContext, ControlPlugin, ControlPluginConfig, ControlStats,
-    ConnectionLimitResult, ConnectionLimitRule, ConnectionLimiter,
-    DefaultControlPlugin, ExceedAction, RateLimitAlgorithm, RateLimitResult,
-    RateLimitRule, RuleMatchType, RuleStore, RuleStorageType, RuleTargetType,
+    ConnectionLimitResult, ConnectionLimitRule, ConnectionLimiter, ControlContext, ControlPlugin,
+    ControlPluginConfig, ControlStats, DefaultControlPlugin, ExceedAction, RateLimitAlgorithm,
+    RateLimitResult, RateLimitRule, RuleMatchType, RuleStorageType, RuleStore, RuleTargetType,
     TokenBucket,
 };
 
 pub use webhook::{
-    WebhookConfig, WebhookEvent, WebhookEventType, WebhookPlugin,
-    WebhookResult, WebhookRetryConfig, DefaultWebhookPlugin,
+    DefaultWebhookPlugin, WebhookConfig, WebhookEvent, WebhookEventType, WebhookPlugin,
+    WebhookResult, WebhookRetryConfig,
 };
 
 pub use cmdb::{
-    CmdbConfig, CmdbEntity, CmdbEntityType, CmdbLabel, CmdbPlugin,
-    CmdbSyncResult, DefaultCmdbPlugin, LabelMapping,
+    CmdbConfig, CmdbEntity, CmdbEntityType, CmdbLabel, CmdbPlugin, CmdbSyncResult,
+    DefaultCmdbPlugin, LabelMapping,
 };
 
 /// Plugin trait for extensibility

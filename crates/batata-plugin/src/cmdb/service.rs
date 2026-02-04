@@ -8,8 +8,8 @@
 use async_trait::async_trait;
 use dashmap::DashMap;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
@@ -32,10 +32,16 @@ pub trait CmdbPlugin: Plugin {
     async fn get_entity(&self, id: &str) -> anyhow::Result<Option<CmdbEntity>>;
 
     /// List entities by type
-    async fn list_entities(&self, entity_type: Option<CmdbEntityType>) -> anyhow::Result<Vec<CmdbEntity>>;
+    async fn list_entities(
+        &self,
+        entity_type: Option<CmdbEntityType>,
+    ) -> anyhow::Result<Vec<CmdbEntity>>;
 
     /// Search entities by labels
-    async fn search_by_labels(&self, labels: &HashMap<String, String>) -> anyhow::Result<Vec<CmdbEntity>>;
+    async fn search_by_labels(
+        &self,
+        labels: &HashMap<String, String>,
+    ) -> anyhow::Result<Vec<CmdbEntity>>;
 
     /// Sync labels from source to target (PLG-202)
     async fn sync_labels(
@@ -151,9 +157,7 @@ impl DefaultCmdbPlugin {
             }
 
             // Check if mapping applies to this entity type
-            if !mapping.entity_types.is_empty()
-                && !mapping.entity_types.contains(entity_type)
-            {
+            if !mapping.entity_types.is_empty() && !mapping.entity_types.contains(entity_type) {
                 continue;
             }
 
@@ -197,7 +201,10 @@ impl Plugin for DefaultCmdbPlugin {
         let mut mappings = self.label_mappings.write().await;
         *mappings = self.config.label_mappings.clone();
 
-        tracing::info!("CMDB plugin initialized with {} label mappings", mappings.len());
+        tracing::info!(
+            "CMDB plugin initialized with {} label mappings",
+            mappings.len()
+        );
         Ok(())
     }
 
@@ -250,7 +257,10 @@ impl CmdbPlugin for DefaultCmdbPlugin {
         Ok(self.entities.get(id).map(|e| e.clone()))
     }
 
-    async fn list_entities(&self, entity_type: Option<CmdbEntityType>) -> anyhow::Result<Vec<CmdbEntity>> {
+    async fn list_entities(
+        &self,
+        entity_type: Option<CmdbEntityType>,
+    ) -> anyhow::Result<Vec<CmdbEntity>> {
         match entity_type {
             Some(et) => {
                 let type_key = et.to_string();
@@ -267,13 +277,14 @@ impl CmdbPlugin for DefaultCmdbPlugin {
                     None => Ok(Vec::new()),
                 }
             }
-            None => {
-                Ok(self.entities.iter().map(|e| e.clone()).collect())
-            }
+            None => Ok(self.entities.iter().map(|e| e.clone()).collect()),
         }
     }
 
-    async fn search_by_labels(&self, labels: &HashMap<String, String>) -> anyhow::Result<Vec<CmdbEntity>> {
+    async fn search_by_labels(
+        &self,
+        labels: &HashMap<String, String>,
+    ) -> anyhow::Result<Vec<CmdbEntity>> {
         if labels.is_empty() {
             return Ok(Vec::new());
         }
@@ -291,9 +302,9 @@ impl CmdbPlugin for DefaultCmdbPlugin {
         let mut results = Vec::new();
         for id in candidate_ids {
             if let Some(entity) = self.entities.get(&id) {
-                let matches_all = labels.iter().all(|(k, v)| {
-                    entity.labels.get(k).map(|ev| ev == v).unwrap_or(false)
-                });
+                let matches_all = labels
+                    .iter()
+                    .all(|(k, v)| entity.labels.get(k).map(|ev| ev == v).unwrap_or(false));
 
                 if matches_all {
                     results.push(entity.clone());
@@ -330,7 +341,9 @@ impl CmdbPlugin for DefaultCmdbPlugin {
 
     async fn map_entity(&self, entity: &CmdbEntity) -> anyhow::Result<serde_json::Value> {
         // Apply label mappings
-        let mapped_labels = self.apply_label_mappings(&entity.labels, &entity.entity_type).await;
+        let mapped_labels = self
+            .apply_label_mappings(&entity.labels, &entity.entity_type)
+            .await;
 
         // Create CMDB-formatted entity
         let cmdb_entity = serde_json::json!({
@@ -362,14 +375,15 @@ impl CmdbPlugin for DefaultCmdbPlugin {
         };
 
         // Get all entities matching configured types
-        let entities: Vec<_> = self.entities.iter()
+        let entities: Vec<_> = self
+            .entities
+            .iter()
             .filter(|e| {
                 self.config.entity_types.is_empty()
                     || self.config.entity_types.contains(&e.entity_type)
             })
             .filter(|e| {
-                self.config.namespaces.is_empty()
-                    || self.config.namespaces.contains(&e.namespace)
+                self.config.namespaces.is_empty() || self.config.namespaces.contains(&e.namespace)
             })
             .map(|e| e.clone())
             .collect();
@@ -386,7 +400,9 @@ impl CmdbPlugin for DefaultCmdbPlugin {
                 }
                 Err(e) => {
                     result.errors += 1;
-                    result.error_messages.push(format!("Failed to sync {}: {}", entity.id, e));
+                    result
+                        .error_messages
+                        .push(format!("Failed to sync {}: {}", entity.id, e));
                 }
             }
         }
@@ -439,7 +455,10 @@ impl CmdbPlugin for DefaultCmdbPlugin {
             total_syncs: self.total_syncs.load(Ordering::Relaxed),
             successful_syncs: self.successful_syncs.load(Ordering::Relaxed),
             failed_syncs: self.failed_syncs.load(Ordering::Relaxed),
-            last_sync: self.last_sync_result.read().await
+            last_sync: self
+                .last_sync_result
+                .read()
+                .await
                 .as_ref()
                 .map(|r| r.timestamp)
                 .unwrap_or(0),
@@ -510,8 +529,7 @@ mod tests {
         plugin.add_label_mapping(mapping).await.unwrap();
 
         // Create entity
-        let entity = CmdbEntity::new(CmdbEntityType::Service, "test-svc")
-            .with_label("env", "prod");
+        let entity = CmdbEntity::new(CmdbEntityType::Service, "test-svc").with_label("env", "prod");
         let id = plugin.register_entity(entity).await.unwrap();
 
         // Sync labels
@@ -534,8 +552,7 @@ mod tests {
         let e2 = CmdbEntity::new(CmdbEntityType::Service, "svc2")
             .with_label("env", "prod")
             .with_label("team", "b");
-        let e3 = CmdbEntity::new(CmdbEntityType::Service, "svc3")
-            .with_label("env", "staging");
+        let e3 = CmdbEntity::new(CmdbEntityType::Service, "svc3").with_label("env", "staging");
 
         plugin.register_entity(e1).await.unwrap();
         plugin.register_entity(e2).await.unwrap();
@@ -560,10 +577,20 @@ mod tests {
         assert_eq!(LabelTransform::None.apply("test"), "test");
         assert_eq!(LabelTransform::Lowercase.apply("TEST"), "test");
         assert_eq!(LabelTransform::Uppercase.apply("test"), "TEST");
-        assert_eq!(LabelTransform::Prefix("pre_".to_string()).apply("test"), "pre_test");
-        assert_eq!(LabelTransform::Suffix("_suf".to_string()).apply("test"), "test_suf");
         assert_eq!(
-            LabelTransform::Replace { from: "-".to_string(), to: "_".to_string() }.apply("a-b-c"),
+            LabelTransform::Prefix("pre_".to_string()).apply("test"),
+            "pre_test"
+        );
+        assert_eq!(
+            LabelTransform::Suffix("_suf".to_string()).apply("test"),
+            "test_suf"
+        );
+        assert_eq!(
+            LabelTransform::Replace {
+                from: "-".to_string(),
+                to: "_".to_string()
+            }
+            .apply("a-b-c"),
             "a_b_c"
         );
 

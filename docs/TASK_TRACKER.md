@@ -378,22 +378,32 @@ This is a design decision, not a missing feature. See `CLAUDE.md` for the projec
 | 2024-02-04 | **Completed ADV-005**: Raft-based distributed lock with RocksDB persistence | Claude |
 | 2024-02-04 | **Completed K8S-001, K8S-002**: Full Kubernetes integration with kube-rs | Claude |
 | 2024-02-04 | **🎉 ALL TASKS COMPLETE**: 125 tasks total, 125 complete (100%) | Claude |
+| 2024-02-04 | **Created NACOS_COMPARISON.md**: Comprehensive Nacos vs Batata feature comparison (~88% coverage) | Claude |
+| 2026-02-04 | **Implemented Gray/Beta Release API**: Full CRUD for gray config publishing (batata-config, batata-console) | Claude |
+| 2026-02-04 | **Implemented Multi-Datacenter Sync**: DatacenterManager integrated into Distro protocol | Claude |
+| 2026-02-04 | **Implemented DNS Service**: UDP DNS server for service discovery (batata-server/startup/dns.rs) | Claude |
+| 2026-02-04 | **Updated NACOS_COMPARISON.md**: Feature coverage now ~92% | Claude |
 
 ---
 
 ## Priority Tasks
 
-### ✅ All Tasks Complete!
+### ✅ All Core Tasks Complete!
 
-All 125 tasks have been completed. The Batata project now has:
+All 125+ tasks have been completed. The Batata project now has:
 - Full Nacos V2/V3 API compatibility
 - gRPC and HTTP service discovery
 - Configuration management with encryption
+- Gray/Beta release configuration support
+- Multi-datacenter sync with locality awareness
 - Kubernetes integration with service watching
 - Prometheus service discovery
+- DNS-based service discovery
 - AI capabilities (MCP, A2A)
 - Distributed locking with Raft consensus
 - And much more!
+
+**See [NACOS_COMPARISON.md](./NACOS_COMPARISON.md) for a detailed feature comparison with the original Nacos project (~92% feature coverage).**
 
 ---
 

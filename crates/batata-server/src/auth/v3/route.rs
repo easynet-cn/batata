@@ -16,4 +16,8 @@ pub fn routes() -> Scope {
         .service(super::permission::search_page)
         .service(super::permission::create)
         .service(super::permission::delete)
+        // OAuth2/OIDC endpoints
+        .service(super::oauth::get_providers)
+        .service(super::oauth::oauth_login)
+        .service(super::oauth::oauth_callback)
 }

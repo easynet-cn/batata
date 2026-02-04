@@ -485,6 +485,119 @@ impl ConsoleDataSource for RemoteDataSource {
             .await
     }
 
+    async fn config_gray_publish(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        content: &str,
+        gray_name: &str,
+        gray_rule: &str,
+        _src_user: &str,
+        _src_ip: &str,
+        app_name: &str,
+        encrypted_data_key: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .config_gray_publish(
+                data_id,
+                group_name,
+                namespace_id,
+                content,
+                gray_name,
+                gray_rule,
+                app_name,
+                encrypted_data_key,
+            )
+            .await
+    }
+
+    async fn config_gray_list(
+        &self,
+        page_no: u64,
+        page_size: u64,
+        namespace_id: &str,
+        data_id: &str,
+        group_name: &str,
+        app_name: &str,
+    ) -> anyhow::Result<Page<ConfigInfoGrayWrapper>> {
+        let result = self
+            .api_client
+            .config_gray_list(
+                page_no,
+                page_size,
+                namespace_id,
+                data_id,
+                group_name,
+                app_name,
+            )
+            .await?;
+
+        Ok(Page::new(
+            result.total_count,
+            page_no,
+            page_size,
+            result
+                .page_items
+                .into_iter()
+                .map(|c| ConfigInfoGrayWrapper {
+                    config_info: batata_config::ConfigInfo {
+                        config_info_base: batata_config::ConfigInfoBase {
+                            id: c.id,
+                            data_id: c.data_id,
+                            group: c.group,
+                            content: c.content,
+                            md5: c.md5,
+                            encrypted_data_key: String::new(),
+                        },
+                        tenant: c.tenant,
+                        app_name: String::new(),
+                        r#type: c.r#type,
+                    },
+                    last_modified: 0,
+                    gray_name: c.gray_name,
+                    gray_rule: c.gray_rule,
+                    src_user: c.src_user,
+                })
+                .collect(),
+        ))
+    }
+
+    async fn config_gray_find_list(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigInfoGrayWrapper>> {
+        let result = self
+            .api_client
+            .config_gray_find_list(data_id, group_name, namespace_id)
+            .await?;
+
+        Ok(result
+            .into_iter()
+            .map(|c| ConfigInfoGrayWrapper {
+                config_info: batata_config::ConfigInfo {
+                    config_info_base: batata_config::ConfigInfoBase {
+                        id: c.id,
+                        data_id: c.data_id,
+                        group: c.group,
+                        content: c.content,
+                        md5: c.md5,
+                        encrypted_data_key: String::new(),
+                    },
+                    tenant: c.tenant,
+                    app_name: String::new(),
+                    r#type: c.r#type,
+                },
+                last_modified: 0,
+                gray_name: c.gray_name,
+                gray_rule: c.gray_rule,
+                src_user: c.src_user,
+            })
+            .collect())
+    }
+
     async fn config_clone(
         &self,
         ids: &[i64],

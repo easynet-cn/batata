@@ -254,6 +254,41 @@ pub trait ConsoleDataSource: Send + Sync {
         src_user: &str,
     ) -> anyhow::Result<bool>;
 
+    /// Publish gray/beta config
+    #[allow(clippy::too_many_arguments)]
+    async fn config_gray_publish(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        content: &str,
+        gray_name: &str,
+        gray_rule: &str,
+        src_user: &str,
+        src_ip: &str,
+        app_name: &str,
+        encrypted_data_key: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Search gray/beta configs with pagination
+    async fn config_gray_list(
+        &self,
+        page_no: u64,
+        page_size: u64,
+        namespace_id: &str,
+        data_id: &str,
+        group_name: &str,
+        app_name: &str,
+    ) -> anyhow::Result<Page<ConfigInfoGrayWrapper>>;
+
+    /// Find all gray configs for a specific config
+    async fn config_gray_find_list(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigInfoGrayWrapper>>;
+
     /// Clone configs to another namespace
     async fn config_clone(
         &self,

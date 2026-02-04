@@ -10,8 +10,8 @@
 //! - Pod metadata retrieval
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use chrono::Utc;
 use dashmap::DashMap;
@@ -356,13 +356,29 @@ impl K8sServiceSync {
 
         Some(K8sService {
             name: metadata.name.clone().unwrap_or_default(),
-            namespace: metadata.namespace.clone().unwrap_or_else(|| "default".to_string()),
-            service_type: spec.type_.clone().unwrap_or_else(|| "ClusterIP".to_string()),
+            namespace: metadata
+                .namespace
+                .clone()
+                .unwrap_or_else(|| "default".to_string()),
+            service_type: spec
+                .type_
+                .clone()
+                .unwrap_or_else(|| "ClusterIP".to_string()),
             cluster_ip: spec.cluster_ip.clone(),
             external_ips: spec.external_ips.clone().unwrap_or_default(),
             ports,
-            labels: metadata.labels.clone().unwrap_or_default().into_iter().collect(),
-            annotations: metadata.annotations.clone().unwrap_or_default().into_iter().collect(),
+            labels: metadata
+                .labels
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+            annotations: metadata
+                .annotations
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
             created_at: metadata
                 .creation_timestamp
                 .as_ref()
@@ -381,7 +397,12 @@ impl K8sServiceSync {
                     .as_ref()
                     .map(|ps| {
                         ps.iter()
-                            .map(|p| (p.port, p.protocol.clone().unwrap_or_else(|| "TCP".to_string())))
+                            .map(|p| {
+                                (
+                                    p.port,
+                                    p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
+                                )
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -487,11 +508,24 @@ impl K8sServiceSync {
 
         K8sPodMetadata {
             name: metadata.name.clone().unwrap_or_default(),
-            namespace: metadata.namespace.clone().unwrap_or_else(|| "default".to_string()),
+            namespace: metadata
+                .namespace
+                .clone()
+                .unwrap_or_else(|| "default".to_string()),
             pod_ip: status.and_then(|s| s.pod_ip.clone()),
             node_name: spec.and_then(|s| s.node_name.clone()),
-            labels: metadata.labels.clone().unwrap_or_default().into_iter().collect(),
-            annotations: metadata.annotations.clone().unwrap_or_default().into_iter().collect(),
+            labels: metadata
+                .labels
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+            annotations: metadata
+                .annotations
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
             container_ports,
             phase: status
                 .and_then(|s| s.phase.clone())
@@ -752,8 +786,8 @@ impl Default for K8sServiceSync {
 // HTTP Handlers
 // =============================================================================
 
-use actix_web::{HttpResponse, delete, get, post, put, web};
 use crate::model::response::RestResult;
+use actix_web::{HttpResponse, delete, get, post, put, web};
 
 /// Get Kubernetes sync status
 #[get("/v1/cloud/k8s/status")]
@@ -835,9 +869,7 @@ pub async fn k8s_get_pod(
 
 /// Get sync status for all services
 #[get("/v1/cloud/k8s/sync-status")]
-pub async fn k8s_list_sync_status(
-    sync: web::Data<std::sync::Arc<K8sServiceSync>>,
-) -> HttpResponse {
+pub async fn k8s_list_sync_status(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -> HttpResponse {
     let status = sync.list_sync_status();
     HttpResponse::Ok().json(RestResult::ok(Some(status)))
 }
@@ -864,7 +896,9 @@ pub async fn k8s_trigger_sync(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -
             struct SyncResponse {
                 synced_count: u32,
             }
-            HttpResponse::Ok().json(RestResult::ok(Some(SyncResponse { synced_count: count })))
+            HttpResponse::Ok().json(RestResult::ok(Some(SyncResponse {
+                synced_count: count,
+            })))
         }
         Err(e) => HttpResponse::BadRequest().json(RestResult::<()>::err(400, &e)),
     }
