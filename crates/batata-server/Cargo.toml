@@ -27,6 +27,7 @@ batata-config = { path = "../batata-config" }
 batata-naming = { path = "../batata-naming" }
 batata-console = { path = "../batata-console" }
 batata-plugin-consul = { path = "../batata-plugin-consul" }
+batata-plugin-apollo = { path = "../batata-plugin-apollo" }
 batata-mesh = { path = "../batata-mesh" }
 
 # Web framework

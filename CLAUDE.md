@@ -88,7 +88,7 @@ sea-orm-cli generate entity -u "postgres://user:pass@localhost:5432/batata" -o .
 
 ## Architecture
 
-Batata uses a multi-crate workspace architecture with 14 internal crates. See `docs/ARCHITECTURE.md` for detailed architecture documentation.
+Batata uses a multi-crate workspace architecture with 15 internal crates. See `docs/ARCHITECTURE.md` for detailed architecture documentation.
 
 ### Entry Point and Servers
 The application (`crates/batata-server/src/main.rs`) starts multiple concurrent servers:
@@ -112,6 +112,7 @@ batata/
 │   ├── batata-naming/               # Service discovery service
 │   ├── batata-plugin/               # Plugin SPI definitions
 │   ├── batata-plugin-consul/        # Consul compatibility plugin
+│   ├── batata-plugin-apollo/        # Apollo Config compatibility plugin
 │   ├── batata-console/              # Management console backend
 │   ├── batata-client/               # Rust SDK for clients
 │   ├── batata-mesh/                 # Service mesh (xDS, Istio MCP)
@@ -190,5 +191,6 @@ batata-server (main binary)
 ├── batata-core (cluster, connections, datacenter)
 ├── batata-mesh (xDS, Istio MCP)
 ├── batata-plugin-consul (Consul API)
+├── batata-plugin-apollo (Apollo Config API)
 └── batata-persistence (database)
 ```

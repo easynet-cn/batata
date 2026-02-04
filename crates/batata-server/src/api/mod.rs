@@ -10,6 +10,9 @@ pub mod config {
 // Consul-compatible API implementation
 pub mod consul;
 
+// Apollo-compatible API implementation
+pub mod apollo;
+
 // gRPC service definitions - re-exported from batata-api crate
 // (generated from proto/nacos_grpc_service.proto)
 pub use batata_api::grpc;

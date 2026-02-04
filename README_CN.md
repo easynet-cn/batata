@@ -21,6 +21,7 @@
 
 - **Nacos API** - 完全兼容 Nacos V2 和 V3 API（V1 API 不支持）
 - **Consul API** - 兼容 Consul Agent、Health、Catalog、KV 和 ACL API
+- **Apollo API** - 完全兼容 Apollo Config 客户端 SDK 和 Open API
 - **gRPC 支持** - 高性能双向流式通信，支持 SDK 客户端
 
 ### 高级特性
@@ -96,6 +97,7 @@ Batata 已实现 **~98% 的 Nacos 功能**，可作为生产环境的替代方�
 | Nacos V1 API | ✅ | ❌ | **不支持** |
 | gRPC 双向流 | ✅ | ✅ | 完整 |
 | Consul API 兼容 | ❌ | ✅ | **额外特性** |
+| Apollo API 兼容 | ❌ | ✅ | **额外特性** |
 | **可观测性** | | | |
 | Prometheus 指标 | ✅ | ✅ | 完整 |
 | 健康检查端点 | ✅ | ✅ | 完整 |
@@ -107,6 +109,7 @@ Batata 已实现 **~98% 的 Nacos 功能**，可作为生产环境的替代方�
 | 特性 | 说明 |
 |-----|------|
 | **Consul API 兼容** | 完整支持 Agent、Health、Catalog、KV、ACL API |
+| **Apollo API 兼容** | 完整支持 Apollo 客户端 SDK 和 Open API |
 | **PostgreSQL 支持** | 除 MySQL 外还支持 PostgreSQL |
 | **Consul JSON 导入/导出** | 支持 Consul KV 存储迁移 |
 | **内置熔断器** | 集群健康检查弹性模式 |
@@ -147,6 +150,7 @@ batata/
 │   ├── batata-naming/            # 服务发现
 │   ├── batata-plugin/            # 插件接口
 │   ├── batata-plugin-consul/     # Consul 兼容插件
+│   ├── batata-plugin-apollo/     # Apollo 兼容插件
 │   ├── batata-console/           # 控制台后端服务
 │   ├── batata-client/            # 客户端 SDK
 │   ├── batata-mesh/              # 服务网格 (xDS, Istio MCP)
@@ -181,6 +185,7 @@ batata-server (主二进制)
 ├── batata-core (集群, 连接, 数据中心)
 ├── batata-mesh (xDS, Istio MCP)
 ├── batata-plugin-consul (Consul API)
+├── batata-plugin-apollo (Apollo API)
 └── batata-persistence (数据库)
 ```
 
@@ -346,6 +351,25 @@ export BATATA_REPLICATION_FACTOR=1
 | `/v1/kv/{key}` | DELETE | 删除 KV 值 |
 | `/v1/kv/export` | GET | 导出 KV（JSON） |
 | `/v1/kv/import` | PUT | 导入 KV（JSON） |
+
+### Apollo API
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/configs/{appId}/{cluster}/{namespace}` | GET | 获取配置 |
+| `/configfiles/{appId}/{cluster}/{namespace}` | GET | 获取配置文本 |
+| `/configfiles/json/{appId}/{cluster}/{namespace}` | GET | 获取 JSON 格式配置 |
+| `/notifications/v2` | GET | 配置变更长轮询 |
+| `/openapi/v1/apps` | GET | 列出所有应用 |
+| `/openapi/v1/apps/{appId}/envclusters` | GET | 获取环境集群 |
+| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces` | GET | 列出命名空间 |
+| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items` | GET | 列出配置项 |
+| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items` | POST | 创建配置项 |
+| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/releases` | POST | 发布配置 |
+| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/lock` | POST | 获取命名空间锁 |
+| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray` | POST | 创建灰度发布 |
+| `/openapi/v1/apps/{appId}/accesskeys` | POST | 创建访问密钥 |
+| `/openapi/v1/metrics/clients` | GET | 获取客户端指标 |
 
 ### 控制台 API (v3)
 
@@ -569,6 +593,28 @@ client = nacos.NacosClient(server_addresses="localhost:8848")
 config = client.get_config("dataId", "group")
 ```
 
+### Java (Apollo SDK)
+
+```java
+Config config = ConfigService.getAppConfig();
+String value = config.getProperty("key", "defaultValue");
+
+// 使用自定义命名空间
+Config applicationConfig = ConfigService.getConfig("application");
+```
+
+### Go (Apollo SDK)
+
+```go
+client, _ := agollo.Start(&config.AppConfig{
+    AppID:         "your-app-id",
+    Cluster:       "default",
+    NamespaceName: "application",
+    IP:            "localhost:8848",
+})
+value := client.GetValue("key")
+```
+
 ## 监控
 
 Prometheus 指标端点：`/nacos/actuator/prometheus`
@@ -607,6 +653,7 @@ batata_cluster_member_count 3
 - [x] DNS 服务发现
 - [x] 灰度发布 API
 - [x] 操作审计日志
+- [x] Apollo Config API 兼容
 - [ ] Kubernetes Operator
 - [ ] Web UI（仅后端 API，可使用 Nacos UI 或自定义前端）
 
@@ -628,6 +675,7 @@ batata_cluster_member_count 3
 
 - [Nacos](https://nacos.io/) - 原始设计和 API 规范
 - [Consul](https://www.consul.io/) - KV 存储和服务发现 API 设计
+- [Apollo](https://www.apolloconfig.com/) - 配置管理 API 设计
 - [OpenRaft](https://github.com/datafuselabs/openraft) - Raft 共识实现
 - [SeaORM](https://www.sea-ql.org/SeaORM/) - 异步 ORM 框架
 - [Actix-web](https://actix.rs/) - 高性能 Web 框架

@@ -12,7 +12,8 @@ use batata_server::{
     middleware::rate_limit,
     model::{self, common::AppState},
     startup::{
-        self, ConsulServices, GracefulShutdown, OtelConfig, XdsServerHandle, start_xds_service,
+        self, ApolloServices, ConsulServices, GracefulShutdown, OtelConfig, XdsServerHandle,
+        start_xds_service,
     },
 };
 use tracing::{error, info};
@@ -182,6 +183,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create Consul service adapters
     let consul_services = ConsulServices::new(grpc_servers.naming_service.clone());
 
+    // Create Apollo service adapters
+    let apollo_services = ApolloServices::new(Arc::new(
+        app_state
+            .database_connection
+            .clone()
+            .expect("Database connection required for Apollo services"),
+    ));
+
     // Start HTTP servers based on deployment type with graceful shutdown support
     match deployment_type.as_str() {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
@@ -209,6 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.naming_service,
                 grpc_servers.connection_manager,
                 consul_services,
+                apollo_services,
                 server_context_path,
                 server_address,
                 server_main_port,
@@ -238,6 +248,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.naming_service,
                 grpc_servers.connection_manager,
                 consul_services,
+                apollo_services,
                 server_context_path,
                 server_address,
                 server_main_port,

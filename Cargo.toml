@@ -11,6 +11,7 @@ members = [
     "crates/batata-naming",
     "crates/batata-plugin",
     "crates/batata-plugin-consul",
+    "crates/batata-plugin-apollo",
     "crates/batata-console",
     "crates/batata-client",
     "crates/batata-mesh",
@@ -36,6 +37,7 @@ batata-config = { path = "crates/batata-config" }
 batata-naming = { path = "crates/batata-naming" }
 batata-plugin = { path = "crates/batata-plugin" }
 batata-plugin-consul = { path = "crates/batata-plugin-consul" }
+batata-plugin-apollo = { path = "crates/batata-plugin-apollo" }
 batata-console = { path = "crates/batata-console" }
 batata-client = { path = "crates/batata-client" }
 batata-server = { path = "crates/batata-server" }

@@ -21,7 +21,7 @@ Batata uses a multi-crate workspace architecture for modularity and maintainabil
 - Better testability with isolated unit tests
 - Flexible deployment options
 
-The project consists of **14 internal crates** following a layered architecture similar to Java Nacos while leveraging Rust's trait system for dependency injection.
+The project consists of **15 internal crates** following a layered architecture similar to Java Nacos while leveraging Rust's trait system for dependency injection.
 
 ---
 
@@ -41,6 +41,7 @@ batata/
 │   ├── batata-naming/         # Service discovery service
 │   ├── batata-plugin/         # Plugin SPI definitions
 │   ├── batata-plugin-consul/  # Consul compatibility plugin
+│   ├── batata-plugin-apollo/  # Apollo Config compatibility plugin
 │   ├── batata-console/        # Management console backend
 │   ├── batata-client/         # Rust SDK for clients
 │   ├── batata-mesh/           # Service mesh (xDS, Istio MCP)
@@ -178,7 +179,19 @@ batata/
 
 **Dependencies**: batata-common, batata-plugin, batata-naming
 
-#### 11. `batata-console`
+#### 11. `batata-plugin-apollo`
+**Purpose**: Apollo Config API compatibility layer.
+
+**Contents**:
+- Apollo Config Service API (`/configs`, `/configfiles`)
+- Apollo Notification API (`/notifications/v2`)
+- Apollo to Nacos concept mapping
+- Long-polling notification service
+- Release key generation
+
+**Dependencies**: batata-common, batata-plugin, batata-config
+
+#### 12. `batata-console`
 **Purpose**: Management console backend.
 
 **Contents**:
@@ -189,7 +202,7 @@ batata/
 
 **Dependencies**: batata-common, batata-core, batata-config, batata-naming
 
-#### 12. `batata-client`
+#### 13. `batata-client`
 **Purpose**: Rust SDK for Nacos clients.
 
 **Contents**:
@@ -199,7 +212,7 @@ batata/
 
 **Dependencies**: batata-common, batata-api, reqwest
 
-#### 13. `batata-mesh`
+#### 14. `batata-mesh`
 **Purpose**: Service mesh integration with xDS and Istio support.
 
 **Contents**:
@@ -210,7 +223,7 @@ batata/
 
 **Dependencies**: batata-common, batata-naming, tonic, prost
 
-#### 14. `batata-server`
+#### 15. `batata-server`
 **Purpose**: Main application entry point that assembles all components.
 
 **Contents**:
@@ -259,6 +272,9 @@ Plugins (optional):
 ┌─────────────────────┐
 │ batata-plugin-consul│ ──► batata-plugin ──► batata-common
 └─────────────────────┘
+┌─────────────────────┐
+│ batata-plugin-apollo│ ──► batata-plugin ──► batata-config
+└─────────────────────┘
 
 Client SDK:
 ┌─────────────────┐
@@ -301,6 +317,7 @@ members = [
     "crates/batata-naming",
     "crates/batata-plugin",
     "crates/batata-plugin-consul",
+    "crates/batata-plugin-apollo",
     "crates/batata-console",
     "crates/batata-client",
     "crates/batata-mesh",
@@ -479,6 +496,7 @@ impl ConfigContext for AppState {
 | nacos-console | batata-console | Console backend |
 | nacos-client | batata-client | Client SDK |
 | N/A | batata-mesh | Service mesh (xDS, Istio) |
+| N/A | batata-plugin-apollo | Apollo Config compatibility |
 | nacos-server | batata-server | Server entry point |
 
 ---
@@ -687,6 +705,6 @@ Write Request
 ## Project Statistics
 
 - **~50,000+ lines** of Rust code
-- **13 internal crates** in workspace
-- **333 unit tests** with comprehensive coverage
+- **15 internal crates** in workspace
+- **350+ unit tests** with comprehensive coverage
 - **3 benchmark suites** for performance testing

@@ -341,7 +341,8 @@ This is a design decision, not a missing feature. See `CLAUDE.md` for the projec
 | v2.3.0 (Plugin) | 11 | 11 | 0 | 0 | 100% |
 | v2.4.0 (Advanced) | 5 | 5 | 0 | 0 | 100% |
 | v2.5.0 (Integration) | 4 | 4 | 0 | 0 | 100% |
-| **Total** | **125** | **125** | **0** | **0** | **100%** |
+| v2.6.0 (Apollo) | 31 | 31 | 0 | 0 | 100% |
+| **Total** | **156** | **156** | **0** | **0** | **100%** |
 
 > **Note**: V1 API tasks (29 tasks) were removed from v2.5.0 as V1 API is not supported per project decision.
 
@@ -383,6 +384,61 @@ This is a design decision, not a missing feature. See `CLAUDE.md` for the projec
 | 2026-02-04 | **Implemented Multi-Datacenter Sync**: DatacenterManager integrated into Distro protocol | Claude |
 | 2026-02-04 | **Implemented DNS Service**: UDP DNS server for service discovery (batata-server/startup/dns.rs) | Claude |
 | 2026-02-04 | **Updated NACOS_COMPARISON.md**: Feature coverage now ~92% | Claude |
+| 2026-02-04 | **Implemented Apollo Config Compatibility (Phase 9)**: Full Apollo client API support | Claude |
+| 2026-02-04 | **Completed APO-001 to APO-005**: Core Client API (config, configfiles, notifications) | Claude |
+| 2026-02-04 | **Completed APO-101 to APO-111**: Open API Management (apps, namespaces, items, releases) | Claude |
+| 2026-02-04 | **Completed APO-201 to APO-215**: Advanced Features (locks, gray release, access keys, metrics) | Claude |
+| 2026-02-04 | **🎉 ALL TASKS COMPLETE**: 156 tasks total, 156 complete (100%) | Claude |
+
+---
+
+## Phase 9: Apollo Config Compatibility (v2.6.0)
+
+### 9.1 Core Client API
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| APO-001 | Get configuration | `GET /configs/{appId}/{clusterName}/{namespace}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | batata-plugin-apollo |
+| APO-002 | Get config as text | `GET /configfiles/{appId}/{clusterName}/{namespace}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Properties format |
+| APO-003 | Get config as JSON | `GET /configfiles/json/{appId}/{clusterName}/{namespace}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | JSON format |
+| APO-004 | Long polling notifications | `GET /notifications/v2` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Configuration change detection |
+| APO-005 | Apollo to Nacos mapping | - | ✅ | Claude | 2026-02-04 | 2026-02-04 | appId+namespace→dataId, cluster→group |
+
+### 9.2 Open API Management
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| APO-101 | Get all apps | `GET /openapi/v1/apps` | ✅ | Claude | 2026-02-04 | 2026-02-04 | List Apollo apps |
+| APO-102 | Get env clusters | `GET /openapi/v1/apps/{appId}/envclusters` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Get environments |
+| APO-103 | List namespaces | `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces` | ✅ | Claude | 2026-02-04 | 2026-02-04 | List namespaces |
+| APO-104 | Get namespace | `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Get namespace details |
+| APO-105 | List items | `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items` | ✅ | Claude | 2026-02-04 | 2026-02-04 | List config items |
+| APO-106 | Get item | `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items/{key}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Get config item |
+| APO-107 | Create item | `POST /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Create config item |
+| APO-108 | Update item | `PUT /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items/{key}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Update config item |
+| APO-109 | Delete item | `DELETE /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items/{key}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Delete config item |
+| APO-110 | Publish release | `POST /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/releases` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Publish config |
+| APO-111 | Get latest release | `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/releases/latest` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Get latest release |
+
+### 9.3 Advanced Features
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| APO-201 | Get lock status | `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/lock` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Namespace lock status |
+| APO-202 | Acquire lock | `POST /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/lock` | ✅ | Claude | 2026-02-04 | 2026-02-04 | TTL-based locking |
+| APO-203 | Release lock | `DELETE /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/lock` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Release namespace lock |
+| APO-204 | Get gray release | `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Get gray release rules |
+| APO-205 | Create gray release | `POST /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray` | ✅ | Claude | 2026-02-04 | 2026-02-04 | IP/label/percentage rules |
+| APO-206 | Merge gray release | `PUT /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray/merge` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Merge to main |
+| APO-207 | Abandon gray release | `DELETE /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Abandon gray release |
+| APO-208 | List access keys | `GET /openapi/v1/apps/{appId}/accesskeys` | ✅ | Claude | 2026-02-04 | 2026-02-04 | List access keys |
+| APO-209 | Create access key | `POST /openapi/v1/apps/{appId}/accesskeys` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Create access key |
+| APO-210 | Get access key | `GET /openapi/v1/apps/{appId}/accesskeys/{keyId}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Get access key details |
+| APO-211 | Enable/disable key | `PUT /openapi/v1/apps/{appId}/accesskeys/{keyId}/enable` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Toggle key status |
+| APO-212 | Delete access key | `DELETE /openapi/v1/apps/{appId}/accesskeys/{keyId}` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Delete access key |
+| APO-213 | Get client metrics | `GET /openapi/v1/metrics/clients` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Client metrics summary |
+| APO-214 | Get app clients | `GET /openapi/v1/apps/{appId}/clients` | ✅ | Claude | 2026-02-04 | 2026-02-04 | List app clients |
+| APO-215 | Cleanup stale clients | `POST /openapi/v1/metrics/clients/cleanup` | ✅ | Claude | 2026-02-04 | 2026-02-04 | Cleanup stale connections |
 
 ---
 
@@ -390,8 +446,12 @@ This is a design decision, not a missing feature. See `CLAUDE.md` for the projec
 
 ### ✅ All Core Tasks Complete!
 
-All 125+ tasks have been completed. The Batata project now has:
+All 156 tasks have been completed. The Batata project now has:
 - Full Nacos V2/V3 API compatibility
+- **Apollo Config API compatibility** (NEW)
+  - Core client API (configs, configfiles, notifications)
+  - Open API management (apps, namespaces, items, releases)
+  - Advanced features (locks, gray release, access keys, metrics)
 - gRPC and HTTP service discovery
 - Configuration management with encryption
 - Gray/Beta release configuration support

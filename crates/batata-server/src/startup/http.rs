@@ -10,6 +10,10 @@ use batata_core::service::remote::ConnectionManager;
 
 use crate::{
     api::ai::{AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp},
+    api::apollo::{
+        ApolloAdvancedService, ApolloNotificationService, ApolloOpenApiService,
+        apollo_advanced_routes, apollo_config_routes, apollo_openapi_routes,
+    },
     api::cloud::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
     },
@@ -120,16 +124,37 @@ impl Default for CloudServices {
     }
 }
 
+/// Apollo services for Apollo Config client compatibility.
+#[derive(Clone)]
+pub struct ApolloServices {
+    pub notification_service: Arc<ApolloNotificationService>,
+    pub openapi_service: Arc<ApolloOpenApiService>,
+    pub advanced_service: Arc<ApolloAdvancedService>,
+}
+
+impl ApolloServices {
+    /// Creates Apollo service adapters from a database connection.
+    pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
+        Self {
+            notification_service: Arc::new(ApolloNotificationService::new(db.clone())),
+            openapi_service: Arc::new(ApolloOpenApiService::new(db.clone())),
+            advanced_service: Arc::new(ApolloAdvancedService::new(db)),
+        }
+    }
+}
+
 /// Creates and binds the main HTTP server.
 ///
 /// The main server provides the core Nacos-compatible API endpoints
-/// including config management, service discovery, and Consul compatibility.
+/// including config management, service discovery, Consul compatibility,
+/// and Apollo Config client compatibility.
 /// It also serves Swagger UI at `/swagger-ui/` for API documentation.
 pub fn main_server(
     app_state: Arc<AppState>,
     naming_service: Arc<NamingService>,
     connection_manager: Arc<ConnectionManager>,
     consul_services: ConsulServices,
+    apollo_services: ApolloServices,
     context_path: String,
     address: String,
     port: u16,
@@ -151,6 +176,10 @@ pub fn main_server(
             .app_data(web::Data::new(consul_services.kv.clone()))
             .app_data(web::Data::new(consul_services.catalog.clone()))
             .app_data(web::Data::new(consul_services.acl.clone()))
+            // Apollo services (Notification, OpenAPI, Advanced)
+            .app_data(web::Data::new(apollo_services.notification_service.clone()))
+            .app_data(web::Data::new(apollo_services.openapi_service.clone()))
+            .app_data(web::Data::new(apollo_services.advanced_service.clone()))
             // AI services (MCP Server Registry, A2A Agent Registry)
             .app_data(web::Data::new(ai_services.mcp_registry.clone()))
             .app_data(web::Data::new(ai_services.agent_registry.clone()))
@@ -170,6 +199,11 @@ pub fn main_server(
             // V2 Open API routes under /nacos prefix
             .service(v2_routes())
             .service(consul_routes())
+            // Apollo Config API routes
+            .service(apollo_config_routes())
+            // Apollo Open API and Advanced routes
+            .service(apollo_openapi_routes())
+            .service(apollo_advanced_routes())
             // AI Capabilities API routes (MCP, A2A)
             .configure(configure_mcp)
             .configure(configure_a2a)
