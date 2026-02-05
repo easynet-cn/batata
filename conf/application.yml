@@ -41,7 +41,7 @@ spring.sql.init.platform: mysql
 ### For PostgreSQL:
 # db.url: postgres://user:password@localhost:5432/batata
 ### Default: use DATABASE_URL environment variable
-db.url: ${DATABASE_URL:mysql://nacos:nacos@localhost:3306/batata}
+db.url: mysql://nacos:nacos@localhost:3306/batata
 
 ### Database connection pool configuration
 db.pool.config.maximumPoolSize: 100

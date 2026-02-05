@@ -12,8 +12,8 @@ use batata_server::{
     middleware::rate_limit,
     model::{self, common::AppState},
     startup::{
-        self, ApolloServices, ConsulServices, GracefulShutdown, OtelConfig, XdsServerHandle,
-        start_xds_service,
+        self, AIServices, ApolloServices, ConsulServices, GracefulShutdown, OtelConfig,
+        XdsServerHandle, start_xds_service,
     },
 };
 use tracing::{error, info};
@@ -109,6 +109,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown_signal = startup::wait_for_shutdown_signal().await;
     let graceful_shutdown = GracefulShutdown::new(shutdown_signal.clone(), Duration::from_secs(30));
 
+    // Create shared AI services (used by both main and console servers)
+    let ai_services = AIServices::new();
+
     // For console remote mode, only start console server
     if is_console_remote {
         info!(
@@ -118,6 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let console_server = startup::console_server(
             app_state.clone(),
+            ai_services.clone(),
             console_context_path,
             console_server_address,
             console_server_port,
@@ -196,6 +200,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
             let console_server = startup::console_server(
                 app_state.clone(),
+                ai_services.clone(),
                 console_context_path,
                 console_server_address,
                 console_server_port,
@@ -219,6 +224,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.connection_manager,
                 consul_services,
                 apollo_services,
+                ai_services.clone(),
                 server_context_path,
                 server_address,
                 server_main_port,
@@ -239,6 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Start both console and main servers
             let console = startup::console_server(
                 app_state.clone(),
+                ai_services.clone(),
                 console_context_path,
                 console_server_address,
                 console_server_port,
@@ -249,6 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.connection_manager,
                 consul_services,
                 apollo_services,
+                ai_services,
                 server_context_path,
                 server_address,
                 server_main_port,

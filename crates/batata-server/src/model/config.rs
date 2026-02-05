@@ -34,6 +34,8 @@ struct Cli {
     function_mode: Option<String>,
     #[arg(short = 'd', long = "deployment")]
     deployment: Option<String>,
+    #[arg(long = "db-url", env = "DATABASE_URL")]
+    database_url: Option<String>,
 }
 
 /// Application configuration loaded from config files and environment
@@ -69,6 +71,11 @@ impl Configuration {
             config_builder = config_builder
                 .set_override(NACOS_DEPLOYMENT_TYPE, v)
                 .expect("Failed to set deployment type override");
+        }
+        if let Some(v) = args.database_url {
+            config_builder = config_builder
+                .set_override("db.url", v)
+                .expect("Failed to set database URL override");
         }
 
         let app_config = config_builder

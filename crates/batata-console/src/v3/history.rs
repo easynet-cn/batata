@@ -46,8 +46,8 @@ pub struct FindConfigsByNamespaceIdParam {
 pub struct ConfigHistoryBasicInfo {
     pub id: u64,
     pub data_id: String,
-    pub group: String,
-    pub tenant: String,
+    pub group_name: String,
+    pub namespace_id: String,
     pub op_type: String,
     pub publish_type: String,
     pub gray_name: String,
@@ -62,8 +62,8 @@ impl From<ConfigHistoryInfo> for ConfigHistoryBasicInfo {
         Self {
             id: info.id,
             data_id: info.data_id,
-            group: info.group,
-            tenant: info.tenant,
+            group_name: info.group,
+            namespace_id: info.tenant,
             op_type: info.op_type,
             publish_type: info.publish_type,
             gray_name: info.gray_name,
@@ -81,8 +81,8 @@ impl From<ConfigHistoryInfo> for ConfigHistoryBasicInfo {
 pub struct ConfigHistoryDetailInfo {
     pub id: u64,
     pub data_id: String,
-    pub group: String,
-    pub tenant: String,
+    pub group_name: String,
+    pub namespace_id: String,
     pub content: String,
     pub md5: String,
     pub app_name: String,
@@ -102,8 +102,8 @@ impl From<ConfigHistoryInfo> for ConfigHistoryDetailInfo {
         Self {
             id: info.id,
             data_id: info.data_id,
-            group: info.group,
-            tenant: info.tenant,
+            group_name: info.group,
+            namespace_id: info.tenant,
             content: info.content,
             md5: info.md5,
             app_name: info.app_name,

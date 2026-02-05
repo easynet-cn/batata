@@ -58,6 +58,7 @@ impl ConsulServices {
 /// the Batata cluster, including authentication and namespace management.
 pub fn console_server(
     app_state: Arc<AppState>,
+    ai_services: AIServices,
     context_path: String,
     address: String,
     port: u16,
@@ -68,6 +69,9 @@ pub fn console_server(
             .wrap(RateLimiter::with_defaults())
             .wrap(Authentication)
             .app_data(web::Data::from(app_state.clone()))
+            // AI services (MCP Server Registry, A2A Agent Registry)
+            .app_data(web::Data::new(ai_services.mcp_registry.clone()))
+            .app_data(web::Data::new(ai_services.agent_registry.clone()))
             .service(
                 web::scope(&context_path)
                     .service(auth::v3::route::routes())
@@ -155,12 +159,12 @@ pub fn main_server(
     connection_manager: Arc<ConnectionManager>,
     consul_services: ConsulServices,
     apollo_services: ApolloServices,
+    ai_services: AIServices,
     context_path: String,
     address: String,
     port: u16,
 ) -> Result<Server, std::io::Error> {
-    // Create AI and Cloud services
-    let ai_services = AIServices::new();
+    // Create Cloud services
     let cloud_services = CloudServices::new();
 
     Ok(HttpServer::new(move || {
@@ -194,6 +198,7 @@ pub fn main_server(
             .service(
                 web::scope(&context_path)
                     .service(auth::v1::route::routes())
+                    .service(auth::v3::route::routes())
                     .service(console::v3::route::routes()),
             )
             // V2 Open API routes under /nacos prefix
