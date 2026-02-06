@@ -3,7 +3,7 @@
 //! Provides a lightweight HTTP client optimized for integration testing.
 
 use reqwest::{Client, Response, StatusCode};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::time::Duration;
 
 /// Nacos V2 API response wrapper

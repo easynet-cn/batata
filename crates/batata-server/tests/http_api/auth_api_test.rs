@@ -2,7 +2,7 @@
 //!
 //! Tests for /v3/auth endpoints
 
-use crate::common::{unique_test_id, TestClient, TEST_USERNAME, TEST_PASSWORD};
+use crate::common::{TEST_PASSWORD, TEST_USERNAME, TestClient, unique_test_id};
 
 /// Test login success
 #[tokio::test]
@@ -51,7 +51,10 @@ async fn test_login_failure_wrong_username() {
     let response: serde_json::Value = client
         .post_form(
             "/v3/auth/user/login",
-            &[("username", "nonexistent_user"), ("password", TEST_PASSWORD)],
+            &[
+                ("username", "nonexistent_user"),
+                ("password", TEST_PASSWORD),
+            ],
         )
         .await
         .expect("Request should complete");

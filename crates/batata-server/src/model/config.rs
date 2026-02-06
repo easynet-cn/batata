@@ -810,6 +810,46 @@ impl Configuration {
             tls_key_path: self.xds_tls_key_path().map(std::path::PathBuf::from),
         }
     }
+
+    // ========================================================================
+    // Logging Configuration
+    // ========================================================================
+
+    /// Get log directory path
+    pub fn log_dir(&self) -> Option<String> {
+        self.config.get_string("nacos.logs.path").ok()
+    }
+
+    /// Check if console logging is enabled
+    pub fn log_console_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.logs.console.enabled")
+            .unwrap_or(true)
+    }
+
+    /// Check if file logging is enabled
+    pub fn log_file_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.logs.file.enabled")
+            .unwrap_or(true)
+    }
+
+    /// Get log level
+    pub fn log_level(&self) -> String {
+        self.config
+            .get_string("nacos.logs.level")
+            .unwrap_or_else(|_| "info".to_string())
+    }
+
+    /// Get logging configuration
+    pub fn logging_config(&self) -> crate::startup::LoggingConfig {
+        crate::startup::LoggingConfig::from_config(
+            self.log_dir(),
+            self.log_console_enabled(),
+            self.log_file_enabled(),
+            self.log_level(),
+        )
+    }
 }
 
 /// xDS server configuration

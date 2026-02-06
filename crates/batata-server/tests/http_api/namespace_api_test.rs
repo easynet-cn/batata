@@ -2,7 +2,7 @@
 //!
 //! Tests for /nacos/v2/console/namespace endpoints
 
-use crate::common::{unique_test_id, TestClient, TEST_USERNAME, TEST_PASSWORD};
+use crate::common::{TEST_PASSWORD, TEST_USERNAME, TestClient, unique_test_id};
 
 /// Test create namespace
 #[tokio::test]
@@ -57,7 +57,10 @@ async fn test_namespace_list() {
         .expect("Get namespace list failed");
 
     assert_eq!(response["code"], 0, "Get namespace list should succeed");
-    assert!(response["data"].is_array(), "Should return array of namespaces");
+    assert!(
+        response["data"].is_array(),
+        "Should return array of namespaces"
+    );
 }
 
 /// Test get namespace

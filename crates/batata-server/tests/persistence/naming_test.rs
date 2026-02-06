@@ -2,13 +2,15 @@
 //!
 //! Tests for service_info, cluster_info, instance_info entities
 
-use crate::common::{unique_service_name, TestDatabase};
+use crate::common::{TestDatabase, unique_service_name};
 
 /// Test service_info CRUD operations
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_service_info_crud() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let service_name = unique_service_name("crud");
 
     // Create service
@@ -28,7 +30,9 @@ async fn test_service_info_crud() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_cluster_info_with_fk() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let service_name = unique_service_name("cluster");
 
     // Create service first
@@ -43,7 +47,9 @@ async fn test_cluster_info_with_fk() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_instance_info_with_fk() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let service_name = unique_service_name("instance");
 
     // Create service first
@@ -57,7 +63,9 @@ async fn test_instance_info_with_fk() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_cascade_delete() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let service_name = unique_service_name("cascade");
 
     // Create service
@@ -78,7 +86,9 @@ async fn test_cascade_delete() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_relationship_loading() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let service_name = unique_service_name("relations");
 
     // Create service with clusters and instances
@@ -92,7 +102,9 @@ async fn test_relationship_loading() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_service_unique_constraint() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let service_name = unique_service_name("unique");
 
     // Insert first service - should succeed
@@ -104,7 +116,9 @@ async fn test_service_unique_constraint() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_instance_health_update() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let service_name = unique_service_name("health");
 
     // Create service and instance with healthy=true
@@ -119,7 +133,9 @@ async fn test_instance_health_update() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_ephemeral_instances() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let service_name = unique_service_name("ephemeral");
 
     // Create ephemeral instance (ephemeral=true)

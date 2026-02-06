@@ -2,7 +2,7 @@
 //!
 //! Tests for Apollo Config API endpoints compatibility
 
-use crate::common::{unique_test_id, TestClient};
+use crate::common::{TestClient, unique_test_id};
 
 /// Test get config via Apollo Config API
 #[tokio::test]

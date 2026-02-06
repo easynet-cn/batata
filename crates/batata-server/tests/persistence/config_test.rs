@@ -2,13 +2,15 @@
 //!
 //! Tests for config_info, his_config_info, config_tags_relation entities
 
-use crate::common::{unique_data_id, TestDatabase, DEFAULT_GROUP};
+use crate::common::{DEFAULT_GROUP, TestDatabase, unique_data_id};
 
 /// Test config_info CRUD operations
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_info_crud() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let data_id = unique_data_id("crud");
 
     // Create
@@ -28,7 +30,9 @@ async fn test_config_info_crud() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_info_unique_constraint() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let data_id = unique_data_id("unique");
 
     // Insert first record - should succeed
@@ -40,7 +44,9 @@ async fn test_config_info_unique_constraint() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_his_config_info_insert() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let data_id = unique_data_id("history");
 
     // Insert config
@@ -57,7 +63,9 @@ async fn test_his_config_info_insert() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_tags_relation() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let data_id = unique_data_id("tagged");
 
     // Create config with tags
@@ -73,7 +81,9 @@ async fn test_config_tags_relation() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_info_aggr() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let data_id = unique_data_id("aggr");
 
     // Insert aggregate config
@@ -89,7 +99,9 @@ async fn test_config_info_aggr() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_md5_consistency() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let data_id = unique_data_id("md5");
     let content = "test.key=test.value";
 

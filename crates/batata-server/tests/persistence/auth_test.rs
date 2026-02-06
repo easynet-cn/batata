@@ -2,13 +2,15 @@
 //!
 //! Tests for users, roles, permissions entities
 
-use crate::common::{unique_test_id, TestDatabase};
+use crate::common::{TestDatabase, unique_test_id};
 
 /// Test users CRUD operations
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_users_crud() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let username = format!("testuser_{}", unique_test_id());
 
     // Create user (username is PK, not auto-increment)
@@ -28,7 +30,9 @@ async fn test_users_crud() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_roles_assignment() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let username = format!("roleuser_{}", unique_test_id());
     let role = format!("testrole_{}", unique_test_id());
 
@@ -47,7 +51,9 @@ async fn test_roles_assignment() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_permissions_crud() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let role = format!("permrole_{}", unique_test_id());
 
     // Create permission
@@ -64,7 +70,9 @@ async fn test_permissions_crud() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_multi_role_user() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let username = format!("multirole_{}", unique_test_id());
 
     // Create user
@@ -82,7 +90,9 @@ async fn test_multi_role_user() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_permission_inheritance() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let username = format!("inherit_{}", unique_test_id());
     let role = format!("inheritrole_{}", unique_test_id());
 
@@ -103,7 +113,9 @@ async fn test_permission_inheritance() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_roles_unique_constraint() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let username = format!("uniquerole_{}", unique_test_id());
     let role = "admin";
 
@@ -116,7 +128,9 @@ async fn test_roles_unique_constraint() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_permissions_unique_constraint() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let role = format!("uniqueperm_{}", unique_test_id());
 
     // Create permission first time - should succeed
@@ -128,7 +142,9 @@ async fn test_permissions_unique_constraint() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_user_enabled_status() {
-    let db = TestDatabase::from_env().await.expect("Database connection failed");
+    let db = TestDatabase::from_env()
+        .await
+        .expect("Database connection failed");
     let username = format!("enabled_{}", unique_test_id());
 
     // Create enabled user

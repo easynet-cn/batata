@@ -5,13 +5,13 @@
 //! - TestClient: HTTP client for API testing
 //! - TestDatabase: Database connection management for persistence tests
 
-pub mod server;
 pub mod client;
 pub mod db;
+pub mod server;
 
-pub use server::TestServer;
 pub use client::TestClient;
 pub use db::TestDatabase;
+pub use server::TestServer;
 
 /// Default test credentials
 pub const TEST_USERNAME: &str = "nacos";

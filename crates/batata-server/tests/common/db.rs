@@ -148,10 +148,7 @@ impl TestDatabase {
         // Split by semicolon and execute each statement
         for statement in schema_sql.split(';') {
             let statement = statement.trim();
-            if statement.is_empty()
-                || statement.starts_with("--")
-                || statement.starts_with("/*")
-            {
+            if statement.is_empty() || statement.starts_with("--") || statement.starts_with("/*") {
                 continue;
             }
 

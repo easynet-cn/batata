@@ -2,6 +2,12 @@
 //!
 //! Provides tracing subscriber setup with optional OpenTelemetry integration
 //! for distributed tracing and observability.
+//!
+//! Supported exporters:
+//! - OTLP (default): Export to any OTLP-compatible collector (Jaeger, Tempo, etc.)
+//! - Jaeger: Direct export to Jaeger via Thrift over HTTP
+//! - Zipkin: Direct export to Zipkin
+//! - Console: Print spans to console (for debugging)
 
 use std::time::Duration;
 
@@ -18,13 +24,52 @@ use tracing_log::LogTracer;
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{EnvFilter, Registry, fmt::MakeWriter, layer::SubscriberExt};
 
+/// Tracing exporter type
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TracingExporter {
+    /// OTLP exporter (default) - works with Jaeger, Tempo, etc.
+    Otlp,
+    /// Jaeger exporter via Thrift over HTTP
+    Jaeger,
+    /// Zipkin exporter
+    Zipkin,
+    /// Console exporter (for debugging)
+    Console,
+}
+
+impl Default for TracingExporter {
+    fn default() -> Self {
+        Self::Otlp
+    }
+}
+
+impl std::str::FromStr for TracingExporter {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "otlp" => Ok(Self::Otlp),
+            "jaeger" => Ok(Self::Jaeger),
+            "zipkin" => Ok(Self::Zipkin),
+            "console" => Ok(Self::Console),
+            _ => Err(format!("Unknown exporter type: {}", s)),
+        }
+    }
+}
+
 /// OpenTelemetry configuration
 #[derive(Debug, Clone)]
 pub struct OtelConfig {
     /// Enable OpenTelemetry tracing
     pub enabled: bool,
+    /// Exporter type (otlp, jaeger, zipkin, console)
+    pub exporter: TracingExporter,
     /// OTLP endpoint URL (e.g., "http://localhost:4317")
     pub otlp_endpoint: String,
+    /// Jaeger endpoint URL (e.g., "http://localhost:14268/api/traces")
+    pub jaeger_endpoint: String,
+    /// Zipkin endpoint URL (e.g., "http://localhost:9411/api/v2/spans")
+    pub zipkin_endpoint: String,
     /// Service name for traces
     pub service_name: String,
     /// Service version
@@ -39,7 +84,10 @@ impl Default for OtelConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            exporter: TracingExporter::Otlp,
             otlp_endpoint: "http://localhost:4317".to_string(),
+            jaeger_endpoint: "http://localhost:14268/api/traces".to_string(),
+            zipkin_endpoint: "http://localhost:9411/api/v2/spans".to_string(),
             service_name: "batata".to_string(),
             service_version: env!("CARGO_PKG_VERSION").to_string(),
             sampling_ratio: 1.0,
@@ -55,8 +103,16 @@ impl OtelConfig {
             enabled: std::env::var("OTEL_ENABLED")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(false),
+            exporter: std::env::var("OTEL_EXPORTER_TYPE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(TracingExporter::Otlp),
             otlp_endpoint: std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
                 .unwrap_or_else(|_| "http://localhost:4317".to_string()),
+            jaeger_endpoint: std::env::var("OTEL_EXPORTER_JAEGER_ENDPOINT")
+                .unwrap_or_else(|_| "http://localhost:14268/api/traces".to_string()),
+            zipkin_endpoint: std::env::var("OTEL_EXPORTER_ZIPKIN_ENDPOINT")
+                .unwrap_or_else(|_| "http://localhost:9411/api/v2/spans".to_string()),
             service_name: std::env::var("OTEL_SERVICE_NAME")
                 .unwrap_or_else(|_| "batata".to_string()),
             service_version: std::env::var("OTEL_SERVICE_VERSION")
@@ -85,7 +141,15 @@ impl OtelConfig {
             enabled: std::env::var("OTEL_ENABLED")
                 .map(|v| v.to_lowercase() == "true" || v == "1")
                 .unwrap_or(enabled),
+            exporter: std::env::var("OTEL_EXPORTER_TYPE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(TracingExporter::Otlp),
             otlp_endpoint: std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").unwrap_or(endpoint),
+            jaeger_endpoint: std::env::var("OTEL_EXPORTER_JAEGER_ENDPOINT")
+                .unwrap_or_else(|_| "http://localhost:14268/api/traces".to_string()),
+            zipkin_endpoint: std::env::var("OTEL_EXPORTER_ZIPKIN_ENDPOINT")
+                .unwrap_or_else(|_| "http://localhost:9411/api/v2/spans".to_string()),
             service_name: std::env::var("OTEL_SERVICE_NAME").unwrap_or(service_name),
             service_version: std::env::var("OTEL_SERVICE_VERSION")
                 .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
@@ -249,9 +313,21 @@ mod tests {
     fn test_otel_config_default() {
         let config = OtelConfig::default();
         assert!(!config.enabled);
+        assert_eq!(config.exporter, TracingExporter::Otlp);
         assert_eq!(config.otlp_endpoint, "http://localhost:4317");
+        assert_eq!(config.jaeger_endpoint, "http://localhost:14268/api/traces");
+        assert_eq!(config.zipkin_endpoint, "http://localhost:9411/api/v2/spans");
         assert_eq!(config.service_name, "batata");
         assert_eq!(config.sampling_ratio, 1.0);
+    }
+
+    #[test]
+    fn test_tracing_exporter_from_str() {
+        assert_eq!("otlp".parse::<TracingExporter>().unwrap(), TracingExporter::Otlp);
+        assert_eq!("jaeger".parse::<TracingExporter>().unwrap(), TracingExporter::Jaeger);
+        assert_eq!("zipkin".parse::<TracingExporter>().unwrap(), TracingExporter::Zipkin);
+        assert_eq!("console".parse::<TracingExporter>().unwrap(), TracingExporter::Console);
+        assert!("invalid".parse::<TracingExporter>().is_err());
     }
 
     #[test]

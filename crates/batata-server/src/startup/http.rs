@@ -24,6 +24,7 @@ use crate::{
     api::openapi::ApiDoc,
     api::v2::route::routes as v2_routes,
     auth, console,
+    console::v3::metrics::routes as metrics_routes,
     middleware::{auth::Authentication, rate_limit::RateLimiter},
     model::common::AppState,
     service::naming::NamingService,
@@ -215,6 +216,8 @@ pub fn main_server(
             // Cloud Native Integration API routes (Prometheus SD, Kubernetes Sync)
             .configure(configure_prometheus)
             .configure(configure_kubernetes)
+            // Prometheus metrics endpoint at /metrics (standard path)
+            .service(metrics_routes())
     })
     .bind((address, port))?
     .run())

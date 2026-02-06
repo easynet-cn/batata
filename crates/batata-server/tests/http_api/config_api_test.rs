@@ -2,7 +2,7 @@
 //!
 //! Tests for /nacos/v2/cs/config endpoints
 
-use crate::common::{unique_data_id, TestClient, DEFAULT_GROUP, TEST_NAMESPACE};
+use crate::common::{DEFAULT_GROUP, TEST_NAMESPACE, TestClient, unique_data_id};
 
 /// Test configuration publish and get
 #[tokio::test]

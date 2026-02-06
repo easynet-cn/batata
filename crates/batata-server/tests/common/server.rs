@@ -135,7 +135,9 @@ impl TestServer {
         }
 
         // Start the server process
-        let process = cmd.spawn().map_err(|e| TestServerError::SpawnFailed(e.to_string()))?;
+        let process = cmd
+            .spawn()
+            .map_err(|e| TestServerError::SpawnFailed(e.to_string()))?;
 
         let mut server = Self {
             process: Some(process),
@@ -270,7 +272,8 @@ impl std::error::Error for TestServerError {}
 
 /// Find an available TCP port
 fn find_available_port() -> Result<u16, TestServerError> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|_| TestServerError::NoAvailablePort)?;
+    let listener =
+        TcpListener::bind("127.0.0.1:0").map_err(|_| TestServerError::NoAvailablePort)?;
     let port = listener
         .local_addr()
         .map_err(|_| TestServerError::NoAvailablePort)?
@@ -358,8 +361,8 @@ mod tests {
 
     #[test]
     fn test_config_builder() {
-        let config = TestServerConfig::with_ports(8848, 9848, 8081)
-            .with_db("mysql://localhost/test");
+        let config =
+            TestServerConfig::with_ports(8848, 9848, 8081).with_db("mysql://localhost/test");
 
         assert_eq!(config.http_port, 8848);
         assert_eq!(config.grpc_port, 9848);

@@ -2,7 +2,7 @@
 //!
 //! Tests for Consul API endpoints compatibility
 
-use crate::common::{unique_service_name, unique_test_id, TestClient};
+use crate::common::{TestClient, unique_service_name, unique_test_id};
 
 /// Test service registration via Consul Agent API
 #[tokio::test]
@@ -144,7 +144,9 @@ async fn test_consul_kv_delete() {
         .await;
 
     // Delete
-    let response = client.delete::<serde_json::Value>(&format!("/v1/kv/{}", key)).await;
+    let response = client
+        .delete::<serde_json::Value>(&format!("/v1/kv/{}", key))
+        .await;
 
     assert!(response.is_ok(), "KV delete should succeed");
 }
@@ -171,10 +173,7 @@ async fn test_consul_kv_cas() {
 
     // CAS update with correct index
     let response = client
-        .raw_post_form(
-            &format!("/v1/kv/{}?cas={}", key, modify_index),
-            &"updated",
-        )
+        .raw_post_form(&format!("/v1/kv/{}?cas={}", key, modify_index), &"updated")
         .await;
 
     assert!(response.is_ok(), "CAS update should succeed");

@@ -435,4 +435,58 @@ nacos.standalone: true
 ### Maximum retries for address server on startup
 #nacos.core.address-server.retry: 5
 
+#*************** Logging Configurations ***************#
+### Log directory path (default: ~/batata/logs)
+#nacos.logs.path: /var/log/batata
+
+### Enable console output (default: true)
+nacos.logs.console.enabled: true
+
+### Enable file logging (default: true)
+nacos.logs.file.enabled: true
+
+### Log level: trace, debug, info, warn, error (default: info)
+nacos.logs.level: info
+
+### Environment variables for logging configuration:
+### BATATA_LOG_DIR: Override log directory path
+### BATATA_LOG_CONSOLE: Enable/disable console logging (true/false)
+### BATATA_LOG_FILE: Enable/disable file logging (true/false)
+### BATATA_LOG_LEVEL: Set log level (trace/debug/info/warn/error)
+### RUST_LOG: Fine-grained control per module (e.g., batata_config=debug,batata_naming=info)
+
+#*************** Distributed Tracing (OpenTelemetry) ***************#
+### Enable OpenTelemetry distributed tracing
+nacos.otel.enabled: false
+
+### Exporter type: otlp (default), jaeger, zipkin, console
+#nacos.otel.exporter: otlp
+
+### OTLP endpoint (for otlp exporter)
+#nacos.otel.endpoint: http://localhost:4317
+
+### Jaeger endpoint (for jaeger exporter)
+#nacos.otel.jaeger.endpoint: http://localhost:14268/api/traces
+
+### Zipkin endpoint (for zipkin exporter)
+#nacos.otel.zipkin.endpoint: http://localhost:9411/api/v2/spans
+
+### Service name for traces
+nacos.otel.service_name: batata
+
+### Sampling ratio (0.0 to 1.0, 1.0 = sample all traces)
+nacos.otel.sampling_ratio: 1.0
+
+### Export timeout in seconds
+nacos.otel.export_timeout_secs: 10
+
+### Environment variables for OpenTelemetry:
+### OTEL_ENABLED: Enable/disable tracing (true/false)
+### OTEL_EXPORTER_TYPE: Exporter type (otlp/jaeger/zipkin/console)
+### OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint
+### OTEL_EXPORTER_JAEGER_ENDPOINT: Jaeger collector endpoint
+### OTEL_EXPORTER_ZIPKIN_ENDPOINT: Zipkin collector endpoint
+### OTEL_SERVICE_NAME: Service name for traces
+### OTEL_SAMPLING_RATIO: Trace sampling ratio
+
 nacos.version: 3.1.0

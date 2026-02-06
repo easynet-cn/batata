@@ -3,3 +3,4 @@
 
 pub mod auth; // Authentication and authorization middleware
 pub mod rate_limit; // Rate limiting middleware for API protection
+pub mod tracing; // Distributed tracing middleware for OpenTelemetry

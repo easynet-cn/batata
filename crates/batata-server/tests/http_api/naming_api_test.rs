@@ -2,7 +2,7 @@
 //!
 //! Tests for /nacos/v2/ns/instance and /nacos/v2/ns/service endpoints
 
-use crate::common::{unique_service_name, TestClient, DEFAULT_GROUP, TEST_NAMESPACE};
+use crate::common::{DEFAULT_GROUP, TEST_NAMESPACE, TestClient, unique_service_name};
 
 /// Test instance registration
 #[tokio::test]
@@ -271,7 +271,10 @@ async fn test_instance_with_weight() {
         .await
         .expect("Failed to register");
 
-    assert_eq!(response["code"], 0, "Registration with weight should succeed");
+    assert_eq!(
+        response["code"], 0,
+        "Registration with weight should succeed"
+    );
 }
 
 /// Test create service
@@ -392,7 +395,10 @@ async fn test_service_list() {
     let client = TestClient::new("http://127.0.0.1:8848");
 
     let response: serde_json::Value = client
-        .get_with_query("/nacos/v2/ns/service/list", &[("pageNo", "1"), ("pageSize", "10")])
+        .get_with_query(
+            "/nacos/v2/ns/service/list",
+            &[("pageNo", "1"), ("pageSize", "10")],
+        )
         .await
         .expect("Failed to get service list");
 
