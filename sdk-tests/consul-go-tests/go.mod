@@ -3,7 +3,7 @@ module github.com/easynet-cn/batata/sdk-tests/consul-go-tests
 go 1.21
 
 require (
-	github.com/hashicorp/consul/api v1.28.2
+	github.com/hashicorp/consul/api v1.30.0
 	github.com/stretchr/testify v1.9.0
 )
 
@@ -11,9 +11,11 @@ require (
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fatih/color v1.16.0 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-hclog v1.5.0 // indirect
 	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/hashicorp/serf v0.10.1 // indirect
