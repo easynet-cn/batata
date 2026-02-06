@@ -1,0 +1,103 @@
+# Docker Compose configuration for integration tests
+#
+# Usage:
+#   Start test databases:    docker-compose -f docker-compose.test.yml up -d
+#   Stop test databases:     docker-compose -f docker-compose.test.yml down
+#   Stop and clean volumes:  docker-compose -f docker-compose.test.yml down -v
+#
+# Run tests:
+#   cargo test --workspace -- --ignored
+#
+# Or with specific database:
+#   TEST_DATABASE_URL="mysql://batata:batata@127.0.0.1:3307/batata_test" cargo test
+
+version: '3.8'
+
+services:
+  # MySQL test database
+  mysql-test:
+    image: mysql:8.0
+    container_name: batata-mysql-test
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: batata_test
+      MYSQL_USER: batata
+      MYSQL_PASSWORD: batata
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-test-data:/var/lib/mysql
+      - ./conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "batata", "-pbatata"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - batata-test-network
+
+  # PostgreSQL test database
+  postgres-test:
+    image: postgres:14
+    container_name: batata-postgres-test
+    environment:
+      POSTGRES_DB: batata_test
+      POSTGRES_USER: batata
+      POSTGRES_PASSWORD: batata
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+      - ./conf/postgresql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U batata -d batata_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - batata-test-network
+
+  # Batata server for integration tests (optional - can also run via cargo)
+  batata-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: batata-server-test
+    depends_on:
+      mysql-test:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=mysql://batata:batata@mysql-test:3306/batata_test
+      - NACOS_SERVER_MAIN_PORT=8848
+      - NACOS_CONSOLE_PORT=8081
+    ports:
+      - "18848:8848"
+      - "19848:9848"
+      - "19849:9849"
+      - "18081:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/v2/core/cluster/node/self/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - batata-test-network
+    profiles:
+      - full  # Only start when running with --profile full
+
+volumes:
+  mysql-test-data:
+    driver: local
+  postgres-test-data:
+    driver: local
+
+networks:
+  batata-test-network:
+    driver: bridge

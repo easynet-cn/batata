@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # MySQL database for Batata
+  mysql:
+    image: mysql:8.0
+    container_name: batata-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: batata
+    ports:
+      - "3306:3306"
+    volumes:
+      - ../conf/mysql-schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - batata-test
+
+  # Batata server
+  batata:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: batata-test-server
+    ports:
+      - "8848:8848"   # Main HTTP
+      - "9848:9848"   # gRPC SDK
+      - "9849:9849"   # gRPC Cluster
+      - "8081:8081"   # Console
+    environment:
+      - DB_URL=mysql://root:root@mysql:3306/batata
+      - NACOS_AUTH_ENABLED=true
+      - NACOS_AUTH_TOKEN_SECRET_KEY=YmF0YXRhLXRlc3Qtc2VjcmV0LWtleS1mb3Itand0LXRva2Vu
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8848/nacos/v2/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - batata-test
+
+  # Nacos Java SDK Tests
+  nacos-tests:
+    build:
+      context: ./nacos-java-tests
+      dockerfile: Dockerfile
+    container_name: nacos-sdk-tests
+    environment:
+      - NACOS_SERVER=batata:8848
+      - NACOS_USERNAME=nacos
+      - NACOS_PASSWORD=nacos
+    depends_on:
+      batata:
+        condition: service_healthy
+    networks:
+      - batata-test
+    profiles:
+      - tests
+
+  # Consul Go SDK Tests
+  consul-tests:
+    build:
+      context: ./consul-go-tests
+      dockerfile: Dockerfile
+    container_name: consul-sdk-tests
+    environment:
+      - CONSUL_HTTP_ADDR=batata:8848
+    depends_on:
+      batata:
+        condition: service_healthy
+    networks:
+      - batata-test
+    profiles:
+      - tests
+
+  # Apollo Java SDK Tests
+  apollo-tests:
+    build:
+      context: ./apollo-java-tests
+      dockerfile: Dockerfile
+    container_name: apollo-sdk-tests
+    environment:
+      - APOLLO_META=http://batata:8848
+      - APOLLO_CONFIG_SERVICE=http://batata:8848
+      - APOLLO_APP_ID=test-app
+      - APOLLO_ENV=DEV
+      - APOLLO_CLUSTER=default
+    depends_on:
+      batata:
+        condition: service_healthy
+    networks:
+      - batata-test
+    profiles:
+      - tests
+
+networks:
+  batata-test:
+    driver: bridge
+
+volumes:
+  mysql-data:
