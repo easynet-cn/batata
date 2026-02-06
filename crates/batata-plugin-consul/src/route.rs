@@ -3,7 +3,7 @@
 
 use actix_web::web;
 
-use crate::{acl, agent, catalog, event, health, kv, query, session, status};
+use crate::{acl, agent, catalog, event, health, kv, lock, query, session, status};
 
 /// Configure Consul Agent API routes (in-memory storage)
 /// Returns a scope configured with all agent service endpoints
@@ -327,9 +327,18 @@ pub fn consul_catalog_routes() -> actix_web::Scope {
 /// Returns a scope configured with all ACL management endpoints
 pub fn consul_acl_routes() -> actix_web::Scope {
     web::scope("/v1/acl")
+        // Bootstrap and auth endpoints (client-facing)
+        .route("/bootstrap", web::put().to(acl::acl_bootstrap))
+        .route("/login", web::post().to(acl::acl_login))
+        .route("/logout", web::post().to(acl::acl_logout))
         // Token management
         .route("/tokens", web::get().to(acl::list_tokens))
+        .route("/token/self", web::get().to(acl::get_token_self))
         .route("/token", web::put().to(acl::create_token))
+        .route(
+            "/token/{accessor_id}/clone",
+            web::put().to(acl::clone_token),
+        )
         .route("/token/{accessor_id}", web::get().to(acl::get_token))
         .route("/token/{accessor_id}", web::delete().to(acl::delete_token))
         // Policy management
@@ -360,9 +369,18 @@ pub fn consul_acl_routes() -> actix_web::Scope {
 /// Returns a scope configured with all ACL management endpoints using database persistence
 pub fn consul_acl_routes_persistent() -> actix_web::Scope {
     web::scope("/v1/acl")
+        // Bootstrap and auth endpoints (client-facing) - persistent versions
+        .route("/bootstrap", web::put().to(acl::acl_bootstrap_persistent))
+        .route("/login", web::post().to(acl::acl_login_persistent))
+        .route("/logout", web::post().to(acl::acl_logout_persistent))
         // Token management - persistent versions
         .route("/tokens", web::get().to(acl::list_tokens_persistent))
+        .route("/token/self", web::get().to(acl::get_token_self_persistent))
         .route("/token", web::put().to(acl::create_token_persistent))
+        .route(
+            "/token/{accessor_id}/clone",
+            web::put().to(acl::clone_token_persistent),
+        )
         .route(
             "/token/{accessor_id}",
             web::get().to(acl::get_token_persistent),
@@ -504,6 +522,25 @@ pub fn consul_query_routes_persistent() -> actix_web::Scope {
         )
 }
 
+/// Configure Consul Lock API routes
+/// Returns a scope configured with lock and semaphore endpoints
+pub fn consul_lock_routes() -> actix_web::Scope {
+    web::scope("/v1")
+        // Lock endpoints
+        .route("/lock/acquire", web::post().to(lock::acquire_lock))
+        .route("/lock/release/{key:.*}", web::put().to(lock::release_lock))
+        .route("/lock/{key:.*}", web::get().to(lock::get_lock))
+        .route("/lock/{key:.*}", web::delete().to(lock::destroy_lock))
+        .route("/lock/renew/{key:.*}", web::put().to(lock::renew_lock))
+        // Semaphore endpoints
+        .route("/semaphore/acquire", web::post().to(lock::acquire_semaphore))
+        .route(
+            "/semaphore/release/{prefix:.*}",
+            web::put().to(lock::release_semaphore),
+        )
+        .route("/semaphore/{prefix:.*}", web::get().to(lock::get_semaphore))
+}
+
 /// Configure all Consul API routes (in-memory storage)
 /// This is the main entry point for integrating Consul API into the server
 /// Note: Data is lost on server restart. For production use, use `consul_routes_persistent()`.
@@ -518,6 +555,7 @@ pub fn consul_routes() -> actix_web::Scope {
         .service(consul_status_routes())
         .service(consul_event_routes())
         .service(consul_query_routes())
+        .service(consul_lock_routes())
 }
 
 /// Configure all Consul API routes with database persistence

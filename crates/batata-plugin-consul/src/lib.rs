@@ -10,6 +10,7 @@
 //! - `event`: User event operations
 //! - `health`: Health check operations
 //! - `kv`: Key-Value store operations
+//! - `lock`: Distributed lock and semaphore operations
 //! - `model`: Data models for Consul API
 //! - `query`: Prepared query operations
 //! - `route`: Route configuration for actix-web
@@ -22,6 +23,7 @@ pub mod catalog;
 pub mod event;
 pub mod health;
 pub mod kv;
+pub mod lock;
 pub mod model;
 pub mod query;
 pub mod route;
@@ -64,5 +66,6 @@ pub use catalog::ConsulCatalogService;
 pub use event::{ConsulEventService, ConsulEventServicePersistent};
 pub use health::{ConsulHealthService, ConsulHealthServicePersistent};
 pub use kv::{ConsulKVService, ConsulKVServicePersistent};
+pub use lock::{ConsulLockService, ConsulSemaphoreService};
 pub use query::{ConsulQueryService, ConsulQueryServicePersistent};
 pub use session::{ConsulSessionService, ConsulSessionServicePersistent};

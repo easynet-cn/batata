@@ -1785,6 +1785,68 @@ impl AclError {
 }
 
 // ============================================================================
+// ACL Bootstrap Response
+// ============================================================================
+
+/// Bootstrap response with the initial management token
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BootstrapResponse {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub accessor_id: String,
+    pub secret_id: String,
+    pub description: String,
+    pub policies: Vec<PolicyLink>,
+    pub local: bool,
+    pub create_time: String,
+    pub hash: String,
+}
+
+// ============================================================================
+// ACL Login Request/Response
+// ============================================================================
+
+/// Login request with auth method
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LoginRequest {
+    pub auth_method: String,
+    pub bearer_token: Option<String>,
+    pub meta: Option<HashMap<String, String>>,
+}
+
+/// Login response with token
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LoginResponse {
+    pub accessor_id: String,
+    pub secret_id: String,
+    pub description: String,
+    pub policies: Vec<PolicyLink>,
+    pub roles: Vec<RoleLink>,
+    pub local: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expiration_time: Option<String>,
+    pub create_time: String,
+}
+
+// ============================================================================
+// Token Clone Request
+// ============================================================================
+
+/// Clone token request
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct CloneTokenRequest {
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+}
+
+// ============================================================================
 // ACL API Endpoints
 // ============================================================================
 
@@ -1854,6 +1916,215 @@ pub async fn delete_token(
     } else {
         HttpResponse::NotFound().json(AclError::new("Token not found"))
     }
+}
+
+/// GET /v1/acl/token/self
+/// Returns the token associated with the current request
+pub async fn get_token_self(
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let secret_id = match AclService::extract_token(&req) {
+        Some(t) => t,
+        None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
+    };
+
+    match acl_service.get_token(&secret_id) {
+        Some(token) => HttpResponse::Ok().json(token),
+        None => HttpResponse::Forbidden().json(AclError::new("ACL token not found or invalid")),
+    }
+}
+
+/// PUT /v1/acl/token/{accessor_id}/clone
+/// Clone an existing token
+pub async fn clone_token(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    body: web::Json<CloneTokenRequest>,
+) -> HttpResponse {
+    let accessor_id = path.into_inner();
+
+    // Find the token to clone
+    let source_token = MEMORY_TOKENS.iter().find_map(|entry| {
+        if entry.value().accessor_id == accessor_id {
+            Some(entry.value().clone())
+        } else {
+            None
+        }
+    });
+
+    match source_token {
+        Some(source) => {
+            // Create a new token with the same policies
+            let policies: Vec<String> = source.policies.iter().map(|p| p.name.clone()).collect();
+            let description = body
+                .description
+                .clone()
+                .unwrap_or_else(|| format!("Clone of {}", source.description));
+            let new_token = acl_service.create_token(&description, policies);
+            HttpResponse::Ok().json(new_token)
+        }
+        None => HttpResponse::NotFound().json(AclError::new("Token not found")),
+    }
+}
+
+/// PUT /v1/acl/bootstrap
+/// Bootstrap the ACL system (creates initial management token)
+pub async fn acl_bootstrap(_acl_service: web::Data<AclService>) -> HttpResponse {
+    // Check if already bootstrapped
+    if let Some(existing) = MEMORY_TOKENS.get("root") {
+        // If bootstrap token exists, return it (for development/testing)
+        // In production, this should return an error if already bootstrapped
+        let token = existing.clone();
+        let response = BootstrapResponse {
+            id: token.accessor_id.clone(),
+            accessor_id: token.accessor_id,
+            secret_id: token.secret_id.unwrap_or_default(),
+            description: token.description,
+            policies: token.policies,
+            local: token.local,
+            create_time: token.create_time,
+            hash: "bootstrap".to_string(),
+        };
+        return HttpResponse::Ok().json(response);
+    }
+
+    // Re-initialize bootstrap (this will create the token)
+    AclService::init_bootstrap();
+
+    if let Some(token) = MEMORY_TOKENS.get("root") {
+        let token = token.clone();
+        let response = BootstrapResponse {
+            id: token.accessor_id.clone(),
+            accessor_id: token.accessor_id,
+            secret_id: token.secret_id.unwrap_or_default(),
+            description: token.description,
+            policies: token.policies,
+            local: token.local,
+            create_time: token.create_time,
+            hash: "bootstrap".to_string(),
+        };
+        HttpResponse::Ok().json(response)
+    } else {
+        HttpResponse::InternalServerError().json(AclError::new("Failed to bootstrap ACL"))
+    }
+}
+
+/// POST /v1/acl/login
+/// Login with an auth method to get a token
+pub async fn acl_login(
+    acl_service: web::Data<AclService>,
+    body: web::Json<LoginRequest>,
+) -> HttpResponse {
+    // Check if auth method exists
+    let auth_method = match acl_service.get_auth_method(&body.auth_method) {
+        Some(m) => m,
+        None => {
+            return HttpResponse::NotFound().json(AclError::new(&format!(
+                "Auth method '{}' not found",
+                body.auth_method
+            )))
+        }
+    };
+
+    // For now, we implement a simple login that creates a token
+    // In production, this would validate the bearer_token against the auth method's config
+    let now = chrono::Utc::now().to_rfc3339();
+    let accessor_id = uuid::Uuid::new_v4().to_string();
+    let secret_id = uuid::Uuid::new_v4().to_string();
+
+    // Calculate expiration based on max_token_ttl
+    let expiration_time = auth_method.max_token_ttl.as_ref().and_then(|ttl| {
+        // Parse TTL like "1h", "30m", "24h"
+        parse_duration(ttl).map(|dur| {
+            (chrono::Utc::now() + chrono::Duration::from_std(dur).unwrap_or_default()).to_rfc3339()
+        })
+    });
+
+    let token = AclToken {
+        accessor_id: accessor_id.clone(),
+        secret_id: Some(secret_id.clone()),
+        description: format!("Login token via {}", body.auth_method),
+        policies: vec![], // No policies by default; binding rules would add them
+        roles: vec![],
+        local: auth_method.token_locality.as_deref() == Some("local"),
+        expiration_time: expiration_time.clone(),
+        create_time: now.clone(),
+        modify_time: now.clone(),
+    };
+
+    MEMORY_TOKENS.insert(secret_id.clone(), token);
+
+    let response = LoginResponse {
+        accessor_id,
+        secret_id,
+        description: format!("Login token via {}", body.auth_method),
+        policies: vec![],
+        roles: vec![],
+        local: auth_method.token_locality.as_deref() == Some("local"),
+        auth_method: Some(body.auth_method.clone()),
+        expiration_time,
+        create_time: now,
+    };
+
+    HttpResponse::Ok().json(response)
+}
+
+/// POST /v1/acl/logout
+/// Logout and invalidate the current token
+pub async fn acl_logout(acl_service: web::Data<AclService>, req: HttpRequest) -> HttpResponse {
+    let secret_id = match AclService::extract_token(&req) {
+        Some(t) => t,
+        None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
+    };
+
+    // Don't allow logging out the bootstrap token
+    if secret_id == "root" {
+        return HttpResponse::Forbidden().json(AclError::new("Cannot logout bootstrap token"));
+    }
+
+    // Find and delete the token
+    if let Some(token) = acl_service.get_token(&secret_id) {
+        if acl_service.delete_token(&token.accessor_id) {
+            return HttpResponse::Ok().json(true);
+        }
+    }
+
+    // Also try direct removal from memory
+    if MEMORY_TOKENS.remove(&secret_id).is_some() {
+        HttpResponse::Ok().json(true)
+    } else {
+        HttpResponse::NotFound().json(AclError::new("Token not found"))
+    }
+}
+
+/// Helper function to parse duration strings like "1h", "30m", "24h"
+fn parse_duration(s: &str) -> Option<std::time::Duration> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    let (num_str, unit) = if s.ends_with('h') || s.ends_with('H') {
+        (&s[..s.len() - 1], 'h')
+    } else if s.ends_with('m') || s.ends_with('M') {
+        (&s[..s.len() - 1], 'm')
+    } else if s.ends_with('s') || s.ends_with('S') {
+        (&s[..s.len() - 1], 's')
+    } else {
+        // Default to seconds
+        (s, 's')
+    };
+
+    let num: u64 = num_str.parse().ok()?;
+    let secs = match unit {
+        'h' => num * 3600,
+        'm' => num * 60,
+        's' => num,
+        _ => num,
+    };
+
+    Some(std::time::Duration::from_secs(secs))
 }
 
 /// GET /v1/acl/policies
@@ -2368,6 +2639,164 @@ pub async fn delete_auth_method_persistent(
     } else {
         HttpResponse::NotFound().json(AclError::new("Auth method not found"))
     }
+}
+
+/// GET /v1/acl/token/self (Persistent)
+/// Returns the token associated with the current request
+pub async fn get_token_self_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let secret_id = match AclService::extract_token(&req) {
+        Some(t) => t,
+        None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
+    };
+
+    match acl_service.get_token(&secret_id).await {
+        Some(token) => HttpResponse::Ok().json(token),
+        None => HttpResponse::Forbidden().json(AclError::new("ACL token not found or invalid")),
+    }
+}
+
+/// PUT /v1/acl/token/{accessor_id}/clone (Persistent)
+/// Clone an existing token
+pub async fn clone_token_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    path: web::Path<String>,
+    body: web::Json<CloneTokenRequest>,
+) -> HttpResponse {
+    let accessor_id = path.into_inner();
+
+    // Find the token to clone
+    let tokens = acl_service.list_tokens().await;
+    let source_token = tokens.into_iter().find(|t| t.accessor_id == accessor_id);
+
+    match source_token {
+        Some(source) => {
+            // Get the full token from cache (with secret_id)
+            let full_source = acl_service
+                .token_cache
+                .iter()
+                .find(|entry| entry.value().accessor_id == accessor_id)
+                .map(|entry| entry.value().clone())
+                .unwrap_or(source);
+
+            // Create a new token with the same policies
+            let policies: Vec<String> =
+                full_source.policies.iter().map(|p| p.name.clone()).collect();
+            let description = body
+                .description
+                .clone()
+                .unwrap_or_else(|| format!("Clone of {}", full_source.description));
+
+            match acl_service.create_token(&description, policies).await {
+                Ok(new_token) => HttpResponse::Ok().json(new_token),
+                Err(e) => HttpResponse::InternalServerError().json(AclError::new(&e)),
+            }
+        }
+        None => HttpResponse::NotFound().json(AclError::new("Token not found")),
+    }
+}
+
+/// PUT /v1/acl/bootstrap (Persistent)
+/// Bootstrap the ACL system (creates initial management token)
+pub async fn acl_bootstrap_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+) -> HttpResponse {
+    // Try to initialize bootstrap
+    if let Err(e) = acl_service.init_bootstrap().await {
+        return HttpResponse::InternalServerError().json(AclError::new(&e));
+    }
+
+    // Get the bootstrap token
+    if let Some(token) = acl_service.get_token("root").await {
+        let response = BootstrapResponse {
+            id: token.accessor_id.clone(),
+            accessor_id: token.accessor_id,
+            secret_id: token.secret_id.unwrap_or_default(),
+            description: token.description,
+            policies: token.policies,
+            local: token.local,
+            create_time: token.create_time,
+            hash: "bootstrap".to_string(),
+        };
+        HttpResponse::Ok().json(response)
+    } else {
+        HttpResponse::InternalServerError().json(AclError::new("Failed to bootstrap ACL"))
+    }
+}
+
+/// POST /v1/acl/login (Persistent)
+/// Login with an auth method to get a token
+pub async fn acl_login_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    body: web::Json<LoginRequest>,
+) -> HttpResponse {
+    // Check if auth method exists
+    let auth_method = match acl_service.get_auth_method(&body.auth_method).await {
+        Some(m) => m,
+        None => {
+            return HttpResponse::NotFound().json(AclError::new(&format!(
+                "Auth method '{}' not found",
+                body.auth_method
+            )))
+        }
+    };
+
+    // Create a login token
+    let now = chrono::Utc::now().to_rfc3339();
+    let description = format!("Login token via {}", body.auth_method);
+
+    // Calculate expiration based on max_token_ttl
+    let expiration_time = auth_method.max_token_ttl.as_ref().and_then(|ttl| {
+        parse_duration(ttl).map(|dur| {
+            (chrono::Utc::now() + chrono::Duration::from_std(dur).unwrap_or_default()).to_rfc3339()
+        })
+    });
+
+    match acl_service.create_token(&description, vec![]).await {
+        Ok(token) => {
+            let response = LoginResponse {
+                accessor_id: token.accessor_id,
+                secret_id: token.secret_id.unwrap_or_default(),
+                description: token.description,
+                policies: token.policies,
+                roles: token.roles,
+                local: auth_method.token_locality.as_deref() == Some("local"),
+                auth_method: Some(body.auth_method.clone()),
+                expiration_time,
+                create_time: now,
+            };
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(AclError::new(&e)),
+    }
+}
+
+/// POST /v1/acl/logout (Persistent)
+/// Logout and invalidate the current token
+pub async fn acl_logout_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let secret_id = match AclService::extract_token(&req) {
+        Some(t) => t,
+        None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
+    };
+
+    // Don't allow logging out the bootstrap token
+    if secret_id == "root" {
+        return HttpResponse::Forbidden().json(AclError::new("Cannot logout bootstrap token"));
+    }
+
+    // Find and delete the token
+    if let Some(token) = acl_service.get_token(&secret_id).await {
+        if acl_service.delete_token(&token.accessor_id).await {
+            return HttpResponse::Ok().json(true);
+        }
+    }
+
+    HttpResponse::NotFound().json(AclError::new("Token not found"))
 }
 
 #[cfg(test)]

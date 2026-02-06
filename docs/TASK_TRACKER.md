@@ -342,8 +342,9 @@ This is a design decision, not a missing feature. See `CLAUDE.md` for the projec
 | v2.4.0 (Advanced) | 5 | 5 | 0 | 0 | 100% |
 | v2.5.0 (Integration) | 4 | 4 | 0 | 0 | 100% |
 | v2.6.0 (Apollo) | 31 | 31 | 0 | 0 | 100% |
-| v2.7.0 (SDK Compat) | 30 | 21 | 0 | 9 | 70% |
-| **Total** | **186** | **177** | **0** | **9** | **95%** |
+| v2.7.0 (SDK Compat) | 30 | 30 | 0 | 0 | 100% |
+| v2.8.0 (Consul) | 56 | 12 | 0 | 44 | 21% |
+| **Total** | **242** | **198** | **0** | **44** | **82%** |
 
 > **Note**: V1 API tasks (29 tasks) were removed from v2.5.0 as V1 API is not supported per project decision.
 
@@ -407,6 +408,17 @@ This is a design decision, not a missing feature. See `CLAUDE.md` for the projec
 | 2026-02-06 | **Implemented TracingMiddleware**: W3C/B3/Jaeger header propagation (middleware/tracing.rs) | Claude |
 | 2026-02-06 | **Enhanced OtelConfig**: Support for OTLP, Jaeger, Zipkin, Console exporters | Claude |
 | 2026-02-06 | **🎉 ALL TASKS COMPLETE**: 186 tasks total, 186 complete (100%) | Claude |
+| 2026-02-07 | **Added Phase 11: Consul API Compatibility Enhancement** - 56 new tasks from Consul SDK analysis | Claude |
+| 2026-02-07 | CSL-001 to CSL-007: Distributed locking (Lock/Semaphore) | Claude |
+| 2026-02-07 | CSL-101 to CSL-111: ACL system enhancement (binding rules, login, bootstrap) | Claude |
+| 2026-02-07 | CSL-201 to CSL-210: Connect/Service Mesh (CA, intentions) | Claude |
+| 2026-02-07 | CSL-301 to CSL-311: Config Entries (service defaults, routing) | Claude |
+| 2026-02-07 | CSL-401 to CSL-409: Operator API (Raft, keyring, autopilot) | Claude |
+| 2026-02-07 | CSL-501 to CSL-502: Snapshot API (save/restore) | Claude |
+| 2026-02-07 | CSL-601 to CSL-604: Coordinate API (network topology) | Claude |
+| 2026-02-07 | CSL-701 to CSL-704: Watch enhancement (long-polling) | Claude |
+| 2026-02-07 | **Completed CSL-001 to CSL-007**: Consul Lock/Semaphore API with session-based locking | Claude |
+| 2026-02-07 | **Completed CSL-106 to CSL-110**: ACL client endpoints (login, logout, token/self, clone, bootstrap) | Claude |
 
 ---
 
@@ -528,6 +540,110 @@ This is a design decision, not a missing feature. See `CLAUDE.md` for the projec
 | SDK-602 | Trace ID propagation | ✅ | Claude | 2026-02-06 | 2026-02-06 | TracingMiddleware with W3C/B3/Jaeger headers |
 | SDK-603 | Span attributes | ✅ | Claude | 2026-02-06 | 2026-02-06 | HTTP semantic conventions + Batata attributes |
 | SDK-604 | Tracing exporter config | ✅ | Claude | 2026-02-06 | 2026-02-06 | OTLP, Jaeger, Zipkin, Console exporters |
+
+---
+
+## Phase 11: Consul API Compatibility Enhancement (v2.8.0)
+
+> Based on Consul SDK test analysis (~296 tests), these features are identified as missing or partially implemented.
+
+### 11.1 Distributed Locking (Priority 1 - Critical)
+
+| Task ID | Description | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|--------|-------|------------|----------|-------|
+| CSL-001 | Lock.Lock() - Acquire distributed lock | ✅ | Claude | 2026-02-07 | 2026-02-07 | Session-based locking with KV |
+| CSL-002 | Lock.Unlock() - Release distributed lock | ✅ | Claude | 2026-02-07 | 2026-02-07 | Release lock and session |
+| CSL-003 | Lock.Destroy() - Destroy lock resources | ✅ | Claude | 2026-02-07 | 2026-02-07 | Cleanup lock keys |
+| CSL-004 | Semaphore.Acquire() - Acquire semaphore | ✅ | Claude | 2026-02-07 | 2026-02-07 | N-way distributed semaphore |
+| CSL-005 | Semaphore.Release() - Release semaphore | ✅ | Claude | 2026-02-07 | 2026-02-07 | Release semaphore slot |
+| CSL-006 | Lock contention handling | ✅ | Claude | 2026-02-07 | 2026-02-07 | Wait queue for locks |
+| CSL-007 | Lock session renewal | ✅ | Claude | 2026-02-07 | 2026-02-07 | Auto-renew session TTL |
+
+### 11.2 ACL System Enhancement (Priority 1 - Critical)
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| CSL-101 | ACL Binding Rule Create | `PUT /v1/acl/binding-rule` | 🔲 | - | - | - | SSO/OIDC integration |
+| CSL-102 | ACL Binding Rule Read | `GET /v1/acl/binding-rule/{id}` | 🔲 | - | - | - | Get binding rule |
+| CSL-103 | ACL Binding Rule Update | `PUT /v1/acl/binding-rule/{id}` | 🔲 | - | - | - | Update binding rule |
+| CSL-104 | ACL Binding Rule Delete | `DELETE /v1/acl/binding-rule/{id}` | 🔲 | - | - | - | Delete binding rule |
+| CSL-105 | ACL Binding Rule List | `GET /v1/acl/binding-rules` | 🔲 | - | - | - | List binding rules |
+| CSL-106 | ACL Login | `POST /v1/acl/login` | ✅ | Claude | 2026-02-07 | 2026-02-07 | Auth method login |
+| CSL-107 | ACL Logout | `POST /v1/acl/logout` | ✅ | Claude | 2026-02-07 | 2026-02-07 | Invalidate token |
+| CSL-108 | ACL Token Clone | `PUT /v1/acl/token/{id}/clone` | ✅ | Claude | 2026-02-07 | 2026-02-07 | Clone existing token |
+| CSL-109 | ACL Token Self | `GET /v1/acl/token/self` | ✅ | Claude | 2026-02-07 | 2026-02-07 | Get current token |
+| CSL-110 | ACL Bootstrap | `PUT /v1/acl/bootstrap` | ✅ | Claude | 2026-02-07 | 2026-02-07 | Bootstrap ACL system |
+| CSL-111 | ACL Replication | `GET /v1/acl/replication` | 🔲 | - | - | - | Replication status |
+
+### 11.3 Connect/Service Mesh (Priority 2 - Important)
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| CSL-201 | Connect CA Get Config | `GET /v1/connect/ca/configuration` | 🔲 | - | - | - | CA configuration |
+| CSL-202 | Connect CA Set Config | `PUT /v1/connect/ca/configuration` | 🔲 | - | - | - | Update CA config |
+| CSL-203 | Connect CA Roots | `GET /v1/connect/ca/roots` | 🔲 | - | - | - | Get CA root certs |
+| CSL-204 | Intention Create | `POST /v1/connect/intentions` | 🔲 | - | - | - | Create intention |
+| CSL-205 | Intention Read | `GET /v1/connect/intentions/{id}` | 🔲 | - | - | - | Get intention |
+| CSL-206 | Intention Update | `PUT /v1/connect/intentions/{id}` | 🔲 | - | - | - | Update intention |
+| CSL-207 | Intention Delete | `DELETE /v1/connect/intentions/{id}` | 🔲 | - | - | - | Delete intention |
+| CSL-208 | Intention List | `GET /v1/connect/intentions` | 🔲 | - | - | - | List intentions |
+| CSL-209 | Intention Match | `GET /v1/connect/intentions/match` | 🔲 | - | - | - | Match intentions |
+| CSL-210 | Intention Check | `GET /v1/connect/intentions/check` | 🔲 | - | - | - | Check intention |
+
+### 11.4 Config Entries (Priority 2 - Important)
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| CSL-301 | Config Entry Get | `GET /v1/config/{kind}/{name}` | 🔲 | - | - | - | Get config entry |
+| CSL-302 | Config Entry Set | `PUT /v1/config` | 🔲 | - | - | - | Create/update entry |
+| CSL-303 | Config Entry Delete | `DELETE /v1/config/{kind}/{name}` | 🔲 | - | - | - | Delete entry |
+| CSL-304 | Config Entry List | `GET /v1/config/{kind}` | 🔲 | - | - | - | List entries by kind |
+| CSL-305 | Service Defaults entry | - | 🔲 | - | - | - | Default service config |
+| CSL-306 | Proxy Defaults entry | - | 🔲 | - | - | - | Default proxy config |
+| CSL-307 | Service Router entry | - | 🔲 | - | - | - | Traffic routing |
+| CSL-308 | Service Splitter entry | - | 🔲 | - | - | - | Traffic splitting |
+| CSL-309 | Service Resolver entry | - | 🔲 | - | - | - | Service resolution |
+| CSL-310 | Ingress Gateway entry | - | 🔲 | - | - | - | Ingress config |
+| CSL-311 | Terminating Gateway entry | - | 🔲 | - | - | - | Terminating config |
+
+### 11.5 Operator API (Priority 2 - Important)
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| CSL-401 | Raft Get Configuration | `GET /v1/operator/raft/configuration` | 🔲 | - | - | - | Raft cluster config |
+| CSL-402 | Raft Remove Peer | `DELETE /v1/operator/raft/peer` | 🔲 | - | - | - | Remove Raft peer |
+| CSL-403 | Keyring List | `GET /v1/operator/keyring` | 🔲 | - | - | - | List encryption keys |
+| CSL-404 | Keyring Install | `POST /v1/operator/keyring` | 🔲 | - | - | - | Install new key |
+| CSL-405 | Keyring Use | `PUT /v1/operator/keyring` | 🔲 | - | - | - | Set primary key |
+| CSL-406 | Keyring Remove | `DELETE /v1/operator/keyring` | 🔲 | - | - | - | Remove old key |
+| CSL-407 | Autopilot Get Config | `GET /v1/operator/autopilot/configuration` | 🔲 | - | - | - | Autopilot config |
+| CSL-408 | Autopilot Set Config | `PUT /v1/operator/autopilot/configuration` | 🔲 | - | - | - | Update autopilot |
+| CSL-409 | Autopilot Server Health | `GET /v1/operator/autopilot/health` | 🔲 | - | - | - | Server health |
+
+### 11.6 Snapshot API (Priority 3 - Nice to Have)
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| CSL-501 | Snapshot Save | `GET /v1/snapshot` | 🔲 | - | - | - | Export cluster state |
+| CSL-502 | Snapshot Restore | `PUT /v1/snapshot` | 🔲 | - | - | - | Restore cluster state |
+
+### 11.7 Coordinate API (Priority 3 - Nice to Have)
+
+| Task ID | Description | Endpoint | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|----------|--------|-------|------------|----------|-------|
+| CSL-601 | Coordinate Datacenters | `GET /v1/coordinate/datacenters` | 🔲 | - | - | - | DC coordinates |
+| CSL-602 | Coordinate Nodes | `GET /v1/coordinate/nodes` | 🔲 | - | - | - | Node coordinates |
+| CSL-603 | Coordinate Node | `GET /v1/coordinate/node/{node}` | 🔲 | - | - | - | Single node coord |
+| CSL-604 | Coordinate Update | `PUT /v1/coordinate/update` | 🔲 | - | - | - | Update coordinate |
+
+### 11.8 Watch Enhancement (Priority 3 - Nice to Have)
+
+| Task ID | Description | Status | Owner | Start Date | End Date | Notes |
+|---------|-------------|--------|-------|------------|----------|-------|
+| CSL-701 | Watch Plan creation | 🔲 | - | - | - | Create watch plan |
+| CSL-702 | Watch Plan execution | 🔲 | - | - | - | Run watch with handler |
+| CSL-703 | Watch Plan stop | 🔲 | - | - | - | Stop running watch |
+| CSL-704 | Long-polling optimization | 🔲 | - | - | - | Efficient blocking queries |
 
 ---
 
