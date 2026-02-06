@@ -12,9 +12,15 @@ batata-common = { path = "../batata-common" }
 batata-naming = { path = "../batata-naming" }
 
 # gRPC and protobuf
-tonic = { version = "0.14", features = ["transport"] }
+tonic = { version = "0.14", features = ["transport", "codegen"] }
 prost = "0.14"
 prost-types = "0.14"
+tower = "0.5"
+http = "1.3"
+http-body = "1.0"
+http-body-util = "0.1"
+hyper = { version = "1.6", features = ["server", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server"] }
 
 # Async
 tokio = { version = "1.49", features = ["full"] }

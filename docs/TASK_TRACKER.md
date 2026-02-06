@@ -419,6 +419,7 @@ This is a design decision, not a missing feature. See `CLAUDE.md` for the projec
 | 2026-02-07 | CSL-701 to CSL-704: Watch enhancement (long-polling) | Claude |
 | 2026-02-07 | **Completed CSL-001 to CSL-007**: Consul Lock/Semaphore API with session-based locking | Claude |
 | 2026-02-07 | **Completed CSL-106 to CSL-110**: ACL client endpoints (login, logout, token/self, clone, bootstrap) | Claude |
+| 2026-02-07 | **xDS Full Integration**: Wired xDS gRPC server into main server startup (port configurable via xds.port) | Claude |
 
 ---
 

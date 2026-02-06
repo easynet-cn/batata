@@ -3,12 +3,15 @@
 //! This module handles the initialization and startup of the xDS service
 //! for service mesh integration (Envoy/Istio).
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
+use tokio::sync::oneshot;
 use tracing::{error, info};
 
 use batata_mesh::{
     server::{XdsServer, XdsServerConfig},
+    start_xds_grpc_server,
     sync::{NacosSyncBridge, SyncBridgeConfig},
 };
 
@@ -21,6 +24,11 @@ pub struct XdsServerHandle {
     pub xds_server: Arc<XdsServer>,
     /// The Nacos-xDS sync bridge
     sync_bridge: NacosSyncBridge,
+    /// Shutdown signal sender for the gRPC server
+    grpc_shutdown_tx: Option<oneshot::Sender<()>>,
+    /// Handle for the gRPC server task
+    #[allow(dead_code)]
+    grpc_server_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl XdsServerHandle {
@@ -42,7 +50,16 @@ impl XdsServerHandle {
     /// Gracefully shutdown the xDS service
     pub async fn shutdown(mut self) {
         info!("Shutting down xDS service");
+
+        // Signal the gRPC server to shutdown
+        if let Some(tx) = self.grpc_shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+
+        // Stop the sync bridge
         self.sync_bridge.stop().await;
+
+        info!("xDS service shutdown complete");
     }
 
     /// Get the number of services currently synced
@@ -53,9 +70,8 @@ impl XdsServerHandle {
 
 /// Starts the xDS service for service mesh integration
 ///
-/// This initializes the xDS server and sync bridge. The actual gRPC serving
-/// is done through the batata_mesh::grpc module which can be added to existing
-/// gRPC servers.
+/// This initializes the xDS server, sync bridge, and starts the xDS gRPC server
+/// on the configured port.
 ///
 /// # Arguments
 /// * `xds_config` - xDS server configuration
@@ -71,8 +87,11 @@ pub async fn start_xds_service(
         return Err("xDS service is not enabled".into());
     }
 
+    let port = xds_config.port;
+
     info!(
         server_id = %xds_config.server_id,
+        port = port,
         sync_interval_ms = xds_config.sync_interval_ms,
         generate_listeners = xds_config.generate_listeners,
         generate_routes = xds_config.generate_routes,
@@ -109,11 +128,25 @@ pub async fn start_xds_service(
         )) as Box<dyn std::error::Error + Send + Sync>
     })?;
 
+    // Start the xDS gRPC server
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
+    let xds_server_clone = xds_server.clone();
+
+    let grpc_handle = tokio::spawn(async move {
+        if let Err(e) = start_xds_grpc_server(xds_server_clone, addr, shutdown_rx).await {
+            error!(error = %e, "xDS gRPC server error");
+        }
+    });
+
+    info!(port = port, "xDS gRPC server started");
     info!("xDS service started successfully");
 
     Ok(XdsServerHandle {
         xds_server,
         sync_bridge,
+        grpc_shutdown_tx: Some(shutdown_tx),
+        grpc_server_handle: Some(grpc_handle),
     })
 }
 

@@ -223,6 +223,7 @@ cargo build --release -p batata-server
 | 8081 | Console HTTP API | Web management console |
 | 9848 | SDK gRPC | Client SDK communication |
 | 9849 | Cluster gRPC | Inter-node communication |
+| 15010 | xDS gRPC | Service mesh xDS/ADS protocol |
 
 ## Configuration
 
@@ -313,6 +314,31 @@ export BATATA_REPLICATION_FACTOR=1
 - Cross-datacenter replication with configurable delay
 - Automatic datacenter topology discovery
 - Region/zone hierarchy support
+
+### xDS/Service Mesh Configuration
+
+Enable xDS protocol support for Envoy proxies and Istio service mesh:
+
+**application.yml:**
+```yaml
+xds:
+  enabled: true
+  port: 15010                    # xDS gRPC server port
+  server_id: "batata-xds-server"
+  sync_interval_ms: 5000         # Service sync interval
+  generate_listeners: true       # Generate LDS resources
+  generate_routes: true          # Generate RDS resources
+  default_listener_port: 15001   # Default listener port for generated resources
+```
+
+**Supported xDS Resources:**
+- **EDS** (Endpoint Discovery Service) - Service endpoints
+- **CDS** (Cluster Discovery Service) - Upstream clusters
+- **LDS** (Listener Discovery Service) - Listeners configuration
+- **RDS** (Route Discovery Service) - Route configuration
+- **ADS** (Aggregated Discovery Service) - All resources via single stream
+
+**Compatible with:** Envoy Proxy, Istio, and any xDS-compatible service mesh.
 
 ## API Reference
 

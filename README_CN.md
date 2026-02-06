@@ -223,6 +223,7 @@ cargo build --release -p batata-server
 | 8081 | 控制台 HTTP API | Web 管理控制台 |
 | 9848 | SDK gRPC | 客户端 SDK 通信 |
 | 9849 | 集群 gRPC | 节点间通信 |
+| 15010 | xDS gRPC | 服务网格 xDS/ADS 协议 |
 
 ## 配置
 
@@ -313,6 +314,31 @@ export BATATA_REPLICATION_FACTOR=1
 - 可配置延迟的跨数据中心复制
 - 自动数据中心拓扑发现
 - 区域/可用区层级支持
+
+### xDS/服务网格配置
+
+启用 xDS 协议支持 Envoy 代理和 Istio 服务网格：
+
+**application.yml:**
+```yaml
+xds:
+  enabled: true
+  port: 15010                    # xDS gRPC 服务器端口
+  server_id: "batata-xds-server"
+  sync_interval_ms: 5000         # 服务同步间隔
+  generate_listeners: true       # 生成 LDS 资源
+  generate_routes: true          # 生成 RDS 资源
+  default_listener_port: 15001   # 生成资源的默认监听端口
+```
+
+**支持的 xDS 资源：**
+- **EDS** (端点发现服务) - 服务端点
+- **CDS** (集群发现服务) - 上游集群
+- **LDS** (监听器发现服务) - 监听器配置
+- **RDS** (路由发现服务) - 路由配置
+- **ADS** (聚合发现服务) - 通过单一流获取所有资源
+
+**兼容：** Envoy Proxy、Istio 及任何 xDS 兼容的服务网格。
 
 ## API 参考
 

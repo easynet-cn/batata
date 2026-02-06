@@ -97,7 +97,7 @@ Total: 1086 SDK compatibility tests
 
 ## Prerequisites
 
-- Java 17+ (for Nacos and Apollo tests)
+- Java 21+ (for Nacos and Apollo tests)
 - Go 1.21+ (for Consul tests)
 - Docker and Docker Compose
 - Maven 3.8+
