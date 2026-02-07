@@ -31,20 +31,19 @@ use utoipa::OpenApi;
         (name = "console", description = "Console management APIs")
     ),
     paths(
-        // Config APIs
+        // Config APIs (V2)
         crate::api::openapi::config::get_config,
         crate::api::openapi::config::publish_config,
         crate::api::openapi::config::delete_config,
         crate::api::openapi::config::get_config_list,
-        // Naming APIs
+        // Naming APIs (V2)
         crate::api::openapi::naming::register_instance,
         crate::api::openapi::naming::deregister_instance,
         crate::api::openapi::naming::get_instance_list,
         crate::api::openapi::naming::get_service_list,
-        crate::api::openapi::naming::subscribe_service,
-        // Auth APIs
+        // Auth APIs (V3)
         crate::api::openapi::auth::login,
-        // Health APIs
+        // Health APIs (V3 Console)
         crate::api::openapi::health::liveness,
         crate::api::openapi::health::readiness,
     ),
@@ -206,12 +205,12 @@ pub mod config {
     /// Get configuration
     #[utoipa::path(
         get,
-        path = "/nacos/v1/cs/configs",
+        path = "/nacos/v2/cs/config",
         tag = "config",
         params(
             ("dataId" = String, Query, description = "Configuration data ID"),
             ("group" = String, Query, description = "Configuration group"),
-            ("tenant" = Option<String>, Query, description = "Namespace/tenant")
+            ("namespaceId" = Option<String>, Query, description = "Namespace ID")
         ),
         responses(
             (status = 200, description = "Configuration content", body = String),
@@ -223,7 +222,7 @@ pub mod config {
     /// Publish configuration
     #[utoipa::path(
         post,
-        path = "/nacos/v1/cs/configs",
+        path = "/nacos/v2/cs/config",
         tag = "config",
         request_body = ConfigForm,
         responses(
@@ -237,12 +236,12 @@ pub mod config {
     /// Delete configuration
     #[utoipa::path(
         delete,
-        path = "/nacos/v1/cs/configs",
+        path = "/nacos/v2/cs/config",
         tag = "config",
         params(
             ("dataId" = String, Query, description = "Configuration data ID"),
             ("group" = String, Query, description = "Configuration group"),
-            ("tenant" = Option<String>, Query, description = "Namespace/tenant")
+            ("namespaceId" = Option<String>, Query, description = "Namespace ID")
         ),
         responses(
             (status = 200, description = "Configuration deleted successfully", body = bool),
@@ -252,15 +251,15 @@ pub mod config {
     )]
     pub async fn delete_config() {}
 
-    /// Get configuration list
+    /// Search configuration by detail
     #[utoipa::path(
         get,
-        path = "/nacos/v1/cs/configs/list",
+        path = "/nacos/v2/cs/config/searchDetail",
         tag = "config",
         params(
             ("dataId" = Option<String>, Query, description = "Configuration data ID pattern"),
             ("group" = Option<String>, Query, description = "Configuration group pattern"),
-            ("tenant" = Option<String>, Query, description = "Namespace/tenant"),
+            ("namespaceId" = Option<String>, Query, description = "Namespace ID"),
             ("pageNo" = Option<i32>, Query, description = "Page number"),
             ("pageSize" = Option<i32>, Query, description = "Page size")
         ),
@@ -277,7 +276,7 @@ pub mod naming {
     /// Register service instance
     #[utoipa::path(
         post,
-        path = "/nacos/v1/ns/instance",
+        path = "/nacos/v2/ns/instance",
         tag = "naming",
         params(
             ("serviceName" = String, Query, description = "Service name"),
@@ -301,7 +300,7 @@ pub mod naming {
     /// Deregister service instance
     #[utoipa::path(
         delete,
-        path = "/nacos/v1/ns/instance",
+        path = "/nacos/v2/ns/instance",
         tag = "naming",
         params(
             ("serviceName" = String, Query, description = "Service name"),
@@ -321,7 +320,7 @@ pub mod naming {
     /// Get instance list
     #[utoipa::path(
         get,
-        path = "/nacos/v1/ns/instance/list",
+        path = "/nacos/v2/ns/instance/list",
         tag = "naming",
         params(
             ("serviceName" = String, Query, description = "Service name"),
@@ -340,7 +339,7 @@ pub mod naming {
     /// Get service list
     #[utoipa::path(
         get,
-        path = "/nacos/v1/ns/service/list",
+        path = "/nacos/v2/ns/service/list",
         tag = "naming",
         params(
             ("pageNo" = Option<i32>, Query, description = "Page number"),
@@ -353,23 +352,6 @@ pub mod naming {
         )
     )]
     pub async fn get_service_list() {}
-
-    /// Subscribe to service changes
-    #[utoipa::path(
-        get,
-        path = "/nacos/v1/ns/instance/subscribe",
-        tag = "naming",
-        params(
-            ("serviceName" = String, Query, description = "Service name"),
-            ("groupName" = Option<String>, Query, description = "Group name"),
-            ("namespaceId" = Option<String>, Query, description = "Namespace ID"),
-            ("clusters" = Option<String>, Query, description = "Cluster names")
-        ),
-        responses(
-            (status = 200, description = "Subscribed successfully", body = ServiceInfo)
-        )
-    )]
-    pub async fn subscribe_service() {}
 }
 
 pub mod auth {
@@ -378,7 +360,7 @@ pub mod auth {
     /// User login
     #[utoipa::path(
         post,
-        path = "/nacos/v1/auth/login",
+        path = "/v3/auth/user/login",
         tag = "auth",
         params(
             ("username" = String, Query, description = "Username"),
@@ -398,7 +380,7 @@ pub mod health {
     /// Liveness check
     #[utoipa::path(
         get,
-        path = "/nacos/v1/console/health/liveness",
+        path = "/v3/console/health/liveness",
         tag = "health",
         responses(
             (status = 200, description = "Service is alive", body = HealthStatus)
@@ -409,7 +391,7 @@ pub mod health {
     /// Readiness check
     #[utoipa::path(
         get,
-        path = "/nacos/v1/console/health/readiness",
+        path = "/v3/console/health/readiness",
         tag = "health",
         responses(
             (status = 200, description = "Service is ready", body = HealthStatus),

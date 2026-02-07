@@ -44,6 +44,9 @@ pub use batata_api::distro;
 // which focuses on V2 and V3 APIs for modern clients.
 pub mod v2;
 
+// Nacos V3 Admin and Client API implementation
+pub mod v3;
+
 // AI Capabilities API (MCP Server Registry, A2A Communication)
 pub mod ai;
 

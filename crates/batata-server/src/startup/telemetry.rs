@@ -165,8 +165,10 @@ impl OtelConfig {
     }
 }
 
-/// Initialize OpenTelemetry tracer provider
-fn init_tracer_provider(
+/// Create an OpenTelemetry tracer provider.
+///
+/// This is used by the logging module to optionally add an OTEL layer.
+pub(crate) fn init_tracer_provider(
     config: &OtelConfig,
 ) -> Result<SdkTracerProvider, Box<dyn std::error::Error>> {
     let exporter = opentelemetry_otlp::SpanExporter::builder()
@@ -323,10 +325,22 @@ mod tests {
 
     #[test]
     fn test_tracing_exporter_from_str() {
-        assert_eq!("otlp".parse::<TracingExporter>().unwrap(), TracingExporter::Otlp);
-        assert_eq!("jaeger".parse::<TracingExporter>().unwrap(), TracingExporter::Jaeger);
-        assert_eq!("zipkin".parse::<TracingExporter>().unwrap(), TracingExporter::Zipkin);
-        assert_eq!("console".parse::<TracingExporter>().unwrap(), TracingExporter::Console);
+        assert_eq!(
+            "otlp".parse::<TracingExporter>().unwrap(),
+            TracingExporter::Otlp
+        );
+        assert_eq!(
+            "jaeger".parse::<TracingExporter>().unwrap(),
+            TracingExporter::Jaeger
+        );
+        assert_eq!(
+            "zipkin".parse::<TracingExporter>().unwrap(),
+            TracingExporter::Zipkin
+        );
+        assert_eq!(
+            "console".parse::<TracingExporter>().unwrap(),
+            TracingExporter::Console
+        );
         assert!("invalid".parse::<TracingExporter>().is_err());
     }
 

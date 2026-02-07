@@ -4,8 +4,11 @@
 //! - GET /nacos/v2/cs/config - Get config
 //! - POST /nacos/v2/cs/config - Publish config
 //! - DELETE /nacos/v2/cs/config - Delete config
+//! - GET /nacos/v2/cs/config/searchDetail - Search config detail
 
 use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, post, web};
+use batata_api::model::Page;
+use batata_config::model::config::ConfigBasicInfo;
 use tracing::{info, warn};
 
 use crate::{
@@ -13,7 +16,9 @@ use crate::{
     secured,
 };
 
-use super::model::{ConfigDeleteParam, ConfigGetParam, ConfigPublishParam, ConfigResponse};
+use super::model::{
+    ConfigDeleteParam, ConfigGetParam, ConfigPublishParam, ConfigResponse, ConfigSearchDetailParam,
+};
 
 /// Get configuration
 ///
@@ -298,6 +303,75 @@ pub async fn delete_config(
         Err(e) => {
             warn!(error = %e, "Failed to delete config");
             Result::<bool>::http_response(500, 500, e.to_string(), false)
+        }
+    }
+}
+
+/// Search config detail
+///
+/// GET /nacos/v2/cs/config/searchDetail
+///
+/// Searches configs with pagination and filtering.
+#[get("searchDetail")]
+pub async fn search_config_detail(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ConfigSearchDetailParam>,
+) -> impl Responder {
+    let namespace_id = params.namespace_id_or_default();
+
+    // Check authorization
+    let resource = format!("{}:*:config/*", namespace_id);
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    let tags: Vec<String> = params
+        .config_tags
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
+    let types: Vec<String> = params
+        .config_type
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
+    let db = data.db();
+    match batata_config::service::config::search_page(
+        db,
+        params.page_no,
+        params.page_size,
+        namespace_id,
+        params.data_id.as_deref().unwrap_or(""),
+        params.group.as_deref().unwrap_or(""),
+        params.app_name.as_deref().unwrap_or(""),
+        tags,
+        types,
+        params.content.as_deref().unwrap_or(""),
+    )
+    .await
+    {
+        Ok(page) => Result::<Page<ConfigBasicInfo>>::http_success(page),
+        Err(e) => {
+            warn!(error = %e, "Failed to search config detail");
+            Result::<Page<ConfigBasicInfo>>::http_response(
+                500,
+                500,
+                e.to_string(),
+                Page::<ConfigBasicInfo>::default(),
+            )
         }
     }
 }

@@ -325,10 +325,7 @@ mod tests {
 
         let ctx = TraceContext::from_headers(&headers);
         assert!(ctx.traceparent.is_some());
-        assert_eq!(
-            ctx.trace_id(),
-            Some("0af7651916cd43dd8448eb211c80319c")
-        );
+        assert_eq!(ctx.trace_id(), Some("0af7651916cd43dd8448eb211c80319c"));
         assert!(ctx.is_sampled());
     }
 

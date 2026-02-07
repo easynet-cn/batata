@@ -145,6 +145,48 @@ pub struct ConfigResponse {
     pub r#type: Option<String>,
 }
 
+/// Request parameters for searching config detail
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigSearchDetailParam {
+    /// Data ID filter (optional, supports wildcard *)
+    #[serde(default)]
+    pub data_id: Option<String>,
+    /// Group filter (optional)
+    #[serde(default)]
+    pub group: Option<String>,
+    /// Namespace ID (optional, defaults to "public")
+    #[serde(default)]
+    pub namespace_id: Option<String>,
+    /// Application name filter (optional)
+    #[serde(default)]
+    pub app_name: Option<String>,
+    /// Config tags filter (comma-separated, optional)
+    #[serde(default)]
+    pub config_tags: Option<String>,
+    /// Config type filter (comma-separated, optional)
+    #[serde(default)]
+    pub config_type: Option<String>,
+    /// Content search filter (optional)
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Page number (1-based, defaults to 1)
+    #[serde(default = "default_page_no")]
+    pub page_no: u64,
+    /// Page size (defaults to 100)
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+}
+
+impl ConfigSearchDetailParam {
+    pub fn namespace_id_or_default(&self) -> &str {
+        self.namespace_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_NAMESPACE_ID)
+    }
+}
+
 // =============================================================================
 // History API Models
 // =============================================================================

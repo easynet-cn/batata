@@ -23,7 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize configuration and logging
     let configuration = model::common::Configuration::new();
 
-    // Initialize tracing with optional OpenTelemetry support
+    // Initialize multi-file logging with optional OpenTelemetry support
+    let logging_config = configuration.logging_config();
     let otel_config = OtelConfig::from_config(
         configuration.otel_enabled(),
         configuration.otel_endpoint(),
@@ -31,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         configuration.otel_sampling_ratio(),
         configuration.otel_export_timeout_secs(),
     );
-    let _otel_guard = startup::init_tracing_with_otel("batata", "info", &otel_config)?;
+    let _logging_guard = startup::init_logging(&logging_config, Some(&otel_config))?;
 
     if otel_config.enabled {
         info!(

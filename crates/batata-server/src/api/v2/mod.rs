@@ -14,6 +14,7 @@ pub mod history;
 pub mod instance;
 pub mod model;
 pub mod namespace;
+pub mod naming_catalog;
 pub mod operator;
 pub mod route;
 pub mod service;

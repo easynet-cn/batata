@@ -443,6 +443,18 @@ nacos.standalone: true
 nacos.logs.console.enabled: true
 
 ### Enable file logging (default: true)
+### When enabled, creates the following log files (inspired by Nacos):
+###   batata.log          - Root logger (captures all events)
+###   naming-server.log   - Service discovery (batata_naming)
+###   config-server.log   - Configuration management (batata_config)
+###   nacos-cluster.log   - Cluster communication (batata_core::cluster)
+###   core-auth.log       - Authentication and authorization (batata_auth)
+###   remote.log          - Remote/gRPC communication (batata_api)
+###   console.log         - Console management API (batata_console)
+###   protocol-raft.log   - Raft consensus protocol (batata_consistency)
+###   plugin-control.log  - Plugin system (batata_plugin*)
+###   mesh.log            - Service mesh / xDS (batata_mesh)
+###   persistence.log     - Database persistence (batata_persistence)
 nacos.logs.file.enabled: true
 
 ### Log level: trace, debug, info, warn, error (default: info)
@@ -453,7 +465,8 @@ nacos.logs.level: info
 ### BATATA_LOG_CONSOLE: Enable/disable console logging (true/false)
 ### BATATA_LOG_FILE: Enable/disable file logging (true/false)
 ### BATATA_LOG_LEVEL: Set log level (trace/debug/info/warn/error)
-### RUST_LOG: Fine-grained control per module (e.g., batata_config=debug,batata_naming=info)
+### BATATA_LOG_FILE_LEVEL: Separate file log level (defaults to BATATA_LOG_LEVEL)
+### RUST_LOG: Fine-grained per-module control (e.g., batata_config=debug,batata_naming=info,info)
 
 #*************** Distributed Tracing (OpenTelemetry) ***************#
 ### Enable OpenTelemetry distributed tracing

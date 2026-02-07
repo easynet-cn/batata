@@ -4,15 +4,19 @@
 //! - POST /nacos/v2/ns/instance - Register instance
 //! - DELETE /nacos/v2/ns/instance - Deregister instance
 //! - PUT /nacos/v2/ns/instance - Update instance
+//! - PATCH /nacos/v2/ns/instance - Patch instance (partial update)
 //! - GET /nacos/v2/ns/instance - Get instance detail
 //! - GET /nacos/v2/ns/instance/list - Get instance list
+//! - PUT /nacos/v2/ns/instance/beat - Instance heartbeat
+//! - GET /nacos/v2/ns/instance/statuses/{key} - Get instance statuses
 //! - PUT /nacos/v2/ns/instance/metadata/batch - Batch update metadata
 //! - DELETE /nacos/v2/ns/instance/metadata/batch - Batch delete metadata
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, post, put, web};
+use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, patch, post, put, web};
+use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
@@ -746,4 +750,284 @@ pub async fn batch_delete_metadata(
     );
 
     Result::<bool>::http_success(true)
+}
+
+/// Patch instance (partial update)
+///
+/// PATCH /nacos/v2/ns/instance
+///
+/// Partially updates an instance. Only provided fields are updated.
+#[patch("")]
+pub async fn patch_instance(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    naming_service: web::Data<Arc<NamingService>>,
+    form: web::Form<InstanceUpdateParam>,
+) -> impl Responder {
+    if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+            false,
+        );
+    }
+
+    let namespace_id = form.namespace_id_or_default();
+    let group_name = form.group_name_or_default();
+    let cluster_name = form.cluster_name_or_default();
+
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, form.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    // Get existing instance to merge
+    let instances = naming_service.get_instances(
+        namespace_id,
+        group_name,
+        &form.service_name,
+        cluster_name,
+        false,
+    );
+
+    let instance_key = format!("{}#{}#{}", form.ip, form.port, cluster_name);
+
+    if let Some(mut existing) = instances.into_iter().find(|i| i.key() == instance_key) {
+        // Patch only provided fields
+        if let Some(weight) = form.weight {
+            existing.weight = weight;
+        }
+        if let Some(healthy) = form.healthy {
+            existing.healthy = healthy;
+        }
+        if let Some(enabled) = form.enabled {
+            existing.enabled = enabled;
+        }
+        if let Some(ephemeral) = form.ephemeral {
+            existing.ephemeral = ephemeral;
+        }
+        if let Some(ref metadata_str) = form.metadata
+            && let Ok(metadata) = serde_json::from_str::<HashMap<String, String>>(metadata_str)
+        {
+            for (k, v) in metadata {
+                existing.metadata.insert(k, v);
+            }
+        }
+
+        let result = naming_service.register_instance(
+            namespace_id,
+            group_name,
+            &form.service_name,
+            existing,
+        );
+
+        if result {
+            Result::<bool>::http_success(true)
+        } else {
+            Result::<bool>::http_response(500, 500, "Failed to patch instance".to_string(), false)
+        }
+    } else {
+        Result::<bool>::http_response(
+            404,
+            404,
+            format!(
+                "instance not found, ip={}, port={}, cluster={}",
+                form.ip, form.port, cluster_name
+            ),
+            false,
+        )
+    }
+}
+
+/// Instance heartbeat
+///
+/// PUT /nacos/v2/ns/instance/beat
+///
+/// Sends a heartbeat for an instance to keep it alive.
+#[put("beat")]
+pub async fn beat_instance(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    naming_service: web::Data<Arc<NamingService>>,
+    form: web::Form<InstanceBeatParam>,
+) -> impl Responder {
+    if form.service_name.is_empty() {
+        return Result::<BeatResponse>::http_response(
+            400,
+            400,
+            "Required parameter 'serviceName' is missing".to_string(),
+            BeatResponse::default(),
+        );
+    }
+
+    let namespace_id = form.namespace_id_or_default();
+    let group_name = form.group_name_or_default();
+
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, form.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    // Parse beat info if provided
+    if let Some(ref beat_str) = form.beat
+        && let Ok(beat_info) = serde_json::from_str::<BeatInfo>(beat_str)
+    {
+        let cluster_name = beat_info.cluster.as_deref().unwrap_or("DEFAULT");
+        let result = naming_service.heartbeat(
+            namespace_id,
+            group_name,
+            &form.service_name,
+            &beat_info.ip,
+            beat_info.port,
+            cluster_name,
+        );
+
+        return Result::<BeatResponse>::http_success(BeatResponse {
+            client_beat_interval: 5000,
+            light_beat_enabled: true,
+            code: if result { 200 } else { 20404 },
+        });
+    }
+
+    // If no beat JSON, try ip + port parameters
+    if let (Some(ip), Some(port)) = (&form.ip, form.port) {
+        let cluster_name = form.cluster_name.as_deref().unwrap_or("DEFAULT");
+        let result = naming_service.heartbeat(
+            namespace_id,
+            group_name,
+            &form.service_name,
+            ip,
+            port,
+            cluster_name,
+        );
+
+        Result::<BeatResponse>::http_success(BeatResponse {
+            client_beat_interval: 5000,
+            light_beat_enabled: true,
+            code: if result { 200 } else { 20404 },
+        })
+    } else {
+        Result::<BeatResponse>::http_response(
+            400,
+            400,
+            "Either 'beat' JSON or 'ip'+'port' parameters are required".to_string(),
+            BeatResponse::default(),
+        )
+    }
+}
+
+/// Get instance statuses by service key
+///
+/// GET /nacos/v2/ns/instance/statuses/{key}
+///
+/// Returns the health status of all instances for a service key.
+#[get("statuses/{key}")]
+pub async fn get_instance_statuses(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    naming_service: web::Data<Arc<NamingService>>,
+    path: web::Path<String>,
+) -> impl Responder {
+    let key = path.into_inner();
+
+    // Key format: namespace@@groupName@@serviceName or groupName@@serviceName
+    let parts: Vec<&str> = key.split("@@").collect();
+    let (namespace_id, group_name, service_name) = match parts.len() {
+        3 => (parts[0], parts[1], parts[2]),
+        2 => ("public", parts[0], parts[1]),
+        _ => {
+            return Result::<HashMap<String, bool>>::http_response(
+                400,
+                400,
+                format!("Invalid service key format: {}", key),
+                HashMap::<String, bool>::new(),
+            );
+        }
+    };
+
+    let resource = format!("{}:{}:naming/{}", namespace_id, group_name, service_name);
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    let instances = naming_service.get_instances(namespace_id, group_name, service_name, "", false);
+
+    let statuses: HashMap<String, bool> = instances
+        .into_iter()
+        .map(|i| (format!("{}#{}", i.ip, i.port), i.healthy))
+        .collect();
+
+    Result::<HashMap<String, bool>>::http_success(statuses)
+}
+
+/// Beat info from client
+#[derive(Debug, Deserialize)]
+struct BeatInfo {
+    ip: String,
+    port: i32,
+    #[serde(default)]
+    cluster: Option<String>,
+}
+
+/// Instance beat request parameters
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceBeatParam {
+    #[serde(default)]
+    pub namespace_id: Option<String>,
+    #[serde(default)]
+    pub group_name: Option<String>,
+    pub service_name: String,
+    #[serde(default)]
+    pub beat: Option<String>,
+    #[serde(default)]
+    pub ip: Option<String>,
+    #[serde(default)]
+    pub port: Option<i32>,
+    #[serde(default)]
+    pub cluster_name: Option<String>,
+}
+
+impl InstanceBeatParam {
+    pub fn namespace_id_or_default(&self) -> &str {
+        self.namespace_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("public")
+    }
+
+    pub fn group_name_or_default(&self) -> &str {
+        self.group_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("DEFAULT_GROUP")
+    }
+}
+
+/// Beat response
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BeatResponse {
+    pub client_beat_interval: i64,
+    pub light_beat_enabled: bool,
+    pub code: i32,
 }

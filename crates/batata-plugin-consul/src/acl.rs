@@ -1920,10 +1920,7 @@ pub async fn delete_token(
 
 /// GET /v1/acl/token/self
 /// Returns the token associated with the current request
-pub async fn get_token_self(
-    acl_service: web::Data<AclService>,
-    req: HttpRequest,
-) -> HttpResponse {
+pub async fn get_token_self(acl_service: web::Data<AclService>, req: HttpRequest) -> HttpResponse {
     let secret_id = match AclService::extract_token(&req) {
         Some(t) => t,
         None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
@@ -2023,7 +2020,7 @@ pub async fn acl_login(
             return HttpResponse::NotFound().json(AclError::new(&format!(
                 "Auth method '{}' not found",
                 body.auth_method
-            )))
+            )));
         }
     };
 
@@ -2682,8 +2679,11 @@ pub async fn clone_token_persistent(
                 .unwrap_or(source);
 
             // Create a new token with the same policies
-            let policies: Vec<String> =
-                full_source.policies.iter().map(|p| p.name.clone()).collect();
+            let policies: Vec<String> = full_source
+                .policies
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
             let description = body
                 .description
                 .clone()
@@ -2739,7 +2739,7 @@ pub async fn acl_login_persistent(
             return HttpResponse::NotFound().json(AclError::new(&format!(
                 "Auth method '{}' not found",
                 body.auth_method
-            )))
+            )));
         }
     };
 

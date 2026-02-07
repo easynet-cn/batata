@@ -1260,9 +1260,7 @@ impl XdsGrpcServer {
             io,
             hyper::service::service_fn(move |req| {
                 let ads_service = ads_service.clone();
-                async move {
-                    Self::handle_request(ads_service, req).await
-                }
+                async move { Self::handle_request(ads_service, req).await }
             }),
         )
         .await?;
@@ -1274,7 +1272,8 @@ impl XdsGrpcServer {
     async fn handle_request(
         _ads_service: Arc<AggregatedDiscoveryServiceImpl>,
         req: http::Request<hyper::body::Incoming>,
-    ) -> Result<http::Response<http_body_util::Full<hyper::body::Bytes>>, std::convert::Infallible> {
+    ) -> Result<http::Response<http_body_util::Full<hyper::body::Bytes>>, std::convert::Infallible>
+    {
         use http_body_util::Full;
         use hyper::body::Bytes;
 
@@ -1295,7 +1294,10 @@ impl XdsGrpcServer {
                     .status(200)
                     .header("content-type", "application/grpc")
                     .header("grpc-status", "0")
-                    .header("grpc-message", "xDS service active - use tonic client for streaming")
+                    .header(
+                        "grpc-message",
+                        "xDS service active - use tonic client for streaming",
+                    )
                     .body(Full::new(Bytes::new()))
                     .unwrap()
             }

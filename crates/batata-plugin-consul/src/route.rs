@@ -533,7 +533,10 @@ pub fn consul_lock_routes() -> actix_web::Scope {
         .route("/lock/{key:.*}", web::delete().to(lock::destroy_lock))
         .route("/lock/renew/{key:.*}", web::put().to(lock::renew_lock))
         // Semaphore endpoints
-        .route("/semaphore/acquire", web::post().to(lock::acquire_semaphore))
+        .route(
+            "/semaphore/acquire",
+            web::post().to(lock::acquire_semaphore),
+        )
         .route(
             "/semaphore/release/{prefix:.*}",
             web::put().to(lock::release_semaphore),

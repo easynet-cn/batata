@@ -222,11 +222,8 @@ pub const HISTORY_ADMIN_V3_PATH: &str = "/v3/admin/cs/history";
 pub const LISTENER_CONTROLLER_V3_ADMIN_PATH: &str = "/v3/admin/cs/listener";
 pub const METRICS_CONTROLLER_V3_ADMIN_PATH: &str = "/v3/admin/cs/metrics";
 pub const CONFIG_V3_CLIENT_API_PATH: &str = "/v3/client/cs/config";
-pub const NACOS_SERVER_VERSION: &str = "/v1";
 pub const NACOS_SERVER_VERSION_V2: &str = "/v2";
 pub const NACOS_SERVER_VERSION_V3: &str = "/v3";
-pub const DEFAULT_NACOS_CORE_CONTEXT: &str = "/v1/core";
-pub const NACOS_CORE_CONTEXT: &str = "/v1/core";
 pub const NACOS_CORE_CONTEXT_V2: &str = "/v2/core";
 pub const NACOS_ADMIN_CORE_CONTEXT_V3: &str = "/v3/admin/core";
 

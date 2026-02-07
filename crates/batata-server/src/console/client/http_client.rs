@@ -136,7 +136,7 @@ impl ConsoleHttpClient {
 
     /// Authenticate with the remote server
     pub async fn authenticate(&self) -> anyhow::Result<()> {
-        let url = self.build_url("/v1/auth/login");
+        let url = self.build_url("/v3/auth/user/login");
 
         debug!("Authenticating with server: {}", url);
 

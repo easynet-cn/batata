@@ -240,6 +240,40 @@ impl TestClient {
         self.handle_response(response).await
     }
 
+    /// Make a PUT request with query parameters
+    pub async fn put_with_query<T: DeserializeOwned, Q: Serialize>(
+        &self,
+        path: &str,
+        query: &Q,
+    ) -> Result<T, TestClientError> {
+        let url = self.build_url(path);
+        let builder = self.add_auth(self.client.put(&url)).query(query);
+
+        let response = builder
+            .send()
+            .await
+            .map_err(|e| TestClientError::RequestFailed(e.to_string()))?;
+
+        self.handle_response(response).await
+    }
+
+    /// Make a PATCH request with form data
+    pub async fn patch_form<T: DeserializeOwned, F: Serialize>(
+        &self,
+        path: &str,
+        form: &F,
+    ) -> Result<T, TestClientError> {
+        let url = self.build_url(path);
+        let builder = self.add_auth(self.client.patch(&url)).form(form);
+
+        let response = builder
+            .send()
+            .await
+            .map_err(|e| TestClientError::RequestFailed(e.to_string()))?;
+
+        self.handle_response(response).await
+    }
+
     /// Make a DELETE request
     pub async fn delete<T: DeserializeOwned>(&self, path: &str) -> Result<T, TestClientError> {
         let url = self.build_url(path);

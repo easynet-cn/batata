@@ -22,7 +22,11 @@ use crate::{
         health::ConsulHealthService, kv::ConsulKVService, route::consul_routes,
     },
     api::openapi::ApiDoc,
-    api::v2::route::routes as v2_routes,
+    api::v2::route::{
+        cluster_routes, config_routes, console_routes as v2_console_routes, naming_routes,
+    },
+    api::v3::admin::route::admin_routes as v3_admin_routes,
+    api::v3::client::route::client_routes as v3_client_routes,
     auth, console,
     console::v3::metrics::routes as metrics_routes,
     middleware::{auth::Authentication, rate_limit::RateLimiter},
@@ -76,7 +80,8 @@ pub fn console_server(
             .service(
                 web::scope(&context_path)
                     .service(auth::v3::route::routes())
-                    .service(console::v3::route::routes()),
+                    .service(console::v3::route::routes())
+                    .service(v2_console_routes()),
             )
     })
     .bind((address, port))?
@@ -198,12 +203,15 @@ pub fn main_server(
             )
             .service(
                 web::scope(&context_path)
-                    .service(auth::v1::route::routes())
-                    .service(auth::v3::route::routes())
-                    .service(console::v3::route::routes()),
+                    // V2 Open API routes (config, naming, cluster only)
+                    .service(config_routes())
+                    .service(naming_routes())
+                    .service(cluster_routes())
+                    // V3 Admin API routes
+                    .service(v3_admin_routes())
+                    // V3 Client API routes
+                    .service(v3_client_routes()),
             )
-            // V2 Open API routes under /nacos prefix
-            .service(v2_routes())
             .service(consul_routes())
             // Apollo Config API routes
             .service(apollo_config_routes())

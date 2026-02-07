@@ -266,22 +266,17 @@ impl ConsulLockService {
                         let (tx, rx) = tokio::sync::oneshot::channel();
                         {
                             let mut waiters = self.lock_waiters.write().await;
-                            waiters
-                                .entry(lock_key.clone())
-                                .or_default()
-                                .push(tx);
+                            waiters.entry(lock_key.clone()).or_default().push(tx);
                         }
 
                         // Wait for notification or timeout
-                        let result = tokio::time::timeout(
-                            Duration::from_millis(wait_ms),
-                            rx,
-                        )
-                        .await;
+                        let result = tokio::time::timeout(Duration::from_millis(wait_ms), rx).await;
 
                         if result.is_ok() {
                             // Retry lock acquisition
-                            return self.try_acquire_lock(&lock_key, &session_id, &lock_value).await;
+                            return self
+                                .try_acquire_lock(&lock_key, &session_id, &lock_value)
+                                .await;
                         }
                     }
                 }
@@ -297,7 +292,8 @@ impl ConsulLockService {
             }
         }
 
-        self.try_acquire_lock(&lock_key, &session_id, &lock_value).await
+        self.try_acquire_lock(&lock_key, &session_id, &lock_value)
+            .await
     }
 
     async fn try_acquire_lock(
@@ -482,10 +478,13 @@ impl ConsulSemaphoreService {
             acquired_at: current_unix_time(),
         };
         let contender_json = serde_json::to_string(&contender).ok()?;
-        self.kv_service.put(contender_key.clone(), &contender_json, None);
+        self.kv_service
+            .put(contender_key.clone(), &contender_json, None);
 
         // Try to acquire a slot
-        let acquired = self.try_acquire_slot(&lock_key, &session_id, opts.limit).await;
+        let acquired = self
+            .try_acquire_slot(&lock_key, &session_id, opts.limit)
+            .await;
 
         if acquired {
             let holders = self.get_holders(&opts.prefix, opts.limit);
@@ -525,7 +524,9 @@ impl ConsulSemaphoreService {
         }
 
         // Add this session as a holder
-        lock_entry.holders.insert(session_id.to_string(), current_unix_time());
+        lock_entry
+            .holders
+            .insert(session_id.to_string(), current_unix_time());
 
         // Update the lock entry
         let lock_json = serde_json::to_string(&lock_entry).unwrap_or_default();
@@ -653,7 +654,9 @@ pub async fn release_lock(
 
     let session_id = match &query.session {
         Some(s) => s.clone(),
-        None => return HttpResponse::BadRequest().json(ConsulError::new("session parameter required")),
+        None => {
+            return HttpResponse::BadRequest().json(ConsulError::new("session parameter required"));
+        }
     };
 
     let success = lock_service.unlock(&key, &session_id).await;
@@ -723,7 +726,9 @@ pub async fn renew_lock(
 
     let session_id = match &query.session {
         Some(s) => s.clone(),
-        None => return HttpResponse::BadRequest().json(ConsulError::new("session parameter required")),
+        None => {
+            return HttpResponse::BadRequest().json(ConsulError::new("session parameter required"));
+        }
     };
 
     let success = lock_service.renew_lock(&key, &session_id);
@@ -767,7 +772,9 @@ pub async fn release_semaphore(
 
     let session_id = match &query.session {
         Some(s) => s.clone(),
-        None => return HttpResponse::BadRequest().json(ConsulError::new("session parameter required")),
+        None => {
+            return HttpResponse::BadRequest().json(ConsulError::new("session parameter required"));
+        }
     };
 
     let success = semaphore_service.release(&prefix, &session_id).await;

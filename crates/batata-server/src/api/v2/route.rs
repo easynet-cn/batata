@@ -5,8 +5,8 @@
 use actix_web::{Scope, web};
 
 use super::{
-    aggr, audit, capacity, client, cluster, config, health, history, instance, namespace, operator,
-    service,
+    aggr, audit, capacity, client, cluster, config, health, history, instance, namespace,
+    naming_catalog, operator, service,
 };
 
 /// Create the V2 Config Service routes
@@ -35,6 +35,7 @@ pub fn config_routes() -> Scope {
                 .service(config::get_config)
                 .service(config::publish_config)
                 .service(config::delete_config)
+                .service(config::search_config_detail)
                 .service(
                     web::scope("/aggr")
                         .service(aggr::publish_aggr_config)
@@ -92,11 +93,15 @@ pub fn naming_routes() -> Scope {
                 .service(instance::register_instance)
                 .service(instance::deregister_instance)
                 .service(instance::update_instance)
+                .service(instance::patch_instance)
                 .service(instance::get_instance)
                 .service(instance::get_instance_list)
+                .service(instance::beat_instance)
+                .service(instance::get_instance_statuses)
                 .service(instance::batch_update_metadata)
                 .service(instance::batch_delete_metadata),
         )
+        .service(web::scope("/catalog/instances").service(naming_catalog::list_catalog_instances))
         .service(
             web::scope("/service")
                 .service(service::create_service)
@@ -136,8 +141,10 @@ pub fn cluster_routes() -> Scope {
             web::scope("/node")
                 .service(cluster::get_node_self)
                 .service(cluster::get_node_list)
-                .service(cluster::get_node_health),
+                .service(cluster::get_node_health)
+                .service(cluster::update_node_list),
         )
+        .service(web::scope("/nodes").service(cluster::remove_nodes))
         .service(web::scope("/lookup").service(cluster::switch_lookup))
 }
 

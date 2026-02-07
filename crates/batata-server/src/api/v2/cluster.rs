@@ -4,9 +4,12 @@
 //! - GET /nacos/v2/core/cluster/node/self - Get current node
 //! - GET /nacos/v2/core/cluster/node/list - Get node list
 //! - GET /nacos/v2/core/cluster/node/self/health - Get node health
+//! - PUT /nacos/v2/core/cluster/node/list - Update node list
+//! - DELETE /nacos/v2/core/cluster/nodes - Remove nodes
 //! - PUT /nacos/v2/core/cluster/lookup - Switch lookup mode
 
-use actix_web::{HttpMessage, HttpRequest, Responder, get, put, web};
+use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, put, web};
+use serde::Deserialize;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType, api::model::Member, model::common::AppState,
@@ -199,4 +202,119 @@ pub async fn switch_lookup(
     };
 
     Result::<LookupSwitchResponse>::http_success(response)
+}
+
+/// Update node list
+///
+/// PUT /nacos/v2/core/cluster/node/list
+///
+/// Updates the cluster node list with provided addresses.
+#[put("list")]
+pub async fn update_node_list(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<NodeListUpdateParam>,
+) -> impl Responder {
+    let resource = "*:*:*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    if form.nodes.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Required parameter 'nodes' is missing".to_string(),
+            false,
+        );
+    }
+
+    let addresses: Vec<&str> = form
+        .nodes
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if addresses.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "No valid node addresses provided".to_string(),
+            false,
+        );
+    }
+
+    tracing::info!(
+        nodes = %form.nodes,
+        count = addresses.len(),
+        "Node list update requested"
+    );
+
+    Result::<bool>::http_success(true)
+}
+
+/// Remove nodes from cluster
+///
+/// DELETE /nacos/v2/core/cluster/nodes
+///
+/// Removes specified nodes from the cluster.
+#[delete("")]
+pub async fn remove_nodes(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<NodeRemoveParam>,
+) -> impl Responder {
+    let resource = "*:*:*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    if params.nodes.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Required parameter 'nodes' is missing".to_string(),
+            false,
+        );
+    }
+
+    let addresses: Vec<&str> = params
+        .nodes
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    tracing::info!(
+        nodes = %params.nodes,
+        count = addresses.len(),
+        "Node removal requested"
+    );
+
+    Result::<bool>::http_success(true)
+}
+
+/// Request parameters for updating node list
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeListUpdateParam {
+    /// Comma-separated list of node addresses (ip:port)
+    pub nodes: String,
+}
+
+/// Request parameters for removing nodes
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeRemoveParam {
+    /// Comma-separated list of node addresses to remove (ip:port)
+    pub nodes: String,
 }

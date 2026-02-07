@@ -130,7 +130,11 @@ impl BetaGrayRule {
             .filter(|s| !s.is_empty())
             .collect();
         let valid = !ips.is_empty();
-        Self { ips, priority, valid }
+        Self {
+            ips,
+            priority,
+            valid,
+        }
     }
 }
 
@@ -169,7 +173,11 @@ impl TagGrayRule {
     pub fn new(expr: &str, priority: i32) -> Self {
         let tag = expr.trim().to_string();
         let valid = !tag.is_empty();
-        Self { tag, priority, valid }
+        Self {
+            tag,
+            priority,
+            valid,
+        }
     }
 }
 
@@ -208,7 +216,11 @@ impl PercentageGrayRule {
     pub fn new(expr: &str, priority: i32) -> Self {
         let percentage = expr.trim().parse::<u8>().unwrap_or(0);
         let valid = percentage > 0 && percentage <= 100;
-        Self { percentage, priority, valid }
+        Self {
+            percentage,
+            priority,
+            valid,
+        }
     }
 
     /// Hash-based percentage matching using client identifier
@@ -282,7 +294,11 @@ impl IpRangeGrayRule {
             valid = false;
         }
 
-        Self { ranges, priority, valid }
+        Self {
+            ranges,
+            priority,
+            valid,
+        }
     }
 
     fn parse_cidr(cidr: &str) -> Option<IpRange> {
@@ -434,7 +450,10 @@ mod tests {
         assert!(rule.is_valid());
 
         let mut labels = HashMap::new();
-        labels.insert(labels::VIP_SERVER_TAG.to_string(), "v2.0-testing".to_string());
+        labels.insert(
+            labels::VIP_SERVER_TAG.to_string(),
+            "v2.0-testing".to_string(),
+        );
         assert!(rule.matches(&labels));
 
         labels.insert(labels::VIP_SERVER_TAG.to_string(), "v1.0".to_string());

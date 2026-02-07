@@ -25,7 +25,9 @@ pub mod sync;
 pub mod xds;
 
 // Re-export commonly used types
-pub use grpc::{AggregatedDiscoveryServiceImpl, XdsGrpcServer, create_ads_service, start_xds_grpc_server};
+pub use grpc::{
+    AggregatedDiscoveryServiceImpl, XdsGrpcServer, create_ads_service, start_xds_grpc_server,
+};
 pub use mcp::{McpServer, McpServerConfig};
 pub use server::XdsServer;
 pub use snapshot::ResourceSnapshot;
