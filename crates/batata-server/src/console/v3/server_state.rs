@@ -39,8 +39,16 @@ async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<St
     //console module state
     let console_state = data.console_state();
 
+    // plugin module state (Consul, Apollo)
+    let plugin_state = data.plugin_state();
+
     let mut state_map: HashMap<String, Option<String>> = HashMap::with_capacity(
-        config_state.len() + auth_state.len() + env_state.len() + console_state.len() + 1,
+        config_state.len()
+            + auth_state.len()
+            + env_state.len()
+            + console_state.len()
+            + plugin_state.len()
+            + 1,
     );
 
     state_map.insert(
@@ -61,6 +69,10 @@ async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<St
     }
 
     for (k, v) in console_state {
+        state_map.insert(k, v);
+    }
+
+    for (k, v) in plugin_state {
         state_map.insert(k, v);
     }
 

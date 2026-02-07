@@ -60,6 +60,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_context_path = configuration.server_context_path();
     let sdk_server_port = configuration.sdk_server_port();
     let cluster_server_port = configuration.cluster_server_port();
+    let consul_enabled = configuration.consul_enabled();
+    let consul_server_port = configuration.consul_server_port();
+    let consul_server_address = server_address.clone();
+    let apollo_enabled = configuration.apollo_enabled();
+    let apollo_server_port = configuration.apollo_server_port();
+    let apollo_server_address = server_address.clone();
 
     // Initialize database and server member manager based on deployment mode
     let (database_connection, server_member_manager) = if is_console_remote {
@@ -185,16 +191,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Create Consul service adapters
-    let consul_services = ConsulServices::new(grpc_servers.naming_service.clone());
+    // Create Consul service adapters (only if enabled)
+    let consul_services = if consul_enabled {
+        Some(ConsulServices::new(grpc_servers.naming_service.clone()))
+    } else {
+        info!("Consul compatibility server is disabled");
+        None
+    };
 
-    // Create Apollo service adapters
-    let apollo_services = ApolloServices::new(Arc::new(
-        app_state
-            .database_connection
-            .clone()
-            .expect("Database connection required for Apollo services"),
-    ));
+    // Create Apollo service adapters (only if enabled)
+    let apollo_services = if apollo_enabled {
+        Some(ApolloServices::new(Arc::new(
+            app_state
+                .database_connection
+                .clone()
+                .expect("Database connection required for Apollo services"),
+        )))
+    } else {
+        info!("Apollo compatibility server is disabled");
+        None
+    };
 
     // Start HTTP servers based on deployment type with graceful shutdown support
     match deployment_type.as_str() {
@@ -219,31 +235,78 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         model::common::NACOS_DEPLOYMENT_TYPE_SERVER => {
-            let main_server = startup::main_server(
+            let naming_service = grpc_servers.naming_service.clone();
+
+            info!(
+                "Starting Nacos main server on {}:{}",
+                server_address, server_main_port
+            );
+            let main = startup::main_server(
                 app_state.clone(),
                 grpc_servers.naming_service,
                 grpc_servers.connection_manager,
-                consul_services,
-                apollo_services,
                 ai_services.clone(),
                 server_context_path,
                 server_address,
                 server_main_port,
             )?;
 
+            let consul_opt = consul_services
+                .map(|svc| {
+                    info!(
+                        "Starting Consul compatibility server on {}:{}",
+                        consul_server_address, consul_server_port
+                    );
+                    startup::consul_server(
+                        app_state.clone(),
+                        naming_service.clone(),
+                        svc,
+                        consul_server_address.clone(),
+                        consul_server_port,
+                    )
+                })
+                .transpose()?;
+
+            let apollo_opt = apollo_services
+                .map(|svc| {
+                    info!(
+                        "Starting Apollo compatibility server on {}:{}",
+                        apollo_server_address, apollo_server_port
+                    );
+                    startup::apollo_server(
+                        app_state.clone(),
+                        svc,
+                        apollo_server_address.clone(),
+                        apollo_server_port,
+                    )
+                })
+                .transpose()?;
+
             tokio::select! {
-                result = main_server => {
+                result = async {
+                    tokio::try_join!(
+                        main,
+                        async { match consul_opt { Some(s) => s.await, None => std::future::pending().await } },
+                        async { match apollo_opt { Some(s) => s.await, None => std::future::pending().await } }
+                    )
+                } => {
                     if let Err(e) = result {
-                        error!("Main server error: {}", e);
+                        error!("Server error: {}", e);
                     }
                 }
                 _ = graceful_shutdown.wait_for_shutdown() => {
-                    info!("Main server shutting down gracefully");
+                    info!("All servers shutting down gracefully");
                 }
             }
         }
         _ => {
-            // Start both console and main servers
+            let naming_service = grpc_servers.naming_service.clone();
+
+            // Start console, main, and optionally Consul/Apollo servers
+            info!(
+                "Starting Console server on {}:{}",
+                console_server_address, console_server_port
+            );
             let console = startup::console_server(
                 app_state.clone(),
                 ai_services.clone(),
@@ -251,20 +314,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 console_server_address,
                 console_server_port,
             )?;
+
+            info!(
+                "Starting Nacos main server on {}:{}",
+                server_address, server_main_port
+            );
             let main = startup::main_server(
                 app_state.clone(),
                 grpc_servers.naming_service,
                 grpc_servers.connection_manager,
-                consul_services,
-                apollo_services,
                 ai_services,
                 server_context_path,
                 server_address,
                 server_main_port,
             )?;
 
+            let consul_opt = consul_services
+                .map(|svc| {
+                    info!(
+                        "Starting Consul compatibility server on {}:{}",
+                        consul_server_address, consul_server_port
+                    );
+                    startup::consul_server(
+                        app_state.clone(),
+                        naming_service.clone(),
+                        svc,
+                        consul_server_address.clone(),
+                        consul_server_port,
+                    )
+                })
+                .transpose()?;
+
+            let apollo_opt = apollo_services
+                .map(|svc| {
+                    info!(
+                        "Starting Apollo compatibility server on {}:{}",
+                        apollo_server_address, apollo_server_port
+                    );
+                    startup::apollo_server(
+                        app_state.clone(),
+                        svc,
+                        apollo_server_address.clone(),
+                        apollo_server_port,
+                    )
+                })
+                .transpose()?;
+
             tokio::select! {
-                result = async { tokio::try_join!(console, main) } => {
+                result = async {
+                    tokio::try_join!(
+                        console,
+                        main,
+                        async { match consul_opt { Some(s) => s.await, None => std::future::pending().await } },
+                        async { match apollo_opt { Some(s) => s.await, None => std::future::pending().await } }
+                    )
+                } => {
                     if let Err(e) = result {
                         error!("Server error: {}", e);
                     }

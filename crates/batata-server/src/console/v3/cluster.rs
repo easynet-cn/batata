@@ -5,6 +5,8 @@ use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, post, put, web}
 use batata_api::model::NodeState;
 use serde::{Deserialize, Serialize};
 
+use batata_console::model::Member as ConsoleMember;
+
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
     api::model::Member,
@@ -22,7 +24,10 @@ pub use batata_console::model::{
 #[serde(rename_all = "camelCase")]
 struct GetNodesParam {
     pub keyword: Option<String>,
-    pub with_health: Option<bool>,
+    pub with_instances: Option<bool>,
+    pub page_no: Option<u64>,
+    pub page_size: Option<u64>,
+    pub namespace_id: Option<String>,
 }
 
 /// Parameters for member state update
@@ -62,7 +67,12 @@ async fn get_nodes(
             .build()
     );
 
-    let mut members = data.member_manager().all_members();
+    let mut members: Vec<ConsoleMember> = data
+        .member_manager()
+        .all_members()
+        .into_iter()
+        .map(ConsoleMember::from)
+        .collect();
 
     if let Some(keyword) = &params.keyword
         && !keyword.is_empty()
@@ -70,7 +80,13 @@ async fn get_nodes(
         members.retain(|e| e.address.contains(keyword));
     }
 
-    model::common::Result::<Vec<Member>>::http_success(members)
+    // Apply pagination
+    let page_no = params.page_no.unwrap_or(1).max(1) as usize;
+    let page_size = params.page_size.unwrap_or(10).max(1) as usize;
+    let start = (page_no - 1) * page_size;
+    let paginated: Vec<ConsoleMember> = members.into_iter().skip(start).take(page_size).collect();
+
+    model::common::Result::<Vec<ConsoleMember>>::http_success(paginated)
 }
 
 /// Get healthy cluster nodes only
@@ -84,8 +100,13 @@ async fn get_healthy_nodes(req: HttpRequest, data: web::Data<AppState>) -> impl 
             .build()
     );
 
-    let members = data.member_manager().healthy_members();
-    model::common::Result::<Vec<Member>>::http_success(members)
+    let members: Vec<ConsoleMember> = data
+        .member_manager()
+        .healthy_members()
+        .into_iter()
+        .map(ConsoleMember::from)
+        .collect();
+    model::common::Result::<Vec<ConsoleMember>>::http_success(members)
 }
 
 /// Get cluster health status
@@ -165,7 +186,10 @@ async fn get_node(
     let address = path.into_inner();
 
     match data.member_manager().get_member(&address) {
-        Some(member) => model::common::Result::<Member>::http_success(member),
+        Some(member) => {
+            let console_member: ConsoleMember = member.into();
+            model::common::Result::<ConsoleMember>::http_success(console_member)
+        }
         None => model::common::Result::<String>::http_response(
             404,
             404,

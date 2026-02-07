@@ -14,11 +14,12 @@ use crate::console::datasource::ConsoleDataSource;
 use super::{
     config::Configuration,
     constants::{
-        AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, CONFIG_RENTENTION_DAYS_PROPERTY_STATE,
-        DATASOURCE_PLATFORM_PROPERTY_STATE, DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA,
-        DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE,
-        IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
-        MAX_HEALTH_CHECK_FAIL_COUNT, NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION,
+        APOLLO_ENABLED_STATE, APOLLO_PORT_STATE, AUTH_ADMIN_REQUEST, AUTH_ENABLED,
+        AUTH_SYSTEM_TYPE, CONFIG_RENTENTION_DAYS_PROPERTY_STATE, CONSUL_ENABLED_STATE,
+        CONSUL_PORT_STATE, DATASOURCE_PLATFORM_PROPERTY_STATE, DEFAULT_CLUSTER_QUOTA,
+        DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE,
+        FUNCTION_MODE_STATE, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY,
+        MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT, NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION,
         NOTIFY_CONNECT_TIMEOUT, NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE, STARTUP_MODE_STATE,
     },
 };
@@ -243,6 +244,30 @@ impl AppState {
         state.insert(
             "login_page_enabled".to_string(),
             Some(format!("{}", self.configuration.auth_console_enabled())),
+        );
+
+        state
+    }
+
+    /// Get plugin state as a HashMap for API responses
+    pub fn plugin_state(&self) -> HashMap<String, Option<String>> {
+        let mut state = HashMap::with_capacity(4);
+
+        state.insert(
+            CONSUL_ENABLED_STATE.to_string(),
+            Some(format!("{}", self.configuration.consul_enabled())),
+        );
+        state.insert(
+            CONSUL_PORT_STATE.to_string(),
+            Some(format!("{}", self.configuration.consul_server_port())),
+        );
+        state.insert(
+            APOLLO_ENABLED_STATE.to_string(),
+            Some(format!("{}", self.configuration.apollo_enabled())),
+        );
+        state.insert(
+            APOLLO_PORT_STATE.to_string(),
+            Some(format!("{}", self.configuration.apollo_server_port())),
         );
 
         state

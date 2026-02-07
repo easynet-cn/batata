@@ -128,8 +128,26 @@ impl RemoteDataSource {
                         state: m.state,
                         extend_info: m.extend_info,
                         address: m.address,
+                        abilities: crate::model::NodeAbilities {
+                            remote_ability: crate::model::RemoteAbility {
+                                support_remote_connection: m
+                                    .abilities
+                                    .remote_ability
+                                    .support_remote_connection,
+                                grpc_report_enabled: m.abilities.remote_ability.grpc_report_enabled,
+                            },
+                            config_ability: crate::model::ConfigAbility {
+                                support_remote_metrics: m
+                                    .abilities
+                                    .config_ability
+                                    .support_remote_metrics,
+                            },
+                            naming_ability: crate::model::NamingAbility {
+                                support_jraft: m.abilities.naming_ability.support_jraft,
+                            },
+                        },
+                        grpc_report_enabled: m.grpc_report_enabled,
                         fail_access_cnt: m.fail_access_cnt,
-                        abilities: m.abilities,
                     })
                     .collect();
             }
@@ -174,8 +192,9 @@ impl RemoteDataSource {
                         .member
                         .extend_info
                         .get("version")
-                        .cloned()
-                        .unwrap_or_default(),
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                 });
             }
             Err(e) => {

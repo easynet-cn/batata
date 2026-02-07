@@ -119,6 +119,44 @@ pub struct ConfigHistoryDetailInfo {
     pub encrypted_data_key: String,
 }
 
+/// Remote connection ability information
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAbility {
+    #[serde(default)]
+    pub support_remote_connection: bool,
+    #[serde(default)]
+    pub grpc_report_enabled: bool,
+}
+
+/// Configuration management ability information
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigAbility {
+    #[serde(default)]
+    pub support_remote_metrics: bool,
+}
+
+/// Naming/service discovery ability information
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NamingAbility {
+    #[serde(default)]
+    pub support_jraft: bool,
+}
+
+/// Aggregated node abilities
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeAbilities {
+    #[serde(default)]
+    pub remote_ability: RemoteAbility,
+    #[serde(default)]
+    pub config_ability: ConfigAbility,
+    #[serde(default)]
+    pub naming_ability: NamingAbility,
+}
+
 /// Cluster member info
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,10 +164,14 @@ pub struct Member {
     pub ip: String,
     pub port: i32,
     pub state: String,
-    pub extend_info: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub extend_info: std::collections::HashMap<String, serde_json::Value>,
     pub address: String,
     pub fail_access_cnt: i32,
-    pub abilities: std::collections::HashMap<String, bool>,
+    #[serde(default)]
+    pub abilities: NodeAbilities,
+    #[serde(default)]
+    pub grpc_report_enabled: bool,
 }
 
 /// Cluster health response

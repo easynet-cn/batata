@@ -88,6 +88,64 @@ pub fn console_server(
     .run())
 }
 
+/// Creates and binds the Consul compatibility HTTP server.
+///
+/// The Consul server provides Consul-compatible API endpoints for service
+/// discovery clients that speak the Consul protocol. It runs on a dedicated
+/// port (default 8500) without Nacos authentication middleware, since Consul
+/// uses its own ACL token system.
+pub fn consul_server(
+    app_state: Arc<AppState>,
+    naming_service: Arc<NamingService>,
+    consul_services: ConsulServices,
+    address: String,
+    port: u16,
+) -> Result<Server, std::io::Error> {
+    Ok(HttpServer::new(move || {
+        App::new()
+            .wrap(Logger::default())
+            .wrap(RateLimiter::with_defaults())
+            .app_data(web::Data::from(app_state.clone()))
+            .app_data(web::Data::new(naming_service.clone()))
+            .app_data(web::Data::new(consul_services.agent.clone()))
+            .app_data(web::Data::new(consul_services.health.clone()))
+            .app_data(web::Data::new(consul_services.kv.clone()))
+            .app_data(web::Data::new(consul_services.catalog.clone()))
+            .app_data(web::Data::new(consul_services.acl.clone()))
+            .service(consul_routes())
+    })
+    .bind((address, port))?
+    .run())
+}
+
+/// Creates and binds the Apollo compatibility HTTP server.
+///
+/// The Apollo server provides Apollo Config-compatible API endpoints for
+/// configuration management clients that speak the Apollo protocol. It runs
+/// on a dedicated port (default 8080) without Nacos authentication middleware,
+/// since Apollo uses its own access key system.
+pub fn apollo_server(
+    app_state: Arc<AppState>,
+    apollo_services: ApolloServices,
+    address: String,
+    port: u16,
+) -> Result<Server, std::io::Error> {
+    Ok(HttpServer::new(move || {
+        App::new()
+            .wrap(Logger::default())
+            .wrap(RateLimiter::with_defaults())
+            .app_data(web::Data::from(app_state.clone()))
+            .app_data(web::Data::new(apollo_services.notification_service.clone()))
+            .app_data(web::Data::new(apollo_services.openapi_service.clone()))
+            .app_data(web::Data::new(apollo_services.advanced_service.clone()))
+            .service(apollo_config_routes())
+            .service(apollo_openapi_routes())
+            .service(apollo_advanced_routes())
+    })
+    .bind((address, port))?
+    .run())
+}
+
 /// AI services for MCP and A2A APIs.
 #[derive(Clone)]
 pub struct AIServices {
@@ -156,15 +214,13 @@ impl ApolloServices {
 /// Creates and binds the main HTTP server.
 ///
 /// The main server provides the core Nacos-compatible API endpoints
-/// including config management, service discovery, Consul compatibility,
-/// and Apollo Config client compatibility.
-/// It also serves Swagger UI at `/swagger-ui/` for API documentation.
+/// including config management, service discovery, AI capabilities,
+/// cloud native integrations, metrics, and Swagger UI documentation.
+/// Consul and Apollo compatibility are served on dedicated ports.
 pub fn main_server(
     app_state: Arc<AppState>,
     naming_service: Arc<NamingService>,
     connection_manager: Arc<ConnectionManager>,
-    consul_services: ConsulServices,
-    apollo_services: ApolloServices,
     ai_services: AIServices,
     context_path: String,
     address: String,
@@ -181,15 +237,6 @@ pub fn main_server(
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(naming_service.clone()))
             .app_data(web::Data::new(connection_manager.clone()))
-            .app_data(web::Data::new(consul_services.agent.clone()))
-            .app_data(web::Data::new(consul_services.health.clone()))
-            .app_data(web::Data::new(consul_services.kv.clone()))
-            .app_data(web::Data::new(consul_services.catalog.clone()))
-            .app_data(web::Data::new(consul_services.acl.clone()))
-            // Apollo services (Notification, OpenAPI, Advanced)
-            .app_data(web::Data::new(apollo_services.notification_service.clone()))
-            .app_data(web::Data::new(apollo_services.openapi_service.clone()))
-            .app_data(web::Data::new(apollo_services.advanced_service.clone()))
             // AI services (MCP Server Registry, A2A Agent Registry)
             .app_data(web::Data::new(ai_services.mcp_registry.clone()))
             .app_data(web::Data::new(ai_services.agent_registry.clone()))
@@ -212,12 +259,6 @@ pub fn main_server(
                     // V3 Client API routes
                     .service(v3_client_routes()),
             )
-            .service(consul_routes())
-            // Apollo Config API routes
-            .service(apollo_config_routes())
-            // Apollo Open API and Advanced routes
-            .service(apollo_openapi_routes())
-            .service(apollo_advanced_routes())
             // AI Capabilities API routes (MCP, A2A)
             .configure(configure_mcp)
             .configure(configure_a2a)

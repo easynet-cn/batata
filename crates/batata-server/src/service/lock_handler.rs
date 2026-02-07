@@ -48,8 +48,7 @@ impl PayloadHandler for LockOperationHandler {
         };
 
         // Check permission for lock resource
-        let auth_context =
-            extract_auth_context_from_payload(&self.auth_service, payload);
+        let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
         let resource = GrpcResource::lock(&lock_instance.key);
         check_permission(
             &self.auth_service,

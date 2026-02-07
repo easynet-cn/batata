@@ -14,7 +14,10 @@ use super::namespace::ApiResult;
 #[serde(rename_all = "camelCase")]
 pub struct GetNodesParam {
     pub keyword: Option<String>,
-    pub with_health: Option<bool>,
+    pub with_instances: Option<bool>,
+    pub page_no: Option<u64>,
+    pub page_size: Option<u64>,
+    pub namespace_id: Option<String>,
 }
 
 #[get("nodes")]
@@ -30,7 +33,13 @@ pub async fn get_nodes(
         members.retain(|e| e.address.contains(keyword));
     }
 
-    ApiResult::<Vec<Member>>::http_success(members)
+    // Apply pagination
+    let page_no = params.page_no.unwrap_or(1).max(1) as usize;
+    let page_size = params.page_size.unwrap_or(10).max(1) as usize;
+    let start = (page_no - 1) * page_size;
+    let paginated: Vec<Member> = members.into_iter().skip(start).take(page_size).collect();
+
+    ApiResult::<Vec<Member>>::http_success(paginated)
 }
 
 #[get("nodes/healthy")]

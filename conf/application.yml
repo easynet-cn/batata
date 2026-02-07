@@ -381,6 +381,18 @@ nacos.config.encryption.reload.interval.ms: 0
 ### If turn on the MCP server:
 nacos.istio.mcp.server.enabled: false
 
+#*************** Consul Compatibility Plugin Configurations ***************#
+### Enable Consul API compatibility server on its own port
+nacos.plugin.consul.enabled: true
+### Consul compatibility server port (default: 8500, same as real Consul)
+nacos.plugin.consul.port: 8500
+
+#*************** Apollo Compatibility Plugin Configurations ***************#
+### Enable Apollo Config API compatibility server on its own port
+nacos.plugin.apollo.enabled: true
+### Apollo compatibility server port (default: 8080)
+nacos.plugin.apollo.port: 8080
+
 #*************** Service Mesh / xDS Configurations ***************#
 ### Enable xDS server for Envoy/Istio integration
 nacos.mesh.xds.enabled: false
