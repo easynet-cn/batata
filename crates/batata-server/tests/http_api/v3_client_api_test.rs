@@ -2,7 +2,19 @@
 //!
 //! Tests for /nacos/v3/client/* endpoints (SDK-facing API)
 
-use crate::common::{DEFAULT_GROUP, TestClient, unique_data_id, unique_service_name};
+use crate::common::{
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id, unique_service_name,
+};
+
+async fn authenticated_client() -> TestClient {
+    let mut client = TestClient::new(MAIN_BASE_URL);
+    client
+        .login_via(CONSOLE_BASE_URL, TEST_USERNAME, TEST_PASSWORD)
+        .await
+        .expect("Failed to login");
+    client
+}
 
 // ========== Client Instance Endpoints ==========
 
@@ -10,7 +22,7 @@ use crate::common::{DEFAULT_GROUP, TestClient, unique_data_id, unique_service_na
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_register_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_reg");
 
     let response: serde_json::Value = client
@@ -36,7 +48,7 @@ async fn test_v3_client_register_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_deregister_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_dereg");
 
     // Register first
@@ -72,7 +84,7 @@ async fn test_v3_client_deregister_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_list_instances() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_list");
 
     // Register multiple instances
@@ -107,7 +119,7 @@ async fn test_v3_client_list_instances() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_list_instances_with_cluster() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_cluster");
 
     // Register instance with cluster
@@ -143,7 +155,7 @@ async fn test_v3_client_list_instances_with_cluster() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_list_instances_healthy_only() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_healthy");
 
     // Register healthy instance
@@ -179,7 +191,7 @@ async fn test_v3_client_list_instances_healthy_only() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_register_with_metadata() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_meta");
 
     let response: serde_json::Value = client
@@ -202,7 +214,7 @@ async fn test_v3_client_register_with_metadata() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_register_validation() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     // Missing required fields
     let result = client
@@ -224,7 +236,7 @@ async fn test_v3_client_register_validation() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_get_config() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v3client_cfg");
     let content = "client.config=value";
 
@@ -257,7 +269,7 @@ async fn test_v3_client_get_config() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_client_get_config_not_found() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v3client_notfound");
 
     let result = client

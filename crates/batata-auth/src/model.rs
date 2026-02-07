@@ -176,6 +176,7 @@ impl Resource {
 pub struct AuthContext {
     pub username: String,
     pub jwt_error: Option<jsonwebtoken::errors::Error>,
+    pub token_provided: bool,
 }
 
 impl AuthContext {
@@ -299,7 +300,22 @@ mod tests {
         let ctx = AuthContext::default();
         assert!(ctx.username.is_empty());
         assert!(ctx.jwt_error.is_none());
+        assert!(!ctx.token_provided);
         assert_eq!(ctx.jwt_error_string(), "");
+    }
+
+    #[test]
+    fn test_auth_context_token_provided() {
+        let mut ctx = AuthContext::default();
+        assert!(!ctx.token_provided);
+
+        ctx.token_provided = true;
+        assert!(ctx.token_provided);
+
+        ctx.username = "admin".to_string();
+        assert_eq!(ctx.username, "admin");
+        assert!(ctx.token_provided);
+        assert!(ctx.jwt_error.is_none());
     }
 
     #[test]

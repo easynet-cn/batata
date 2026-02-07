@@ -2,14 +2,15 @@
 //!
 //! Tests for /v3/auth endpoints
 
-use crate::common::{TEST_PASSWORD, TEST_USERNAME, TestClient, unique_test_id};
+use crate::common::{CONSOLE_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient, unique_test_id};
 
 /// Test login success
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_login_success() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = TestClient::new(CONSOLE_BASE_URL);
 
+    // Console login returns flat format: {"accessToken":"...","tokenTtl":...,"globalAdmin":...,"username":"..."}
     let response: serde_json::Value = client
         .post_form(
             "/v3/auth/user/login",
@@ -18,55 +19,77 @@ async fn test_login_success() {
         .await
         .expect("Login request should succeed");
 
-    assert_eq!(response["code"], 0, "Login should succeed");
     assert!(
-        response["data"]["accessToken"].is_string(),
+        response["accessToken"].is_string(),
         "Should return access token"
     );
+    assert!(response["tokenTtl"].is_number(), "Should return token TTL");
 }
 
 /// Test login failure with wrong password
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_login_failure_wrong_password() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = TestClient::new(CONSOLE_BASE_URL);
 
-    let response: serde_json::Value = client
-        .post_form(
+    // Failed login returns non-JSON error text, so parsing as JSON should fail or return error
+    let result = client
+        .post_form::<serde_json::Value, _>(
             "/v3/auth/user/login",
             &[("username", TEST_USERNAME), ("password", "wrong_password")],
         )
-        .await
-        .expect("Request should complete");
+        .await;
 
-    assert_ne!(response["code"], 0, "Login should fail");
+    match result {
+        Ok(response) => {
+            // If parsed as JSON, code should indicate failure
+            assert!(
+                response.get("accessToken").is_none() || response["code"] != 0,
+                "Login should fail with wrong password"
+            );
+        }
+        Err(_) => {
+            // Parse error or HTTP error is expected for failed login
+        }
+    }
 }
 
 /// Test login failure with wrong username
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_login_failure_wrong_username() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = TestClient::new(CONSOLE_BASE_URL);
 
-    let response: serde_json::Value = client
-        .post_form(
+    // Failed login returns non-JSON error text, so parsing as JSON should fail or return error
+    let result = client
+        .post_form::<serde_json::Value, _>(
             "/v3/auth/user/login",
             &[
                 ("username", "nonexistent_user"),
                 ("password", TEST_PASSWORD),
             ],
         )
-        .await
-        .expect("Request should complete");
+        .await;
 
-    assert_ne!(response["code"], 0, "Login should fail");
+    match result {
+        Ok(response) => {
+            // If parsed as JSON, code should indicate failure
+            assert!(
+                response.get("accessToken").is_none() || response["code"] != 0,
+                "Login should fail with wrong username"
+            );
+        }
+        Err(_) => {
+            // Parse error or HTTP error is expected for failed login
+        }
+    }
 }
 
 /// Test token validation on protected endpoint
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_token_validation() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
+    let mut client = TestClient::new(CONSOLE_BASE_URL);
 
     // Login first
     client
@@ -76,7 +99,7 @@ async fn test_token_validation() {
 
     // Access protected endpoint
     let response: serde_json::Value = client
-        .get("/v3/auth/users")
+        .get("/v3/auth/user/list?pageNo=1&pageSize=10&search=accurate")
         .await
         .expect("Should access with valid token");
 
@@ -87,10 +110,12 @@ async fn test_token_validation() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_access_without_token() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = TestClient::new(CONSOLE_BASE_URL);
 
     // Try to access protected endpoint without token
-    let result = client.get::<serde_json::Value>("/v3/auth/users").await;
+    let result = client
+        .get::<serde_json::Value>("/v3/auth/user/list?pageNo=1&pageSize=10&search=accurate")
+        .await;
 
     // Should fail or return error
     match result {
@@ -107,7 +132,7 @@ async fn test_access_without_token() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_create_user() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
+    let mut client = TestClient::new(CONSOLE_BASE_URL);
     client
         .login(TEST_USERNAME, TEST_PASSWORD)
         .await
@@ -137,14 +162,17 @@ async fn test_create_user() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_user_list() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
+    let mut client = TestClient::new(CONSOLE_BASE_URL);
     client
         .login(TEST_USERNAME, TEST_PASSWORD)
         .await
         .expect("Login failed");
 
     let response: serde_json::Value = client
-        .get_with_query("/v3/auth/users", &[("pageNo", "1"), ("pageSize", "10")])
+        .get_with_query(
+            "/v3/auth/user/list",
+            &[("pageNo", "1"), ("pageSize", "10"), ("search", "accurate")],
+        )
         .await
         .expect("Get users failed");
 
@@ -155,7 +183,7 @@ async fn test_user_list() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_create_role() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
+    let mut client = TestClient::new(CONSOLE_BASE_URL);
     client
         .login(TEST_USERNAME, TEST_PASSWORD)
         .await
@@ -166,10 +194,7 @@ async fn test_create_role() {
     let response: serde_json::Value = client
         .post_form(
             "/v3/auth/role",
-            &[
-                ("role", role_name.as_str()),
-                ("description", "Test role for integration testing"),
-            ],
+            &[("role", role_name.as_str()), ("username", TEST_USERNAME)],
         )
         .await
         .expect("Create role request failed");
@@ -188,7 +213,7 @@ async fn test_create_role() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_assign_permission() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
+    let mut client = TestClient::new(CONSOLE_BASE_URL);
     client
         .login(TEST_USERNAME, TEST_PASSWORD)
         .await
@@ -196,9 +221,12 @@ async fn test_assign_permission() {
 
     let role_name = format!("permrole_{}", unique_test_id());
 
-    // Create role first
+    // Create role first (requires username)
     let _: serde_json::Value = client
-        .post_form("/v3/auth/role", &[("role", role_name.as_str())])
+        .post_form(
+            "/v3/auth/role",
+            &[("role", role_name.as_str()), ("username", TEST_USERNAME)],
+        )
         .await
         .expect("Create role failed");
 

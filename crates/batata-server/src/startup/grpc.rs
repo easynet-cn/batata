@@ -20,9 +20,17 @@ use batata_core::{
 use crate::model::tls::validate_tls_config;
 
 use crate::{
-    api::grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
+    api::{
+        ai::{AgentRegistry, McpServerRegistry},
+        grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
+    },
     model::common::AppState,
     service::{
+        ai_handler::{
+            AgentEndpointHandler, McpServerEndpointHandler, QueryAgentCardHandler,
+            QueryMcpServerHandler, ReleaseAgentCardHandler, ReleaseMcpServerHandler,
+        },
+        cluster_handler::MemberReportHandler,
         config_fuzzy_watch::ConfigFuzzyWatchManager,
         config_handler::{
             ClientConfigMetricHandler, ConfigBatchListenHandler, ConfigChangeClusterSyncHandler,
@@ -38,6 +46,8 @@ use crate::{
             HealthCheckHandler, PushAckHandler, ServerCheckHandler, ServerLoaderInfoHandler,
             ServerReloadHandler, SetupAckHandler,
         },
+        lock::LockService,
+        lock_handler::LockOperationHandler,
         naming::NamingService,
         naming_fuzzy_watch::NamingFuzzyWatchManager,
         naming_handler::{
@@ -187,6 +197,38 @@ fn register_distro_handlers(registry: &mut HandlerRegistry, distro_protocol: Arc
     registry.register_handler(Arc::new(DistroDataSnapshotHandler { distro_protocol }));
 }
 
+/// Registers the cluster member report handler.
+fn register_cluster_handlers(registry: &mut HandlerRegistry, app_state: Arc<AppState>) {
+    registry.register_handler(Arc::new(MemberReportHandler { app_state }));
+}
+
+/// Registers the lock operation handler.
+fn register_lock_handlers(registry: &mut HandlerRegistry, lock_service: Arc<LockService>) {
+    registry.register_handler(Arc::new(LockOperationHandler { lock_service }));
+}
+
+/// Registers all AI handlers (MCP + A2A).
+fn register_ai_handlers(
+    registry: &mut HandlerRegistry,
+    mcp_registry: Arc<McpServerRegistry>,
+    agent_registry: Arc<AgentRegistry>,
+) {
+    registry.register_handler(Arc::new(McpServerEndpointHandler {
+        mcp_registry: mcp_registry.clone(),
+    }));
+    registry.register_handler(Arc::new(QueryMcpServerHandler {
+        mcp_registry: mcp_registry.clone(),
+    }));
+    registry.register_handler(Arc::new(ReleaseMcpServerHandler { mcp_registry }));
+    registry.register_handler(Arc::new(AgentEndpointHandler {
+        agent_registry: agent_registry.clone(),
+    }));
+    registry.register_handler(Arc::new(QueryAgentCardHandler {
+        agent_registry: agent_registry.clone(),
+    }));
+    registry.register_handler(Arc::new(ReleaseAgentCardHandler { agent_registry }));
+}
+
 /// Creates and initializes the Distro protocol with the naming service handler.
 fn create_distro_protocol(
     local_address: &str,
@@ -267,16 +309,8 @@ pub fn start_grpc_servers(
     // Create gRPC auth service based on configuration
     let auth_enabled = app_state.configuration.auth_enabled();
     let token_secret_key = app_state.configuration.token_secret_key();
-    let server_identity_key = app_state
-        .configuration
-        .config
-        .get_string("nacos.core.auth.server.identity.key")
-        .unwrap_or_default();
-    let server_identity_value = app_state
-        .configuration
-        .config
-        .get_string("nacos.core.auth.server.identity.value")
-        .unwrap_or_default();
+    let server_identity_key = app_state.configuration.server_identity_key();
+    let server_identity_value = app_state.configuration.server_identity_value();
 
     let grpc_auth_service = GrpcAuthService::new(
         auth_enabled,
@@ -325,6 +359,18 @@ pub fn start_grpc_servers(
 
     // Register distro handlers
     register_distro_handlers(&mut handler_registry, distro_protocol.clone());
+
+    // Register cluster handlers
+    register_cluster_handlers(&mut handler_registry, app_state.clone());
+
+    // Register lock handlers
+    let lock_service = Arc::new(LockService::new());
+    register_lock_handlers(&mut handler_registry, lock_service);
+
+    // Register AI handlers (MCP + A2A)
+    let mcp_registry = Arc::new(McpServerRegistry::new());
+    let agent_registry = Arc::new(AgentRegistry::new());
+    register_ai_handlers(&mut handler_registry, mcp_registry, agent_registry);
 
     // Start distro protocol background tasks
     let distro_protocol_clone = distro_protocol.clone();

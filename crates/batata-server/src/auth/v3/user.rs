@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::api::model::Page;
 use crate::auth::model::{GLOBAL_ADMIN_ROLE, ONLY_IDENTITY, UPDATE_PASSWORD_ENTRY_POINT, User};
 use crate::error::BatataError;
-use crate::{ActionTypes, Secured, auth, model};
+use crate::{ActionTypes, ApiType, Secured, SignType, auth, model};
 use crate::{
     model::common::{self, AppState},
     secured,
@@ -41,6 +41,8 @@ async fn search_page(
     secured!(
         Secured::builder(&req, &data, "console/users")
             .action(ActionTypes::Read)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -86,6 +88,8 @@ async fn search(
     secured!(
         Secured::builder(&req, &data, "console/users")
             .action(ActionTypes::Read)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -113,6 +117,8 @@ async fn create(
     secured!(
         Secured::builder(&req, &data, "console/users")
             .action(ActionTypes::Write)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -177,6 +183,8 @@ async fn update(
     secured!(
         Secured::builder(&req, &data, "console/user/password")
             .action(ActionTypes::Write)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .tags(vec![
                 ONLY_IDENTITY.to_string(),
                 UPDATE_PASSWORD_ENTRY_POINT.to_string()
@@ -213,6 +221,8 @@ async fn delete(
     secured!(
         Secured::builder(&req, &data, "console/users")
             .action(ActionTypes::Write)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 

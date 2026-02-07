@@ -217,10 +217,33 @@ impl Configuration {
         self.config
             .get_bool("nacos.core.auth.enabled")
             .unwrap_or(false)
-            || self
-                .config
-                .get_bool("nacos.core.auth.admin.enabled")
-                .unwrap_or(false)
+    }
+
+    pub fn auth_admin_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.core.auth.admin.enabled")
+            .unwrap_or(false)
+    }
+
+    pub fn auth_enabled_for_api_type(&self, api_type: batata_common::ApiType) -> bool {
+        match api_type {
+            batata_common::ApiType::OpenApi => self.auth_enabled(),
+            batata_common::ApiType::AdminApi => self.auth_admin_enabled(),
+            batata_common::ApiType::ConsoleApi => self.auth_console_enabled(),
+            batata_common::ApiType::InnerApi => true,
+        }
+    }
+
+    pub fn server_identity_key(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.server.identity.key")
+            .unwrap_or_default()
+    }
+
+    pub fn server_identity_value(&self) -> String {
+        self.config
+            .get_string("nacos.core.auth.server.identity.value")
+            .unwrap_or_default()
     }
 
     pub fn auth_system_type(&self) -> String {
@@ -875,4 +898,103 @@ pub struct XdsConfig {
     pub tls_cert_path: Option<std::path::PathBuf>,
     /// TLS key path
     pub tls_key_path: Option<std::path::PathBuf>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use batata_common::ApiType;
+    use config::Config;
+
+    fn build_config(overrides: Vec<(&str, config::Value)>) -> Configuration {
+        let mut builder = Config::builder();
+        for (key, value) in overrides {
+            builder = builder.set_override(key, value).unwrap();
+        }
+        Configuration {
+            config: builder.build().unwrap(),
+        }
+    }
+
+    #[test]
+    fn test_auth_enabled_default_false() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.auth_enabled());
+    }
+
+    #[test]
+    fn test_auth_enabled_only_core_auth() {
+        let cfg = build_config(vec![("nacos.core.auth.enabled", true.into())]);
+        assert!(cfg.auth_enabled());
+    }
+
+    #[test]
+    fn test_auth_enabled_does_not_include_admin() {
+        // Setting admin.enabled=true should NOT make auth_enabled() return true
+        let cfg = build_config(vec![("nacos.core.auth.admin.enabled", true.into())]);
+        assert!(!cfg.auth_enabled());
+    }
+
+    #[test]
+    fn test_auth_admin_enabled() {
+        let cfg = build_config(vec![("nacos.core.auth.admin.enabled", true.into())]);
+        assert!(cfg.auth_admin_enabled());
+    }
+
+    #[test]
+    fn test_auth_enabled_for_api_type_open_api() {
+        let cfg = build_config(vec![("nacos.core.auth.enabled", true.into())]);
+        assert!(cfg.auth_enabled_for_api_type(ApiType::OpenApi));
+
+        let cfg2 = build_config(vec![]);
+        assert!(!cfg2.auth_enabled_for_api_type(ApiType::OpenApi));
+    }
+
+    #[test]
+    fn test_auth_enabled_for_api_type_admin_api() {
+        let cfg = build_config(vec![("nacos.core.auth.admin.enabled", true.into())]);
+        assert!(cfg.auth_enabled_for_api_type(ApiType::AdminApi));
+
+        let cfg2 = build_config(vec![]);
+        assert!(!cfg2.auth_enabled_for_api_type(ApiType::AdminApi));
+    }
+
+    #[test]
+    fn test_auth_enabled_for_api_type_console_api() {
+        // Console auth defaults to true
+        let cfg = build_config(vec![]);
+        assert!(cfg.auth_enabled_for_api_type(ApiType::ConsoleApi));
+
+        let cfg2 = build_config(vec![("nacos.core.auth.console.enabled", false.into())]);
+        assert!(!cfg2.auth_enabled_for_api_type(ApiType::ConsoleApi));
+    }
+
+    #[test]
+    fn test_auth_enabled_for_api_type_inner_api() {
+        // InnerApi always returns true (uses server identity instead)
+        let cfg = build_config(vec![]);
+        assert!(cfg.auth_enabled_for_api_type(ApiType::InnerApi));
+    }
+
+    #[test]
+    fn test_server_identity_key_default() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.server_identity_key().is_empty());
+    }
+
+    #[test]
+    fn test_server_identity_key_value() {
+        let cfg = build_config(vec![
+            (
+                "nacos.core.auth.server.identity.key",
+                "serverIdentity".into(),
+            ),
+            (
+                "nacos.core.auth.server.identity.value",
+                "cluster-node-1".into(),
+            ),
+        ]);
+        assert_eq!(cfg.server_identity_key(), "serverIdentity");
+        assert_eq!(cfg.server_identity_value(), "cluster-node-1");
+    }
 }

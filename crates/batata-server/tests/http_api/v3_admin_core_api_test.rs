@@ -2,7 +2,18 @@
 //!
 //! Tests for /nacos/v3/admin/core/* endpoints
 
-use crate::common::{TestClient, unique_test_id};
+use crate::common::{
+    CONSOLE_BASE_URL, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient, unique_test_id,
+};
+
+async fn authenticated_client() -> TestClient {
+    let mut client = TestClient::new(MAIN_BASE_URL);
+    client
+        .login_via(CONSOLE_BASE_URL, TEST_USERNAME, TEST_PASSWORD)
+        .await
+        .expect("Failed to login");
+    client
+}
 
 // ========== Cluster Node Endpoints ==========
 
@@ -10,7 +21,7 @@ use crate::common::{TestClient, unique_test_id};
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_cluster_get_self() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/core/cluster/node/self")
@@ -26,7 +37,7 @@ async fn test_v3_admin_cluster_get_self() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_cluster_self_health() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/core/cluster/node/self/health")
@@ -44,7 +55,7 @@ async fn test_v3_admin_cluster_self_health() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_cluster_list_nodes() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/core/cluster/node/list")
@@ -59,7 +70,7 @@ async fn test_v3_admin_cluster_list_nodes() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_cluster_list_nodes_with_keyword() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get_with_query(
@@ -78,7 +89,7 @@ async fn test_v3_admin_cluster_list_nodes_with_keyword() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_list_namespaces() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/core/namespace/list")
@@ -96,7 +107,7 @@ async fn test_v3_admin_list_namespaces() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_create_namespace() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let ns_id = format!("v3admin-ns-{}", unique_test_id());
 
     let response: serde_json::Value = client
@@ -128,7 +139,7 @@ async fn test_v3_admin_create_namespace() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_namespace() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let ns_id = format!("v3admin-get-ns-{}", unique_test_id());
 
     // Create
@@ -169,7 +180,7 @@ async fn test_v3_admin_get_namespace() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_update_namespace() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let ns_id = format!("v3admin-upd-ns-{}", unique_test_id());
 
     // Create
@@ -214,7 +225,7 @@ async fn test_v3_admin_update_namespace() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_delete_namespace() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let ns_id = format!("v3admin-del-ns-{}", unique_test_id());
 
     // Create
@@ -247,7 +258,7 @@ async fn test_v3_admin_delete_namespace() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_core_get_ids() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/core/ops/ids")
@@ -263,7 +274,7 @@ async fn test_v3_admin_core_get_ids() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_loader_current() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/core/loader/current")
@@ -277,7 +288,7 @@ async fn test_v3_admin_loader_current() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_loader_cluster() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/core/loader/cluster")

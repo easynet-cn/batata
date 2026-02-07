@@ -86,6 +86,58 @@ impl TestClient {
         &self.base_url
     }
 
+    /// Parse login response body, supporting both flat and wrapped formats.
+    /// Flat format: `{"accessToken": "...", "tokenTtl": ..., ...}`
+    /// Wrapped format: `{"code": 0, "data": {"accessToken": "...", ...}}`
+    fn parse_login_response(&mut self, body: &str) -> Result<(), TestClientError> {
+        // Try flat format first (console server returns this)
+        if let Ok(data) = serde_json::from_str::<LoginResponse>(body) {
+            self.access_token = Some(data.access_token);
+            return Ok(());
+        }
+
+        // Try wrapped NacosResponse format
+        if let Ok(result) = serde_json::from_str::<NacosResponse<LoginResponse>>(body) {
+            if result.is_success() {
+                if let Some(data) = result.data {
+                    self.access_token = Some(data.access_token);
+                    return Ok(());
+                }
+            }
+        }
+
+        Err(TestClientError::LoginFailed)
+    }
+
+    /// Login via a specific URL (for cross-port auth)
+    /// Use this when the login endpoint is on a different server than the API endpoints.
+    pub async fn login_via(
+        &mut self,
+        auth_base_url: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<(), TestClientError> {
+        let url = format!("{}/v3/auth/user/login", auth_base_url.trim_end_matches('/'));
+
+        let response = self
+            .client
+            .post(&url)
+            .form(&[("username", username), ("password", password)])
+            .send()
+            .await
+            .map_err(|e| TestClientError::RequestFailed(e.to_string()))?;
+
+        if response.status().is_success() {
+            let body = response
+                .text()
+                .await
+                .map_err(|e| TestClientError::ParseFailed(e.to_string()))?;
+            return self.parse_login_response(&body);
+        }
+
+        Err(TestClientError::LoginFailed)
+    }
+
     /// Login and store access token
     pub async fn login(&mut self, username: &str, password: &str) -> Result<(), TestClientError> {
         let url = format!("{}/v3/auth/user/login", self.base_url);
@@ -99,17 +151,11 @@ impl TestClient {
             .map_err(|e| TestClientError::RequestFailed(e.to_string()))?;
 
         if response.status().is_success() {
-            let result: NacosResponse<LoginResponse> = response
-                .json()
+            let body = response
+                .text()
                 .await
                 .map_err(|e| TestClientError::ParseFailed(e.to_string()))?;
-
-            if result.is_success() {
-                if let Some(data) = result.data {
-                    self.access_token = Some(data.access_token);
-                    return Ok(());
-                }
-            }
+            return self.parse_login_response(&body);
         }
 
         Err(TestClientError::LoginFailed)

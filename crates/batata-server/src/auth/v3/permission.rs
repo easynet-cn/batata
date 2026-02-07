@@ -2,7 +2,7 @@ use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, 
 use serde::Deserialize;
 
 use crate::{
-    ActionTypes, Secured,
+    ActionTypes, ApiType, Secured, SignType,
     api::model::Page,
     auth::{self, model::PermissionInfo},
     model::common::{self, AppState},
@@ -27,6 +27,8 @@ async fn exist(
     secured!(
         Secured::builder(&req, &data, "console/permissions")
             .action(ActionTypes::Read)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -59,6 +61,8 @@ async fn search_page(
     secured!(
         Secured::builder(&req, &data, "console/permissions")
             .action(ActionTypes::Read)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -102,6 +106,8 @@ async fn create(
     secured!(
         Secured::builder(&req, &data, "console/permissions")
             .action(ActionTypes::Write)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -132,6 +138,8 @@ async fn delete(
     secured!(
         Secured::builder(&req, &data, "console/permissions")
             .action(ActionTypes::Write)
+            .sign_type(SignType::Specified)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 

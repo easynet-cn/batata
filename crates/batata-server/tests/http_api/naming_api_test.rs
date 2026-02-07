@@ -2,13 +2,24 @@
 //!
 //! Tests for /nacos/v2/ns/instance and /nacos/v2/ns/service endpoints
 
-use crate::common::{DEFAULT_GROUP, TEST_NAMESPACE, TestClient, unique_service_name};
+use crate::common::{
+    CONSOLE_BASE_URL, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient, unique_service_name,
+};
+
+async fn authenticated_client() -> TestClient {
+    let mut client = TestClient::new(MAIN_BASE_URL);
+    client
+        .login_via(CONSOLE_BASE_URL, TEST_USERNAME, TEST_PASSWORD)
+        .await
+        .expect("Failed to login");
+    client
+}
 
 /// Test instance registration
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_register_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("register");
 
     let response: serde_json::Value = client
@@ -34,7 +45,7 @@ async fn test_register_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_deregister_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("deregister");
 
     // First register
@@ -70,7 +81,7 @@ async fn test_deregister_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_update_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("update");
 
     // Register
@@ -110,7 +121,7 @@ async fn test_update_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_get_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("getdetail");
 
     // Register
@@ -147,7 +158,7 @@ async fn test_get_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_get_instance_list() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("list");
 
     // Register multiple instances
@@ -181,7 +192,7 @@ async fn test_get_instance_list() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_instance_list_healthy_only() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("healthy");
 
     // Register instance
@@ -217,7 +228,7 @@ async fn test_instance_list_healthy_only() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_batch_update_metadata() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("batchmeta");
 
     // Register instance
@@ -254,7 +265,7 @@ async fn test_batch_update_metadata() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_instance_with_weight() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("weighted");
 
     // Register with specific weight
@@ -281,7 +292,7 @@ async fn test_instance_with_weight() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_create_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("create");
 
     let response: serde_json::Value = client
@@ -302,7 +313,7 @@ async fn test_create_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_delete_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("delete");
 
     // Create first
@@ -330,7 +341,7 @@ async fn test_delete_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_update_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("update_svc");
 
     // Create
@@ -364,7 +375,7 @@ async fn test_update_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_get_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("getservice");
 
     // Create
@@ -392,7 +403,7 @@ async fn test_get_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_service_list() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get_with_query(
@@ -409,20 +420,26 @@ async fn test_service_list() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_service_not_found() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("nonexistent");
 
-    let response: serde_json::Value = client
-        .get_with_query(
+    let result = client
+        .get_with_query::<serde_json::Value, _>(
             "/nacos/v2/ns/service",
             &[("serviceName", service_name.as_str())],
         )
-        .await
-        .expect("Request should complete");
+        .await;
 
-    // Should indicate service not found
-    assert!(
-        response["data"].is_null() || response["code"] != 0,
-        "Should indicate service not found"
-    );
+    // Should indicate service not found via HTTP 404 or error code
+    match result {
+        Ok(response) => {
+            assert!(
+                response["data"].is_null() || response["code"] != 0,
+                "Should indicate service not found"
+            );
+        }
+        Err(_) => {
+            // HTTP 404 is expected for service not found
+        }
+    }
 }

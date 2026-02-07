@@ -9,7 +9,19 @@
 //! - PUT /v2/core/cluster/node/list
 //! - DELETE /v2/core/cluster/nodes
 
-use crate::common::{DEFAULT_GROUP, TestClient, unique_data_id, unique_service_name};
+use crate::common::{
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id, unique_service_name,
+};
+
+async fn authenticated_client() -> TestClient {
+    let mut client = TestClient::new(MAIN_BASE_URL);
+    client
+        .login_via(CONSOLE_BASE_URL, TEST_USERNAME, TEST_PASSWORD)
+        .await
+        .expect("Failed to login");
+    client
+}
 
 // ========== Instance PATCH ==========
 
@@ -17,7 +29,7 @@ use crate::common::{DEFAULT_GROUP, TestClient, unique_data_id, unique_service_na
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_patch_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v2_patch");
 
     // Register first
@@ -55,7 +67,7 @@ async fn test_v2_patch_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_patch_nonexistent_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v2_patch_noexist");
 
     let result = client
@@ -88,7 +100,7 @@ async fn test_v2_patch_nonexistent_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_instance_beat() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v2_beat");
 
     // Register first
@@ -125,7 +137,7 @@ async fn test_v2_instance_beat() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_instance_beat_with_json() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v2_beat_json");
 
     // Register
@@ -167,7 +179,7 @@ async fn test_v2_instance_beat_with_json() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_get_instance_statuses() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v2_statuses");
 
     // Register some instances
@@ -197,7 +209,7 @@ async fn test_v2_get_instance_statuses() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_search_config_detail() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v2_search");
 
     // Create config first
@@ -235,7 +247,7 @@ async fn test_v2_search_config_detail() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_search_config_with_filter() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get_with_query(
@@ -259,7 +271,7 @@ async fn test_v2_search_config_with_filter() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_catalog_instances() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v2_catalog");
 
     // Register instance
@@ -297,7 +309,7 @@ async fn test_v2_catalog_instances() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_update_cluster_node_list() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .put_form(
@@ -314,7 +326,7 @@ async fn test_v2_update_cluster_node_list() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v2_remove_cluster_nodes() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     // Attempt to remove a non-existent node (should still succeed or return appropriate error)
     let response: serde_json::Value = client

@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     grpc::{Metadata, Payload},
-    model::INTERNAL_MODULE,
+    model::{INTERNAL_MODULE, Member},
 };
 
 // Constants for connection labels
@@ -980,6 +980,671 @@ impl From<&Payload> for PushAckRequest {
     }
 }
 
+// =============================================================================
+// Cluster: MemberReport
+// =============================================================================
+
+/// Request for cluster member heartbeat reporting between nodes
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberReportRequest {
+    #[serde(flatten)]
+    pub internal_request: InternalRequest,
+    pub node: Option<Member>,
+}
+
+impl RequestTrait for MemberReportRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.internal_request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "MemberReportRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.internal_request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.internal_request.request_id()
+    }
+}
+
+impl From<&Payload> for MemberReportRequest {
+    fn from(value: &Payload) -> Self {
+        MemberReportRequest::from_payload(value)
+    }
+}
+
+/// Response for cluster member heartbeat reporting
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberReportResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    pub node: Option<Member>,
+}
+
+impl MemberReportResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            node: None,
+        }
+    }
+}
+
+impl ResponseTrait for MemberReportResponse {
+    fn response_type(&self) -> &'static str {
+        "MemberReportResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<MemberReportResponse> for Any {
+    fn from(val: MemberReportResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// =============================================================================
+// Lock: LockOperation
+// =============================================================================
+
+/// Lock instance for distributed locking
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockInstance {
+    pub key: String,
+    pub expired_time: i64,
+    pub lock_type: String,
+    pub params: HashMap<String, String>,
+}
+
+/// Request for distributed lock operations (acquire/release)
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockOperationRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    pub lock_instance: Option<LockInstance>,
+    pub lock_operation: String,
+}
+
+impl RequestTrait for LockOperationRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "LockOperationRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.request.request_id.clone()
+    }
+}
+
+impl From<&Payload> for LockOperationRequest {
+    fn from(value: &Payload) -> Self {
+        LockOperationRequest::from_payload(value)
+    }
+}
+
+/// Response for distributed lock operations
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockOperationResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    pub result: bool,
+}
+
+impl LockOperationResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            result: false,
+        }
+    }
+}
+
+impl ResponseTrait for LockOperationResponse {
+    fn response_type(&self) -> &'static str {
+        "LockOperationResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<LockOperationResponse> for Any {
+    fn from(val: LockOperationResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// =============================================================================
+// AI-MCP: McpServerEndpoint, QueryMcpServer, ReleaseMcpServer
+// =============================================================================
+
+/// Request to register/deregister an MCP server endpoint
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerEndpointRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    pub namespace_id: String,
+    pub mcp_name: String,
+    pub address: String,
+    pub port: u16,
+    pub version: String,
+    #[serde(rename = "type")]
+    pub operation_type: String,
+}
+
+impl RequestTrait for McpServerEndpointRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "McpServerEndpointRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.request.request_id.clone()
+    }
+}
+
+impl From<&Payload> for McpServerEndpointRequest {
+    fn from(value: &Payload) -> Self {
+        McpServerEndpointRequest::from_payload(value)
+    }
+}
+
+/// Response to MCP server endpoint register/deregister
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerEndpointResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    #[serde(rename = "type")]
+    pub operation_type: String,
+}
+
+impl McpServerEndpointResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            operation_type: String::new(),
+        }
+    }
+}
+
+impl ResponseTrait for McpServerEndpointResponse {
+    fn response_type(&self) -> &'static str {
+        "McpServerEndpointResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<McpServerEndpointResponse> for Any {
+    fn from(val: McpServerEndpointResponse) -> Self {
+        val.to_any()
+    }
+}
+
+/// Request to query MCP server details
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryMcpServerRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    pub namespace_id: String,
+    pub mcp_name: String,
+    pub version: String,
+}
+
+impl RequestTrait for QueryMcpServerRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "QueryMcpServerRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.request.request_id.clone()
+    }
+}
+
+impl From<&Payload> for QueryMcpServerRequest {
+    fn from(value: &Payload) -> Self {
+        QueryMcpServerRequest::from_payload(value)
+    }
+}
+
+/// Response containing MCP server details
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryMcpServerResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    pub detail: serde_json::Value,
+}
+
+impl QueryMcpServerResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            detail: serde_json::Value::Null,
+        }
+    }
+}
+
+impl ResponseTrait for QueryMcpServerResponse {
+    fn response_type(&self) -> &'static str {
+        "QueryMcpServerResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<QueryMcpServerResponse> for Any {
+    fn from(val: QueryMcpServerResponse) -> Self {
+        val.to_any()
+    }
+}
+
+/// Request to release (publish) an MCP server
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseMcpServerRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    pub namespace_id: String,
+    pub mcp_name: String,
+    pub server_specification: serde_json::Value,
+}
+
+impl RequestTrait for ReleaseMcpServerRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "ReleaseMcpServerRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.request.request_id.clone()
+    }
+}
+
+impl From<&Payload> for ReleaseMcpServerRequest {
+    fn from(value: &Payload) -> Self {
+        ReleaseMcpServerRequest::from_payload(value)
+    }
+}
+
+/// Response for releasing (publishing) an MCP server
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseMcpServerResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    pub mcp_id: String,
+}
+
+impl ReleaseMcpServerResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            mcp_id: String::new(),
+        }
+    }
+}
+
+impl ResponseTrait for ReleaseMcpServerResponse {
+    fn response_type(&self) -> &'static str {
+        "ReleaseMcpServerResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<ReleaseMcpServerResponse> for Any {
+    fn from(val: ReleaseMcpServerResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// =============================================================================
+// AI-A2A: AgentEndpoint, QueryAgentCard, ReleaseAgentCard
+// =============================================================================
+
+/// Agent endpoint information for gRPC registration
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentEndpoint {
+    pub address: String,
+    pub port: u16,
+    pub version: String,
+    pub transport: String,
+    pub path: String,
+    pub support_tls: bool,
+}
+
+/// Request to register/deregister an agent endpoint
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentEndpointRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    pub namespace_id: String,
+    pub agent_name: String,
+    pub endpoint: Option<AgentEndpoint>,
+    #[serde(rename = "type")]
+    pub operation_type: String,
+}
+
+impl RequestTrait for AgentEndpointRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "AgentEndpointRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.request.request_id.clone()
+    }
+}
+
+impl From<&Payload> for AgentEndpointRequest {
+    fn from(value: &Payload) -> Self {
+        AgentEndpointRequest::from_payload(value)
+    }
+}
+
+/// Response for agent endpoint register/deregister
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentEndpointResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    #[serde(rename = "type")]
+    pub operation_type: String,
+}
+
+impl AgentEndpointResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            operation_type: String::new(),
+        }
+    }
+}
+
+impl ResponseTrait for AgentEndpointResponse {
+    fn response_type(&self) -> &'static str {
+        "AgentEndpointResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<AgentEndpointResponse> for Any {
+    fn from(val: AgentEndpointResponse) -> Self {
+        val.to_any()
+    }
+}
+
+/// Request to query agent card details
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryAgentCardRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    pub namespace_id: String,
+    pub agent_name: String,
+    pub version: String,
+}
+
+impl RequestTrait for QueryAgentCardRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "QueryAgentCardRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.request.request_id.clone()
+    }
+}
+
+impl From<&Payload> for QueryAgentCardRequest {
+    fn from(value: &Payload) -> Self {
+        QueryAgentCardRequest::from_payload(value)
+    }
+}
+
+/// Response containing agent card details
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryAgentCardResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    pub detail: serde_json::Value,
+}
+
+impl QueryAgentCardResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            detail: serde_json::Value::Null,
+        }
+    }
+}
+
+impl ResponseTrait for QueryAgentCardResponse {
+    fn response_type(&self) -> &'static str {
+        "QueryAgentCardResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<QueryAgentCardResponse> for Any {
+    fn from(val: QueryAgentCardResponse) -> Self {
+        val.to_any()
+    }
+}
+
+/// Request to release (publish) an agent card
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseAgentCardRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub module: String,
+    pub namespace_id: String,
+    pub agent_name: String,
+    pub agent_card: serde_json::Value,
+    pub set_as_latest: bool,
+}
+
+impl RequestTrait for ReleaseAgentCardRequest {
+    fn headers(&self) -> HashMap<String, String> {
+        self.request.headers()
+    }
+
+    fn request_type(&self) -> &'static str {
+        "ReleaseAgentCardRequest"
+    }
+
+    fn insert_headers(&mut self, headers: HashMap<String, String>) {
+        self.request.insert_headers(headers);
+    }
+
+    fn request_id(&self) -> String {
+        self.request.request_id.clone()
+    }
+}
+
+impl From<&Payload> for ReleaseAgentCardRequest {
+    fn from(value: &Payload) -> Self {
+        ReleaseAgentCardRequest::from_payload(value)
+    }
+}
+
+/// Response for releasing (publishing) an agent card
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseAgentCardResponse {
+    #[serde(flatten)]
+    pub response: Response,
+}
+
+impl ReleaseAgentCardResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl ResponseTrait for ReleaseAgentCardResponse {
+    fn response_type(&self) -> &'static str {
+        "ReleaseAgentCardResponse"
+    }
+
+    fn request_id(&mut self, request_id: String) {
+        self.response.request_id = request_id;
+    }
+
+    fn error_code(&self) -> i32 {
+        self.response.error_code
+    }
+
+    fn result_code(&self) -> i32 {
+        self.response.result_code
+    }
+}
+
+impl From<ReleaseAgentCardResponse> for Any {
+    fn from(val: ReleaseAgentCardResponse) -> Self {
+        val.to_any()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -994,5 +1659,86 @@ mod tests {
     fn test_response_code() {
         assert_eq!(ResponseCode::Success.code(), 200);
         assert_eq!(ResponseCode::Fail.code(), 500);
+    }
+
+    #[test]
+    fn test_member_report_request() {
+        let req = MemberReportRequest::default();
+        assert_eq!(req.request_type(), "MemberReportRequest");
+        assert!(req.node.is_none());
+    }
+
+    #[test]
+    fn test_lock_operation_request() {
+        let req = LockOperationRequest::default();
+        assert_eq!(req.request_type(), "LockOperationRequest");
+    }
+
+    #[test]
+    fn test_lock_instance_serialization() {
+        let lock = LockInstance {
+            key: "test-lock".to_string(),
+            expired_time: 30000,
+            lock_type: "reentrant".to_string(),
+            params: HashMap::new(),
+        };
+        let json = serde_json::to_string(&lock).unwrap();
+        assert!(json.contains("test-lock"));
+        let parsed: LockInstance = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.key, "test-lock");
+        assert_eq!(parsed.expired_time, 30000);
+    }
+
+    #[test]
+    fn test_mcp_server_endpoint_request() {
+        let req = McpServerEndpointRequest::default();
+        assert_eq!(req.request_type(), "McpServerEndpointRequest");
+    }
+
+    #[test]
+    fn test_query_mcp_server_request() {
+        let req = QueryMcpServerRequest::default();
+        assert_eq!(req.request_type(), "QueryMcpServerRequest");
+    }
+
+    #[test]
+    fn test_release_mcp_server_request() {
+        let req = ReleaseMcpServerRequest::default();
+        assert_eq!(req.request_type(), "ReleaseMcpServerRequest");
+    }
+
+    #[test]
+    fn test_agent_endpoint_request() {
+        let req = AgentEndpointRequest::default();
+        assert_eq!(req.request_type(), "AgentEndpointRequest");
+    }
+
+    #[test]
+    fn test_query_agent_card_request() {
+        let req = QueryAgentCardRequest::default();
+        assert_eq!(req.request_type(), "QueryAgentCardRequest");
+    }
+
+    #[test]
+    fn test_release_agent_card_request() {
+        let req = ReleaseAgentCardRequest::default();
+        assert_eq!(req.request_type(), "ReleaseAgentCardRequest");
+    }
+
+    #[test]
+    fn test_agent_endpoint_serialization() {
+        let ep = AgentEndpoint {
+            address: "127.0.0.1".to_string(),
+            port: 8080,
+            version: "1.0".to_string(),
+            transport: "http".to_string(),
+            path: "/agent".to_string(),
+            support_tls: true,
+        };
+        let json = serde_json::to_string(&ep).unwrap();
+        let parsed: AgentEndpoint = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.address, "127.0.0.1");
+        assert_eq!(parsed.port, 8080);
+        assert!(parsed.support_tls);
     }
 }

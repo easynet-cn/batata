@@ -37,9 +37,9 @@ pub struct Secured<'a> {
     pub api_type: ApiType,             // API access type
 }
 
-impl<'a> From<Secured<'a>> for Resource {
-    // Convert security context to authorization resource
-    fn from(val: Secured<'a>) -> Self {
+impl<'a> From<&Secured<'a>> for Resource {
+    // Convert security context reference to authorization resource
+    fn from(val: &Secured<'a>) -> Self {
         let properties = val
             .tags
             .iter()
@@ -147,108 +147,185 @@ impl<'a> SecuredBuilder<'a> {
 #[macro_export]
 macro_rules! secured {
     ($secured: expr) => {
-        // Extract auth context before any await points to avoid holding RefCell reference
-        let auth_context_opt: Option<$crate::auth::model::AuthContext> = {
-            $secured
-                .req
-                .extensions()
-                .get::<$crate::auth::model::AuthContext>()
-                .cloned()
-        };
-        if let Some(auth_context) = auth_context_opt {
-            if auth_context.jwt_error.is_some() {
-                return $crate::model::common::ErrorResult::http_response_forbidden(
-                    actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                    &auth_context.jwt_error_string(),
-                    $secured.req.path(),
-                );
-            }
+        // Bind to local variable to avoid re-evaluating the builder expression
+        let __secured = $secured;
 
-            if !$secured.only_identity() && !$secured.has_update_password_permission() {
-                let roles = $crate::auth::service::role::find_by_username(
-                    $secured.data.db(),
-                    &auth_context.username,
-                )
-                .await
-                .ok()
-                .unwrap_or_default();
+        // Step 1: Check if auth is enabled for this API type
+        let __auth_enabled = __secured
+            .data
+            .configuration
+            .auth_enabled_for_api_type(__secured.api_type);
 
-                if roles.is_empty() {
-                    return $crate::model::common::ErrorResult::http_response_forbidden(
-                        actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                        &auth_context.jwt_error_string(),
-                        $secured.req.path(),
-                    );
-                }
+        if __auth_enabled {
+            // Step 2: For InnerApi, check server identity headers instead of token
+            if __secured.api_type == $crate::ApiType::InnerApi {
+                let __identity_key = __secured.data.configuration.server_identity_key();
+                let __identity_value = __secured.data.configuration.server_identity_value();
 
-                let global_admin = roles
-                    .iter()
-                    .any(|e| e.role == $crate::auth::model::GLOBAL_ADMIN_ROLE);
+                if !__identity_key.is_empty() {
+                    let __header_match = __secured
+                        .req
+                        .headers()
+                        .get(&__identity_key)
+                        .and_then(|v| v.to_str().ok())
+                        .map(|v| v == __identity_value)
+                        .unwrap_or(false);
 
-                if !global_admin {
-                    if $secured
-                        .resource
-                        .starts_with($crate::auth::model::CONSOLE_RESOURCE_NAME_PREFIX)
-                    {
+                    if !__header_match {
                         return $crate::model::common::ErrorResult::http_response_forbidden(
                             actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
-                            "authorization failed!.",
-                            $secured.req.path(),
+                            "server identity verification failed",
+                            __secured.req.path(),
                         );
                     }
+                }
+            } else {
+                // Step 3: Extract AuthContext from request extensions
+                let __auth_context_opt: Option<$crate::auth::model::AuthContext> = {
+                    __secured
+                        .req
+                        .extensions()
+                        .get::<$crate::auth::model::AuthContext>()
+                        .cloned()
+                };
 
-                    let role_names = roles
-                        .iter()
-                        .map(|e| e.role.to_string())
-                        .collect::<Vec<String>>();
-                    let permissions = $crate::auth::service::permission::find_by_roles(
-                        $secured.data.db(),
-                        role_names,
-                    )
-                    .await
-                    .ok()
-                    .unwrap_or_default();
-
-                    let mut resource: $crate::auth::model::Resource = $secured.into();
-
-                    if $secured.sign_type == $crate::SignType::Config {
-                        resource =
-                            $crate::ConfigHttpResourceParser::parse(&$secured.req, &$secured);
+                match __auth_context_opt {
+                    None => {
+                        // No AuthContext at all (e.g. OPTIONS bypassed middleware)
+                        return $crate::model::common::ErrorResult::http_response_forbidden(
+                            actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
+                            "no auth context found",
+                            __secured.req.path(),
+                        );
                     }
+                    Some(ref __auth_context) if !__auth_context.token_provided => {
+                        return $crate::model::common::ErrorResult::http_response_forbidden(
+                            actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
+                            "no token provided",
+                            __secured.req.path(),
+                        );
+                    }
+                    Some(ref __auth_context) if __auth_context.jwt_error.is_some() => {
+                        return $crate::model::common::ErrorResult::http_response_forbidden(
+                            actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
+                            &__auth_context.jwt_error_string(),
+                            __secured.req.path(),
+                        );
+                    }
+                    Some(ref __auth_context) => {
+                        // Step 4: If only_identity or update_password tag, skip permission check
+                        if !__secured.only_identity()
+                            && !__secured.has_update_password_permission()
+                        {
+                            // Step 5: Look up roles
+                            let __roles =
+                                $crate::auth::service::role::find_by_username(
+                                    __secured.data.db(),
+                                    &__auth_context.username,
+                                )
+                                .await
+                                .ok()
+                                .unwrap_or_default();
 
-                    let has_permission = roles.iter().any(|role| {
-                        permissions.iter().filter(|e| e.role == role.role).any(|e| {
-                            // Escape regex metacharacters first, then convert * wildcard to .*
-                            let mut permission_resource =
-                                regex::escape(&e.resource).replace("\\*", ".*");
-
-                            if permission_resource.starts_with(":") {
-                                permission_resource = format!(
-                                    "{}{}",
-                                    $crate::model::common::DEFAULT_NAMESPACE_ID,
-                                    permission_resource,
+                            if __roles.is_empty() {
+                                return $crate::model::common::ErrorResult::http_response_forbidden(
+                                    actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
+                                    "no roles found for user",
+                                    __secured.req.path(),
                                 );
                             }
 
-                            let regex_match = batata_common::regex_matches(
-                                &permission_resource,
-                                &$crate::join_resource(&resource),
-                            );
+                            // Step 6: If ROLE_ADMIN, pass through
+                            let __global_admin = __roles
+                                .iter()
+                                .any(|e| e.role == $crate::auth::model::GLOBAL_ADMIN_ROLE);
 
-                            e.action.contains($secured.action.as_str()) && regex_match
-                        })
-                    });
+                            if !__global_admin {
+                                // Step 7: Console resource prefix check for non-admin
+                                if __secured
+                                    .resource
+                                    .starts_with(
+                                        $crate::auth::model::CONSOLE_RESOURCE_NAME_PREFIX,
+                                    )
+                                {
+                                    return $crate::model::common::ErrorResult::http_response_forbidden(
+                                        actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+                                        "authorization failed!.",
+                                        __secured.req.path(),
+                                    );
+                                }
 
-                    if !has_permission {
-                        return $crate::model::common::ErrorResult::http_response_forbidden(
-                            actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
-                            "authorization failed!.",
-                            $secured.req.path(),
-                        );
+                                // Step 8: Look up permissions
+                                let __role_names = __roles
+                                    .iter()
+                                    .map(|e| e.role.to_string())
+                                    .collect::<Vec<String>>();
+                                let __permissions =
+                                    $crate::auth::service::permission::find_by_roles(
+                                        __secured.data.db(),
+                                        __role_names,
+                                    )
+                                    .await
+                                    .ok()
+                                    .unwrap_or_default();
+
+                                // Step 9: Parse resource based on sign_type
+                                let __resource: $crate::auth::model::Resource =
+                                    if __secured.sign_type == $crate::SignType::Config {
+                                        $crate::ConfigHttpResourceParser::parse(
+                                            __secured.req,
+                                            &__secured,
+                                        )
+                                    } else if __secured.sign_type == $crate::SignType::Naming {
+                                        $crate::NamingHttpResourceParser::parse(
+                                            __secured.req,
+                                            &__secured,
+                                        )
+                                    } else {
+                                        (&__secured).into()
+                                    };
+
+                                // Step 10: Match permissions against resource + action
+                                let __has_permission = __roles.iter().any(|__role| {
+                                    __permissions
+                                        .iter()
+                                        .filter(|e| e.role == __role.role)
+                                        .any(|e| {
+                                            let mut __permission_resource =
+                                                regex::escape(&e.resource).replace("\\*", ".*");
+
+                                            if __permission_resource.starts_with(":") {
+                                                __permission_resource = format!(
+                                                    "{}{}",
+                                                    $crate::model::common::DEFAULT_NAMESPACE_ID,
+                                                    __permission_resource,
+                                                );
+                                            }
+
+                                            let __regex_match = batata_common::regex_matches(
+                                                &__permission_resource,
+                                                &$crate::join_resource(&__resource),
+                                            );
+
+                                            e.action.contains(__secured.action.as_str())
+                                                && __regex_match
+                                        })
+                                });
+
+                                if !__has_permission {
+                                    return $crate::model::common::ErrorResult::http_response_forbidden(
+                                        actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+                                        "authorization failed!.",
+                                        __secured.req.path(),
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+        // If auth is disabled for this API type, skip all auth checks (pass through)
     };
 }
 
@@ -317,7 +394,75 @@ impl ConfigHttpResourceParser {
     }
 }
 
-fn join_resource(resource: &Resource) -> String {
+pub struct NamingHttpResourceParser {}
+
+impl NamingHttpResourceParser {
+    pub fn parse(req: &HttpRequest, secured: &Secured) -> Resource {
+        let namespace_id = NamingHttpResourceParser::get_namespace_id(req);
+        let group = NamingHttpResourceParser::get_group(req);
+        let name = NamingHttpResourceParser::get_resource_name(req);
+        let action = secured.action.as_str();
+
+        let mut properties = secured
+            .tags
+            .iter()
+            .map(|e| (e.to_string(), serde_json::Value::from(e.to_string())))
+            .collect::<HashMap<String, serde_json::Value>>();
+
+        properties.insert(
+            Resource::ACTION.to_string(),
+            serde_json::Value::from(action.to_string()),
+        );
+
+        Resource {
+            namespace_id,
+            group,
+            name,
+            r#type: secured.sign_type.as_str().to_string(),
+            properties,
+        }
+    }
+
+    pub fn get_namespace_id(req: &HttpRequest) -> String {
+        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
+            .ok()
+            .map(|q| q.into_inner())
+            .unwrap_or_default();
+
+        params
+            .get(NAMESPACE_ID)
+            .or(params.get(TENANT))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn get_group(req: &HttpRequest) -> String {
+        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
+            .ok()
+            .map(|q| q.into_inner())
+            .unwrap_or_default();
+
+        params
+            .get(GROUP_NAME)
+            .or(params.get(GROUP))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn get_resource_name(req: &HttpRequest) -> String {
+        let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
+            .ok()
+            .map(|q| q.into_inner())
+            .unwrap_or_default();
+
+        params
+            .get(batata_common::SERVICE_NAME)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+pub fn join_resource(resource: &Resource) -> String {
     if SignType::Specified.as_str() == resource.r#type {
         return resource.name.to_string();
     }
@@ -362,7 +507,10 @@ fn join_resource(resource: &Resource) -> String {
 mod tests {
     use super::*;
 
+    // ========================================================================
     // join_resource tests
+    // ========================================================================
+
     #[test]
     fn test_join_resource_specified_type() {
         let resource = auth::model::Resource {
@@ -421,5 +569,184 @@ mod tests {
             properties: HashMap::new(),
         };
         assert_eq!(join_resource(&resource), "ns1:group1:naming/*");
+    }
+
+    #[test]
+    fn test_join_resource_naming_with_all_fields() {
+        let resource = auth::model::Resource {
+            namespace_id: "ns1".to_string(),
+            group: "DEFAULT_GROUP".to_string(),
+            name: "my-service".to_string(),
+            r#type: "naming".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(
+            join_resource(&resource),
+            "ns1:DEFAULT_GROUP:naming/my-service"
+        );
+    }
+
+    #[test]
+    fn test_join_resource_naming_empty_all() {
+        let resource = auth::model::Resource {
+            namespace_id: String::new(),
+            group: String::new(),
+            name: String::new(),
+            r#type: "naming".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(join_resource(&resource), "public:*:naming/*");
+    }
+
+    #[test]
+    fn test_join_resource_config_empty_all() {
+        let resource = auth::model::Resource {
+            namespace_id: String::new(),
+            group: String::new(),
+            name: String::new(),
+            r#type: "config".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(join_resource(&resource), "public:*:config/*");
+    }
+
+    // ========================================================================
+    // NamingHttpResourceParser tests (using actix_web::test)
+    // ========================================================================
+
+    #[test]
+    fn test_naming_parser_get_namespace_id() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?namespaceId=ns1")
+            .to_http_request();
+        assert_eq!(NamingHttpResourceParser::get_namespace_id(&req), "ns1");
+    }
+
+    #[test]
+    fn test_naming_parser_get_namespace_id_from_tenant() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?tenant=tenant1")
+            .to_http_request();
+        assert_eq!(NamingHttpResourceParser::get_namespace_id(&req), "tenant1");
+    }
+
+    #[test]
+    fn test_naming_parser_namespace_id_priority_over_tenant() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?namespaceId=ns1&tenant=tenant1")
+            .to_http_request();
+        assert_eq!(NamingHttpResourceParser::get_namespace_id(&req), "ns1");
+    }
+
+    #[test]
+    fn test_naming_parser_get_group() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?groupName=mygroup")
+            .to_http_request();
+        assert_eq!(NamingHttpResourceParser::get_group(&req), "mygroup");
+    }
+
+    #[test]
+    fn test_naming_parser_get_group_from_group_param() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?group=mygroup2")
+            .to_http_request();
+        assert_eq!(NamingHttpResourceParser::get_group(&req), "mygroup2");
+    }
+
+    #[test]
+    fn test_naming_parser_get_resource_name() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?serviceName=my-service")
+            .to_http_request();
+        assert_eq!(
+            NamingHttpResourceParser::get_resource_name(&req),
+            "my-service"
+        );
+    }
+
+    #[test]
+    fn test_naming_parser_empty_params() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test")
+            .to_http_request();
+        assert_eq!(NamingHttpResourceParser::get_namespace_id(&req), "");
+        assert_eq!(NamingHttpResourceParser::get_group(&req), "");
+        assert_eq!(NamingHttpResourceParser::get_resource_name(&req), "");
+    }
+
+    // ========================================================================
+    // ConfigHttpResourceParser tests (using actix_web::test)
+    // ========================================================================
+
+    #[test]
+    fn test_config_parser_get_namespace_id() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?namespaceId=ns1")
+            .to_http_request();
+        assert_eq!(ConfigHttpResourceParser::get_namespace_id(&req), "ns1");
+    }
+
+    #[test]
+    fn test_config_parser_get_group() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?groupName=grp1")
+            .to_http_request();
+        assert_eq!(ConfigHttpResourceParser::get_group(&req), "grp1");
+    }
+
+    #[test]
+    fn test_config_parser_get_resource_name() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test?dataId=my-config.yaml")
+            .to_http_request();
+        assert_eq!(
+            ConfigHttpResourceParser::get_resource_name(&req),
+            "my-config.yaml"
+        );
+    }
+
+    #[test]
+    fn test_config_parser_empty_params() {
+        let req = actix_web::test::TestRequest::default()
+            .uri("/test")
+            .to_http_request();
+        assert_eq!(ConfigHttpResourceParser::get_namespace_id(&req), "");
+        assert_eq!(ConfigHttpResourceParser::get_group(&req), "");
+        assert_eq!(ConfigHttpResourceParser::get_resource_name(&req), "");
+    }
+
+    // ========================================================================
+    // join_resource for naming with various combinations
+    // ========================================================================
+
+    #[test]
+    fn test_join_resource_naming_empty_namespace_with_group() {
+        let resource = auth::model::Resource {
+            namespace_id: String::new(),
+            group: "DEFAULT_GROUP".to_string(),
+            name: "my-service".to_string(),
+            r#type: "naming".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(
+            join_resource(&resource),
+            "public:DEFAULT_GROUP:naming/my-service"
+        );
+    }
+
+    #[test]
+    fn test_join_resource_naming_with_custom_namespace() {
+        let resource = auth::model::Resource {
+            namespace_id: "dev-env".to_string(),
+            group: "mygroup".to_string(),
+            name: "order-service".to_string(),
+            r#type: "naming".to_string(),
+            properties: HashMap::new(),
+        };
+        assert_eq!(
+            join_resource(&resource),
+            "dev-env:mygroup:naming/order-service"
+        );
     }
 }

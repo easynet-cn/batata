@@ -2,12 +2,13 @@
 //!
 //! Provides capacity quota management endpoints for configurations.
 
-use actix_web::{HttpResponse, Responder, delete, get, post, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, web};
 use serde::{Deserialize, Serialize};
 
 use batata_config::service::capacity;
 
 use crate::model::common::AppState;
+use crate::{ActionTypes, ApiType, Secured, SignType, secured};
 
 /// Capacity request parameters
 #[derive(Debug, Deserialize)]
@@ -82,9 +83,18 @@ impl CapacityResponse {
 /// Get capacity for tenant or group
 #[get("")]
 pub async fn get_capacity(
+    req: HttpRequest,
     data: web::Data<AppState>,
     query: web::Query<CapacityRequest>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/capacity")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
     let db = data.db();
 
     if let Some(ref tenant) = query.tenant {
@@ -164,9 +174,18 @@ pub async fn get_capacity(
 /// Create or update capacity
 #[post("")]
 pub async fn update_capacity(
+    req: HttpRequest,
     data: web::Data<AppState>,
     query: web::Query<CapacityRequest>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/capacity")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
     let db = data.db();
 
     if let Some(ref tenant) = query.tenant {
@@ -236,9 +255,18 @@ pub async fn update_capacity(
 /// Delete capacity
 #[delete("")]
 pub async fn delete_capacity(
+    req: HttpRequest,
     data: web::Data<AppState>,
     query: web::Query<CapacityRequest>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/capacity")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
     let db = data.db();
 
     if let Some(ref tenant) = query.tenant {

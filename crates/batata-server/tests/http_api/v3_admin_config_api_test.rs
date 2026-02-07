@@ -2,7 +2,19 @@
 //!
 //! Tests for /nacos/v3/admin/cs/* endpoints
 
-use crate::common::{DEFAULT_GROUP, TestClient, unique_data_id};
+use crate::common::{
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id,
+};
+
+async fn authenticated_client() -> TestClient {
+    let mut client = TestClient::new(MAIN_BASE_URL);
+    client
+        .login_via(CONSOLE_BASE_URL, TEST_USERNAME, TEST_PASSWORD)
+        .await
+        .expect("Failed to login");
+    client
+}
 
 // ========== Config CRUD ==========
 
@@ -10,7 +22,7 @@ use crate::common::{DEFAULT_GROUP, TestClient, unique_data_id};
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_create_config() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_config");
     let content = "v3.admin.key=value";
 
@@ -33,7 +45,7 @@ async fn test_v3_admin_create_config() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_config() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_get");
     let content = "v3.get.key=value";
 
@@ -66,7 +78,7 @@ async fn test_v3_admin_get_config() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_update_config() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_upd");
     let content_v1 = "version=1";
     let content_v2 = "version=2";
@@ -104,7 +116,7 @@ async fn test_v3_admin_update_config() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_delete_config() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_del");
     let content = "to_delete=true";
 
@@ -151,7 +163,7 @@ async fn test_v3_admin_delete_config() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_config_validation() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     // Missing dataId should fail
     let result = client
@@ -173,7 +185,7 @@ async fn test_v3_admin_config_validation() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_config_history_list() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_hist");
 
     // Create config to generate history
@@ -212,7 +224,7 @@ async fn test_v3_admin_config_history_list() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_config_listener() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_listen");
 
     let response: serde_json::Value = client
@@ -232,7 +244,7 @@ async fn test_v3_admin_config_listener() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_config_cluster_metrics() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/cs/metrics/cluster")
@@ -247,7 +259,7 @@ async fn test_v3_admin_config_cluster_metrics() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_config_ip_metrics() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get_with_query("/nacos/v3/admin/cs/metrics/ip", &[("ip", "127.0.0.1")])

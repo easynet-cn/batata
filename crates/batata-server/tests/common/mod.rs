@@ -17,6 +17,12 @@ pub use server::TestServer;
 pub const TEST_USERNAME: &str = "nacos";
 pub const TEST_PASSWORD: &str = "nacos";
 
+/// Server URLs
+/// Main HTTP server for API endpoints (/nacos/v2/*, /nacos/v3/admin/*, /nacos/v3/client/*)
+pub const MAIN_BASE_URL: &str = "http://127.0.0.1:8848";
+/// Console HTTP server for auth and management endpoints (/v3/auth/*)
+pub const CONSOLE_BASE_URL: &str = "http://127.0.0.1:8081";
+
 /// Test namespaces
 pub const TEST_NAMESPACE: &str = "public";
 pub const TEST_NAMESPACE_CUSTOM: &str = "test-namespace";

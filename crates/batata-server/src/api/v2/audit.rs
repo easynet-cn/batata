@@ -2,12 +2,13 @@
 //!
 //! Provides audit log query endpoints for operation tracking.
 
-use actix_web::{HttpResponse, Responder, get, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, get, web};
 use serde::{Deserialize, Serialize};
 
 use batata_config::service::audit;
 
 use crate::model::common::AppState;
+use crate::{ActionTypes, ApiType, Secured, SignType, secured};
 
 /// Audit log search parameters
 #[derive(Debug, Deserialize)]
@@ -102,9 +103,18 @@ impl AuditLogResponse {
 /// Get audit log list with pagination and filtering
 #[get("/list")]
 pub async fn get_audit_logs(
+    req: HttpRequest,
     data: web::Data<AppState>,
     query: web::Query<AuditLogQuery>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/audit")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
     let db = data.db();
 
     // Parse time filters
@@ -170,9 +180,18 @@ pub async fn get_audit_logs(
 /// Get a single audit log entry by ID
 #[get("")]
 pub async fn get_audit_log(
+    req: HttpRequest,
     data: web::Data<AppState>,
     query: web::Query<IdQuery>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/audit")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
     let db = data.db();
 
     match audit::get_log(db, query.id).await {
@@ -218,9 +237,18 @@ pub struct IdQuery {
 /// Get operation statistics
 #[get("/stats")]
 pub async fn get_audit_stats(
+    req: HttpRequest,
     data: web::Data<AppState>,
     query: web::Query<StatsQuery>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/audit")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
     let db = data.db();
 
     let start_time = query.start_time.as_ref().and_then(|s| {

@@ -2,8 +2,19 @@
 //!
 //! Tests for /nacos/v3/admin/ns/* endpoints
 
-use crate::common::{TestClient, unique_service_name};
+use crate::common::{
+    CONSOLE_BASE_URL, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient, unique_service_name,
+};
 use serde_json::json;
+
+async fn authenticated_client() -> TestClient {
+    let mut client = TestClient::new(MAIN_BASE_URL);
+    client
+        .login_via(CONSOLE_BASE_URL, TEST_USERNAME, TEST_PASSWORD)
+        .await
+        .expect("Failed to login");
+    client
+}
 
 // ========== Service CRUD ==========
 
@@ -11,7 +22,7 @@ use serde_json::json;
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_create_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_create");
 
     let response: serde_json::Value = client
@@ -32,7 +43,7 @@ async fn test_v3_admin_create_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_get");
 
     // Create first
@@ -61,7 +72,7 @@ async fn test_v3_admin_get_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_update_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_update");
 
     // Create
@@ -96,7 +107,7 @@ async fn test_v3_admin_update_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_delete_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_delete");
 
     // Create
@@ -124,7 +135,7 @@ async fn test_v3_admin_delete_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_list_services() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get_with_query(
@@ -142,7 +153,7 @@ async fn test_v3_admin_list_services() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_create_duplicate_service() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_dup");
 
     // Create first
@@ -175,7 +186,7 @@ async fn test_v3_admin_create_duplicate_service() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_register_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_reg");
 
     let response: serde_json::Value = client
@@ -201,7 +212,7 @@ async fn test_v3_admin_register_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_deregister_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_dereg");
 
     // Register first
@@ -237,7 +248,7 @@ async fn test_v3_admin_deregister_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_update_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_upd");
 
     // Register
@@ -276,7 +287,7 @@ async fn test_v3_admin_update_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_list_instances() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_list");
 
     // Register instances
@@ -310,7 +321,7 @@ async fn test_v3_admin_list_instances() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_instance() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_get");
 
     // Register
@@ -346,7 +357,7 @@ async fn test_v3_admin_get_instance() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_update_instance_metadata() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_meta");
 
     // Register
@@ -384,7 +395,7 @@ async fn test_v3_admin_update_instance_metadata() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_naming_switches() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/ns/ops/switches")
@@ -399,7 +410,7 @@ async fn test_v3_admin_get_naming_switches() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_naming_metrics() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/ns/ops/metrics")
@@ -416,7 +427,7 @@ async fn test_v3_admin_get_naming_metrics() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_health_checkers() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/ns/health/checkers")
@@ -430,7 +441,7 @@ async fn test_v3_admin_get_health_checkers() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_update_health() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_health");
 
     // Register non-ephemeral instance
@@ -470,7 +481,7 @@ async fn test_v3_admin_update_health() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_list_clients() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/ns/client/list")

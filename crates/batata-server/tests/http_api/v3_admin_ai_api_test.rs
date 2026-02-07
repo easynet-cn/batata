@@ -2,8 +2,19 @@
 //!
 //! Tests for /nacos/v3/admin/ai/* endpoints (MCP and A2A)
 
-use crate::common::{TestClient, unique_test_id};
+use crate::common::{
+    CONSOLE_BASE_URL, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient, unique_test_id,
+};
 use serde_json::json;
+
+async fn authenticated_client() -> TestClient {
+    let mut client = TestClient::new(MAIN_BASE_URL);
+    client
+        .login_via(CONSOLE_BASE_URL, TEST_USERNAME, TEST_PASSWORD)
+        .await
+        .expect("Failed to login");
+    client
+}
 
 // ========== MCP Server CRUD ==========
 
@@ -11,7 +22,7 @@ use serde_json::json;
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_list_mcp_servers() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get_with_query(
@@ -28,7 +39,7 @@ async fn test_v3_admin_list_mcp_servers() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_create_mcp_server() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let server_name = format!("test-mcp-{}", unique_test_id());
 
     let response: serde_json::Value = client
@@ -57,7 +68,7 @@ async fn test_v3_admin_create_mcp_server() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_mcp_server() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let server_name = format!("get-mcp-{}", unique_test_id());
 
     // Create
@@ -92,7 +103,7 @@ async fn test_v3_admin_get_mcp_server() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_delete_mcp_server() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let server_name = format!("del-mcp-{}", unique_test_id());
 
     // Create
@@ -122,7 +133,7 @@ async fn test_v3_admin_delete_mcp_server() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_list_a2a_agents() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
 
     let response: serde_json::Value = client
         .get_with_query(
@@ -139,7 +150,7 @@ async fn test_v3_admin_list_a2a_agents() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_register_a2a_agent() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let agent_name = format!("test-agent-{}", unique_test_id());
 
     let response: serde_json::Value = client
@@ -170,7 +181,7 @@ async fn test_v3_admin_register_a2a_agent() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_a2a_agent() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let agent_name = format!("get-agent-{}", unique_test_id());
 
     // Register
@@ -207,7 +218,7 @@ async fn test_v3_admin_get_a2a_agent() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_delete_a2a_agent() {
-    let client = TestClient::new("http://127.0.0.1:8848");
+    let client = authenticated_client().await;
     let agent_name = format!("del-agent-{}", unique_test_id());
 
     // Register
