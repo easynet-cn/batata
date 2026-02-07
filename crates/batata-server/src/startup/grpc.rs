@@ -203,8 +203,15 @@ fn register_cluster_handlers(registry: &mut HandlerRegistry, app_state: Arc<AppS
 }
 
 /// Registers the lock operation handler.
-fn register_lock_handlers(registry: &mut HandlerRegistry, lock_service: Arc<LockService>) {
-    registry.register_handler(Arc::new(LockOperationHandler { lock_service }));
+fn register_lock_handlers(
+    registry: &mut HandlerRegistry,
+    lock_service: Arc<LockService>,
+    auth_service: Arc<GrpcAuthService>,
+) {
+    registry.register_handler(Arc::new(LockOperationHandler {
+        lock_service,
+        auth_service,
+    }));
 }
 
 /// Registers all AI handlers (MCP + A2A).
@@ -212,21 +219,32 @@ fn register_ai_handlers(
     registry: &mut HandlerRegistry,
     mcp_registry: Arc<McpServerRegistry>,
     agent_registry: Arc<AgentRegistry>,
+    auth_service: Arc<GrpcAuthService>,
 ) {
     registry.register_handler(Arc::new(McpServerEndpointHandler {
         mcp_registry: mcp_registry.clone(),
+        auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(QueryMcpServerHandler {
         mcp_registry: mcp_registry.clone(),
+        auth_service: auth_service.clone(),
     }));
-    registry.register_handler(Arc::new(ReleaseMcpServerHandler { mcp_registry }));
+    registry.register_handler(Arc::new(ReleaseMcpServerHandler {
+        mcp_registry,
+        auth_service: auth_service.clone(),
+    }));
     registry.register_handler(Arc::new(AgentEndpointHandler {
         agent_registry: agent_registry.clone(),
+        auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(QueryAgentCardHandler {
         agent_registry: agent_registry.clone(),
+        auth_service: auth_service.clone(),
     }));
-    registry.register_handler(Arc::new(ReleaseAgentCardHandler { agent_registry }));
+    registry.register_handler(Arc::new(ReleaseAgentCardHandler {
+        agent_registry,
+        auth_service,
+    }));
 }
 
 /// Creates and initializes the Distro protocol with the naming service handler.
@@ -318,6 +336,7 @@ pub fn start_grpc_servers(
         server_identity_key,
         server_identity_value,
     );
+    let grpc_auth_service_arc = Arc::new(grpc_auth_service.clone());
 
     if auth_enabled {
         info!("gRPC authentication is enabled");
@@ -365,12 +384,21 @@ pub fn start_grpc_servers(
 
     // Register lock handlers
     let lock_service = Arc::new(LockService::new());
-    register_lock_handlers(&mut handler_registry, lock_service);
+    register_lock_handlers(
+        &mut handler_registry,
+        lock_service,
+        grpc_auth_service_arc.clone(),
+    );
 
     // Register AI handlers (MCP + A2A)
     let mcp_registry = Arc::new(McpServerRegistry::new());
     let agent_registry = Arc::new(AgentRegistry::new());
-    register_ai_handlers(&mut handler_registry, mcp_registry, agent_registry);
+    register_ai_handlers(
+        &mut handler_registry,
+        mcp_registry,
+        agent_registry,
+        grpc_auth_service_arc,
+    );
 
     // Start distro protocol background tasks
     let distro_protocol_clone = distro_protocol.clone();

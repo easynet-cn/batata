@@ -24,6 +24,8 @@ pub enum ResourceType {
     Config,
     Naming,
     Internal,
+    Ai,
+    Lock,
 }
 
 impl ResourceType {
@@ -32,6 +34,8 @@ impl ResourceType {
             ResourceType::Config => "config",
             ResourceType::Naming => "naming",
             ResourceType::Internal => "internal",
+            ResourceType::Ai => "ai",
+            ResourceType::Lock => "lock",
         }
     }
 }
@@ -139,6 +143,16 @@ impl GrpcResource {
     /// Create a naming resource
     pub fn naming(namespace_id: &str, group: &str, service_name: &str) -> Self {
         Self::new(namespace_id, group, service_name, ResourceType::Naming)
+    }
+
+    /// Create an AI resource (MCP server or A2A agent)
+    pub fn ai(namespace_id: &str, name: &str) -> Self {
+        Self::new(namespace_id, Self::ANY, name, ResourceType::Ai)
+    }
+
+    /// Create a lock resource
+    pub fn lock(key: &str) -> Self {
+        Self::new(Self::ANY, Self::ANY, key, ResourceType::Lock)
     }
 
     /// Convert to permission resource string format
@@ -491,6 +505,20 @@ mod tests {
         assert_eq!(ResourceType::Config.as_str(), "config");
         assert_eq!(ResourceType::Naming.as_str(), "naming");
         assert_eq!(ResourceType::Internal.as_str(), "internal");
+        assert_eq!(ResourceType::Ai.as_str(), "ai");
+        assert_eq!(ResourceType::Lock.as_str(), "lock");
+    }
+
+    #[test]
+    fn test_grpc_resource_ai() {
+        let resource = GrpcResource::ai("public", "my-mcp-server");
+        assert_eq!(resource.to_permission_string(), "public:*:ai/my-mcp-server");
+    }
+
+    #[test]
+    fn test_grpc_resource_lock() {
+        let resource = GrpcResource::lock("my-lock-key");
+        assert_eq!(resource.to_permission_string(), "*:*:lock/my-lock-key");
     }
 
     #[test]

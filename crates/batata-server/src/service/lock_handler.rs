@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tonic::Status;
 use tracing::debug;
 
-use batata_core::model::Connection;
+use batata_core::{GrpcAuthService, GrpcResource, PermissionAction, model::Connection};
 
 use crate::{
     api::{
@@ -15,7 +15,9 @@ use crate::{
     },
     service::{
         lock::LockService,
-        rpc::{AuthRequirement, PayloadHandler},
+        rpc::{
+            AuthRequirement, PayloadHandler, check_permission, extract_auth_context_from_payload,
+        },
     },
 };
 
@@ -26,6 +28,7 @@ const LOCK_OP_RELEASE: &str = "RELEASE";
 #[derive(Clone)]
 pub struct LockOperationHandler {
     pub lock_service: Arc<LockService>,
+    pub auth_service: Arc<GrpcAuthService>,
 }
 
 #[tonic::async_trait]
@@ -43,6 +46,18 @@ impl PayloadHandler for LockOperationHandler {
             );
             return Ok(response.build_payload());
         };
+
+        // Check permission for lock resource
+        let auth_context =
+            extract_auth_context_from_payload(&self.auth_service, payload);
+        let resource = GrpcResource::lock(&lock_instance.key);
+        check_permission(
+            &self.auth_service,
+            &auth_context,
+            &resource,
+            PermissionAction::Write,
+            &[],
+        )?;
 
         let owner = &connection.meta_info.connection_id;
 
@@ -92,7 +107,7 @@ impl PayloadHandler for LockOperationHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Authenticated
+        AuthRequirement::Permission
     }
 }
 
@@ -106,12 +121,17 @@ mod tests {
         })
     }
 
+    fn test_auth_service() -> Arc<GrpcAuthService> {
+        Arc::new(GrpcAuthService::default())
+    }
+
     #[test]
     fn test_lock_operation_handler_can_handle() {
         let handler = LockOperationHandler {
             lock_service: test_lock_service(),
+            auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "LockOperationRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Authenticated);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Permission);
     }
 }
