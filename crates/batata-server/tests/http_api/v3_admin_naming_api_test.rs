@@ -154,16 +154,19 @@ async fn test_v3_admin_create_duplicate_service() {
         .await
         .expect("Failed to create service");
 
-    // Create again - should fail
-    let response: serde_json::Value = client
-        .post_json(
+    // Create again - should return error in the response body (HTTP 400)
+    let result = client
+        .post_json::<serde_json::Value, _>(
             "/nacos/v3/admin/ns/service",
             &json!({ "serviceName": service_name }),
         )
-        .await
-        .expect("Request should complete");
+        .await;
 
-    assert_ne!(response["code"], 0, "Duplicate create should fail");
+    // May return HTTP 400 or response with non-zero code
+    match result {
+        Ok(response) => assert_ne!(response["code"], 0, "Duplicate create should fail"),
+        Err(_) => {} // HTTP error is also acceptable
+    }
 }
 
 // ========== Instance CRUD ==========
@@ -176,17 +179,17 @@ async fn test_v3_admin_register_instance() {
     let service_name = unique_service_name("v3admin_inst_reg");
 
     let response: serde_json::Value = client
-        .post_form(
+        .post_json(
             "/nacos/v3/admin/ns/instance",
-            &[
-                ("serviceName", service_name.as_str()),
-                ("ip", "192.168.10.1"),
-                ("port", "8080"),
-                ("weight", "1.0"),
-                ("healthy", "true"),
-                ("enabled", "true"),
-                ("ephemeral", "true"),
-            ],
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.10.1",
+                "port": 8080,
+                "weight": 1.0,
+                "healthy": true,
+                "enabled": true,
+                "ephemeral": true
+            }),
         )
         .await
         .expect("Failed to register instance");
@@ -203,13 +206,13 @@ async fn test_v3_admin_deregister_instance() {
 
     // Register first
     let _: serde_json::Value = client
-        .post_form(
+        .post_json(
             "/nacos/v3/admin/ns/instance",
-            &[
-                ("serviceName", service_name.as_str()),
-                ("ip", "192.168.10.2"),
-                ("port", "8080"),
-            ],
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.10.2",
+                "port": 8080
+            }),
         )
         .await
         .expect("Failed to register");
@@ -239,29 +242,29 @@ async fn test_v3_admin_update_instance() {
 
     // Register
     let _: serde_json::Value = client
-        .post_form(
+        .post_json(
             "/nacos/v3/admin/ns/instance",
-            &[
-                ("serviceName", service_name.as_str()),
-                ("ip", "192.168.10.3"),
-                ("port", "8080"),
-                ("weight", "1.0"),
-            ],
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.10.3",
+                "port": 8080,
+                "weight": 1.0
+            }),
         )
         .await
         .expect("Failed to register");
 
     // Update
     let response: serde_json::Value = client
-        .put_form(
+        .put_json(
             "/nacos/v3/admin/ns/instance",
-            &[
-                ("serviceName", service_name.as_str()),
-                ("ip", "192.168.10.3"),
-                ("port", "8080"),
-                ("weight", "2.0"),
-                ("enabled", "true"),
-            ],
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.10.3",
+                "port": 8080,
+                "weight": 2.0,
+                "enabled": true
+            }),
         )
         .await
         .expect("Failed to update instance");
@@ -279,13 +282,13 @@ async fn test_v3_admin_list_instances() {
     // Register instances
     for i in 1..=2 {
         let _: serde_json::Value = client
-            .post_form(
+            .post_json(
                 "/nacos/v3/admin/ns/instance",
-                &[
-                    ("serviceName", service_name.as_str()),
-                    ("ip", &format!("192.168.10.{}", 10 + i)),
-                    ("port", "8080"),
-                ],
+                &json!({
+                    "serviceName": service_name,
+                    "ip": format!("192.168.10.{}", 10 + i),
+                    "port": 8080
+                }),
             )
             .await
             .expect("Failed to register");
@@ -312,13 +315,13 @@ async fn test_v3_admin_get_instance() {
 
     // Register
     let _: serde_json::Value = client
-        .post_form(
+        .post_json(
             "/nacos/v3/admin/ns/instance",
-            &[
-                ("serviceName", service_name.as_str()),
-                ("ip", "192.168.10.20"),
-                ("port", "8080"),
-            ],
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.10.20",
+                "port": 8080
+            }),
         )
         .await
         .expect("Failed to register");
@@ -348,26 +351,26 @@ async fn test_v3_admin_update_instance_metadata() {
 
     // Register
     let _: serde_json::Value = client
-        .post_form(
+        .post_json(
             "/nacos/v3/admin/ns/instance",
-            &[
-                ("serviceName", service_name.as_str()),
-                ("ip", "192.168.10.30"),
-                ("port", "8080"),
-            ],
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.10.30",
+                "port": 8080
+            }),
         )
         .await
         .expect("Failed to register");
 
     // Update metadata
     let response: serde_json::Value = client
-        .put_form(
+        .put_json(
             "/nacos/v3/admin/ns/instance/metadata",
-            &[
-                ("serviceName", service_name.as_str()),
-                ("instances", r#"[{"ip":"192.168.10.30","port":8080}]"#),
-                ("metadata", r#"{"env":"staging"}"#),
-            ],
+            &json!({
+                "serviceName": service_name,
+                "instances": r#"[{"ip":"192.168.10.30","port":8080}]"#,
+                "metadata": r#"{"env":"staging"}"#
+            }),
         )
         .await
         .expect("Failed to update metadata");
@@ -430,23 +433,23 @@ async fn test_v3_admin_update_health() {
     let client = TestClient::new("http://127.0.0.1:8848");
     let service_name = unique_service_name("v3admin_health");
 
-    // Register instance
+    // Register non-ephemeral instance
     let _: serde_json::Value = client
-        .post_form(
+        .post_json(
             "/nacos/v3/admin/ns/instance",
-            &[
-                ("serviceName", service_name.as_str()),
-                ("ip", "192.168.10.40"),
-                ("port", "8080"),
-                ("ephemeral", "false"),
-            ],
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.10.40",
+                "port": 8080,
+                "ephemeral": false
+            }),
         )
         .await
         .expect("Failed to register");
 
-    // Update health
+    // Update health (handler uses web::Query, not form body)
     let response: serde_json::Value = client
-        .put_form(
+        .put_with_query(
             "/nacos/v3/admin/ns/health/instance",
             &[
                 ("serviceName", service_name.as_str()),

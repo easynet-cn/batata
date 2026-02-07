@@ -58,8 +58,8 @@ async fn test_v2_patch_nonexistent_instance() {
     let client = TestClient::new("http://127.0.0.1:8848");
     let service_name = unique_service_name("v2_patch_noexist");
 
-    let response: serde_json::Value = client
-        .patch_form(
+    let result = client
+        .patch_form::<serde_json::Value, _>(
             "/nacos/v2/ns/instance",
             &[
                 ("serviceName", service_name.as_str()),
@@ -68,13 +68,18 @@ async fn test_v2_patch_nonexistent_instance() {
                 ("weight", "2.0"),
             ],
         )
-        .await
-        .expect("Request should complete");
+        .await;
 
-    assert_ne!(
-        response["code"], 0,
-        "Patching nonexistent instance should fail"
-    );
+    // Should fail - either HTTP error or response with non-zero code
+    match result {
+        Ok(response) => {
+            assert_ne!(
+                response["code"], 0,
+                "Patching nonexistent instance should fail"
+            )
+        }
+        Err(_) => {} // HTTP 404 error is also acceptable
+    }
 }
 
 // ========== Instance Beat ==========

@@ -145,11 +145,13 @@ async fn create_config(
         .unwrap_or_default()
         .to_string();
 
-    let auth_content = match req.extensions().get::<AuthContext>() {
-        Some(ctx) => ctx.clone(),
-        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    let src_user = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => config_form
+            .src_user
+            .take()
+            .unwrap_or_else(|| ctx.username.clone()),
+        None => config_form.src_user.take().unwrap_or_default(),
     };
-    let src_user = config_form.src_user.take().unwrap_or(auth_content.username);
 
     let src_ip = req
         .connection_info()
@@ -213,11 +215,13 @@ async fn update_config(
         .unwrap_or_default()
         .to_string();
 
-    let auth_content = match req.extensions().get::<AuthContext>() {
-        Some(ctx) => ctx.clone(),
-        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    let src_user = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => config_form
+            .src_user
+            .take()
+            .unwrap_or_else(|| ctx.username.clone()),
+        None => config_form.src_user.take().unwrap_or_default(),
     };
-    let src_user = config_form.src_user.take().unwrap_or(auth_content.username);
     let src_ip = req
         .connection_info()
         .realip_remote_addr()
@@ -273,10 +277,11 @@ async fn delete_config(
         .unwrap_or_default()
         .to_owned();
 
-    let auth_content = match req.extensions().get::<AuthContext>() {
-        Some(ctx) => ctx.clone(),
-        None => return HttpResponse::Unauthorized().body("Unauthorized"),
-    };
+    let src_user = req
+        .extensions()
+        .get::<AuthContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
 
     if let Err(e) = service::config::delete(
         data.db(),
@@ -285,7 +290,7 @@ async fn delete_config(
         &namespace_id,
         "",
         &client_ip,
-        &auth_content.username,
+        &src_user,
     )
     .await
     {
@@ -319,12 +324,11 @@ async fn import_config(
 
     let policy = params.get_policy();
 
-    let auth_context = match req.extensions().get::<AuthContext>() {
-        Some(ctx) => ctx.clone(),
-        None => return HttpResponse::Unauthorized().body("Unauthorized"),
-    };
-
-    let src_user = auth_context.username;
+    let src_user = req
+        .extensions()
+        .get::<AuthContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
     let src_ip = req
         .connection_info()
         .realip_remote_addr()

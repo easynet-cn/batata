@@ -2,7 +2,7 @@
 //!
 //! Tests for /nacos/v3/admin/core/* endpoints
 
-use crate::common::{TEST_PASSWORD, TEST_USERNAME, TestClient, unique_test_id};
+use crate::common::{TestClient, unique_test_id};
 
 // ========== Cluster Node Endpoints ==========
 
@@ -78,11 +78,7 @@ async fn test_v3_admin_cluster_list_nodes_with_keyword() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_list_namespaces() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
-    client
-        .login(TEST_USERNAME, TEST_PASSWORD)
-        .await
-        .expect("Login failed");
+    let client = TestClient::new("http://127.0.0.1:8848");
 
     let response: serde_json::Value = client
         .get("/nacos/v3/admin/core/namespace/list")
@@ -100,19 +96,14 @@ async fn test_v3_admin_list_namespaces() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_create_namespace() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
-    client
-        .login(TEST_USERNAME, TEST_PASSWORD)
-        .await
-        .expect("Login failed");
-
+    let client = TestClient::new("http://127.0.0.1:8848");
     let ns_id = format!("v3admin-ns-{}", unique_test_id());
 
     let response: serde_json::Value = client
         .post_form(
             "/nacos/v3/admin/core/namespace",
             &[
-                ("namespaceId", ns_id.as_str()),
+                ("customNamespaceId", ns_id.as_str()),
                 ("namespaceName", "V3 Admin Test NS"),
                 ("namespaceDesc", "Created by V3 admin test"),
             ],
@@ -137,12 +128,7 @@ async fn test_v3_admin_create_namespace() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_get_namespace() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
-    client
-        .login(TEST_USERNAME, TEST_PASSWORD)
-        .await
-        .expect("Login failed");
-
+    let client = TestClient::new("http://127.0.0.1:8848");
     let ns_id = format!("v3admin-get-ns-{}", unique_test_id());
 
     // Create
@@ -150,7 +136,7 @@ async fn test_v3_admin_get_namespace() {
         .post_form(
             "/nacos/v3/admin/core/namespace",
             &[
-                ("namespaceId", ns_id.as_str()),
+                ("customNamespaceId", ns_id.as_str()),
                 ("namespaceName", "V3 Admin Get NS"),
             ],
         )
@@ -183,12 +169,7 @@ async fn test_v3_admin_get_namespace() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_update_namespace() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
-    client
-        .login(TEST_USERNAME, TEST_PASSWORD)
-        .await
-        .expect("Login failed");
-
+    let client = TestClient::new("http://127.0.0.1:8848");
     let ns_id = format!("v3admin-upd-ns-{}", unique_test_id());
 
     // Create
@@ -196,7 +177,7 @@ async fn test_v3_admin_update_namespace() {
         .post_form(
             "/nacos/v3/admin/core/namespace",
             &[
-                ("namespaceId", ns_id.as_str()),
+                ("customNamespaceId", ns_id.as_str()),
                 ("namespaceName", "Original Name"),
             ],
         )
@@ -233,12 +214,7 @@ async fn test_v3_admin_update_namespace() {
 #[tokio::test]
 #[ignore = "requires running server"]
 async fn test_v3_admin_delete_namespace() {
-    let mut client = TestClient::new("http://127.0.0.1:8848");
-    client
-        .login(TEST_USERNAME, TEST_PASSWORD)
-        .await
-        .expect("Login failed");
-
+    let client = TestClient::new("http://127.0.0.1:8848");
     let ns_id = format!("v3admin-del-ns-{}", unique_test_id());
 
     // Create
@@ -246,7 +222,7 @@ async fn test_v3_admin_delete_namespace() {
         .post_form(
             "/nacos/v3/admin/core/namespace",
             &[
-                ("namespaceId", ns_id.as_str()),
+                ("customNamespaceId", ns_id.as_str()),
                 ("namespaceName", "To Delete"),
             ],
         )

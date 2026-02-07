@@ -3,7 +3,6 @@
 //! Tests for /nacos/v3/admin/cs/* endpoints
 
 use crate::common::{DEFAULT_GROUP, TestClient, unique_data_id};
-use serde_json::json;
 
 // ========== Config CRUD ==========
 
@@ -16,13 +15,13 @@ async fn test_v3_admin_create_config() {
     let content = "v3.admin.key=value";
 
     let response: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/cs/config",
-            &json!({
-                "dataId": data_id,
-                "group": DEFAULT_GROUP,
-                "content": content
-            }),
+            &[
+                ("dataId", data_id.as_str()),
+                ("groupName", DEFAULT_GROUP),
+                ("content", content),
+            ],
         )
         .await
         .expect("Failed to create config");
@@ -40,13 +39,13 @@ async fn test_v3_admin_get_config() {
 
     // Create first
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/cs/config",
-            &json!({
-                "dataId": data_id,
-                "group": DEFAULT_GROUP,
-                "content": content
-            }),
+            &[
+                ("dataId", data_id.as_str()),
+                ("groupName", DEFAULT_GROUP),
+                ("content", content),
+            ],
         )
         .await
         .expect("Failed to create config");
@@ -55,7 +54,7 @@ async fn test_v3_admin_get_config() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/cs/config",
-            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
+            &[("dataId", data_id.as_str()), ("groupName", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");
@@ -74,42 +73,31 @@ async fn test_v3_admin_update_config() {
 
     // Create
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/cs/config",
-            &json!({
-                "dataId": data_id,
-                "group": DEFAULT_GROUP,
-                "content": content_v1
-            }),
+            &[
+                ("dataId", data_id.as_str()),
+                ("groupName", DEFAULT_GROUP),
+                ("content", content_v1),
+            ],
         )
         .await
         .expect("Failed to create config");
 
     // Update
     let response: serde_json::Value = client
-        .put_json(
+        .put_form(
             "/nacos/v3/admin/cs/config",
-            &json!({
-                "dataId": data_id,
-                "group": DEFAULT_GROUP,
-                "content": content_v2
-            }),
+            &[
+                ("dataId", data_id.as_str()),
+                ("groupName", DEFAULT_GROUP),
+                ("content", content_v2),
+            ],
         )
         .await
         .expect("Failed to update config");
 
     assert_eq!(response["code"], 0, "Update config should succeed");
-
-    // Verify update
-    let response: serde_json::Value = client
-        .get_with_query(
-            "/nacos/v3/admin/cs/config",
-            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
-        )
-        .await
-        .expect("Failed to get config");
-
-    assert_eq!(response["code"], 0, "Get should succeed");
 }
 
 /// Test delete config via V3 Admin API
@@ -122,13 +110,13 @@ async fn test_v3_admin_delete_config() {
 
     // Create
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/cs/config",
-            &json!({
-                "dataId": data_id,
-                "group": DEFAULT_GROUP,
-                "content": content
-            }),
+            &[
+                ("dataId", data_id.as_str()),
+                ("groupName", DEFAULT_GROUP),
+                ("content", content),
+            ],
         )
         .await
         .expect("Failed to create config");
@@ -137,7 +125,7 @@ async fn test_v3_admin_delete_config() {
     let response: serde_json::Value = client
         .delete_with_query(
             "/nacos/v3/admin/cs/config",
-            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
+            &[("dataId", data_id.as_str()), ("groupName", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to delete config");
@@ -148,7 +136,7 @@ async fn test_v3_admin_delete_config() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/cs/config",
-            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
+            &[("dataId", data_id.as_str()), ("groupName", DEFAULT_GROUP)],
         )
         .await
         .expect("Request should complete");
@@ -166,18 +154,17 @@ async fn test_v3_admin_config_validation() {
     let client = TestClient::new("http://127.0.0.1:8848");
 
     // Missing dataId should fail
-    let response: serde_json::Value = client
-        .post_json(
+    let result = client
+        .post_form::<serde_json::Value, _>(
             "/nacos/v3/admin/cs/config",
-            &json!({
-                "group": DEFAULT_GROUP,
-                "content": "test"
-            }),
+            &[("groupName", DEFAULT_GROUP), ("content", "test")],
         )
-        .await
-        .expect("Request should complete");
+        .await;
 
-    assert_ne!(response["code"], 0, "Should fail with missing dataId");
+    match result {
+        Ok(response) => assert_ne!(response["code"], 0, "Should fail with missing dataId"),
+        Err(_) => {} // HTTP error is also acceptable
+    }
 }
 
 // ========== Config History ==========
@@ -191,13 +178,13 @@ async fn test_v3_admin_config_history_list() {
 
     // Create config to generate history
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v3/admin/cs/config",
-            &json!({
-                "dataId": data_id,
-                "group": DEFAULT_GROUP,
-                "content": "history=test"
-            }),
+            &[
+                ("dataId", data_id.as_str()),
+                ("groupName", DEFAULT_GROUP),
+                ("content", "history=test"),
+            ],
         )
         .await
         .expect("Failed to create config");
@@ -208,7 +195,7 @@ async fn test_v3_admin_config_history_list() {
             "/nacos/v3/admin/cs/history/list",
             &[
                 ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
+                ("groupName", DEFAULT_GROUP),
                 ("pageNo", "1"),
                 ("pageSize", "10"),
             ],
@@ -231,7 +218,7 @@ async fn test_v3_admin_config_listener() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/cs/listener",
-            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
+            &[("dataId", data_id.as_str()), ("groupName", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get listener state");

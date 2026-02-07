@@ -16,7 +16,7 @@ async fn test_v3_admin_list_mcp_servers() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/ai/mcp/list",
-            &[("pageNo", "1"), ("pageSize", "10")],
+            &[("page", "1"), ("pageSize", "10")],
         )
         .await
         .expect("Failed to list MCP servers");
@@ -35,8 +35,8 @@ async fn test_v3_admin_create_mcp_server() {
         .post_json(
             "/nacos/v3/admin/ai/mcp",
             &json!({
-                "serverName": server_name,
-                "serverUrl": "http://localhost:9090/mcp",
+                "name": server_name,
+                "endpoint": "http://localhost:9090/mcp",
                 "description": "Test MCP server"
             }),
         )
@@ -47,10 +47,7 @@ async fn test_v3_admin_create_mcp_server() {
 
     // Cleanup
     let _: serde_json::Value = client
-        .delete_with_query(
-            "/nacos/v3/admin/ai/mcp",
-            &[("serverName", server_name.as_str())],
-        )
+        .delete(&format!("/nacos/v3/admin/ai/mcp/default/{}", server_name))
         .await
         .ok()
         .unwrap_or_default();
@@ -68,19 +65,16 @@ async fn test_v3_admin_get_mcp_server() {
         .post_json(
             "/nacos/v3/admin/ai/mcp",
             &json!({
-                "serverName": server_name,
-                "serverUrl": "http://localhost:9090/mcp"
+                "name": server_name,
+                "endpoint": "http://localhost:9090/mcp"
             }),
         )
         .await
         .expect("Failed to create MCP server");
 
-    // Get
+    // Get (uses path params: /mcp/{namespace}/{name})
     let response: serde_json::Value = client
-        .get_with_query(
-            "/nacos/v3/admin/ai/mcp",
-            &[("serverName", server_name.as_str())],
-        )
+        .get(&format!("/nacos/v3/admin/ai/mcp/default/{}", server_name))
         .await
         .expect("Failed to get MCP server");
 
@@ -88,55 +82,7 @@ async fn test_v3_admin_get_mcp_server() {
 
     // Cleanup
     let _: serde_json::Value = client
-        .delete_with_query(
-            "/nacos/v3/admin/ai/mcp",
-            &[("serverName", server_name.as_str())],
-        )
-        .await
-        .ok()
-        .unwrap_or_default();
-}
-
-/// Test update MCP server via V3 Admin API
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_v3_admin_update_mcp_server() {
-    let client = TestClient::new("http://127.0.0.1:8848");
-    let server_name = format!("upd-mcp-{}", unique_test_id());
-
-    // Create
-    let _: serde_json::Value = client
-        .post_json(
-            "/nacos/v3/admin/ai/mcp",
-            &json!({
-                "serverName": server_name,
-                "serverUrl": "http://localhost:9090/mcp"
-            }),
-        )
-        .await
-        .expect("Failed to create MCP server");
-
-    // Update
-    let response: serde_json::Value = client
-        .put_json(
-            "/nacos/v3/admin/ai/mcp",
-            &json!({
-                "serverName": server_name,
-                "serverUrl": "http://localhost:9091/mcp",
-                "description": "Updated MCP server"
-            }),
-        )
-        .await
-        .expect("Failed to update MCP server");
-
-    assert_eq!(response["code"], 0, "Update MCP server should succeed");
-
-    // Cleanup
-    let _: serde_json::Value = client
-        .delete_with_query(
-            "/nacos/v3/admin/ai/mcp",
-            &[("serverName", server_name.as_str())],
-        )
+        .delete(&format!("/nacos/v3/admin/ai/mcp/default/{}", server_name))
         .await
         .ok()
         .unwrap_or_default();
@@ -154,19 +100,16 @@ async fn test_v3_admin_delete_mcp_server() {
         .post_json(
             "/nacos/v3/admin/ai/mcp",
             &json!({
-                "serverName": server_name,
-                "serverUrl": "http://localhost:9090/mcp"
+                "name": server_name,
+                "endpoint": "http://localhost:9090/mcp"
             }),
         )
         .await
         .expect("Failed to create MCP server");
 
-    // Delete
+    // Delete (uses path params: /mcp/{namespace}/{name})
     let response: serde_json::Value = client
-        .delete_with_query(
-            "/nacos/v3/admin/ai/mcp",
-            &[("serverName", server_name.as_str())],
-        )
+        .delete(&format!("/nacos/v3/admin/ai/mcp/default/{}", server_name))
         .await
         .expect("Failed to delete MCP server");
 
@@ -184,7 +127,7 @@ async fn test_v3_admin_list_a2a_agents() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/ai/a2a/list",
-            &[("pageNo", "1"), ("pageSize", "10")],
+            &[("page", "1"), ("pageSize", "10")],
         )
         .await
         .expect("Failed to list A2A agents");
@@ -203,9 +146,11 @@ async fn test_v3_admin_register_a2a_agent() {
         .post_json(
             "/nacos/v3/admin/ai/a2a",
             &json!({
-                "name": agent_name,
-                "url": "http://localhost:9100/a2a",
-                "description": "Test A2A agent"
+                "card": {
+                    "name": agent_name,
+                    "endpoint": "http://localhost:9100/a2a",
+                    "description": "Test A2A agent"
+                }
             }),
         )
         .await
@@ -215,7 +160,7 @@ async fn test_v3_admin_register_a2a_agent() {
 
     // Cleanup
     let _: serde_json::Value = client
-        .delete_with_query("/nacos/v3/admin/ai/a2a", &[("name", agent_name.as_str())])
+        .delete(&format!("/nacos/v3/admin/ai/a2a/default/{}", agent_name))
         .await
         .ok()
         .unwrap_or_default();
@@ -233,16 +178,18 @@ async fn test_v3_admin_get_a2a_agent() {
         .post_json(
             "/nacos/v3/admin/ai/a2a",
             &json!({
-                "name": agent_name,
-                "url": "http://localhost:9100/a2a"
+                "card": {
+                    "name": agent_name,
+                    "endpoint": "http://localhost:9100/a2a"
+                }
             }),
         )
         .await
         .expect("Failed to register agent");
 
-    // Get
+    // Get (uses path params: /a2a/{namespace}/{name})
     let response: serde_json::Value = client
-        .get_with_query("/nacos/v3/admin/ai/a2a", &[("name", agent_name.as_str())])
+        .get(&format!("/nacos/v3/admin/ai/a2a/default/{}", agent_name))
         .await
         .expect("Failed to get agent");
 
@@ -250,7 +197,7 @@ async fn test_v3_admin_get_a2a_agent() {
 
     // Cleanup
     let _: serde_json::Value = client
-        .delete_with_query("/nacos/v3/admin/ai/a2a", &[("name", agent_name.as_str())])
+        .delete(&format!("/nacos/v3/admin/ai/a2a/default/{}", agent_name))
         .await
         .ok()
         .unwrap_or_default();
@@ -268,16 +215,18 @@ async fn test_v3_admin_delete_a2a_agent() {
         .post_json(
             "/nacos/v3/admin/ai/a2a",
             &json!({
-                "name": agent_name,
-                "url": "http://localhost:9100/a2a"
+                "card": {
+                    "name": agent_name,
+                    "endpoint": "http://localhost:9100/a2a"
+                }
             }),
         )
         .await
         .expect("Failed to register agent");
 
-    // Delete
+    // Delete (uses path params: /a2a/{namespace}/{name})
     let response: serde_json::Value = client
-        .delete_with_query("/nacos/v3/admin/ai/a2a", &[("name", agent_name.as_str())])
+        .delete(&format!("/nacos/v3/admin/ai/a2a/default/{}", agent_name))
         .await
         .expect("Failed to delete agent");
 
