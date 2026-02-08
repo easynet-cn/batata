@@ -62,7 +62,7 @@ public class NacosClusterManagementTest {
      */
     @Test
     @Order(1)
-    void testRegisterInstanceWithCluster() throws NacosException {
+    void testRegisterInstanceWithCluster() throws NacosException, InterruptedException {
         String serviceName = "cluster-service-" + UUID.randomUUID().toString().substring(0, 8);
         String clusterName = "cluster-a";
 
@@ -266,9 +266,12 @@ public class NacosClusterManagementTest {
 
         // Subscribe with cluster filter
         namingService.subscribe(serviceName, DEFAULT_GROUP, Arrays.asList("primary"), event -> {
-            if (event.getInstances() != null) {
-                receivedInstances.addAll(event.getInstances());
-                latch.countDown();
+            if (event instanceof com.alibaba.nacos.api.naming.listener.NamingEvent) {
+                com.alibaba.nacos.api.naming.listener.NamingEvent namingEvent = (com.alibaba.nacos.api.naming.listener.NamingEvent) event;
+                if (namingEvent.getInstances() != null) {
+                    receivedInstances.addAll(namingEvent.getInstances());
+                    latch.countDown();
+                }
             }
         });
 

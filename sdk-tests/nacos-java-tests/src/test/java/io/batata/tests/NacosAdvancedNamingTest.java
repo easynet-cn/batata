@@ -7,6 +7,7 @@ import com.alibaba.nacos.api.naming.listener.EventListener;
 import com.alibaba.nacos.api.naming.listener.NamingEvent;
 import com.alibaba.nacos.api.naming.pojo.Instance;
 import com.alibaba.nacos.api.naming.pojo.ListView;
+import com.alibaba.nacos.api.naming.pojo.ServiceInfo;
 import org.junit.jupiter.api.*;
 
 import java.util.*;
@@ -172,15 +173,15 @@ public class NacosAdvancedNamingTest {
     void testBatchDeregisterInstance() throws NacosException, InterruptedException {
         String serviceName = "batch-dereg-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Register instances first
+        // Register instances using batch register (required for batch deregister)
         List<Instance> instances = new ArrayList<>();
         for (int i = 0; i < 4; i++) {
             Instance instance = new Instance();
             instance.setIp("192.168.103." + (i + 1));
             instance.setPort(8080);
             instances.add(instance);
-            namingService.registerInstance(serviceName, instance);
         }
+        namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instances);
 
         Thread.sleep(1000);
 
@@ -205,13 +206,15 @@ public class NacosAdvancedNamingTest {
     void testPartialBatchDeregister() throws NacosException, InterruptedException {
         String serviceName = "partial-dereg-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Register 5 instances
+        // Register 5 instances using batch register (required for batch deregister)
+        List<Instance> instances = new ArrayList<>();
         for (int i = 0; i < 5; i++) {
             Instance instance = new Instance();
             instance.setIp("192.168.104." + (i + 1));
             instance.setPort(8080);
-            namingService.registerInstance(serviceName, instance);
+            instances.add(instance);
         }
+        namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instances);
 
         Thread.sleep(1000);
 
@@ -445,9 +448,9 @@ public class NacosAdvancedNamingTest {
         Thread.sleep(500);
 
         // Get subscribed services
-        ListView<String> subscribed = namingService.getSubscribeServices();
+        List<ServiceInfo> subscribed = namingService.getSubscribeServices();
         assertNotNull(subscribed);
-        System.out.println("Subscribed services: " + subscribed.getCount() + ", data: " + subscribed.getData());
+        System.out.println("Subscribed services count: " + subscribed.size());
 
         // Cleanup
         namingService.unsubscribe(serviceName1, listener);

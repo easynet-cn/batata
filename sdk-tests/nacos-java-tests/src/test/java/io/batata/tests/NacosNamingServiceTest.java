@@ -382,25 +382,25 @@ public class NacosNamingServiceTest {
         Instance cluster1 = new Instance();
         cluster1.setIp("192.168.1.80");
         cluster1.setPort(8080);
-        cluster1.setClusterName("CLUSTER_A");
+        cluster1.setClusterName("cluster-a");
         namingService.registerInstance(serviceName, cluster1);
 
         Instance cluster2 = new Instance();
         cluster2.setIp("192.168.1.81");
         cluster2.setPort(8080);
-        cluster2.setClusterName("CLUSTER_B");
+        cluster2.setClusterName("cluster-b");
         namingService.registerInstance(serviceName, cluster2);
 
         Thread.sleep(1000);
 
         // Get from specific cluster
         List<Instance> clusterA = namingService.selectInstances(serviceName,
-                DEFAULT_GROUP, Arrays.asList("CLUSTER_A"), true);
+                DEFAULT_GROUP, Arrays.asList("cluster-a"), true);
         assertEquals(1, clusterA.size());
         assertEquals("192.168.1.80", clusterA.get(0).getIp());
 
         List<Instance> clusterB = namingService.selectInstances(serviceName,
-                DEFAULT_GROUP, Arrays.asList("CLUSTER_B"), true);
+                DEFAULT_GROUP, Arrays.asList("cluster-b"), true);
         assertEquals(1, clusterB.size());
         assertEquals("192.168.1.81", clusterB.get(0).getIp());
 

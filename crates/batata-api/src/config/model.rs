@@ -30,7 +30,7 @@ where
 
 /// Base configuration request structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigRequest {
     #[serde(flatten)]
     pub request: Request,
@@ -123,7 +123,7 @@ impl std::str::FromStr for SameConfigPolicy {
 
 /// Configuration listen context
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigListenContext {
     pub group: String,
     pub md5: String,
@@ -133,8 +133,9 @@ pub struct ConfigListenContext {
 
 /// Batch listen request for configuration changes
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigBatchListenRequest {
+    #[serde(flatten)]
     pub config_request: ConfigRequest,
     pub listen: bool,
     pub config_listen_contexts: Vec<ConfigListenContext>,
@@ -176,8 +177,9 @@ impl From<&Payload> for ConfigBatchListenRequest {
 
 /// Request to publish configuration
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigPublishRequest {
+    #[serde(flatten)]
     pub config_request: ConfigRequest,
     pub content: String,
     pub cas_md5: String,
@@ -220,8 +222,9 @@ impl From<&Payload> for ConfigPublishRequest {
 
 /// Request to query configuration
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigQueryRequest {
+    #[serde(flatten)]
     pub config_request: ConfigRequest,
     pub tag: String,
 }
@@ -261,8 +264,9 @@ impl From<&Payload> for ConfigQueryRequest {
 
 /// Request to remove configuration
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigRemoveRequest {
+    #[serde(flatten)]
     pub config_request: ConfigRequest,
     pub tag: String,
 }
@@ -302,8 +306,9 @@ impl From<&Payload> for ConfigRemoveRequest {
 
 /// Base fuzzy watch notify request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct FuzzyWatchNotifyRequest {
+    #[serde(flatten)]
     pub server_request: ServerRequest,
     #[serde(
         serialize_with = "serialize_config_module",
@@ -337,8 +342,9 @@ impl RequestTrait for FuzzyWatchNotifyRequest {
 
 /// Configuration fuzzy watch change notify request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigFuzzyWatchChangeNotifyRequest {
+    #[serde(flatten)]
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
     pub group_key: String,
     pub change_type: String,
@@ -387,8 +393,9 @@ pub struct Context {
 
 /// Configuration fuzzy watch sync request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigFuzzyWatchSyncRequest {
+    #[serde(flatten)]
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
     pub group_key_pattern: String,
     pub sync_type: String,
@@ -449,8 +456,9 @@ impl MetricsKey {
 
 /// Client configuration metric request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ClientConfigMetricRequest {
+    #[serde(flatten)]
     pub server_request: ServerRequest,
     pub metrics_keys: Vec<MetricsKey>,
     #[serde(
@@ -496,8 +504,9 @@ impl From<&Payload> for ClientConfigMetricRequest {
 
 /// Configuration change notify request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigChangeNotifyRequest {
+    #[serde(flatten)]
     pub server_request: ServerRequest,
     pub data_id: String,
     pub group: String,
@@ -555,7 +564,7 @@ impl From<&Payload> for ConfigChangeNotifyRequest {
 
 /// Configuration fuzzy watch request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigFuzzyWatchRequest {
     pub request: Request,
     pub group_key_pattern: String,
@@ -604,8 +613,9 @@ impl From<&Payload> for ConfigFuzzyWatchRequest {
 
 /// Request for syncing configuration changes across cluster nodes
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConfigChangeClusterSyncRequest {
+    #[serde(flatten)]
     pub config_request: ConfigRequest,
     pub last_modified: i64,
     pub gray_name: String,
@@ -657,6 +667,7 @@ pub struct ConfigContext {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigChangeBatchListenResponse {
+    #[serde(flatten)]
     pub response: Response,
     pub changed_configs: Vec<ConfigContext>,
 }
@@ -698,6 +709,7 @@ impl From<ConfigChangeBatchListenResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigPublishResponse {
+    #[serde(flatten)]
     pub response: Response,
 }
 
@@ -737,6 +749,7 @@ impl From<ConfigPublishResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigQueryResponse {
+    #[serde(flatten)]
     pub response: Response,
     pub content: String,
     pub encrypted_data_key: String,
@@ -788,6 +801,7 @@ impl From<ConfigQueryResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigRemoveResponse {
+    #[serde(flatten)]
     pub response: Response,
 }
 
@@ -827,6 +841,7 @@ impl From<ConfigRemoveResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigFuzzyWatchChangeNotifyResponse {
+    #[serde(flatten)]
     pub response: Response,
 }
 
@@ -866,6 +881,7 @@ impl From<ConfigFuzzyWatchChangeNotifyResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigFuzzyWatchSyncResponse {
+    #[serde(flatten)]
     pub response: Response,
 }
 
@@ -905,6 +921,7 @@ impl From<ConfigFuzzyWatchSyncResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfigMetricResponse {
+    #[serde(flatten)]
     pub response: Response,
     pub metrics: HashMap<String, Value>,
 }
@@ -946,6 +963,7 @@ impl From<ClientConfigMetricResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigChangeNotifyResponse {
+    #[serde(flatten)]
     pub response: Response,
 }
 
@@ -985,6 +1003,7 @@ impl From<ConfigChangeNotifyResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigFuzzyWatchResponse {
+    #[serde(flatten)]
     pub response: Response,
 }
 
@@ -1024,6 +1043,7 @@ impl From<ConfigFuzzyWatchResponse> for Any {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigChangeClusterSyncResponse {
+    #[serde(flatten)]
     pub response: Response,
 }
 

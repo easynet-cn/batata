@@ -36,19 +36,27 @@ async fn login(
     let mut username: String = "".to_string();
     let mut password: String = "".to_string();
 
-    if let Some(form_data) = form {
-        if let Some(v) = &form_data.username {
-            username = v.to_string();
-        }
-        if let Some(v) = &form_data.password {
-            password = v.to_string();
-        }
-    } else if let Some(query_data) = query {
+    // Nacos SDK sends username as query param and password as form body,
+    // so we merge both sources (query params take precedence for username,
+    // form body takes precedence for password).
+    if let Some(query_data) = &query {
         if let Some(v) = &query_data.username {
             username = v.to_string();
         }
         if let Some(v) = &query_data.password {
             password = v.to_string();
+        }
+    }
+    if let Some(form_data) = &form {
+        if let Some(v) = &form_data.username {
+            if !v.is_empty() {
+                username = v.to_string();
+            }
+        }
+        if let Some(v) = &form_data.password {
+            if !v.is_empty() {
+                password = v.to_string();
+            }
         }
     }
 

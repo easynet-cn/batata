@@ -250,10 +250,16 @@ pub fn main_server(
             )
             .service(
                 web::scope(&context_path)
+                    // Auth routes (needed for SDK authentication)
+                    .service(auth::v3::route::routes())
                     // V2 Open API routes (config, naming, cluster only)
                     .service(config_routes())
                     .service(naming_routes())
                     .service(cluster_routes())
+                    // V2 Console API routes
+                    .service(v2_console_routes())
+                    // V3 Console API routes
+                    .service(console::v3::route::routes())
                     // V3 Admin API routes
                     .service(v3_admin_routes())
                     // V3 Client API routes

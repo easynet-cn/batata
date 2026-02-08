@@ -18,6 +18,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 6. **No Frontend Work**: Batata is a backend-only implementation. No frontend/UI work is needed. The console API provides JSON responses for third-party UI integration.
 
+7. **Reference Implementation**: The original Nacos project is located at `~/work/github/easynet-cn/nacos`. When uncertain about behavior or API contracts, always check the original Nacos source code first to ensure consistency.
+
+## Nacos 3.x Architecture Rules
+
+Batata follows the **Nacos 3.x architecture** where Server and Console are **separated**. All behavior MUST be consistent with the original Nacos 3.x implementation.
+
+### Server/Console Separation
+
+| Component | Default Port | Context Path | Role |
+|-----------|-------------|--------------|------|
+| Main HTTP Server | 8848 | `/nacos` | Core V2/V3 API for SDK clients |
+| Console HTTP Server | 8081 | _(empty)_ | Admin console V3 API |
+| SDK gRPC Server | 9848 (8848+1000) | - | Client SDK communication (config, naming) |
+| Cluster gRPC Server | 9849 (8848+1001) | - | Inter-node cluster communication |
+
+### Authentication Architecture
+
+- **Auth routes MUST be registered on BOTH Main Server and Console Server**. The Nacos 3.x SDK authenticates via HTTP login at the main server address (`http://server:8848/nacos/v3/auth/user/login`) before sending gRPC requests.
+- **SDK authentication flow**: HTTP login (get JWT token) → gRPC requests (with token in headers). If HTTP login fails, gRPC requests will fail with `UNAUTHENTICATED`.
+- Auth login endpoint: `POST /v3/auth/user/login` (under each server's context path).
+
+### SDK Client Communication Pattern
+
+1. SDK connects to Main Server port (8848) via HTTP for authentication
+2. SDK connects to gRPC port (9848) for config/naming operations
+3. All gRPC requests carry the JWT token obtained from HTTP login
+4. Config operations: `ConfigPublishRequest`, `ConfigQueryRequest`, `ConfigRemoveRequest` via gRPC
+5. Naming operations: `InstanceRequest`, `ServiceQueryRequest`, `SubscribeServiceRequest` via gRPC
+
+### API Route Distribution
+
+- **Main Server (8848)**: V2 Open API (`/nacos/v2/cs/*`, `/nacos/v2/ns/*`), V3 Admin API (`/nacos/v3/admin/*`), V3 Client API (`/nacos/v3/client/*`), Auth API (`/nacos/v3/auth/*`)
+- **Console Server (8081)**: V3 Console API (`/v3/console/*`), V2 Console API (`/v2/console/*`), Auth API (`/v3/auth/*`)
+
 ## Project Overview
 
 Batata is a Rust implementation of a Nacos-compatible service discovery, configuration management, and service management platform. It provides HTTP and gRPC APIs for configuration management, service discovery, and cluster coordination. It also supports Consul API compatibility.

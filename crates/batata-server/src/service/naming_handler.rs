@@ -5,19 +5,20 @@ use std::sync::Arc;
 
 use batata_core::model::Connection;
 use tonic::Status;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     api::{
         grpc::Payload,
         naming::model::{
-            BatchInstanceRequest, BatchInstanceResponse, DE_REGISTER_INSTANCE, InstanceRequest,
-            InstanceResponse, NamingFuzzyWatchChangeNotifyRequest,
-            NamingFuzzyWatchChangeNotifyResponse, NamingFuzzyWatchRequest,
-            NamingFuzzyWatchResponse, NamingFuzzyWatchSyncRequest, NamingFuzzyWatchSyncResponse,
-            NotifySubscriberRequest, NotifySubscriberResponse, PersistentInstanceRequest,
-            QueryServiceResponse, REGISTER_INSTANCE, ServiceListRequest, ServiceListResponse,
-            ServiceQueryRequest, SubscribeServiceRequest, SubscribeServiceResponse,
+            BATCH_DE_REGISTER_INSTANCE, BATCH_REGISTER_INSTANCE, BatchInstanceRequest,
+            BatchInstanceResponse, DE_REGISTER_INSTANCE, InstanceRequest, InstanceResponse,
+            NamingFuzzyWatchChangeNotifyRequest, NamingFuzzyWatchChangeNotifyResponse,
+            NamingFuzzyWatchRequest, NamingFuzzyWatchResponse, NamingFuzzyWatchSyncRequest,
+            NamingFuzzyWatchSyncResponse, NotifySubscriberRequest, NotifySubscriberResponse,
+            PersistentInstanceRequest, QueryServiceResponse, REGISTER_INSTANCE, ServiceListRequest,
+            ServiceListResponse, ServiceQueryRequest, SubscribeServiceRequest,
+            SubscribeServiceResponse,
         },
         remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
@@ -50,6 +51,16 @@ impl PayloadHandler for InstanceRequestHandler {
 
         let src_ip = connection.meta_info.client_ip.as_str();
 
+        debug!(
+            req_type = %req_type,
+            namespace = %namespace,
+            group_name = %group_name,
+            service_name = %service_name,
+            instance_ip = %instance.ip,
+            instance_port = %instance.port,
+            "Received InstanceRequest"
+        );
+
         let result = if req_type == REGISTER_INSTANCE {
             self.naming_service
                 .register_instance(namespace, group_name, service_name, instance)
@@ -60,8 +71,13 @@ impl PayloadHandler for InstanceRequestHandler {
             false
         };
 
-        // Notify fuzzy watchers about service change
+        // Notify subscribers and fuzzy watchers about service change
         if result {
+            // Notify regular subscribers (SubscribeServiceRequest subscribers)
+            self.notify_subscribers(namespace, group_name, service_name)
+                .await;
+
+            // Notify fuzzy watchers
             if let Err(e) = self
                 .notify_fuzzy_watchers(
                     namespace,
@@ -100,6 +116,66 @@ impl PayloadHandler for InstanceRequestHandler {
 }
 
 impl InstanceRequestHandler {
+    /// Notify regular subscribers about service change
+    async fn notify_subscribers(&self, namespace: &str, group_name: &str, service_name: &str) {
+        debug!(
+            "Looking for subscribers: namespace='{}', group='{}', service='{}'",
+            namespace, group_name, service_name
+        );
+
+        let subscribers = self
+            .naming_service
+            .get_subscribers(namespace, group_name, service_name);
+
+        debug!(
+            "Found {} subscribers for {}@@{}@@{}",
+            subscribers.len(),
+            namespace,
+            group_name,
+            service_name
+        );
+
+        if subscribers.is_empty() {
+            return;
+        }
+
+        // Get current service info
+        let service_info =
+            self.naming_service
+                .get_service(namespace, group_name, service_name, "", false);
+
+        // Build notification
+        let notification =
+            NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
+        let payload = notification.build_server_push_payload();
+
+        info!(
+            "Notifying {} subscribers for service {}@@{}@@{}",
+            subscribers.len(),
+            namespace,
+            group_name,
+            service_name
+        );
+
+        for connection_id in &subscribers {
+            if self
+                .connection_manager
+                .push_message(connection_id, payload.clone())
+                .await
+            {
+                debug!(
+                    "Pushed subscriber notification to connection {}",
+                    connection_id
+                );
+            } else {
+                warn!(
+                    "Failed to push subscriber notification to connection {}",
+                    connection_id
+                );
+            }
+        }
+    }
+
     /// Notify fuzzy watchers about service change
     async fn notify_fuzzy_watchers(
         &self,
@@ -181,6 +257,7 @@ impl InstanceRequestHandler {
 #[derive(Clone)]
 pub struct BatchInstanceRequestHandler {
     pub naming_service: Arc<NamingService>,
+    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -195,14 +272,23 @@ impl PayloadHandler for BatchInstanceRequestHandler {
         let instances = request.instances;
         let req_type = &request.r#type;
 
-        let result = if req_type == REGISTER_INSTANCE {
+        debug!(
+            "BatchInstanceRequest: type='{}', namespace='{}', group='{}', service='{}', instances_count={}",
+            req_type,
+            namespace,
+            group_name,
+            service_name,
+            instances.len()
+        );
+
+        let result = if req_type == REGISTER_INSTANCE || req_type == BATCH_REGISTER_INSTANCE {
             self.naming_service.batch_register_instances(
                 namespace,
                 group_name,
                 service_name,
                 instances,
             )
-        } else if req_type == DE_REGISTER_INSTANCE {
+        } else if req_type == DE_REGISTER_INSTANCE || req_type == BATCH_DE_REGISTER_INSTANCE {
             self.naming_service.batch_deregister_instances(
                 namespace,
                 group_name,
@@ -212,6 +298,12 @@ impl PayloadHandler for BatchInstanceRequestHandler {
         } else {
             false
         };
+
+        // Notify subscribers about the batch change
+        if result {
+            self.notify_subscribers(namespace, group_name, service_name)
+                .await;
+        }
 
         let mut response = BatchInstanceResponse::new();
         response.response.request_id = request_id;
@@ -233,6 +325,48 @@ impl PayloadHandler for BatchInstanceRequestHandler {
 
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Authenticated
+    }
+}
+
+impl BatchInstanceRequestHandler {
+    /// Notify subscribers about service change (same logic as InstanceRequestHandler)
+    async fn notify_subscribers(&self, namespace: &str, group_name: &str, service_name: &str) {
+        let subscribers = self
+            .naming_service
+            .get_subscribers(namespace, group_name, service_name);
+
+        if subscribers.is_empty() {
+            return;
+        }
+
+        let service_info =
+            self.naming_service
+                .get_service(namespace, group_name, service_name, "", false);
+
+        let notification =
+            NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
+        let payload = notification.build_server_push_payload();
+
+        info!(
+            "Notifying {} subscribers for batch service change {}@@{}@@{}",
+            subscribers.len(),
+            namespace,
+            group_name,
+            service_name
+        );
+
+        for connection_id in &subscribers {
+            if !self
+                .connection_manager
+                .push_message(connection_id, payload.clone())
+                .await
+            {
+                warn!(
+                    "Failed to push batch notification to connection {}",
+                    connection_id
+                );
+            }
+        }
     }
 }
 
@@ -328,6 +462,11 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
 
         let connection_id = &connection.meta_info.connection_id;
 
+        info!(
+            "SubscribeServiceRequest: subscribe={}, connection_id={}, namespace='{}', group='{}', service='{}', clusters='{}'",
+            subscribe, connection_id, namespace, group_name, service_name, clusters
+        );
+
         if subscribe {
             self.naming_service
                 .subscribe(connection_id, namespace, group_name, service_name);
@@ -357,6 +496,7 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
 #[derive(Clone)]
 pub struct PersistentInstanceRequestHandler {
     pub naming_service: Arc<NamingService>,
+    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -384,6 +524,12 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
             false
         };
 
+        // Notify subscribers about the persistent instance change
+        if result {
+            self.notify_subscribers(namespace, group_name, service_name)
+                .await;
+        }
+
         let mut response = InstanceResponse::new();
         response.response.request_id = request_id;
         response.r#type = req_type.clone();
@@ -404,6 +550,48 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
 
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Authenticated
+    }
+}
+
+impl PersistentInstanceRequestHandler {
+    /// Notify subscribers about service change
+    async fn notify_subscribers(&self, namespace: &str, group_name: &str, service_name: &str) {
+        let subscribers = self
+            .naming_service
+            .get_subscribers(namespace, group_name, service_name);
+
+        if subscribers.is_empty() {
+            return;
+        }
+
+        let service_info =
+            self.naming_service
+                .get_service(namespace, group_name, service_name, "", false);
+
+        let notification =
+            NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
+        let payload = notification.build_server_push_payload();
+
+        info!(
+            "Notifying {} subscribers for persistent instance change {}@@{}@@{}",
+            subscribers.len(),
+            namespace,
+            group_name,
+            service_name
+        );
+
+        for connection_id in &subscribers {
+            if !self
+                .connection_manager
+                .push_message(connection_id, payload.clone())
+                .await
+            {
+                warn!(
+                    "Failed to push persistent instance notification to connection {}",
+                    connection_id
+                );
+            }
+        }
     }
 }
 

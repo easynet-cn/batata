@@ -38,7 +38,7 @@ public class NacosV3ConsoleApiTest {
     }
 
     private static String loginV3(String username, String password) throws Exception {
-        String loginUrl = String.format("http://%s/v3/auth/user/login", serverAddr);
+        String loginUrl = String.format("http://%s/nacos/v3/auth/user/login", serverAddr);
         URL url = new URL(loginUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
@@ -116,9 +116,11 @@ public class NacosV3ConsoleApiTest {
     }
 
     private HttpURLConnection createConnection(String method, String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
+        // Ensure path has /nacos prefix
+        String normalizedPath = path.startsWith("/nacos") ? path : "/nacos" + path;
+        String fullUrl = String.format("http://%s%s", serverAddr, normalizedPath);
         if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
+            fullUrl += (normalizedPath.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
         }
 
         URL url = new URL(fullUrl);

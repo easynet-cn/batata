@@ -33,10 +33,12 @@ pub const INSTANCE_TYPE_PERSISTENT: &str = "persistent";
 // Request type constants
 pub const REGISTER_INSTANCE: &str = "registerInstance";
 pub const DE_REGISTER_INSTANCE: &str = "deregisterInstance";
+pub const BATCH_REGISTER_INSTANCE: &str = "batchRegisterInstance";
+pub const BATCH_DE_REGISTER_INSTANCE: &str = "batchDeregisterInstance";
 
 // Service instance information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Instance {
     pub instance_id: String,
     pub ip: String,
@@ -79,7 +81,7 @@ impl Instance {
 
 // Service information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Service {
     pub name: String,
     pub group_name: String,
@@ -125,7 +127,7 @@ pub struct ServiceInfo {
 
 // Base naming request structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct NamingRequest {
     #[serde(flatten)]
     pub request: Request,
@@ -164,7 +166,7 @@ impl RequestTrait for NamingRequest {
 
 // Instance registration/deregistration request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct InstanceRequest {
     #[serde(flatten)]
     pub naming_request: NamingRequest,
@@ -207,7 +209,7 @@ impl From<&Payload> for InstanceRequest {
 
 // Batch instance request for multiple instances
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct BatchInstanceRequest {
     #[serde(flatten)]
     pub naming_request: NamingRequest,
@@ -250,7 +252,7 @@ impl From<&Payload> for BatchInstanceRequest {
 
 // Persistent instance request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct PersistentInstanceRequest {
     #[serde(flatten)]
     pub naming_request: NamingRequest,
@@ -293,7 +295,7 @@ impl From<&Payload> for PersistentInstanceRequest {
 
 // Service list request for listing services
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ServiceListRequest {
     #[serde(flatten)]
     pub naming_request: NamingRequest,
@@ -337,7 +339,7 @@ impl From<&Payload> for ServiceListRequest {
 
 // Service query request for querying service details
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ServiceQueryRequest {
     #[serde(flatten)]
     pub naming_request: NamingRequest,
@@ -381,7 +383,7 @@ impl From<&Payload> for ServiceQueryRequest {
 
 // Subscribe service request for subscribing to service changes
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct SubscribeServiceRequest {
     #[serde(flatten)]
     pub naming_request: NamingRequest,
@@ -425,7 +427,7 @@ impl From<&Payload> for SubscribeServiceRequest {
 
 // Notify subscriber request for pushing service changes to subscribers
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct NotifySubscriberRequest {
     #[serde(flatten)]
     pub server_request: ServerRequest,
@@ -492,7 +494,7 @@ impl From<&Payload> for NotifySubscriberRequest {
 
 // Fuzzy watch notify request base
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct FuzzyWatchNotifyRequest {
     pub server_request: ServerRequest,
     #[serde(
@@ -527,7 +529,7 @@ impl RequestTrait for FuzzyWatchNotifyRequest {
 
 // Naming fuzzy watch request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct NamingFuzzyWatchRequest {
     #[serde(flatten)]
     pub request: Request,
@@ -587,7 +589,7 @@ pub struct NamingContext {
 
 // Naming fuzzy watch change notify request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct NamingFuzzyWatchChangeNotifyRequest {
     #[serde(flatten)]
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
@@ -630,7 +632,7 @@ impl From<&Payload> for NamingFuzzyWatchChangeNotifyRequest {
 
 // Naming fuzzy watch sync request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct NamingFuzzyWatchSyncRequest {
     #[serde(flatten)]
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,

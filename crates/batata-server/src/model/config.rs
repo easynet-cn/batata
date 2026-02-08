@@ -842,7 +842,7 @@ impl Configuration {
     pub fn consul_enabled(&self) -> bool {
         self.config
             .get_bool("nacos.plugin.consul.enabled")
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     /// Get Consul compatibility server port (default: 8500)
@@ -860,7 +860,7 @@ impl Configuration {
     pub fn apollo_enabled(&self) -> bool {
         self.config
             .get_bool("nacos.plugin.apollo.enabled")
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     /// Get Apollo compatibility server port (default: 8080)
@@ -1035,9 +1035,9 @@ mod tests {
     }
 
     #[test]
-    fn test_consul_enabled_default_true() {
+    fn test_consul_enabled_default_false() {
         let cfg = build_config(vec![]);
-        assert!(cfg.consul_enabled());
+        assert!(!cfg.consul_enabled());
     }
 
     #[test]
@@ -1059,9 +1059,9 @@ mod tests {
     }
 
     #[test]
-    fn test_apollo_enabled_default_true() {
+    fn test_apollo_enabled_default_false() {
         let cfg = build_config(vec![]);
-        assert!(cfg.apollo_enabled());
+        assert!(!cfg.apollo_enabled());
     }
 
     #[test]

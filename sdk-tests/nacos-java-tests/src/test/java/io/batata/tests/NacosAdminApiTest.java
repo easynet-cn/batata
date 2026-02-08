@@ -74,12 +74,14 @@ public class NacosAdminApiTest {
         conn.setRequestMethod("GET");
 
         int responseCode = conn.getResponseCode();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(
-                responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream()));
+        java.io.InputStream stream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
         StringBuilder response = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            response.append(line);
+        if (stream != null) {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
         }
         System.out.println("GET " + path + " -> " + responseCode);
         return response.toString();
@@ -104,12 +106,14 @@ public class NacosAdminApiTest {
         }
 
         int responseCode = conn.getResponseCode();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(
-                responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream()));
+        java.io.InputStream stream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
         StringBuilder response = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            response.append(line);
+        if (stream != null) {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
         }
         System.out.println("POST " + path + " -> " + responseCode);
         return response.toString();
@@ -134,12 +138,14 @@ public class NacosAdminApiTest {
         }
 
         int responseCode = conn.getResponseCode();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(
-                responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream()));
+        java.io.InputStream stream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
         StringBuilder response = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            response.append(line);
+        if (stream != null) {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
         }
         System.out.println("PUT " + path + " -> " + responseCode);
         return response.toString();
@@ -156,12 +162,14 @@ public class NacosAdminApiTest {
         conn.setRequestMethod("DELETE");
 
         int responseCode = conn.getResponseCode();
-        BufferedReader reader = new BufferedReader(new InputStreamReader(
-                responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream()));
+        java.io.InputStream stream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
         StringBuilder response = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            response.append(line);
+        if (stream != null) {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
         }
         System.out.println("DELETE " + path + " -> " + responseCode);
         return response.toString();

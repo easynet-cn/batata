@@ -175,7 +175,7 @@ public class NacosConnectionTest {
      */
     @Test
     @Order(4)
-    void testServerListRetrieval() throws NacosException {
+    void testServerListRetrieval() throws NacosException, InterruptedException {
         Properties properties = new Properties();
         properties.put("serverAddr", serverAddr);
         properties.put("username", username);

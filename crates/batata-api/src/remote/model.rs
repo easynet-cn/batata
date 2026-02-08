@@ -66,8 +66,25 @@ pub trait RequestTrait {
     where
         T: for<'a> Deserialize<'a> + Default,
     {
-        serde_json::from_slice::<T>(&value.body.clone().unwrap_or_default().value.to_vec())
-            .unwrap_or_default()
+        let bytes = value.body.clone().unwrap_or_default().value.to_vec();
+        match serde_json::from_slice::<T>(&bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                let payload_type = value
+                    .metadata
+                    .as_ref()
+                    .map(|m| m.r#type.as_str())
+                    .unwrap_or("unknown");
+                let body_str = String::from_utf8_lossy(&bytes);
+                tracing::error!(
+                    payload_type = %payload_type,
+                    error = %e,
+                    body = %body_str,
+                    "Failed to deserialize gRPC payload"
+                );
+                T::default()
+            }
+        }
     }
 
     /// Convert the request to a protobuf Any type for gRPC transmission
@@ -107,7 +124,7 @@ pub trait RequestTrait {
 
 /// Base request structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Request {
     #[serde(skip)]
     pub headers: HashMap<String, String>,
@@ -144,7 +161,7 @@ impl RequestTrait for Request {
 
 /// Internal request with module information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct InternalRequest {
     #[serde(flatten)]
     pub request: Request,
@@ -180,7 +197,7 @@ impl RequestTrait for InternalRequest {
 
 /// Health check request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct HealthCheckRequest {
     #[serde(flatten)]
     pub internal_request: InternalRequest,
@@ -299,7 +316,7 @@ pub trait ResponseTrait {
 
 /// Base response structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Response {
     pub result_code: i32,
     pub error_code: i32,
@@ -398,7 +415,7 @@ pub struct ClientAbilities {}
 
 /// Connection reset request to restart a connection
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConnectResetRequest {
     #[serde(flatten)]
     pub internal_request: InternalRequest,
@@ -441,7 +458,7 @@ impl From<&Payload> for ConnectResetRequest {
 
 /// Server check request to verify server availability
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ServerCheckRequest {
     #[serde(flatten)]
     pub internal_request: InternalRequest,
@@ -481,7 +498,7 @@ impl From<&Payload> for ServerCheckRequest {
 
 /// Connection setup request sent when establishing a new connection
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ConnectionSetupRequest {
     #[serde(flatten)]
     pub internal_request: InternalRequest,
@@ -606,7 +623,7 @@ impl From<&Payload> for ServerReloadRequest {
 
 /// Generic server request with module information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ServerRequest {
     #[serde(flatten)]
     pub request: Request,
@@ -642,7 +659,7 @@ impl RequestTrait for ServerRequest {
 
 /// Client detection request for checking client status
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ClientDetectionRequest {
     #[serde(flatten)]
     pub server_requst: ServerRequest,
@@ -674,7 +691,7 @@ impl From<&Payload> for ClientDetectionRequest {
 
 /// Setup acknowledgment request for connection setup confirmation
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct SetupAckRequest {
     #[serde(flatten)]
     pub server_requst: ServerRequest,
@@ -942,7 +959,7 @@ impl From<SetupAckResponse> for Any {
 
 /// Push acknowledgment request for confirming server push
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct PushAckRequest {
     #[serde(flatten)]
     pub internal_request: InternalRequest,
@@ -986,7 +1003,7 @@ impl From<&Payload> for PushAckRequest {
 
 /// Request for cluster member heartbeat reporting between nodes
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct MemberReportRequest {
     #[serde(flatten)]
     pub internal_request: InternalRequest,
@@ -1075,7 +1092,7 @@ pub struct LockInstance {
 
 /// Request for distributed lock operations (acquire/release)
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct LockOperationRequest {
     #[serde(flatten)]
     pub request: Request,

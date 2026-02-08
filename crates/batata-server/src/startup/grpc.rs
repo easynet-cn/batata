@@ -156,6 +156,7 @@ fn register_naming_handlers(
     }));
     registry.register_handler(Arc::new(BatchInstanceRequestHandler {
         naming_service: naming_service.clone(),
+        connection_manager: connection_manager.clone(),
     }));
     registry.register_handler(Arc::new(ServiceListRequestHandler {
         naming_service: naming_service.clone(),
@@ -168,6 +169,7 @@ fn register_naming_handlers(
     }));
     registry.register_handler(Arc::new(PersistentInstanceRequestHandler {
         naming_service: naming_service.clone(),
+        connection_manager: connection_manager.clone(),
     }));
     registry.register_handler(Arc::new(NotifySubscriberHandler {
         naming_service: naming_service.clone(),

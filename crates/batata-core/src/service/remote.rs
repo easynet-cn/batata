@@ -15,12 +15,11 @@ pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Sta
 
     connection.meta_info.remote_ip = remote_ip.clone();
     connection.meta_info.remote_port = remote_port;
-    connection.meta_info.connection_id = format!(
-        "{}_{}_{}",
-        chrono::Utc::now().timestamp_millis(),
-        remote_ip,
-        remote_port
-    );
+    // Use deterministic connection_id based on remote address only.
+    // In gRPC over HTTP/2, both unary RPCs and bidirectional streams share
+    // the same TCP connection (same remote IP:port), so this ensures
+    // consistent connection_id across all request types from the same client.
+    connection.meta_info.connection_id = format!("{}_{}", remote_ip, remote_port);
 
     let local_port = request.local_addr().map(|a| a.port()).unwrap_or(0);
 

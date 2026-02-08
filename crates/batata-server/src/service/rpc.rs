@@ -409,6 +409,19 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                 let client = GrpcClient::new(con, tx.clone());
 
                                 connection_manager.register(&connection_id, client);
+                                // ConnectionSetupRequest is fully handled here - don't route through handler registry
+                                continue;
+                            }
+
+                            // Response types (e.g., NotifySubscriberResponse, ConfigChangeNotifyResponse)
+                            // are sent by clients as acknowledgments to server push notifications.
+                            // They don't need handler routing - just silently accept them.
+                            if message_type.ends_with("Response") {
+                                tracing::debug!(
+                                    "Received client response on bi-stream: {}",
+                                    message_type
+                                );
+                                continue;
                             }
 
                             let handler = handler_registry.get_handler(message_type);

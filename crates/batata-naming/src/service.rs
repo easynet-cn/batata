@@ -170,13 +170,17 @@ impl NamingService {
         mut instance: Instance,
     ) -> bool {
         let service_key = build_service_key(namespace, group_name, service_name);
-        let instance_key = build_instance_key(&instance);
 
-        // Set default values
-        if instance.weight <= 0.0 {
+        // Normalize defaults BEFORE building instance key for consistent storage
+        if instance.weight < 0.0 {
             instance.weight = 1.0;
         }
+        if instance.cluster_name.is_empty() {
+            instance.cluster_name = "DEFAULT".to_string();
+        }
         instance.service_name = service_name.to_string();
+
+        let instance_key = build_instance_key(&instance);
 
         // Get or create service entry
         let instances = self.services.entry(service_key).or_default();
@@ -193,7 +197,13 @@ impl NamingService {
         instance: &Instance,
     ) -> bool {
         let service_key = build_service_key(namespace, group_name, service_name);
-        let instance_key = build_instance_key(instance);
+
+        // If cluster_name is empty, try "DEFAULT" (the default cluster name)
+        let instance_key = if instance.cluster_name.is_empty() {
+            format!("{}#{}#DEFAULT", instance.ip, instance.port)
+        } else {
+            build_instance_key(instance)
+        };
 
         if let Some(instances) = self.services.get(&service_key) {
             instances.remove(&instance_key);
@@ -218,9 +228,10 @@ impl NamingService {
                 .iter()
                 .filter(|entry| {
                     let inst = entry.value();
-                    // Filter by cluster if specified
-                    let cluster_match =
-                        cluster.is_empty() || inst.cluster_name == cluster || cluster == "*";
+                    // Filter by cluster if specified (supports comma-separated list)
+                    let cluster_match = cluster.is_empty()
+                        || cluster == "*"
+                        || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
                     // Filter by health if required
                     let health_match = !healthy_only || inst.healthy;
                     cluster_match && health_match
@@ -264,7 +275,9 @@ impl NamingService {
                 .iter()
                 .filter(|entry| {
                     let inst = entry.value();
-                    cluster.is_empty() || inst.cluster_name == cluster || cluster == "*"
+                    cluster.is_empty()
+                        || cluster == "*"
+                        || cluster.split(',').any(|c| c.trim() == inst.cluster_name)
                 })
                 .map(|entry| entry.value().clone())
                 .collect();
@@ -351,7 +364,9 @@ impl NamingService {
                 .iter()
                 .filter(|entry| {
                     let inst = entry.value();
-                    cluster.is_empty() || inst.cluster_name == cluster || cluster == "*"
+                    cluster.is_empty()
+                        || cluster == "*"
+                        || cluster.split(',').any(|c| c.trim() == inst.cluster_name)
                 })
                 .count();
 
@@ -359,8 +374,9 @@ impl NamingService {
                 .iter()
                 .filter(|entry| {
                     let inst = entry.value();
-                    let cluster_match =
-                        cluster.is_empty() || inst.cluster_name == cluster || cluster == "*";
+                    let cluster_match = cluster.is_empty()
+                        || cluster == "*"
+                        || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
                     cluster_match && inst.healthy
                 })
                 .count();
@@ -654,7 +670,11 @@ impl NamingService {
             .collect()
     }
 
-    /// Batch register instances
+    /// Batch register instances (reconciliation model)
+    ///
+    /// Replaces ALL instances for the given service with the provided list.
+    /// This follows the Nacos reconciliation model where batch register
+    /// represents the full desired state, not an incremental addition.
     pub fn batch_register_instances(
         &self,
         namespace: &str,
@@ -662,8 +682,23 @@ impl NamingService {
         service_name: &str,
         instances: Vec<Instance>,
     ) -> bool {
+        let service_key = build_service_key(namespace, group_name, service_name);
+
+        // Clear existing instances for this service, then register the new ones
+        let entry = self.services.entry(service_key).or_default();
+        entry.clear();
+
         for instance in instances {
-            self.register_instance(namespace, group_name, service_name, instance);
+            let mut instance = instance;
+            if instance.weight < 0.0 {
+                instance.weight = 1.0;
+            }
+            if instance.cluster_name.is_empty() {
+                instance.cluster_name = "DEFAULT".to_string();
+            }
+            instance.service_name = service_name.to_string();
+            let instance_key = build_instance_key(&instance);
+            entry.insert(instance_key, instance);
         }
         true
     }
@@ -1158,7 +1193,7 @@ mod tests {
 
         let instances = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
         assert_eq!(instances.len(), 1);
-        assert_eq!(instances[0].weight, 1.0); // Should be normalized to 1.0
+        assert_eq!(instances[0].weight, 0.0); // Zero weight is preserved for zero-weight semantics
     }
 
     #[test]

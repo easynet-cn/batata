@@ -24,6 +24,9 @@ http = "1.2"
 # Async
 async-trait = "0.1"
 
+# Logging
+tracing = "0.1"
+
 # Utils
 bytes = "1.11"
 chrono = "0.4"

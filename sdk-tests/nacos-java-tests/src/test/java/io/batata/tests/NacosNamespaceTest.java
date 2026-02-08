@@ -48,29 +48,40 @@ public class NacosNamespaceTest {
     }
 
     private static String getAccessToken(String username, String password) throws Exception {
-        String loginUrl = String.format("http://%s/nacos/v1/auth/login", serverAddr);
-        URL url = new URL(loginUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        // Try V3 auth endpoint first, then fall back to V1
+        String[] loginUrls = {
+            String.format("http://%s/nacos/v3/auth/user/login", serverAddr),
+            String.format("http://%s/nacos/v1/auth/login", serverAddr)
+        };
 
-        String body = "username=" + URLEncoder.encode(username, "UTF-8") +
-                "&password=" + URLEncoder.encode(password, "UTF-8");
-        conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
+        for (String loginUrl : loginUrls) {
+            try {
+                URL url = new URL(loginUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 
-        if (conn.getResponseCode() == 200) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            String resp = response.toString();
-            if (resp.contains("accessToken")) {
-                int start = resp.indexOf("accessToken") + 14;
-                int end = resp.indexOf("\"", start);
-                return resp.substring(start, end);
+                String body = "username=" + URLEncoder.encode(username, "UTF-8") +
+                        "&password=" + URLEncoder.encode(password, "UTF-8");
+                conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
+
+                if (conn.getResponseCode() == 200) {
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+                    StringBuilder response = new StringBuilder();
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        response.append(line);
+                    }
+                    String resp = response.toString();
+                    if (resp.contains("accessToken")) {
+                        int start = resp.indexOf("accessToken") + 14;
+                        int end = resp.indexOf("\"", start);
+                        return resp.substring(start, end);
+                    }
+                }
+            } catch (Exception e) {
+                // Try next URL
             }
         }
         return "";
