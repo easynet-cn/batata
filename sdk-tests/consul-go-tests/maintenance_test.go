@@ -735,7 +735,7 @@ func TestMaintenanceWithACL(t *testing.T) {
 		// Create a new client with the token
 		addr := os.Getenv("CONSUL_HTTP_ADDR")
 		if addr == "" {
-			addr = "127.0.0.1:8848"
+			addr = "127.0.0.1:8500"
 		}
 		tokenClient, err := api.NewClient(&api.Config{
 			Address: addr,

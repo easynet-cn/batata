@@ -13,11 +13,12 @@ use batata_core::service::cluster::ServerMemberManager;
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
+use crate::health::ConsulHealthService;
 use crate::model::{
     AgentConfig, AgentHostInfo, AgentMaintenanceRequest, AgentMember, AgentMembersParams,
     AgentSelf, AgentService, AgentServiceRegistration, AgentServiceWithChecks, AgentStats,
-    AgentVersion, ConsulError, CounterMetric, GaugeMetric, HostCPU, HostDisk, HostInfo, HostMemory,
-    MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
+    AgentVersion, CheckRegistration, ConsulError, CounterMetric, GaugeMetric, HostCPU, HostDisk,
+    HostInfo, HostMemory, MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
 };
 
 /// Consul Agent service adapter
@@ -39,6 +40,7 @@ pub async fn register_service(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
+    health_service: web::Data<ConsulHealthService>,
     query: web::Query<ServiceQueryParams>,
     body: web::Json<AgentServiceRegistration>,
 ) -> HttpResponse {
@@ -56,6 +58,59 @@ pub async fn register_service(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    let service_id = registration.service_id();
+
+    // Extract embedded checks before converting to NacosInstance
+    let mut embedded_checks: Vec<CheckRegistration> = Vec::new();
+
+    // Single check
+    if let Some(ref check) = registration.check {
+        embedded_checks.push(CheckRegistration {
+            name: check
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("Service '{}' check", registration.name)),
+            check_id: check.check_id.clone(),
+            service_id: Some(service_id.clone()),
+            notes: check.notes.clone(),
+            ttl: check.ttl.clone(),
+            http: check.http.clone(),
+            method: check.method.clone(),
+            header: check.header.clone(),
+            tcp: check.tcp.clone(),
+            grpc: check.grpc.clone(),
+            interval: check.interval.clone(),
+            timeout: check.timeout.clone(),
+            deregister_critical_service_after: check.deregister_critical_service_after.clone(),
+            status: check.status.clone(),
+        });
+    }
+
+    // Multiple checks
+    if let Some(ref checks) = registration.checks {
+        for check in checks {
+            embedded_checks.push(CheckRegistration {
+                name: check
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("Service '{}' check", registration.name)),
+                check_id: check.check_id.clone(),
+                service_id: Some(service_id.clone()),
+                notes: check.notes.clone(),
+                ttl: check.ttl.clone(),
+                http: check.http.clone(),
+                method: check.method.clone(),
+                header: check.header.clone(),
+                tcp: check.tcp.clone(),
+                grpc: check.grpc.clone(),
+                interval: check.interval.clone(),
+                timeout: check.timeout.clone(),
+                deregister_critical_service_after: check.deregister_critical_service_after.clone(),
+                status: check.status.clone(),
+            });
+        }
+    }
+
     // Convert Consul registration to Nacos Instance
     let nacos_instance: NacosInstance = (&registration).into();
 
@@ -69,6 +124,12 @@ pub async fn register_service(
     );
 
     if success {
+        // Register embedded checks with health service
+        for check_reg in embedded_checks {
+            if let Err(e) = health_service.register_check(check_reg) {
+                tracing::warn!("Failed to register embedded check: {}", e);
+            }
+        }
         HttpResponse::Ok().finish()
     } else {
         HttpResponse::InternalServerError().json(ConsulError::new("Failed to register service"))
@@ -81,6 +142,7 @@ pub async fn deregister_service(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
+    health_service: web::Data<ConsulHealthService>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
 ) -> HttpResponse {
@@ -137,6 +199,11 @@ pub async fn deregister_service(
     }
 
     if deregistered {
+        // Clean up any associated health checks
+        let service_checks = health_service.get_service_checks(&service_id);
+        for check in &service_checks {
+            let _ = health_service.deregister_check(&check.check_id);
+        }
         HttpResponse::Ok().finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new(format!(
@@ -302,14 +369,18 @@ fn create_service_health_check(
 /// Places a service into maintenance mode
 pub async fn set_service_maintenance(
     req: HttpRequest,
-    agent: web::Data<ConsulAgentService>,
+    _agent: web::Data<ConsulAgentService>,
+    health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<MaintenanceRequest>,
 ) -> HttpResponse {
     let service_id = path.into_inner();
     let enable = query.enable;
-    let _reason = query.reason.clone();
+    let reason = query
+        .reason
+        .clone()
+        .unwrap_or_else(|| "Maintenance".to_string());
 
     // Check ACL authorization for service write (maintenance requires write)
     let authz = acl_service.authorize_request(
@@ -322,52 +393,25 @@ pub async fn set_service_maintenance(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Find and update the service
-    // In Nacos, we can simulate maintenance by setting enabled = false
-    let namespace = "public";
-    let (_, service_names) =
-        agent
-            .naming_service
-            .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+    let check_id = format!("_service_maintenance:{}", service_id);
 
-    for service_name in service_names {
-        let instances = agent.naming_service.get_instances(
-            namespace,
-            "DEFAULT_GROUP",
-            &service_name,
-            "",
-            false,
-        );
-
-        for instance in &instances {
-            if instance.instance_id == service_id {
-                // Create updated instance with enabled status toggled
-                let mut updated_instance = instance.clone();
-                updated_instance.enabled = !enable;
-
-                // Deregister old and register new
-                agent.naming_service.deregister_instance(
-                    namespace,
-                    "DEFAULT_GROUP",
-                    &service_name,
-                    instance,
-                );
-                agent.naming_service.register_instance(
-                    namespace,
-                    "DEFAULT_GROUP",
-                    &service_name,
-                    updated_instance,
-                );
-
-                return HttpResponse::Ok().finish();
-            }
-        }
+    if enable {
+        // Create a critical maintenance health check
+        let registration = CheckRegistration {
+            name: "Service Maintenance Mode".to_string(),
+            check_id: Some(check_id),
+            service_id: Some(service_id),
+            status: Some("critical".to_string()),
+            notes: Some(reason),
+            ..Default::default()
+        };
+        let _ = health_service.register_check(registration);
+    } else {
+        // Remove the maintenance check
+        let _ = health_service.deregister_check(&check_id);
     }
 
-    HttpResponse::NotFound().json(ConsulError::new(format!(
-        "Service not found: {}",
-        service_id
-    )))
+    HttpResponse::Ok().finish()
 }
 
 // ============================================================================
@@ -846,6 +890,7 @@ pub async fn agent_reload(req: HttpRequest, acl_service: web::Data<AclService>) 
 /// Toggles node maintenance mode
 pub async fn agent_maintenance(
     req: HttpRequest,
+    health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     query: web::Query<AgentMaintenanceRequest>,
 ) -> HttpResponse {
@@ -856,7 +901,28 @@ pub async fn agent_maintenance(
     }
 
     let enable = query.enable;
-    let reason = query.reason.as_deref().unwrap_or("Maintenance");
+    let reason = query
+        .reason
+        .clone()
+        .unwrap_or_else(|| "Maintenance".to_string());
+
+    let check_id = "_node_maintenance".to_string();
+
+    if enable {
+        // Create a critical node maintenance health check
+        let registration = CheckRegistration {
+            name: "Node Maintenance Mode".to_string(),
+            check_id: Some(check_id),
+            service_id: None,
+            status: Some("critical".to_string()),
+            notes: Some(reason.clone()),
+            ..Default::default()
+        };
+        let _ = health_service.register_check(registration);
+    } else {
+        // Remove the maintenance check
+        let _ = health_service.deregister_check(&check_id);
+    }
 
     tracing::info!(
         "Agent maintenance mode: {} (reason: {})",

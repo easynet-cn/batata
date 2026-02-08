@@ -711,12 +711,23 @@ pub async fn get_service_health(
             checks.push(health_service.create_instance_check(&instance));
         }
 
+        // Also include maintenance checks if they exist
+        let maintenance_check_id = format!("_service_maintenance:{}", instance.instance_id);
+        if let Some(maint_check) = health_service.get_check(&maintenance_check_id) {
+            checks.push(maint_check);
+        }
+
         // Update check service info
         for check in &mut checks {
             check.service_name = service_name.clone();
             if let Some(tags) = &agent_service.tags {
                 check.service_tags = Some(tags.clone());
             }
+        }
+
+        // If passing_only is set, skip instances with any critical check
+        if passing_only && checks.iter().any(|c| c.status == "critical") {
+            continue;
         }
 
         results.push(ServiceHealth {
@@ -733,7 +744,90 @@ pub async fn get_service_health(
         });
     }
 
-    HttpResponse::Ok().json(results)
+    // Apply filter expression if specified
+    let results = if let Some(ref filter) = query.filter {
+        apply_service_health_filter(results, filter)
+    } else {
+        results
+    };
+
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(results)
+}
+
+/// Apply Consul filter expression to service health results.
+/// Supports basic expressions like:
+///   ServiceMeta.key == "value"
+///   ServiceMeta["key"] == "value"
+///   Service == "name"
+fn apply_service_health_filter(results: Vec<ServiceHealth>, filter: &str) -> Vec<ServiceHealth> {
+    // Parse simple filter: field == "value" or field != "value"
+    let filter = filter.trim();
+
+    // Try to parse: <selector> <op> "<value>"
+    let (selector, op, expected) = if let Some(rest) = filter.strip_suffix('"') {
+        if let Some(pos) = rest.rfind('"') {
+            let expected = &rest[pos + 1..];
+            let before = rest[..pos].trim();
+            if let Some(selector) = before.strip_suffix("==") {
+                (selector.trim(), "==", expected)
+            } else if let Some(selector) = before.strip_suffix("!=") {
+                (selector.trim(), "!=", expected)
+            } else {
+                return results;
+            }
+        } else {
+            return results;
+        }
+    } else {
+        return results;
+    };
+
+    results
+        .into_iter()
+        .filter(|entry| {
+            let actual = resolve_service_health_field(entry, selector);
+            match op {
+                "==" => actual.as_deref() == Some(expected),
+                "!=" => actual.as_deref() != Some(expected),
+                _ => true,
+            }
+        })
+        .collect()
+}
+
+/// Resolve a field selector against a ServiceHealth entry.
+fn resolve_service_health_field(entry: &ServiceHealth, selector: &str) -> Option<String> {
+    // ServiceMeta.key or ServiceMeta["key"]
+    if let Some(key) = selector.strip_prefix("ServiceMeta.") {
+        return entry.service.meta.as_ref()?.get(key).cloned();
+    }
+    if let Some(rest) = selector.strip_prefix("ServiceMeta[\"") {
+        let key = rest.strip_suffix("\"]")?;
+        return entry.service.meta.as_ref()?.get(key).cloned();
+    }
+    // Node.Meta.key
+    if let Some(key) = selector.strip_prefix("Node.Meta.") {
+        return entry.node.meta.as_ref()?.get(key).cloned();
+    }
+    // Service
+    if selector == "Service" {
+        return Some(entry.service.service.clone());
+    }
+    // ServiceID
+    if selector == "ServiceID" {
+        return Some(entry.service.id.clone());
+    }
+    // ServicePort
+    if selector == "ServicePort" {
+        return Some(entry.service.port.to_string());
+    }
+    // ServiceAddress
+    if selector == "ServiceAddress" {
+        return Some(entry.service.address.clone());
+    }
+    None
 }
 
 /// GET /v1/health/checks/:service
@@ -1023,7 +1117,9 @@ pub async fn list_agent_checks(
         .map(|c| (c.check_id.clone(), c))
         .collect();
 
-    HttpResponse::Ok().json(checks_map)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(checks_map)
 }
 
 /// GET /v1/health/connect/:service
@@ -1118,11 +1214,22 @@ pub async fn get_service_health_persistent(
             checks.push(health_service.create_instance_check(&instance));
         }
 
+        // Also include maintenance checks if they exist
+        let maintenance_check_id = format!("_service_maintenance:{}", instance.instance_id);
+        if let Some(maint_check) = health_service.get_check(&maintenance_check_id).await {
+            checks.push(maint_check);
+        }
+
         for check in &mut checks {
             check.service_name = service_name.clone();
             if let Some(tags) = &agent_service.tags {
                 check.service_tags = Some(tags.clone());
             }
+        }
+
+        // If passing_only is set, skip instances with any critical check
+        if passing_only && checks.iter().any(|c| c.status == "critical") {
+            continue;
         }
 
         results.push(ServiceHealth {
@@ -1139,7 +1246,16 @@ pub async fn get_service_health_persistent(
         });
     }
 
-    HttpResponse::Ok().json(results)
+    // Apply filter expression if specified
+    let results = if let Some(ref filter) = query.filter {
+        apply_service_health_filter(results, filter)
+    } else {
+        results
+    };
+
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(results)
 }
 
 /// GET /v1/health/checks/:service (Persistent version)

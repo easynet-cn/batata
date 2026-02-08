@@ -161,6 +161,16 @@ pub struct NodeServices {
     pub services: HashMap<String, AgentService>,
 }
 
+/// Node detail with services as array (for /v1/catalog/node-services/:node)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeServiceList {
+    #[serde(rename = "Node")]
+    pub node: CatalogNode,
+
+    #[serde(rename = "Services")]
+    pub services: Vec<AgentService>,
+}
+
 /// Catalog registration request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogRegistration {
@@ -403,6 +413,10 @@ impl ConsulCatalogService {
 
     /// Get node details with services
     pub fn get_node(&self, namespace: &str, node_name: &str) -> Option<NodeServices> {
+        let hostname = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
+
         let (_, service_names) =
             self.naming_service
                 .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
@@ -422,12 +436,17 @@ impl ConsulCatalogService {
             for instance in instances {
                 let instance_node = format!("node-{}", instance.ip.replace('.', "-"));
 
-                if instance_node == node_name || instance.ip == node_name {
+                // Match by node name formats: hostname, node-{ip}, raw IP, or "batata-node"
+                if instance_node == node_name
+                    || instance.ip == node_name
+                    || hostname == node_name
+                    || node_name == "batata-node"
+                {
                     // Found a service on this node
                     if node.is_none() {
                         node = Some(CatalogNode {
                             id: uuid::Uuid::new_v4().to_string(),
-                            node: instance_node.clone(),
+                            node: node_name.to_string(),
                             address: instance.ip.clone(),
                             datacenter: self.datacenter.clone(),
                             tagged_addresses: None,
@@ -441,6 +460,22 @@ impl ConsulCatalogService {
                     services.insert(agent_service.id.clone(), agent_service);
                 }
             }
+        }
+
+        // If hostname matches but no services were found, still return the node
+        if node.is_none()
+            && (hostname == node_name || node_name == "batata-node")
+        {
+            node = Some(CatalogNode {
+                id: uuid::Uuid::new_v4().to_string(),
+                node: node_name.to_string(),
+                address: "127.0.0.1".to_string(),
+                datacenter: self.datacenter.clone(),
+                tagged_addresses: None,
+                meta: None,
+                create_index: 1,
+                modify_index: 1,
+            });
         }
 
         node.map(|n| NodeServices { node: n, services })
@@ -592,7 +627,9 @@ pub async fn list_services(
 
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
     let services = catalog.get_services(&namespace);
-    HttpResponse::Ok().json(services)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(services)
 }
 
 /// GET /v1/catalog/service/:service
@@ -617,9 +654,13 @@ pub async fn get_service(
     let services = catalog.get_service_instances(&namespace, &service_name, tag_filter);
 
     if services.is_empty() {
-        HttpResponse::Ok().json(Vec::<CatalogService>::new())
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", "1"))
+            .json(Vec::<CatalogService>::new())
     } else {
-        HttpResponse::Ok().json(services)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", "1"))
+            .json(services)
     }
 }
 
@@ -639,7 +680,9 @@ pub async fn list_nodes(
 
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
     let nodes = catalog.get_nodes(&namespace);
-    HttpResponse::Ok().json(nodes)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(nodes)
 }
 
 /// GET /v1/catalog/node/:node
@@ -661,7 +704,9 @@ pub async fn get_node(
     }
 
     match catalog.get_node(&namespace, &node_name) {
-        Some(node_services) => HttpResponse::Ok().json(node_services),
+        Some(node_services) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", "1"))
+            .json(node_services),
         None => HttpResponse::NotFound()
             .json(ConsulError::new(format!("Node not found: {}", node_name))),
     }
@@ -760,7 +805,7 @@ pub async fn get_connect_service(
 }
 
 /// GET /v1/catalog/node-services/:node
-/// Returns the services for a specific node (alternative format)
+/// Returns the services for a specific node (array format)
 pub async fn get_node_services(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
@@ -777,7 +822,15 @@ pub async fn get_node_services(
     }
 
     match catalog.get_node(&namespace, &node_name) {
-        Some(node_services) => HttpResponse::Ok().json(node_services),
+        Some(node_services) => {
+            let list = NodeServiceList {
+                node: node_services.node,
+                services: node_services.services.into_values().collect(),
+            };
+            HttpResponse::Ok()
+                .insert_header(("X-Consul-Index", "1"))
+                .json(list)
+        }
         None => HttpResponse::NotFound()
             .json(ConsulError::new(format!("Node not found: {}", node_name))),
     }

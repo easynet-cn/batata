@@ -93,7 +93,7 @@ func TestEventFireWithNodeFilter(t *testing.T) {
 	if err != nil {
 		t.Skip("Could not get agent self info")
 	}
-	config := self["Config"].(map[string]interface{})
+	config := self["Config"]
 	nodeName := config["NodeName"].(string)
 
 	eventName := "node-event-" + randomID()

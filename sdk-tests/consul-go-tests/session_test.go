@@ -135,7 +135,7 @@ func TestSessionNode(t *testing.T) {
 	if err != nil {
 		t.Skip("Could not get agent self info")
 	}
-	config := self["Config"].(map[string]interface{})
+	config := self["Config"]
 	nodeName := config["NodeName"].(string)
 
 	// Create session on this node
@@ -187,7 +187,9 @@ func TestSessionWithChecks(t *testing.T) {
 	err := client.Agent().CheckRegister(&api.AgentCheckRegistration{
 		ID:   checkID,
 		Name: "session-check",
-		TTL:  "30s",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TTL: "30s",
+		},
 	})
 	require.NoError(t, err)
 	defer client.Agent().CheckDeregister(checkID)

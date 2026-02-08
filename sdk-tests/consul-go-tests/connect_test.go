@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"testing"
@@ -48,7 +48,7 @@ func TestConnectCARootsList(t *testing.T) {
 		for _, root := range roots.Roots {
 			t.Logf("  Root: ID=%s, Active=%v", root.ID, root.Active)
 			assert.NotEmpty(t, root.ID, "Root should have ID")
-			assert.NotEmpty(t, root.RootCert, "Root should have certificate")
+			assert.NotEmpty(t, root.RootCertPEM, "Root should have certificate")
 		}
 
 		// Verify we have an active root
@@ -240,8 +240,8 @@ func TestConnectIntentionCheck(t *testing.T) {
 
 	// Check if connection is allowed
 	allowed, _, err := connect.IntentionCheck(&api.IntentionCheck{
-		SourceName:      srcService,
-		DestinationName: dstService,
+		Source:      srcService,
+		Destination: dstService,
 	}, nil)
 
 	if err != nil {
@@ -261,8 +261,8 @@ func TestConnectIntentionCheck(t *testing.T) {
 
 	// Check again - should be denied
 	allowed, _, err = connect.IntentionCheck(&api.IntentionCheck{
-		SourceName:      srcService,
-		DestinationName: dstService,
+		Source:      srcService,
+		Destination: dstService,
 	}, nil)
 
 	if err == nil {
@@ -331,8 +331,7 @@ func TestConnectCALeaf(t *testing.T) {
 	defer agent.ServiceDeregister(serviceName)
 
 	// Try to get leaf certificate
-	connect := client.Connect()
-	leaf, _, err := connect.CALeaf(serviceName, nil)
+	leaf, _, err := agent.ConnectCALeaf(serviceName, nil)
 	if err != nil {
 		t.Logf("CA leaf not available (Connect may not be enabled): %v", err)
 		return

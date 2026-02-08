@@ -345,6 +345,7 @@ pub fn consul_acl_routes() -> actix_web::Scope {
         .route("/policies", web::get().to(acl::list_policies))
         .route("/policy", web::put().to(acl::create_policy))
         .route("/policy/{id}", web::get().to(acl::get_policy))
+        .route("/policy/{id}", web::delete().to(acl::delete_policy))
         // Role management
         .route("/roles", web::get().to(acl::list_roles))
         .route("/role", web::put().to(acl::create_role))
@@ -393,6 +394,10 @@ pub fn consul_acl_routes_persistent() -> actix_web::Scope {
         .route("/policies", web::get().to(acl::list_policies_persistent))
         .route("/policy", web::put().to(acl::create_policy_persistent))
         .route("/policy/{id}", web::get().to(acl::get_policy_persistent))
+        .route(
+            "/policy/{id}",
+            web::delete().to(acl::delete_policy_persistent),
+        )
         // Role management - persistent versions
         .route("/roles", web::get().to(acl::list_roles_persistent))
         .route("/role", web::put().to(acl::create_role_persistent))

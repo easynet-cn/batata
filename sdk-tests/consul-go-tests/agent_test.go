@@ -14,11 +14,17 @@ import (
 func getClient(t *testing.T) *api.Client {
 	addr := os.Getenv("CONSUL_HTTP_ADDR")
 	if addr == "" {
-		addr = "127.0.0.1:8848"
+		addr = "127.0.0.1:8500"
+	}
+
+	token := os.Getenv("CONSUL_HTTP_TOKEN")
+	if token == "" {
+		token = "root"
 	}
 
 	client, err := api.NewClient(&api.Config{
 		Address: addr,
+		Token:   token,
 	})
 	require.NoError(t, err)
 	return client
@@ -58,12 +64,14 @@ func TestAgentServiceRegister(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, services, serviceID, "Service should be registered")
 
-	service := services[serviceID]
-	assert.Equal(t, "test-service", service.Service)
-	assert.Equal(t, 8080, service.Port)
-	assert.Equal(t, "192.168.1.100", service.Address)
-	assert.Contains(t, service.Tags, "test")
-	assert.Equal(t, "1.0.0", service.Meta["version"])
+	service, exists := services[serviceID]
+	if assert.True(t, exists, "Service should exist in map") {
+		assert.Equal(t, "test-service", service.Service)
+		assert.Equal(t, 8080, service.Port)
+		assert.Equal(t, "192.168.1.100", service.Address)
+		assert.Contains(t, service.Tags, "test")
+		assert.Equal(t, "1.0.0", service.Meta["version"])
+	}
 
 	// Cleanup
 	err = client.Agent().ServiceDeregister(serviceID)
@@ -187,7 +195,9 @@ func TestAgentCheckRegister(t *testing.T) {
 		ID:        checkID,
 		Name:      "service-ttl-check",
 		ServiceID: serviceID,
-		TTL:       "30s",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TTL: "30s",
+		},
 	})
 	assert.NoError(t, err, "Check registration should succeed")
 
@@ -212,7 +222,9 @@ func TestAgentCheckDeregister(t *testing.T) {
 	err := client.Agent().CheckRegister(&api.AgentCheckRegistration{
 		ID:   checkID,
 		Name: "temp-check",
-		TTL:  "30s",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TTL: "30s",
+		},
 	})
 	require.NoError(t, err)
 	time.Sleep(500 * time.Millisecond)
@@ -240,7 +252,9 @@ func TestAgentPassTTL(t *testing.T) {
 	err := client.Agent().CheckRegister(&api.AgentCheckRegistration{
 		ID:   checkID,
 		Name: "ttl-pass-check",
-		TTL:  "30s",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TTL: "30s",
+		},
 	})
 	require.NoError(t, err)
 	time.Sleep(500 * time.Millisecond)
@@ -269,7 +283,9 @@ func TestAgentFailTTL(t *testing.T) {
 	err := client.Agent().CheckRegister(&api.AgentCheckRegistration{
 		ID:   checkID,
 		Name: "ttl-fail-check",
-		TTL:  "30s",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TTL: "30s",
+		},
 	})
 	require.NoError(t, err)
 	time.Sleep(500 * time.Millisecond)

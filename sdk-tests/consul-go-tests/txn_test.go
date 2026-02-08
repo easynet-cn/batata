@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"encoding/base64"
@@ -9,6 +9,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// kvOpsToTxnOps converts KVTxnOps to TxnOps for the Txn API
+func kvOpsToTxnOps(kvOps api.KVTxnOps) api.TxnOps {
+	txnOps := make(api.TxnOps, len(kvOps))
+	for i, op := range kvOps {
+		txnOps[i] = &api.TxnOp{KV: op}
+	}
+	return txnOps
+}
 
 // ==================== KV Transaction Tests ====================
 
@@ -32,7 +41,7 @@ func TestTxnKVSet(t *testing.T) {
 		},
 	}
 
-	ok, resp, _, err := txn.Txn(ops, nil)
+	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "Transaction should succeed")
 	assert.NotNil(t, resp, "Response should not be nil")
@@ -72,7 +81,7 @@ func TestTxnKVGet(t *testing.T) {
 		},
 	}
 
-	ok, resp, _, err := txn.Txn(ops, nil)
+	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "Transaction should succeed")
 
@@ -106,7 +115,7 @@ func TestTxnKVDelete(t *testing.T) {
 		},
 	}
 
-	ok, _, _, err := txn.Txn(ops, nil)
+	ok, _, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "Transaction should succeed")
 
@@ -144,7 +153,7 @@ func TestTxnKVDeleteTree(t *testing.T) {
 		},
 	}
 
-	ok, _, _, err := txn.Txn(ops, nil)
+	ok, _, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "Transaction should succeed")
 
@@ -188,7 +197,7 @@ func TestTxnKVCAS(t *testing.T) {
 		},
 	}
 
-	ok, _, _, err := txn.Txn(ops, nil)
+	ok, _, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "CAS transaction should succeed")
 
@@ -223,7 +232,7 @@ func TestTxnKVCASFail(t *testing.T) {
 		},
 	}
 
-	ok, resp, _, err := txn.Txn(ops, nil)
+	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 
 	if !ok {
@@ -264,7 +273,7 @@ func TestTxnKVCheckIndex(t *testing.T) {
 		},
 	}
 
-	ok, _, _, err := txn.Txn(ops, nil)
+	ok, _, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "Check-index transaction should succeed")
 
@@ -304,7 +313,7 @@ func TestTxnMultipleOperations(t *testing.T) {
 		},
 	}
 
-	ok, resp, _, err := txn.Txn(ops, nil)
+	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "Multi-operation transaction should succeed")
 
@@ -341,7 +350,7 @@ func TestTxnAtomicity(t *testing.T) {
 		},
 	}
 
-	ok, _, _, err := txn.Txn(ops, nil)
+	ok, _, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 
 	if !ok {
@@ -375,7 +384,7 @@ func TestTxnLargeTransaction(t *testing.T) {
 		}
 	}
 
-	ok, resp, _, err := txn.Txn(ops, nil)
+	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "Large transaction should succeed")
 
@@ -403,7 +412,7 @@ func TestTxnWithFlags(t *testing.T) {
 		},
 	}
 
-	ok, _, _, err := txn.Txn(ops, nil)
+	ok, _, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok)
 
@@ -439,7 +448,7 @@ func TestTxnCheckNotExists(t *testing.T) {
 		},
 	}
 
-	ok, _, _, err := txn.Txn(ops, nil)
+	ok, _, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok, "Check-not-exists transaction should succeed")
 
@@ -471,7 +480,7 @@ func TestTxnBase64Value(t *testing.T) {
 		},
 	}
 
-	ok, _, _, err := txn.Txn(ops, nil)
+	ok, _, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	require.NoError(t, err)
 	assert.True(t, ok)
 
@@ -496,7 +505,7 @@ func TestTxnEmptyOperations(t *testing.T) {
 
 	ops := api.KVTxnOps{}
 
-	ok, resp, _, err := txn.Txn(ops, nil)
+	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	if err != nil {
 		t.Logf("Empty transaction error: %v", err)
 	} else {
@@ -519,7 +528,7 @@ func TestTxnInvalidKey(t *testing.T) {
 		},
 	}
 
-	ok, resp, _, err := txn.Txn(ops, nil)
+	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	if err != nil {
 		t.Logf("Invalid key error: %v", err)
 	} else if !ok && len(resp.Errors) > 0 {

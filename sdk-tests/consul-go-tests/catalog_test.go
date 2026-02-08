@@ -62,10 +62,12 @@ func TestCatalogService(t *testing.T) {
 	assert.NoError(t, err, "Catalog service should succeed")
 	assert.NotEmpty(t, services)
 
-	service := services[0]
-	assert.Equal(t, serviceName, service.ServiceID)
-	assert.Equal(t, serviceName, service.ServiceName)
-	assert.Equal(t, 8080, service.ServicePort)
+	if len(services) > 0 {
+		service := services[0]
+		assert.Equal(t, serviceName, service.ServiceID)
+		assert.Equal(t, serviceName, service.ServiceName)
+		assert.Equal(t, 8080, service.ServicePort)
+	}
 
 	// Cleanup
 	client.Agent().ServiceDeregister(serviceName)
@@ -172,7 +174,7 @@ func TestCatalogNodeServices(t *testing.T) {
 		t.Skip("Could not get agent self info")
 	}
 
-	config := self["Config"].(map[string]interface{})
+	config := self["Config"]
 	nodeName := config["NodeName"].(string)
 
 	// Get node services

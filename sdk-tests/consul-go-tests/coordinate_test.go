@@ -1,11 +1,11 @@
-package consultest
+package tests
 
 import (
 	"testing"
 	"time"
 
 	"github.com/hashicorp/consul/api"
-	"github.com/stretchr/testify/assert"
+	serfcoord "github.com/hashicorp/serf/coordinate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,11 +91,11 @@ func TestCoordinateUpdate(t *testing.T) {
 	// Create a coordinate entry
 	coord := &api.CoordinateEntry{
 		Node: nodeName,
-		Coord: &api.Coordinate{
-			Vec:       []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8},
-			Error:     1.5,
+		Coord: &serfcoord.Coordinate{
+			Vec:        []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8},
+			Error:      1.5,
 			Adjustment: 0.1,
-			Height:    0.001,
+			Height:     0.001,
 		},
 	}
 
@@ -140,12 +140,12 @@ func TestDiscoveryChain(t *testing.T) {
 		return
 	}
 
-	if chain != nil {
+	if chain != nil && chain.Chain != nil {
 		t.Logf("Discovery chain for %s:", serviceName)
-		t.Logf("  Protocol: %s", chain.Protocol)
-		t.Logf("  Start Node: %s", chain.StartNode)
-		t.Logf("  Nodes: %d", len(chain.Nodes))
-		t.Logf("  Targets: %d", len(chain.Targets))
+		t.Logf("  Protocol: %s", chain.Chain.Protocol)
+		t.Logf("  Start Node: %s", chain.Chain.StartNode)
+		t.Logf("  Nodes: %d", len(chain.Chain.Nodes))
+		t.Logf("  Targets: %d", len(chain.Chain.Targets))
 	}
 }
 
@@ -183,8 +183,8 @@ func TestDiscoveryChainWithOptions(t *testing.T) {
 		return
 	}
 
-	if chain != nil {
-		t.Logf("Discovery chain with options - Protocol: %s", chain.Protocol)
+	if chain != nil && chain.Chain != nil {
+		t.Logf("Discovery chain with options - Protocol: %s", chain.Chain.Protocol)
 	}
 }
 
@@ -261,13 +261,14 @@ func TestRawQuery(t *testing.T) {
 	raw := client.Raw()
 
 	// Query agent self endpoint
-	body, _, err := raw.Query("/v1/agent/self", nil)
+	var out map[string]interface{}
+	_, err := raw.Query("/v1/agent/self", &out, nil)
 	if err != nil {
 		t.Logf("Raw query: %v", err)
 		return
 	}
 
-	t.Logf("Raw query response size: %d bytes", len(body))
+	t.Logf("Raw query returned %d top-level keys", len(out))
 }
 
 // TestRawWrite tests raw API write
@@ -278,8 +279,8 @@ func TestRawWrite(t *testing.T) {
 	key := "raw-test-" + randomString(8)
 
 	// Write to KV
-	body := []byte("raw test value")
-	_, err := raw.Write("/v1/kv/"+key, body, nil)
+	var out interface{}
+	_, err := raw.Write("/v1/kv/"+key, []byte("raw test value"), &out, nil)
 	if err != nil {
 		t.Logf("Raw write: %v", err)
 		return
@@ -299,7 +300,8 @@ func TestRawDelete(t *testing.T) {
 	key := "raw-delete-" + randomString(8)
 
 	// Create key first
-	raw.Write("/v1/kv/"+key, []byte("to be deleted"), nil)
+	var out interface{}
+	raw.Write("/v1/kv/"+key, []byte("to be deleted"), &out, nil)
 
 	// Delete
 	_, err := raw.Delete("/v1/kv/"+key, nil)
@@ -344,16 +346,20 @@ func TestConnectProxyConfig(t *testing.T) {
 	require.NoError(t, err)
 
 	if proxy, ok := services[serviceName+"-sidecar-proxy"]; ok {
-		t.Logf("Proxy config - Destination: %s, LocalPort: %d",
-			proxy.Proxy.DestinationServiceName, proxy.Proxy.LocalServicePort)
+		if proxy.Proxy != nil {
+			t.Logf("Proxy config - Destination: %s, LocalPort: %d",
+				proxy.Proxy.DestinationServiceName, proxy.Proxy.LocalServicePort)
+		} else {
+			t.Log("Sidecar proxy registered but Proxy config is nil")
+		}
 	}
 }
 
-// TestConnectAuthorize tests Connect authorization
-func TestConnectAuthorize(t *testing.T) {
+// TestConnectAuthorizeAdvanced tests Connect authorization with certificate details
+func TestConnectAuthorizeAdvanced(t *testing.T) {
 	client := getTestClient(t)
 
-	connect := client.Connect()
+	agent := client.Agent()
 
 	// Create authorization request
 	auth := &api.AgentAuthorizeParams{
@@ -362,7 +368,7 @@ func TestConnectAuthorize(t *testing.T) {
 		ClientCertSerial: "00:11:22:33:44:55",
 	}
 
-	result, err := connect.Authorize("target-service", auth)
+	result, err := agent.ConnectAuthorize(auth)
 	if err != nil {
 		t.Logf("Connect authorize: %v", err)
 		return

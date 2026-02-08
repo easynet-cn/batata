@@ -494,6 +494,19 @@ pub async fn execute_query(
                     },
                     datacenter: Some("dc1".to_string()),
                     namespace: Some(namespace.to_string()),
+                    kind: instance.metadata.get("consul_kind").cloned(),
+                    proxy: instance
+                        .metadata
+                        .get("consul_proxy")
+                        .and_then(|s| serde_json::from_str(s).ok()),
+                    connect: instance
+                        .metadata
+                        .get("consul_connect")
+                        .and_then(|s| serde_json::from_str(s).ok()),
+                    tagged_addresses: instance
+                        .metadata
+                        .get("consul_tagged_addresses")
+                        .and_then(|s| serde_json::from_str(s).ok()),
                 },
                 checks: vec![HealthCheck {
                     node: "batata-node".to_string(),
@@ -723,6 +736,19 @@ pub async fn execute_query_persistent(
                     },
                     datacenter: Some("dc1".to_string()),
                     namespace: Some(namespace.to_string()),
+                    kind: instance.metadata.get("consul_kind").cloned(),
+                    proxy: instance
+                        .metadata
+                        .get("consul_proxy")
+                        .and_then(|s| serde_json::from_str(s).ok()),
+                    connect: instance
+                        .metadata
+                        .get("consul_connect")
+                        .and_then(|s| serde_json::from_str(s).ok()),
+                    tagged_addresses: instance
+                        .metadata
+                        .get("consul_tagged_addresses")
+                        .and_then(|s| serde_json::from_str(s).ok()),
                 },
                 checks: vec![HealthCheck {
                     node: "batata-node".to_string(),

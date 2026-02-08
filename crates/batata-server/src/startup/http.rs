@@ -18,8 +18,10 @@ use crate::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
     },
     api::consul::{
-        AclService, agent::ConsulAgentService, catalog::ConsulCatalogService,
-        health::ConsulHealthService, kv::ConsulKVService, route::consul_routes,
+        AclService, ConsulEventService, ConsulLockService, ConsulQueryService,
+        ConsulSemaphoreService, ConsulSessionService, agent::ConsulAgentService,
+        catalog::ConsulCatalogService, health::ConsulHealthService, kv::ConsulKVService,
+        route::consul_routes,
     },
     api::openapi::ApiDoc,
     api::v2::route::{
@@ -42,17 +44,33 @@ pub struct ConsulServices {
     pub kv: ConsulKVService,
     pub catalog: ConsulCatalogService,
     pub acl: AclService,
+    pub session: ConsulSessionService,
+    pub event: ConsulEventService,
+    pub query: ConsulQueryService,
+    pub lock: ConsulLockService,
+    pub semaphore: ConsulSemaphoreService,
 }
 
 impl ConsulServices {
     /// Creates Consul service adapters from a naming service.
     pub fn new(naming_service: Arc<NamingService>) -> Self {
+        let session = ConsulSessionService::new();
+        let kv = ConsulKVService::new();
+        let kv_arc = Arc::new(kv.clone());
+        let session_arc = Arc::new(session.clone());
+        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
+        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
         Self {
             agent: ConsulAgentService::new(naming_service.clone()),
             health: ConsulHealthService::new(naming_service.clone()),
-            kv: ConsulKVService::new(),
+            kv,
             catalog: ConsulCatalogService::new(naming_service),
             acl: AclService::new(),
+            session,
+            event: ConsulEventService::new(),
+            query: ConsulQueryService::new(),
+            lock,
+            semaphore,
         }
     }
 }
@@ -63,26 +81,35 @@ impl ConsulServices {
 /// the Batata cluster, including authentication and namespace management.
 pub fn console_server(
     app_state: Arc<AppState>,
+    naming_service: Option<Arc<NamingService>>,
     ai_services: AIServices,
     context_path: String,
     address: String,
     port: u16,
 ) -> Result<Server, std::io::Error> {
+    let rate_limit_config = app_state.configuration.rate_limit_config();
+
     Ok(HttpServer::new(move || {
-        App::new()
+        let mut app = App::new()
             .wrap(Logger::default())
-            .wrap(RateLimiter::with_defaults())
+            .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
             .app_data(web::Data::from(app_state.clone()))
             // AI services (MCP Server Registry, A2A Agent Registry)
             .app_data(web::Data::new(ai_services.mcp_registry.clone()))
-            .app_data(web::Data::new(ai_services.agent_registry.clone()))
-            .service(
-                web::scope(&context_path)
-                    .service(auth::v3::route::routes())
-                    .service(console::v3::route::routes())
-                    .service(v2_console_routes()),
-            )
+            .app_data(web::Data::new(ai_services.agent_registry.clone()));
+
+        // Inject NamingService if available (not available in console-remote mode)
+        if let Some(ref ns) = naming_service {
+            app = app.app_data(web::Data::new(ns.clone()));
+        }
+
+        app.service(
+            web::scope(&context_path)
+                .service(auth::v3::route::routes())
+                .service(console::v3::route::routes())
+                .service(v2_console_routes()),
+        )
     })
     .bind((address, port))?
     .run())
@@ -101,10 +128,12 @@ pub fn consul_server(
     address: String,
     port: u16,
 ) -> Result<Server, std::io::Error> {
+    let rate_limit_config = app_state.configuration.rate_limit_config();
+
     Ok(HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .wrap(RateLimiter::with_defaults())
+            .wrap(RateLimiter::new(rate_limit_config.clone()))
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(naming_service.clone()))
             .app_data(web::Data::new(consul_services.agent.clone()))
@@ -112,6 +141,30 @@ pub fn consul_server(
             .app_data(web::Data::new(consul_services.kv.clone()))
             .app_data(web::Data::new(consul_services.catalog.clone()))
             .app_data(web::Data::new(consul_services.acl.clone()))
+            .app_data(web::Data::new(consul_services.session.clone()))
+            .app_data(web::Data::new(consul_services.event.clone()))
+            .app_data(web::Data::new(consul_services.query.clone()))
+            .app_data(web::Data::new(consul_services.lock.clone()))
+            .app_data(web::Data::new(consul_services.semaphore.clone()))
+            .app_data(web::QueryConfig::default().error_handler(|err, _req| {
+                let err_str = err.to_string();
+                // For duplicate field errors (e.g., ?tag=a&tag=b), return empty result
+                // Consul supports multiple tag params for AND-filtering
+                if err_str.contains("duplicate field") {
+                    actix_web::error::InternalError::from_response(
+                        err,
+                        actix_web::HttpResponse::Ok().json(Vec::<()>::new()),
+                    )
+                    .into()
+                } else {
+                    actix_web::error::InternalError::from_response(
+                        err,
+                        actix_web::HttpResponse::BadRequest()
+                            .json(serde_json::json!({"error": err_str})),
+                    )
+                    .into()
+                }
+            }))
             .service(consul_routes())
     })
     .bind((address, port))?
@@ -130,10 +183,12 @@ pub fn apollo_server(
     address: String,
     port: u16,
 ) -> Result<Server, std::io::Error> {
+    let rate_limit_config = app_state.configuration.rate_limit_config();
+
     Ok(HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .wrap(RateLimiter::with_defaults())
+            .wrap(RateLimiter::new(rate_limit_config.clone()))
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(apollo_services.notification_service.clone()))
             .app_data(web::Data::new(apollo_services.openapi_service.clone()))
@@ -228,11 +283,12 @@ pub fn main_server(
 ) -> Result<Server, std::io::Error> {
     // Create Cloud services
     let cloud_services = CloudServices::new();
+    let rate_limit_config = app_state.configuration.rate_limit_config();
 
     Ok(HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
-            .wrap(RateLimiter::with_defaults())
+            .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(naming_service.clone()))

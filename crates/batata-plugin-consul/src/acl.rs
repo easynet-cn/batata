@@ -337,7 +337,13 @@ query_prefix "" { policy = "write" }
     }
 
     /// Create a new token
-    pub fn create_token(&self, description: &str, policies: Vec<String>) -> AclToken {
+    pub fn create_token(
+        &self,
+        description: &str,
+        policies: Vec<String>,
+        roles: Vec<String>,
+        local: bool,
+    ) -> AclToken {
         let now = chrono::Utc::now().to_rfc3339();
         let accessor_id = uuid::Uuid::new_v4().to_string();
         let secret_id = uuid::Uuid::new_v4().to_string();
@@ -352,13 +358,23 @@ query_prefix "" { policy = "write" }
             })
             .collect();
 
+        let role_links: Vec<RoleLink> = roles
+            .iter()
+            .filter_map(|r| {
+                MEMORY_ROLES.get(r).map(|role| RoleLink {
+                    id: role.id.clone(),
+                    name: role.name.clone(),
+                })
+            })
+            .collect();
+
         let token = AclToken {
             accessor_id,
             secret_id: Some(secret_id.clone()),
             description: description.to_string(),
             policies: policy_links,
-            roles: vec![],
-            local: false,
+            roles: role_links,
+            local,
             expiration_time: None,
             create_time: now.clone(),
             modify_time: now,
@@ -412,6 +428,16 @@ query_prefix "" { policy = "write" }
         MEMORY_POLICIES.insert(policy.id.clone(), policy.clone());
         MEMORY_POLICIES.insert(policy.name.clone(), policy.clone());
         policy
+    }
+
+    /// Delete a policy by ID
+    pub fn delete_policy(&self, id: &str) -> bool {
+        if let Some((_, policy)) = MEMORY_POLICIES.remove(id) {
+            MEMORY_POLICIES.remove(&policy.name);
+            true
+        } else {
+            false
+        }
     }
 
     /// Get a policy by ID or name
@@ -978,6 +1004,18 @@ query_prefix "" { policy = "write" }
         description: &str,
         policies: Vec<String>,
     ) -> Result<AclToken, String> {
+        self.create_token_with_roles(description, policies, vec![], false)
+            .await
+    }
+
+    /// Create a new token with roles
+    pub async fn create_token_with_roles(
+        &self,
+        description: &str,
+        policies: Vec<String>,
+        roles: Vec<String>,
+        local: bool,
+    ) -> Result<AclToken, String> {
         let now = chrono::Utc::now().to_rfc3339();
         let accessor_id = uuid::Uuid::new_v4().to_string();
         let secret_id = uuid::Uuid::new_v4().to_string();
@@ -992,13 +1030,23 @@ query_prefix "" { policy = "write" }
             }
         }
 
+        let mut role_links = Vec::new();
+        for r in &roles {
+            if let Some(role) = self.get_role(r).await {
+                role_links.push(RoleLink {
+                    id: role.id.clone(),
+                    name: role.name.clone(),
+                });
+            }
+        }
+
         let token = AclToken {
             accessor_id,
             secret_id: Some(secret_id.clone()),
             description: description.to_string(),
             policies: policy_links,
-            roles: vec![],
-            local: false,
+            roles: role_links,
+            local,
             expiration_time: None,
             create_time: now.clone(),
             modify_time: now,
@@ -1167,6 +1215,25 @@ query_prefix "" { policy = "write" }
 
         self.save_policy(&policy).await?;
         Ok(policy)
+    }
+
+    /// Delete a policy by ID
+    pub async fn delete_policy(&self, id: &str) -> bool {
+        let data_id = format!("policy:{}", id);
+        match batata_config::service::config::delete(
+            &self.db,
+            &data_id,
+            CONSUL_ACL_GROUP,
+            CONSUL_ACL_NAMESPACE,
+            "",
+            "",
+            "",
+        )
+        .await
+        {
+            Ok(_) => true,
+            Err(_) => false,
+        }
     }
 
     /// List all policies
@@ -1875,7 +1942,7 @@ pub async fn get_token(
 
     match token {
         Some(t) => HttpResponse::Ok().json(t),
-        None => HttpResponse::NotFound().json(AclError::new("Token not found")),
+        None => HttpResponse::Ok().json(serde_json::Value::Null),
     }
 }
 
@@ -1885,6 +1952,8 @@ pub async fn get_token(
 pub struct CreateTokenRequest {
     pub description: Option<String>,
     pub policies: Option<Vec<PolicyLink>>,
+    pub roles: Option<Vec<RoleLink>>,
+    pub local: Option<bool>,
 }
 
 /// PUT /v1/acl/token
@@ -1893,13 +1962,48 @@ pub async fn create_token(
     acl_service: web::Data<AclService>,
     body: web::Json<CreateTokenRequest>,
 ) -> HttpResponse {
+    // Collect policy identifiers - prefer ID, fallback to name
     let policies: Vec<String> = body
         .policies
         .as_ref()
-        .map(|p| p.iter().map(|pl| pl.name.clone()).collect())
+        .map(|p| {
+            p.iter()
+                .map(|pl| {
+                    if !pl.id.is_empty() {
+                        pl.id.clone()
+                    } else {
+                        pl.name.clone()
+                    }
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
-    let token = acl_service.create_token(body.description.as_deref().unwrap_or(""), policies);
+    // Collect role identifiers - prefer ID, fallback to name
+    let roles: Vec<String> = body
+        .roles
+        .as_ref()
+        .map(|r| {
+            r.iter()
+                .map(|rl| {
+                    if !rl.id.is_empty() {
+                        rl.id.clone()
+                    } else {
+                        rl.name.clone()
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let local = body.local.unwrap_or(false);
+
+    let token = acl_service.create_token(
+        body.description.as_deref().unwrap_or(""),
+        policies,
+        roles,
+        local,
+    );
 
     HttpResponse::Ok().json(token)
 }
@@ -1958,7 +2062,8 @@ pub async fn clone_token(
                 .description
                 .clone()
                 .unwrap_or_else(|| format!("Clone of {}", source.description));
-            let new_token = acl_service.create_token(&description, policies);
+            let roles: Vec<String> = source.roles.iter().map(|r| r.name.clone()).collect();
+            let new_token = acl_service.create_token(&description, policies, roles, source.local);
             HttpResponse::Ok().json(new_token)
         }
         None => HttpResponse::NotFound().json(AclError::new("Token not found")),
@@ -2141,6 +2246,20 @@ pub async fn get_policy(
     match acl_service.get_policy(&id) {
         Some(policy) => HttpResponse::Ok().json(policy),
         None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
+    }
+}
+
+/// DELETE /v1/acl/policy/{id}
+pub async fn delete_policy(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let id = path.into_inner();
+
+    if acl_service.delete_policy(&id) {
+        HttpResponse::Ok().json(true)
+    } else {
+        HttpResponse::NotFound().json(AclError::new("Policy not found"))
     }
 }
 
@@ -2400,11 +2519,44 @@ pub async fn create_token_persistent(
     let policies: Vec<String> = body
         .policies
         .as_ref()
-        .map(|p| p.iter().map(|pl| pl.name.clone()).collect())
+        .map(|p| {
+            p.iter()
+                .map(|pl| {
+                    if !pl.id.is_empty() {
+                        pl.id.clone()
+                    } else {
+                        pl.name.clone()
+                    }
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
+    let roles: Vec<String> = body
+        .roles
+        .as_ref()
+        .map(|r| {
+            r.iter()
+                .map(|rl| {
+                    if !rl.id.is_empty() {
+                        rl.id.clone()
+                    } else {
+                        rl.name.clone()
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let local = body.local.unwrap_or(false);
+
     match acl_service
-        .create_token(body.description.as_deref().unwrap_or(""), policies)
+        .create_token_with_roles(
+            body.description.as_deref().unwrap_or(""),
+            policies,
+            roles,
+            local,
+        )
         .await
     {
         Ok(token) => HttpResponse::Ok().json(token),
@@ -2464,6 +2616,20 @@ pub async fn create_policy_persistent(
     {
         Ok(policy) => HttpResponse::Ok().json(policy),
         Err(e) => HttpResponse::InternalServerError().json(AclError::new(&e)),
+    }
+}
+
+/// DELETE /v1/acl/policy/{id} (Persistent)
+pub async fn delete_policy_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let id = path.into_inner();
+
+    if acl_service.delete_policy(&id).await {
+        HttpResponse::Ok().json(true)
+    } else {
+        HttpResponse::NotFound().json(AclError::new("Policy not found"))
     }
 }
 
@@ -2678,18 +2844,22 @@ pub async fn clone_token_persistent(
                 .map(|entry| entry.value().clone())
                 .unwrap_or(source);
 
-            // Create a new token with the same policies
+            // Create a new token with the same policies and roles
             let policies: Vec<String> = full_source
                 .policies
                 .iter()
                 .map(|p| p.name.clone())
                 .collect();
+            let roles: Vec<String> = full_source.roles.iter().map(|r| r.name.clone()).collect();
             let description = body
                 .description
                 .clone()
                 .unwrap_or_else(|| format!("Clone of {}", full_source.description));
 
-            match acl_service.create_token(&description, policies).await {
+            match acl_service
+                .create_token_with_roles(&description, policies, roles, full_source.local)
+                .await
+            {
                 Ok(new_token) => HttpResponse::Ok().json(new_token),
                 Err(e) => HttpResponse::InternalServerError().json(AclError::new(&e)),
             }
@@ -2876,7 +3046,12 @@ mod tests {
     #[test]
     fn test_create_token() {
         let service = AclService::new();
-        let token = service.create_token("Test token", vec!["global-management".to_string()]);
+        let token = service.create_token(
+            "Test token",
+            vec!["global-management".to_string()],
+            vec![],
+            false,
+        );
 
         assert!(!token.accessor_id.is_empty());
         assert!(token.secret_id.is_some());

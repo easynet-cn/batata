@@ -323,7 +323,7 @@ nacos.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtM
 ### Enable API rate limiting
 nacos.ratelimit.enabled: true
 ### Maximum requests per minute per IP for general API
-nacos.ratelimit.max_requests: 100
+nacos.ratelimit.max_requests: 10000
 ### Rate limit window duration in seconds
 nacos.ratelimit.window_seconds: 60
 

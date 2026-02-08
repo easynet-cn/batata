@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"testing"
@@ -6,7 +6,6 @@ import (
 
 	"github.com/hashicorp/consul/api"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // ==================== Operator Raft Tests ====================
@@ -150,17 +149,15 @@ func TestOperatorAutopilotCASConfiguration(t *testing.T) {
 	operator := client.Operator()
 
 	// Get current configuration
-	currentConfig, qm, err := operator.AutopilotCASConfiguration(nil, nil)
+	currentConfig, err := operator.AutopilotGetConfiguration(nil)
 	if err != nil {
 		t.Logf("Autopilot CAS not available: %v", err)
 		return
 	}
 
-	t.Logf("Current config index: %d", qm.LastIndex)
-
 	// Try CAS update with stale index (should fail)
 	currentConfig.MaxTrailingLogs = currentConfig.MaxTrailingLogs + 100
-	success, _, err := operator.AutopilotCASConfiguration(currentConfig, &api.WriteOptions{})
+	success, err := operator.AutopilotCASConfiguration(currentConfig, &api.WriteOptions{})
 	if err != nil {
 		t.Logf("Autopilot CAS update: %v", err)
 	} else {
@@ -333,7 +330,7 @@ func TestOperatorLicenseGet(t *testing.T) {
 
 	operator := client.Operator()
 
-	license, _, err := operator.LicenseGet(nil)
+	license, err := operator.LicenseGet(nil)
 	if err != nil {
 		t.Logf("License get not available (Enterprise feature): %v", err)
 		return
@@ -353,7 +350,7 @@ func TestOperatorLeaderTransfer(t *testing.T) {
 	operator := client.Operator()
 
 	// Leader transfer to a specific node (will fail without proper cluster)
-	err := operator.RaftLeaderTransfer("", nil)
+	_, err := operator.RaftLeaderTransfer("", nil)
 	if err != nil {
 		t.Logf("Leader transfer: %v (expected in single-node)", err)
 	} else {
@@ -393,7 +390,7 @@ func TestOperatorLeaderTransferToNode(t *testing.T) {
 		return
 	}
 
-	err = operator.RaftLeaderTransfer(targetID, nil)
+	_, err = operator.RaftLeaderTransfer(targetID, nil)
 	if err != nil {
 		t.Logf("Leader transfer to %s: %v", targetID, err)
 	} else {

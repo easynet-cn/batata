@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"context"
@@ -685,8 +685,8 @@ func TestWatchWithToken(t *testing.T) {
 		}
 	}
 
-	// Use token from client config
-	plan.Token = client.Config().Token
+	// Use token from environment if set
+	plan.Token = ""
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

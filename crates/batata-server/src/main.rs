@@ -128,6 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let console_server = startup::console_server(
             app_state.clone(),
+            None, // No NamingService in remote mode
             ai_services.clone(),
             console_context_path,
             console_server_address,
@@ -217,6 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
             let console_server = startup::console_server(
                 app_state.clone(),
+                Some(grpc_servers.naming_service.clone()),
                 ai_services.clone(),
                 console_context_path,
                 console_server_address,
@@ -309,6 +311,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let console = startup::console_server(
                 app_state.clone(),
+                Some(naming_service.clone()),
                 ai_services.clone(),
                 console_context_path,
                 console_server_address,

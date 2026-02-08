@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"math/rand"
@@ -16,11 +16,17 @@ import (
 func getTestClient(t *testing.T) *api.Client {
 	addr := os.Getenv("CONSUL_HTTP_ADDR")
 	if addr == "" {
-		addr = "127.0.0.1:8848"
+		addr = "127.0.0.1:8500"
+	}
+
+	token := os.Getenv("CONSUL_HTTP_TOKEN")
+	if token == "" {
+		token = "root"
 	}
 
 	client, err := api.NewClient(&api.Config{
 		Address: addr,
+		Token:   token,
 	})
 	require.NoError(t, err)
 	return client

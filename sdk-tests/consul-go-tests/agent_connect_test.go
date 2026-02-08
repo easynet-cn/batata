@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"testing"
@@ -89,7 +89,11 @@ func TestAgentServiceExplicitProxy(t *testing.T) {
 
 	if proxy, ok := services[proxyName]; ok {
 		assert.Equal(t, api.ServiceKindConnectProxy, proxy.Kind)
-		t.Logf("Proxy registered for destination: %s", proxy.Proxy.DestinationServiceName)
+		if proxy.Proxy != nil {
+			t.Logf("Proxy registered for destination: %s", proxy.Proxy.DestinationServiceName)
+		} else {
+			t.Log("Proxy registered but Proxy config is nil")
+		}
 	}
 }
 
@@ -397,10 +401,12 @@ func TestAgentCheckDocker(t *testing.T) {
 	reg := &api.AgentCheckRegistration{
 		ID:   checkID,
 		Name: "Docker Check",
-		DockerContainerID: "test-container-id",
-		Shell:             "/bin/sh",
-		Args:              []string{"echo", "healthy"},
-		Interval:          "10s",
+		AgentServiceCheck: api.AgentServiceCheck{
+			DockerContainerID: "test-container-id",
+			Shell:             "/bin/sh",
+			Args:              []string{"echo", "healthy"},
+			Interval:          "10s",
+		},
 	}
 
 	err := agent.CheckRegister(reg)
@@ -422,10 +428,12 @@ func TestAgentCheckScript(t *testing.T) {
 	checkID := "script-check-" + randomString(8)
 
 	reg := &api.AgentCheckRegistration{
-		ID:       checkID,
-		Name:     "Script Check",
-		Args:     []string{"echo", "healthy"},
-		Interval: "10s",
+		ID:   checkID,
+		Name: "Script Check",
+		AgentServiceCheck: api.AgentServiceCheck{
+			Args:     []string{"echo", "healthy"},
+			Interval: "10s",
+		},
 	}
 
 	err := agent.CheckRegister(reg)
@@ -446,11 +454,13 @@ func TestAgentCheckHTTP(t *testing.T) {
 	checkID := "http-check-" + randomString(8)
 
 	reg := &api.AgentCheckRegistration{
-		ID:       checkID,
-		Name:     "HTTP Check",
-		HTTP:     "http://localhost:8080/health",
-		Interval: "10s",
-		Timeout:  "5s",
+		ID:   checkID,
+		Name: "HTTP Check",
+		AgentServiceCheck: api.AgentServiceCheck{
+			HTTP:     "http://localhost:8080/health",
+			Interval: "10s",
+			Timeout:  "5s",
+		},
 	}
 
 	err := agent.CheckRegister(reg)
@@ -475,11 +485,13 @@ func TestAgentCheckTCP(t *testing.T) {
 	checkID := "tcp-check-" + randomString(8)
 
 	reg := &api.AgentCheckRegistration{
-		ID:       checkID,
-		Name:     "TCP Check",
-		TCP:      "localhost:8080",
-		Interval: "10s",
-		Timeout:  "5s",
+		ID:   checkID,
+		Name: "TCP Check",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TCP:      "localhost:8080",
+			Interval: "10s",
+			Timeout:  "5s",
+		},
 	}
 
 	err := agent.CheckRegister(reg)
@@ -504,11 +516,13 @@ func TestAgentCheckGRPC(t *testing.T) {
 	checkID := "grpc-check-" + randomString(8)
 
 	reg := &api.AgentCheckRegistration{
-		ID:       checkID,
-		Name:     "gRPC Check",
-		GRPC:     "localhost:9090",
-		Interval: "10s",
-		Timeout:  "5s",
+		ID:   checkID,
+		Name: "gRPC Check",
+		AgentServiceCheck: api.AgentServiceCheck{
+			GRPC:     "localhost:9090",
+			Interval: "10s",
+			Timeout:  "5s",
+		},
 	}
 
 	err := agent.CheckRegister(reg)

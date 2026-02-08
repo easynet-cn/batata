@@ -5,6 +5,54 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Consul-compatible boolean query parameter deserialization.
+/// In Consul, query parameters like `?recurse` (key-present with empty value) mean `true`.
+/// Standard serde can't parse empty string "" as bool.
+pub mod consul_bool {
+    use serde::{self, Deserialize, Deserializer};
+
+    /// Deserialize Option<bool> where empty string means Some(true) (Consul convention)
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Accept either bool or string
+        let opt: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+        match opt {
+            None => Ok(None),
+            Some(serde_json::Value::Bool(b)) => Ok(Some(b)),
+            Some(serde_json::Value::String(ref s)) if s.is_empty() => Ok(Some(true)),
+            Some(serde_json::Value::String(ref s)) => match s.to_lowercase().as_str() {
+                "true" | "1" | "yes" => Ok(Some(true)),
+                "false" | "0" | "no" => Ok(Some(false)),
+                _ => Ok(Some(true)), // key-present = true
+            },
+            Some(serde_json::Value::Null) => Ok(None),
+            _ => Ok(Some(true)),
+        }
+    }
+}
+
+/// Consul-compatible integer query parameter deserialization.
+/// Handles empty strings gracefully by returning None.
+pub mod consul_u64 {
+    use serde::{self, Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+        match opt {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(serde_json::Value::Number(n)) => Ok(n.as_u64()),
+            Some(serde_json::Value::String(ref s)) if s.is_empty() => Ok(None),
+            Some(serde_json::Value::String(ref s)) => Ok(s.parse().ok()),
+            _ => Ok(None),
+        }
+    }
+}
+
 /// Service registration request
 /// PUT /v1/agent/service/register
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +88,22 @@ pub struct AgentServiceRegistration {
     /// Service weights for load balancing
     #[serde(rename = "Weights", default)]
     pub weights: Option<Weights>,
+
+    /// Service kind (e.g., "connect-proxy", "mesh-gateway")
+    #[serde(rename = "Kind", default)]
+    pub kind: Option<String>,
+
+    /// Proxy configuration for connect-proxy services
+    #[serde(rename = "Proxy", default)]
+    pub proxy: Option<serde_json::Value>,
+
+    /// Connect configuration for mesh-enabled services
+    #[serde(rename = "Connect", default)]
+    pub connect: Option<serde_json::Value>,
+
+    /// Tagged addresses for the service
+    #[serde(rename = "TaggedAddresses", default)]
+    pub tagged_addresses: Option<serde_json::Value>,
 
     /// Single health check definition
     #[serde(rename = "Check", default)]
@@ -196,6 +260,22 @@ pub struct AgentService {
     #[serde(rename = "Datacenter", skip_serializing_if = "Option::is_none")]
     pub datacenter: Option<String>,
 
+    /// Service kind (e.g., "connect-proxy", "mesh-gateway")
+    #[serde(rename = "Kind", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+
+    /// Proxy configuration
+    #[serde(rename = "Proxy", skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<serde_json::Value>,
+
+    /// Connect configuration
+    #[serde(rename = "Connect", skip_serializing_if = "Option::is_none")]
+    pub connect: Option<serde_json::Value>,
+
+    /// Tagged addresses
+    #[serde(rename = "TaggedAddresses", skip_serializing_if = "Option::is_none")]
+    pub tagged_addresses: Option<serde_json::Value>,
+
     /// Namespace
     #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
@@ -327,12 +407,12 @@ impl Default for Node {
 }
 
 /// Health check registration request
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CheckRegistration {
     #[serde(rename = "Name")]
     pub name: String,
 
-    #[serde(rename = "CheckID", default)]
+    #[serde(rename = "CheckID", alias = "ID", default)]
     pub check_id: Option<String>,
 
     #[serde(rename = "ServiceID", default)]
@@ -485,6 +565,7 @@ pub struct ServiceHealth {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct HealthQueryParams {
     /// Only return passing instances
+    #[serde(default, deserialize_with = "consul_bool::deserialize")]
     pub passing: Option<bool>,
 
     /// Filter by tag
@@ -530,6 +611,34 @@ impl From<&AgentServiceRegistration> for NacosInstance {
                 enable_tag_override.to_string(),
             );
         }
+        if let Some(ref kind) = reg.kind {
+            metadata.insert("consul_kind".to_string(), kind.clone());
+        }
+        if let Some(ref proxy) = reg.proxy {
+            metadata.insert(
+                "consul_proxy".to_string(),
+                serde_json::to_string(proxy).unwrap_or_default(),
+            );
+        }
+        if let Some(ref connect) = reg.connect {
+            metadata.insert(
+                "consul_connect".to_string(),
+                serde_json::to_string(connect).unwrap_or_default(),
+            );
+        }
+        if let Some(ref tagged_addresses) = reg.tagged_addresses {
+            metadata.insert(
+                "consul_tagged_addresses".to_string(),
+                serde_json::to_string(tagged_addresses).unwrap_or_default(),
+            );
+        }
+        // Store warning weight in metadata
+        if let Some(ref weights) = reg.weights {
+            metadata.insert(
+                "consul_warning_weight".to_string(),
+                weights.warning.to_string(),
+            );
+        }
 
         NacosInstance {
             instance_id: reg.service_id(),
@@ -565,6 +674,21 @@ impl From<&NacosInstance> for AgentService {
             .and_then(|s| s.parse().ok())
             .unwrap_or(false);
 
+        // Extract Kind, Proxy, Connect, TaggedAddresses from metadata
+        let kind = instance.metadata.get("consul_kind").cloned();
+        let proxy = instance
+            .metadata
+            .get("consul_proxy")
+            .and_then(|s| serde_json::from_str(s).ok());
+        let connect = instance
+            .metadata
+            .get("consul_connect")
+            .and_then(|s| serde_json::from_str(s).ok());
+        let tagged_addresses = instance
+            .metadata
+            .get("consul_tagged_addresses")
+            .and_then(|s| serde_json::from_str(s).ok());
+
         // Filter out Consul-specific metadata keys
         let meta: HashMap<String, String> = instance
             .metadata
@@ -572,6 +696,10 @@ impl From<&NacosInstance> for AgentService {
             .filter(|(k, _)| !k.starts_with("consul_") && k.as_str() != "enable_tag_override")
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+
+        // Round-trip weight correctly: store as i32 with proper rounding
+        let weight = instance.weight.round() as i32;
+        let weight = if weight < 1 { 1 } else { weight };
 
         AgentService {
             id: instance.instance_id.clone(),
@@ -582,10 +710,18 @@ impl From<&NacosInstance> for AgentService {
             meta: if meta.is_empty() { None } else { Some(meta) },
             enable_tag_override,
             weights: Weights {
-                passing: instance.weight as i32,
-                warning: 1,
+                passing: weight,
+                warning: instance
+                    .metadata
+                    .get("consul_warning_weight")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1),
             },
             datacenter: None,
+            kind,
+            proxy,
+            connect,
+            tagged_addresses,
             namespace: None,
         }
     }
@@ -860,6 +996,7 @@ pub struct SessionCreateResponse {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AgentMembersParams {
     /// WAN members only
+    #[serde(default, deserialize_with = "consul_bool::deserialize")]
     pub wan: Option<bool>,
     /// Segment filter
     pub segment: Option<String>,
@@ -1295,6 +1432,10 @@ mod tests {
                 passing: 5,
                 warning: 1,
             }),
+            kind: None,
+            proxy: None,
+            connect: None,
+            tagged_addresses: None,
             check: None,
             checks: None,
             namespace: None,

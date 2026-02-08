@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"encoding/json"
@@ -13,8 +13,8 @@ import (
 
 // ==================== Agent Metrics Tests ====================
 
-// TestAgentMetrics tests getting agent metrics
-func TestAgentMetrics(t *testing.T) {
+// TestAgentMetricsBasic tests getting agent metrics
+func TestAgentMetricsBasic(t *testing.T) {
 	client := getTestClient(t)
 
 	agent := client.Agent()
@@ -131,7 +131,7 @@ func TestAgentSelfConfig(t *testing.T) {
 		return
 	}
 
-	if config, ok := self["Config"].(map[string]interface{}); ok {
+	if config := self["Config"]; config != nil {
 		if datacenter, ok := config["Datacenter"]; ok {
 			t.Logf("Datacenter: %v", datacenter)
 		}
@@ -156,7 +156,7 @@ func TestAgentSelfMember(t *testing.T) {
 		return
 	}
 
-	if member, ok := self["Member"].(map[string]interface{}); ok {
+	if member := self["Member"]; member != nil {
 		t.Logf("Member Name: %v", member["Name"])
 		t.Logf("Member Addr: %v", member["Addr"])
 		t.Logf("Member Port: %v", member["Port"])
@@ -186,8 +186,8 @@ func TestAgentHostInfo(t *testing.T) {
 
 // ==================== Agent Members Tests ====================
 
-// TestAgentMembers tests listing cluster members
-func TestAgentMembers(t *testing.T) {
+// TestAgentMembersDetailed tests listing cluster members with details
+func TestAgentMembersDetailed(t *testing.T) {
 	client := getTestClient(t)
 
 	agent := client.Agent()

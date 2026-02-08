@@ -19,7 +19,7 @@ func TestAgentSelf(t *testing.T) {
 	assert.NoError(t, err, "Agent self should succeed")
 	assert.NotEmpty(t, self, "Should return agent info")
 
-	if config, ok := self["Config"].(map[string]interface{}); ok {
+	if config := self["Config"]; config != nil {
 		t.Logf("Node Name: %v", config["NodeName"])
 		t.Logf("Datacenter: %v", config["Datacenter"])
 	}
@@ -59,7 +59,7 @@ func TestAgentVersion(t *testing.T) {
 	self, err := client.Agent().Self()
 	require.NoError(t, err)
 
-	if config, ok := self["Config"].(map[string]interface{}); ok {
+	if config := self["Config"]; config != nil {
 		version := config["Version"]
 		t.Logf("Agent version: %v", version)
 	}
@@ -137,7 +137,9 @@ func TestAgentWarnTTL(t *testing.T) {
 	err := client.Agent().CheckRegister(&api.AgentCheckRegistration{
 		ID:   checkID,
 		Name: "warn-check",
-		TTL:  "30s",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TTL: "30s",
+		},
 	})
 	require.NoError(t, err)
 	defer client.Agent().CheckDeregister(checkID)
@@ -163,7 +165,9 @@ func TestAgentUpdateTTL(t *testing.T) {
 	err := client.Agent().CheckRegister(&api.AgentCheckRegistration{
 		ID:   checkID,
 		Name: "update-check",
-		TTL:  "30s",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TTL: "30s",
+		},
 	})
 	require.NoError(t, err)
 	defer client.Agent().CheckDeregister(checkID)

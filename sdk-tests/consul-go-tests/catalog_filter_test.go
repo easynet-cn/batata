@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"testing"
@@ -288,8 +288,8 @@ func TestCatalogStaleRead(t *testing.T) {
 
 // ==================== Catalog Node Services Tests ====================
 
-// TestCatalogNodeServices tests getting services on a node
-func TestCatalogNodeServices(t *testing.T) {
+// TestCatalogNodeServicesDetailed tests getting services on a node with details
+func TestCatalogNodeServicesDetailed(t *testing.T) {
 	client := getTestClient(t)
 
 	agent := client.Agent()
@@ -329,8 +329,8 @@ func TestCatalogNodeServices(t *testing.T) {
 	}
 }
 
-// TestCatalogNodeServiceList tests listing node services
-func TestCatalogNodeServiceList(t *testing.T) {
+// TestCatalogNodeServiceListDetailed tests listing node services with detail
+func TestCatalogNodeServiceListDetailed(t *testing.T) {
 	client := getTestClient(t)
 
 	agent := client.Agent()
@@ -420,8 +420,8 @@ func TestCatalogConnectServices(t *testing.T) {
 
 // ==================== Catalog Datacenter Tests ====================
 
-// TestCatalogDatacenters tests listing datacenters
-func TestCatalogDatacenters(t *testing.T) {
+// TestCatalogDatacentersAdvanced tests listing datacenters with assertions
+func TestCatalogDatacentersAdvanced(t *testing.T) {
 	client := getTestClient(t)
 
 	catalog := client.Catalog()

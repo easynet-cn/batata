@@ -104,18 +104,23 @@ struct StoredKV {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct KVQueryParams {
     /// Return raw value (not JSON wrapped)
+    #[serde(default, deserialize_with = "crate::model::consul_bool::deserialize")]
     pub raw: Option<bool>,
 
     /// Return only keys (no values)
+    #[serde(default, deserialize_with = "crate::model::consul_bool::deserialize")]
     pub keys: Option<bool>,
 
     /// Recursively get all keys under prefix
+    #[serde(default, deserialize_with = "crate::model::consul_bool::deserialize")]
     pub recurse: Option<bool>,
 
     /// Check-and-set index for conditional writes
+    #[serde(default, deserialize_with = "crate::model::consul_u64::deserialize")]
     pub cas: Option<u64>,
 
     /// Custom flags to store with the key
+    #[serde(default, deserialize_with = "crate::model::consul_u64::deserialize")]
     pub flags: Option<u64>,
 
     /// Datacenter
@@ -128,10 +133,18 @@ pub struct KVQueryParams {
     pub separator: Option<String>,
 
     /// Wait for index to be >= this value (blocking wait for watch)
+    #[serde(default, deserialize_with = "crate::model::consul_u64::deserialize")]
     pub index: Option<u64>,
 
     /// Wait time in milliseconds for blocking wait
+    #[serde(default, deserialize_with = "crate::model::consul_u64::deserialize")]
     pub wait: Option<u64>,
+
+    /// Acquire session lock
+    pub acquire: Option<String>,
+
+    /// Release session lock
+    pub release: Option<String>,
 }
 
 /// Transaction operation
@@ -226,7 +239,7 @@ impl ConsulKVService {
         let timeout_duration = std::time::Duration::from_millis(timeout_ms);
 
         loop {
-            if self.current_index() >= target_index {
+            if self.current_index() > target_index {
                 return true;
             }
 
@@ -283,6 +296,42 @@ impl ConsulKVService {
 
         keys.sort();
         keys
+    }
+
+    /// Put a key-value pair with pre-encoded base64 value (for transactions).
+    pub fn put_base64(&self, key: String, base64_value: Option<String>, flags: Option<u64>) -> KVPair {
+        let index = self.next_index();
+        let now = current_timestamp();
+
+        if let Some(mut existing) = self.store.get_mut(&key) {
+            existing.pair.modify_index = index;
+            existing.pair.value = base64_value;
+            if let Some(f) = flags {
+                existing.pair.flags = f;
+            }
+            existing.modified_at = now;
+            existing.pair.clone()
+        } else {
+            let pair = KVPair {
+                key: key.clone(),
+                create_index: index,
+                modify_index: index,
+                lock_index: 0,
+                flags: flags.unwrap_or(0),
+                value: base64_value,
+                session: None,
+            };
+
+            self.store.insert(
+                key,
+                StoredKV {
+                    pair: pair.clone(),
+                    created_at: now,
+                    modified_at: now,
+                },
+            );
+            pair
+        }
     }
 
     /// Put a key-value pair
@@ -346,6 +395,17 @@ impl ConsulKVService {
         }
     }
 
+    /// Release all KV keys held by a session (called on session destroy).
+    /// Clears the session field on matching keys (Consul "release" behavior).
+    pub fn release_session(&self, session_id: &str) {
+        for mut entry in self.store.iter_mut() {
+            if entry.pair.session.as_deref() == Some(session_id) {
+                entry.pair.session = None;
+                entry.pair.modify_index = self.next_index();
+            }
+        }
+    }
+
     /// Delete a key
     pub fn delete(&self, key: &str) -> bool {
         self.store.remove(key).is_some()
@@ -367,99 +427,89 @@ impl ConsulKVService {
         count
     }
 
-    /// Execute a transaction
+    /// Execute a transaction with two-phase validation
     pub fn transaction(&self, ops: Vec<TxnOp>) -> TxnResult {
-        let mut results: Vec<TxnResultItem> = Vec::new();
+        // Phase 1: Validate all operations and collect planned changes
         let mut errors: Vec<TxnError> = Vec::new();
 
-        for (idx, op) in ops.into_iter().enumerate() {
-            if let Some(kv_op) = op.kv {
+        // Validate check-index and check-not-exists first
+        for (idx, op) in ops.iter().enumerate() {
+            if let Some(ref kv_op) = op.kv {
                 match kv_op.verb.to_lowercase().as_str() {
-                    "get" => {
-                        if let Some(pair) = self.get(&kv_op.key) {
-                            results.push(TxnResultItem { kv: pair });
-                        } else {
-                            errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: format!("key '{}' not found", kv_op.key),
-                            });
+                    "check-index" => {
+                        let expected_index = kv_op.index.unwrap_or(0);
+                        match self.get(&kv_op.key) {
+                            Some(pair) => {
+                                if pair.modify_index != expected_index {
+                                    errors.push(TxnError {
+                                        op_index: idx as u32,
+                                        what: format!(
+                                            "current modify index {} does not match expected {}",
+                                            pair.modify_index, expected_index
+                                        ),
+                                    });
+                                }
+                            }
+                            None => {
+                                errors.push(TxnError {
+                                    op_index: idx as u32,
+                                    what: format!(
+                                        "key '{}' doesn't exist for check-index",
+                                        kv_op.key
+                                    ),
+                                });
+                            }
                         }
                     }
-                    "set" => {
-                        let value = kv_op
-                            .value
-                            .as_ref()
-                            .and_then(|v| BASE64.decode(v).ok())
-                            .and_then(|bytes| String::from_utf8(bytes).ok())
-                            .unwrap_or_default();
-
-                        let pair = self.put(kv_op.key, &value, kv_op.flags);
-                        results.push(TxnResultItem { kv: pair });
+                    "check-not-exists" => {
+                        if self.get(&kv_op.key).is_some() {
+                            errors.push(TxnError {
+                                op_index: idx as u32,
+                                what: format!("key '{}' exists when it should not", kv_op.key),
+                            });
+                        }
                     }
                     "cas" => {
-                        let value = kv_op
-                            .value
-                            .as_ref()
-                            .and_then(|v| BASE64.decode(v).ok())
-                            .and_then(|bytes| String::from_utf8(bytes).ok())
-                            .unwrap_or_default();
-
                         let cas_index = kv_op.index.unwrap_or(0);
-                        if self.cas(kv_op.key.clone(), &value, cas_index, kv_op.flags) {
-                            if let Some(pair) = self.get(&kv_op.key) {
-                                results.push(TxnResultItem { kv: pair });
+                        if cas_index > 0 {
+                            match self.get(&kv_op.key) {
+                                Some(pair) => {
+                                    if pair.modify_index != cas_index {
+                                        errors.push(TxnError {
+                                            op_index: idx as u32,
+                                            what: "CAS failed: index mismatch".to_string(),
+                                        });
+                                    }
+                                }
+                                None => {
+                                    errors.push(TxnError {
+                                        op_index: idx as u32,
+                                        what: format!("key '{}' not found", kv_op.key),
+                                    });
+                                }
                             }
-                        } else {
-                            errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: "CAS failed: index mismatch".to_string(),
-                            });
                         }
-                    }
-                    "delete" => {
-                        if self.delete(&kv_op.key) {
-                            results.push(TxnResultItem {
-                                kv: KVPair::key_only(kv_op.key),
-                            });
-                        }
-                        // Delete is always successful even if key doesn't exist
-                    }
-                    "delete-tree" => {
-                        let count = self.delete_prefix(&kv_op.key);
-                        results.push(TxnResultItem {
-                            kv: KVPair {
-                                key: kv_op.key,
-                                create_index: 0,
-                                modify_index: count as u64,
-                                lock_index: 0,
-                                flags: 0,
-                                value: None,
-                                session: None,
-                            },
-                        });
                     }
                     "delete-cas" => {
                         let cas_index = kv_op.index.unwrap_or(0);
-                        if let Some(existing) = self.store.get(&kv_op.key) {
-                            if existing.pair.modify_index == cas_index {
-                                drop(existing);
-                                self.delete(&kv_op.key);
-                                results.push(TxnResultItem {
-                                    kv: KVPair::key_only(kv_op.key),
-                                });
-                            } else {
+                        match self.store.get(&kv_op.key) {
+                            Some(existing) => {
+                                if existing.pair.modify_index != cas_index {
+                                    errors.push(TxnError {
+                                        op_index: idx as u32,
+                                        what: "CAS failed: index mismatch".to_string(),
+                                    });
+                                }
+                            }
+                            None => {
                                 errors.push(TxnError {
                                     op_index: idx as u32,
-                                    what: "CAS failed: index mismatch".to_string(),
+                                    what: format!("key '{}' not found", kv_op.key),
                                 });
                             }
-                        } else {
-                            errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: format!("key '{}' not found", kv_op.key),
-                            });
                         }
                     }
+                    "get" | "set" | "delete" | "delete-tree" | "get-tree" | "lock" | "unlock" => {}
                     verb => {
                         errors.push(TxnError {
                             op_index: idx as u32,
@@ -470,19 +520,112 @@ impl ConsulKVService {
             }
         }
 
+        // If validation errors, return immediately without applying anything
+        if !errors.is_empty() {
+            return TxnResult {
+                results: None,
+                errors: Some(errors),
+            };
+        }
+
+        // Phase 2: Apply all operations
+        let mut results: Vec<TxnResultItem> = Vec::new();
+
+        for (_idx, op) in ops.into_iter().enumerate() {
+            if let Some(kv_op) = op.kv {
+                match kv_op.verb.to_lowercase().as_str() {
+                    "get" => {
+                        if let Some(pair) = self.get(&kv_op.key) {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    "get-tree" => {
+                        let pairs = self.get_prefix(&kv_op.key);
+                        for pair in pairs {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    "set" => {
+                        let base64_val = txn_value_base64(&kv_op.value);
+                        let pair = self.put_base64(kv_op.key, base64_val, kv_op.flags);
+                        results.push(TxnResultItem { kv: pair });
+                    }
+                    "cas" => {
+                        let value = decode_txn_value(&kv_op.value);
+                        let cas_index = kv_op.index.unwrap_or(0);
+                        self.cas(kv_op.key.clone(), &value, cas_index, kv_op.flags);
+                        if let Some(pair) = self.get(&kv_op.key) {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    "delete" => {
+                        self.delete(&kv_op.key);
+                        results.push(TxnResultItem {
+                            kv: KVPair::key_only(kv_op.key),
+                        });
+                    }
+                    "delete-tree" => {
+                        self.delete_prefix(&kv_op.key);
+                    }
+                    "delete-cas" => {
+                        self.delete(&kv_op.key);
+                        results.push(TxnResultItem {
+                            kv: KVPair::key_only(kv_op.key),
+                        });
+                    }
+                    "check-index" | "check-not-exists" => {
+                        // Already validated in phase 1, these are check-only verbs
+                        if let Some(pair) = self.get(&kv_op.key) {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    "lock" => {
+                        let base64_val = txn_value_base64(&kv_op.value);
+                        let pair = self.put_base64(kv_op.key.clone(), base64_val, kv_op.flags);
+                        if let Some(mut entry) = self.store.get_mut(&kv_op.key) {
+                            entry.pair.lock_index += 1;
+                        }
+                        results.push(TxnResultItem { kv: pair });
+                    }
+                    "unlock" => {
+                        if let Some(mut entry) = self.store.get_mut(&kv_op.key) {
+                            entry.pair.session = None;
+                            results.push(TxnResultItem {
+                                kv: entry.pair.clone(),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         TxnResult {
             results: if results.is_empty() {
                 None
             } else {
                 Some(results)
             },
-            errors: if errors.is_empty() {
-                None
-            } else {
-                Some(errors)
-            },
+            errors: None,
         }
     }
+}
+
+/// Get the base64 value from a transaction operation.
+/// The Go SDK sends values already base64-encoded. Since KVPair stores values
+/// as base64, we pass them through directly without decode/re-encode.
+fn txn_value_base64(value: &Option<String>) -> Option<String> {
+    value.clone().filter(|v| !v.is_empty())
+}
+
+/// Decode base64 value from transaction operation to a UTF-8 string for put().
+/// Falls back to lossy conversion for non-UTF-8 binary data.
+fn decode_txn_value(value: &Option<String>) -> String {
+    value
+        .as_ref()
+        .and_then(|v| BASE64.decode(v).ok())
+        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+        .unwrap_or_default()
 }
 
 impl Default for ConsulKVService {
@@ -668,6 +811,78 @@ impl ConsulKVServicePersistent {
         keys
     }
 
+    /// Put a key-value pair with pre-encoded base64 value (for transactions).
+    pub async fn put_base64(&self, key: String, base64_value: Option<String>, flags: Option<u64>) -> Option<KVPair> {
+        let index = self.next_index();
+        let now = current_timestamp();
+        let data_id = Self::key_to_data_id(&key);
+
+        let (create_index, lock_index, session) = if let Some(existing) = self.get(&key).await {
+            (existing.create_index, existing.lock_index, existing.session)
+        } else {
+            (index, 0, None)
+        };
+
+        let value_str = base64_value.unwrap_or_default();
+        let metadata = KVMetadata {
+            value: value_str,
+            flags: flags.unwrap_or(0),
+            session,
+            create_index,
+            modify_index: index,
+            lock_index,
+        };
+
+        let content = serde_json::to_string(&metadata).ok()?;
+
+        match batata_config::service::config::create_or_update(
+            &self.db,
+            &data_id,
+            CONSUL_KV_GROUP,
+            CONSUL_KV_NAMESPACE,
+            &content,
+            "consul-kv",
+            "system",
+            "127.0.0.1",
+            "",
+            &format!("Consul KV: {}", key),
+            "",
+            "",
+            "json",
+            "",
+            "",
+        )
+        .await
+        {
+            Ok(_) => {
+                let pair = KVPair {
+                    key: key.clone(),
+                    create_index,
+                    modify_index: index,
+                    lock_index,
+                    flags: flags.unwrap_or(0),
+                    value: Some(metadata.value),
+                    session: metadata.session,
+                };
+
+                self.cache.insert(
+                    key,
+                    StoredKV {
+                        pair: pair.clone(),
+                        created_at: now,
+                        modified_at: now,
+                    },
+                );
+
+                Some(pair)
+            }
+            Err(e) => {
+                tracing::error!("Failed to save KV to database: {}", e);
+                None
+            }
+        }
+    }
+
     /// Put a key-value pair
     pub async fn put(&self, key: String, value: &str, flags: Option<u64>) -> Option<KVPair> {
         let index = self.next_index();
@@ -798,105 +1013,88 @@ impl ConsulKVServicePersistent {
         count
     }
 
-    /// Execute a transaction
+    /// Execute a transaction with two-phase validation
     pub async fn transaction(&self, ops: Vec<TxnOp>) -> TxnResult {
-        let mut results: Vec<TxnResultItem> = Vec::new();
+        // Phase 1: Validate all operations
         let mut errors: Vec<TxnError> = Vec::new();
 
-        for (idx, op) in ops.into_iter().enumerate() {
-            if let Some(kv_op) = op.kv {
+        for (idx, op) in ops.iter().enumerate() {
+            if let Some(ref kv_op) = op.kv {
                 match kv_op.verb.to_lowercase().as_str() {
-                    "get" => {
-                        if let Some(pair) = self.get(&kv_op.key).await {
-                            results.push(TxnResultItem { kv: pair });
-                        } else {
-                            errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: format!("key '{}' not found", kv_op.key),
-                            });
+                    "check-index" => {
+                        let expected_index = kv_op.index.unwrap_or(0);
+                        match self.get(&kv_op.key).await {
+                            Some(pair) => {
+                                if pair.modify_index != expected_index {
+                                    errors.push(TxnError {
+                                        op_index: idx as u32,
+                                        what: format!(
+                                            "current modify index {} does not match expected {}",
+                                            pair.modify_index, expected_index
+                                        ),
+                                    });
+                                }
+                            }
+                            None => {
+                                errors.push(TxnError {
+                                    op_index: idx as u32,
+                                    what: format!(
+                                        "key '{}' doesn't exist for check-index",
+                                        kv_op.key
+                                    ),
+                                });
+                            }
                         }
                     }
-                    "set" => {
-                        let value = kv_op
-                            .value
-                            .as_ref()
-                            .and_then(|v| BASE64.decode(v).ok())
-                            .and_then(|bytes| String::from_utf8(bytes).ok())
-                            .unwrap_or_default();
-
-                        if let Some(pair) = self.put(kv_op.key, &value, kv_op.flags).await {
-                            results.push(TxnResultItem { kv: pair });
-                        } else {
+                    "check-not-exists" => {
+                        if self.get(&kv_op.key).await.is_some() {
                             errors.push(TxnError {
                                 op_index: idx as u32,
-                                what: "Failed to set key".to_string(),
+                                what: format!("key '{}' exists when it should not", kv_op.key),
                             });
                         }
                     }
                     "cas" => {
-                        let value = kv_op
-                            .value
-                            .as_ref()
-                            .and_then(|v| BASE64.decode(v).ok())
-                            .and_then(|bytes| String::from_utf8(bytes).ok())
-                            .unwrap_or_default();
-
                         let cas_index = kv_op.index.unwrap_or(0);
-                        if self
-                            .cas(kv_op.key.clone(), &value, cas_index, kv_op.flags)
-                            .await
-                        {
-                            if let Some(pair) = self.get(&kv_op.key).await {
-                                results.push(TxnResultItem { kv: pair });
+                        if cas_index > 0 {
+                            match self.get(&kv_op.key).await {
+                                Some(pair) => {
+                                    if pair.modify_index != cas_index {
+                                        errors.push(TxnError {
+                                            op_index: idx as u32,
+                                            what: "CAS failed: index mismatch".to_string(),
+                                        });
+                                    }
+                                }
+                                None => {
+                                    errors.push(TxnError {
+                                        op_index: idx as u32,
+                                        what: format!("key '{}' not found", kv_op.key),
+                                    });
+                                }
                             }
-                        } else {
-                            errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: "CAS failed: index mismatch".to_string(),
-                            });
                         }
-                    }
-                    "delete" => {
-                        self.delete(&kv_op.key).await;
-                        results.push(TxnResultItem {
-                            kv: KVPair::key_only(kv_op.key),
-                        });
-                    }
-                    "delete-tree" => {
-                        let count = self.delete_prefix(&kv_op.key).await;
-                        results.push(TxnResultItem {
-                            kv: KVPair {
-                                key: kv_op.key,
-                                create_index: 0,
-                                modify_index: count as u64,
-                                lock_index: 0,
-                                flags: 0,
-                                value: None,
-                                session: None,
-                            },
-                        });
                     }
                     "delete-cas" => {
                         let cas_index = kv_op.index.unwrap_or(0);
-                        if let Some(existing) = self.get(&kv_op.key).await {
-                            if existing.modify_index == cas_index {
-                                self.delete(&kv_op.key).await;
-                                results.push(TxnResultItem {
-                                    kv: KVPair::key_only(kv_op.key),
-                                });
-                            } else {
+                        match self.get(&kv_op.key).await {
+                            Some(existing) => {
+                                if existing.modify_index != cas_index {
+                                    errors.push(TxnError {
+                                        op_index: idx as u32,
+                                        what: "CAS failed: index mismatch".to_string(),
+                                    });
+                                }
+                            }
+                            None => {
                                 errors.push(TxnError {
                                     op_index: idx as u32,
-                                    what: "CAS failed: index mismatch".to_string(),
+                                    what: format!("key '{}' not found", kv_op.key),
                                 });
                             }
-                        } else {
-                            errors.push(TxnError {
-                                op_index: idx as u32,
-                                what: format!("key '{}' not found", kv_op.key),
-                            });
                         }
                     }
+                    "get" | "set" | "delete" | "delete-tree" | "get-tree" | "lock" | "unlock" => {}
                     verb => {
                         errors.push(TxnError {
                             op_index: idx as u32,
@@ -907,17 +1105,78 @@ impl ConsulKVServicePersistent {
             }
         }
 
+        // If validation errors, return immediately without applying anything
+        if !errors.is_empty() {
+            return TxnResult {
+                results: None,
+                errors: Some(errors),
+            };
+        }
+
+        // Phase 2: Apply all operations
+        let mut results: Vec<TxnResultItem> = Vec::new();
+
+        for (_idx, op) in ops.into_iter().enumerate() {
+            if let Some(kv_op) = op.kv {
+                match kv_op.verb.to_lowercase().as_str() {
+                    "get" => {
+                        if let Some(pair) = self.get(&kv_op.key).await {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    "get-tree" => {
+                        let pairs = self.get_prefix(&kv_op.key).await;
+                        for pair in pairs {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    "set" => {
+                        let base64_val = txn_value_base64(&kv_op.value);
+                        if let Some(pair) = self.put_base64(kv_op.key, base64_val, kv_op.flags).await {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    "cas" => {
+                        let value = decode_txn_value(&kv_op.value);
+                        let cas_index = kv_op.index.unwrap_or(0);
+                        self.cas(kv_op.key.clone(), &value, cas_index, kv_op.flags)
+                            .await;
+                        if let Some(pair) = self.get(&kv_op.key).await {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    "delete" => {
+                        self.delete(&kv_op.key).await;
+                        results.push(TxnResultItem {
+                            kv: KVPair::key_only(kv_op.key),
+                        });
+                    }
+                    "delete-tree" => {
+                        self.delete_prefix(&kv_op.key).await;
+                    }
+                    "delete-cas" => {
+                        self.delete(&kv_op.key).await;
+                        results.push(TxnResultItem {
+                            kv: KVPair::key_only(kv_op.key),
+                        });
+                    }
+                    "check-index" | "check-not-exists" => {
+                        if let Some(pair) = self.get(&kv_op.key).await {
+                            results.push(TxnResultItem { kv: pair });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         TxnResult {
             results: if results.is_empty() {
                 None
             } else {
                 Some(results)
             },
-            errors: if errors.is_empty() {
-                None
-            } else {
-                Some(errors)
-            },
+            errors: None,
         }
     }
 
@@ -927,7 +1186,7 @@ impl ConsulKVServicePersistent {
         let timeout_duration = std::time::Duration::from_millis(timeout_ms);
 
         loop {
-            if self.current_index() >= target_index {
+            if self.current_index() > target_index {
                 return true;
             }
 
@@ -984,13 +1243,17 @@ pub async fn get_kv(
         }
     }
 
+    let current_idx = kv_service.current_index();
+
     // Handle keys-only request
     if keys_only {
         let keys = kv_service.get_keys(&key, query.separator.as_deref());
         if keys.is_empty() {
             return HttpResponse::NotFound().finish();
         }
-        return HttpResponse::Ok().json(keys);
+        return HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", current_idx.to_string()))
+            .json(keys);
     }
 
     // Handle recursive get
@@ -999,7 +1262,9 @@ pub async fn get_kv(
         if pairs.is_empty() {
             return HttpResponse::NotFound().finish();
         }
-        return HttpResponse::Ok().json(pairs);
+        return HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", current_idx.to_string()))
+            .json(pairs);
     }
 
     // Single key get
@@ -1009,12 +1274,15 @@ pub async fn get_kv(
                 // Return raw value
                 match pair.raw_value() {
                     Some(bytes) => HttpResponse::Ok()
+                        .insert_header(("X-Consul-Index", current_idx.to_string()))
                         .content_type("application/octet-stream")
                         .body(bytes),
                     None => HttpResponse::NotFound().finish(),
                 }
             } else {
-                HttpResponse::Ok().json(vec![pair])
+                HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", current_idx.to_string()))
+                    .json(vec![pair])
             }
         }
         None => HttpResponse::NotFound().finish(),
@@ -1043,6 +1311,40 @@ pub async fn put_kv(
     }
 
     let value = String::from_utf8_lossy(&body).to_string();
+
+    // Handle acquire (session-based lock)
+    if let Some(ref session_id) = query.acquire {
+        // Try to acquire lock: only succeeds if no other session holds it
+        if let Some(existing) = kv_service.get(&key) {
+            if existing.session.is_some() && existing.session.as_deref() != Some(session_id) {
+                // Another session holds the lock
+                return HttpResponse::Ok().json(false);
+            }
+        }
+        let pair = kv_service.put(key.clone(), &value, query.flags);
+        // Set session on the pair
+        if let Some(mut entry) = kv_service.store.get_mut(&key) {
+            entry.pair.session = Some(session_id.clone());
+            entry.pair.lock_index += 1;
+        }
+        let _ = pair;
+        return HttpResponse::Ok().json(true);
+    }
+
+    // Handle release (session-based unlock)
+    if let Some(ref session_id) = query.release {
+        if let Some(existing) = kv_service.get(&key) {
+            if existing.session.as_deref() == Some(session_id) {
+                // Release the lock: update the value and clear session
+                kv_service.put(key.clone(), &value, query.flags);
+                if let Some(mut entry) = kv_service.store.get_mut(&key) {
+                    entry.pair.session = None;
+                }
+                return HttpResponse::Ok().json(true);
+            }
+        }
+        return HttpResponse::Ok().json(false);
+    }
 
     // Check-and-set if cas parameter is provided
     if let Some(cas_index) = query.cas {

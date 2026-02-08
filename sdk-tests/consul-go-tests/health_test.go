@@ -84,7 +84,7 @@ func TestHealthNode(t *testing.T) {
 		t.Skip("Could not get agent self info, skipping node health test")
 	}
 
-	config := self["Config"].(map[string]interface{})
+	config := self["Config"]
 	nodeName := config["NodeName"].(string)
 
 	// Query node health

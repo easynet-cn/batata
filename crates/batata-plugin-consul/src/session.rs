@@ -10,6 +10,7 @@ use dashmap::DashMap;
 use serde::Deserialize;
 
 use crate::acl::{AclService, ResourceType};
+use crate::kv::ConsulKVService;
 use crate::model::{ConsulError, Session, SessionCreateRequest, SessionCreateResponse};
 
 /// Session storage with TTL tracking
@@ -201,6 +202,7 @@ pub async fn create_session(
 pub async fn destroy_session(
     req: HttpRequest,
     session_service: web::Data<ConsulSessionService>,
+    kv_service: web::Data<ConsulKVService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
 ) -> HttpResponse {
@@ -211,6 +213,9 @@ pub async fn destroy_session(
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+
+    // Release all KV keys held by this session (Consul "release" behavior)
+    kv_service.release_session(&session_id);
 
     let destroyed = session_service.destroy_session(&session_id);
     HttpResponse::Ok().json(destroyed)

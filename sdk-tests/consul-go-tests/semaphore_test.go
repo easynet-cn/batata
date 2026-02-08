@@ -1,4 +1,4 @@
-package consultest
+package tests
 
 import (
 	"context"
