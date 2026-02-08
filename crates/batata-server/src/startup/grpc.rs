@@ -292,6 +292,7 @@ fn create_distro_protocol(
 /// A `GrpcServers` struct containing the spawned server handles and naming service.
 pub fn start_grpc_servers(
     app_state: Arc<AppState>,
+    naming_service: Option<Arc<NamingService>>,
     sdk_server_port: u16,
     cluster_server_port: u16,
 ) -> Result<GrpcServers, Box<dyn std::error::Error>> {
@@ -361,7 +362,7 @@ pub fn start_grpc_servers(
         connection_manager.clone(),
     );
 
-    let naming_service = Arc::new(NamingService::new());
+    let naming_service = naming_service.unwrap_or_else(|| Arc::new(NamingService::new()));
     register_naming_handlers(
         &mut handler_registry,
         naming_service.clone(),

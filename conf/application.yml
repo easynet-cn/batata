@@ -386,6 +386,8 @@ nacos.istio.mcp.server.enabled: false
 nacos.plugin.consul.enabled: false
 ### Consul compatibility server port (default: 8500, same as real Consul)
 nacos.plugin.consul.port: 8500
+### Enable Consul ACL (default: false, Consul can work without ACL)
+nacos.plugin.consul.acl.enabled: false
 
 #*************** Apollo Compatibility Plugin Configurations ***************#
 ### Enable Apollo Config API compatibility server on its own port

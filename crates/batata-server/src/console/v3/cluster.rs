@@ -2,14 +2,12 @@
 // This module provides web console endpoints for cluster node management and monitoring
 
 use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, post, put, web};
-use batata_api::model::NodeState;
 use serde::{Deserialize, Serialize};
 
 use batata_console::model::Member as ConsoleMember;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
-    api::model::Member,
     model::{self, common::AppState},
     secured,
 };
@@ -68,8 +66,8 @@ async fn get_nodes(
     );
 
     let mut members: Vec<ConsoleMember> = data
-        .member_manager()
-        .all_members()
+        .console_datasource
+        .cluster_all_members()
         .into_iter()
         .map(ConsoleMember::from)
         .collect();
@@ -101,8 +99,8 @@ async fn get_healthy_nodes(req: HttpRequest, data: web::Data<AppState>) -> impl 
     );
 
     let members: Vec<ConsoleMember> = data
-        .member_manager()
-        .healthy_members()
+        .console_datasource
+        .cluster_healthy_members()
         .into_iter()
         .map(ConsoleMember::from)
         .collect();
@@ -120,15 +118,7 @@ async fn get_health(req: HttpRequest, data: web::Data<AppState>) -> impl Respond
             .build()
     );
 
-    let summary = data.member_manager().health_summary();
-    let healthy = data.member_manager().is_cluster_healthy();
-    let standalone_mode = data.member_manager().is_standalone();
-
-    let response = ClusterHealthResponse {
-        is_healthy: healthy,
-        summary: summary.into(),
-        standalone: standalone_mode,
-    };
+    let response = data.console_datasource.cluster_get_health();
 
     model::common::Result::<ClusterHealthResponse>::http_success(response)
 }
@@ -144,26 +134,7 @@ async fn get_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
             .build()
     );
 
-    let self_member = data.member_manager().get_self();
-    let version = self_member
-        .extend_info
-        .read()
-        .ok()
-        .and_then(|info| {
-            info.get(Member::VERSION)
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_default();
-
-    let response = SelfMemberResponse {
-        ip: self_member.ip.clone(),
-        port: self_member.port,
-        address: self_member.address.clone(),
-        state: self_member.state.to_string(),
-        is_standalone: data.member_manager().is_standalone(),
-        version,
-    };
+    let response = data.console_datasource.cluster_get_self();
 
     model::common::Result::<SelfMemberResponse>::http_success(response)
 }
@@ -185,7 +156,7 @@ async fn get_node(
 
     let address = path.into_inner();
 
-    match data.member_manager().get_member(&address) {
+    match data.console_datasource.cluster_get_member(&address) {
         Some(member) => {
             let console_member: ConsoleMember = member.into();
             model::common::Result::<ConsoleMember>::http_success(console_member)
@@ -210,7 +181,7 @@ async fn get_member_count(req: HttpRequest, data: web::Data<AppState>) -> impl R
             .build()
     );
 
-    let count = data.member_manager().member_count();
+    let count = data.console_datasource.cluster_member_count();
     model::common::Result::<usize>::http_success(count)
 }
 
@@ -225,7 +196,7 @@ async fn check_standalone(req: HttpRequest, data: web::Data<AppState>) -> impl R
             .build()
     );
 
-    let standalone_mode = data.member_manager().is_standalone();
+    let standalone_mode = data.console_datasource.cluster_is_standalone();
     model::common::Result::<bool>::http_success(standalone_mode)
 }
 
@@ -240,7 +211,7 @@ async fn refresh_self(req: HttpRequest, data: web::Data<AppState>) -> impl Respo
             .build()
     );
 
-    data.member_manager().refresh_self();
+    data.console_datasource.cluster_refresh_self();
     model::common::Result::<bool>::http_success(true)
 }
 
@@ -264,53 +235,26 @@ async fn update_member_state(
     );
 
     let address = path.into_inner();
+    let state = body.state.to_uppercase();
 
-    // Parse the state string to NodeState
-    let new_state = match body.state.to_uppercase().as_str() {
-        "UP" => NodeState::Up,
-        "DOWN" => NodeState::Down,
-        "SUSPICIOUS" => NodeState::Suspicious,
-        "STARTING" => NodeState::Starting,
-        "ISOLATION" => NodeState::Isolation,
-        _ => {
-            return model::common::Result::<String>::http_response(
-                400,
-                400,
-                format!(
-                    "Invalid state: {}. Valid states are: UP, DOWN, SUSPICIOUS, STARTING, ISOLATION",
-                    body.state
-                ),
-                String::new(),
-            );
+    match data
+        .console_datasource
+        .cluster_update_member_state(&address, &state)
+        .await
+    {
+        Ok(previous_state) => {
+            let response = UpdateMemberStateResponse {
+                success: true,
+                previous_state,
+                new_state: state,
+                address,
+            };
+            model::common::Result::<UpdateMemberStateResponse>::http_success(response)
         }
-    };
-
-    // Get the current member state before update
-    let previous_state = match data.member_manager().get_member(&address) {
-        Some(member) => member.state.to_string(),
-        None => {
-            return model::common::Result::<String>::http_response(
-                404,
-                404,
-                format!("Member not found: {}", address),
-                String::new(),
-            );
+        Err(e) => {
+            model::common::Result::<String>::http_response(400, 400, e.to_string(), String::new())
         }
-    };
-
-    // Update the member state
-    data.member_manager()
-        .update_member_state(&address, new_state)
-        .await;
-
-    let response = UpdateMemberStateResponse {
-        success: true,
-        previous_state,
-        new_state: body.state.to_uppercase(),
-        address,
-    };
-
-    model::common::Result::<UpdateMemberStateResponse>::http_success(response)
+    }
 }
 
 /// Get leader information
@@ -335,9 +279,9 @@ async fn get_leader(req: HttpRequest, data: web::Data<AppState>) -> impl Respond
     }
 
     let response = LeaderResponse {
-        is_leader: data.member_manager().is_leader(),
-        leader_address: data.member_manager().leader_address(),
-        local_address: data.member_manager().local_address().to_string(),
+        is_leader: data.console_datasource.cluster_is_leader(),
+        leader_address: data.console_datasource.cluster_leader_address(),
+        local_address: data.console_datasource.cluster_local_address(),
     };
 
     model::common::Result::<LeaderResponse>::http_success(response)

@@ -13,7 +13,7 @@ use crate::{
     auth::model::ONLY_IDENTITY,
     error::{self, BatataError},
     model::common::{self, AppState},
-    secured, service,
+    secured,
 };
 
 static NAMESPACE_ID_REGEX: LazyLock<regex::Regex> =
@@ -65,7 +65,11 @@ async fn get(
             .build()
     );
 
-    match service::namespace::get_by_namespace_id(data.db(), &params.namespace_id, "1").await {
+    match data
+        .console_datasource
+        .namespace_get_by_id(&params.namespace_id, "1")
+        .await
+    {
         Ok(namespace) => common::Result::<Namespace>::http_success(namespace),
         Err(err) => {
             if let Some(BatataError::ApiError(status, code, message, data)) = err.downcast_ref() {
@@ -93,7 +97,7 @@ async fn find_all(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
             .build()
     );
 
-    let namespaces: Vec<Namespace> = service::namespace::find_all(data.db()).await;
+    let namespaces: Vec<Namespace> = data.console_datasource.namespace_find_all().await;
 
     common::Result::<Vec<Namespace>>::http_success(namespaces)
 }
@@ -152,9 +156,10 @@ async fn create(
         );
     }
 
-    let res =
-        service::namespace::create(data.db(), &namespace_id, &namespace_name, &namespace_desc)
-            .await;
+    let res = data
+        .console_datasource
+        .namespace_create(&namespace_id, &namespace_name, &namespace_desc)
+        .await;
 
     common::Result::<bool>::http_success(res.is_ok())
 }
@@ -205,13 +210,10 @@ async fn update(
 
     let namespace_desc = form.namespace_desc.clone().unwrap_or_default();
 
-    match service::namespace::update(
-        data.db(),
-        &form.namespace_id,
-        &form.namespace_name,
-        &namespace_desc,
-    )
-    .await
+    match data
+        .console_datasource
+        .namespace_update(&form.namespace_id, &form.namespace_name, &namespace_desc)
+        .await
     {
         Ok(res) => common::Result::<bool>::http_success(res),
         Err(e) => {
@@ -235,7 +237,10 @@ async fn delete(
             .build()
     );
 
-    let res = service::namespace::delete(data.db(), &form.namespace_id).await;
+    let res = data
+        .console_datasource
+        .namespace_delete(&form.namespace_id)
+        .await;
 
     common::Result::<bool>::http_success(res.unwrap_or_default())
 }
@@ -259,7 +264,10 @@ async fn exist(
         return common::Result::<bool>::http_success(false);
     }
 
-    let result = service::namespace::check(data.db(), &params.custom_namespace_id).await;
+    let result = data
+        .console_datasource
+        .namespace_check(&params.custom_namespace_id)
+        .await;
 
     match result {
         Ok(e) => common::Result::<bool>::http_success(e),

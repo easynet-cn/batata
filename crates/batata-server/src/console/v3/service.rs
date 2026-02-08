@@ -2,17 +2,16 @@
 //!
 //! Provides HTTP handlers for service discovery operations on the main server.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashMap;
 
-use actix_web::{HttpMessage, HttpRequest, Responder, Scope, delete, get, post, put, web};
-use serde::{Deserialize, Serialize};
-
-use batata_naming::service::ServiceMetadata;
+use actix_web::{
+    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web,
+};
+use serde::Deserialize;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
-    secured, service::naming::NamingService,
+    secured,
 };
 
 const DEFAULT_NAMESPACE_ID: &str = "public";
@@ -195,59 +194,11 @@ impl UpdateClusterForm {
     }
 }
 
-// Response types
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ServiceListResponse {
-    count: i32,
-    service_list: Vec<ServiceInfoResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ServiceInfoResponse {
-    name: String,
-    group_name: String,
-    cluster_count: i32,
-    ip_count: i32,
-    healthy_instance_count: i32,
-    trigger_flag: bool,
-    protect_threshold: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    selector: Option<SelectorResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SelectorResponse {
-    r#type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    expression: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SubscriberListResponse {
-    count: i32,
-    subscribers: Vec<SubscriberInfoResponse>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SubscriberInfoResponse {
-    addr_str: String,
-    agent: String,
-}
-
 /// GET /ns/service/list
 #[get("list")]
 async fn list_services(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     params: web::Query<ServiceListQuery>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();
@@ -262,66 +213,30 @@ async fn list_services(
             .build()
     );
 
-    let (total_count, service_names) = naming_service.list_services(
-        namespace_id,
-        group_name,
-        params.page_no as i32,
-        params.page_size as i32,
-    );
+    let service_name_filter = params.service_name.as_deref().unwrap_or("");
+    let has_ip_count = params.has_ip_count.unwrap_or(false);
 
-    let service_list: Vec<ServiceInfoResponse> = service_names
-        .iter()
-        .map(|name| {
-            let instances = naming_service.get_instances(namespace_id, group_name, name, "", false);
-            let clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
-            let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
-            let metadata_opt = naming_service.get_service_metadata(namespace_id, group_name, name);
-            let (protect_threshold, metadata, selector) = if let Some(meta) = metadata_opt {
-                let sel = if meta.selector_type != "none" && !meta.selector_type.is_empty() {
-                    Some(SelectorResponse {
-                        r#type: meta.selector_type,
-                        expression: if meta.selector_expression.is_empty() {
-                            None
-                        } else {
-                            Some(meta.selector_expression)
-                        },
-                    })
-                } else {
-                    None
-                };
-                (
-                    meta.protect_threshold,
-                    if meta.metadata.is_empty() {
-                        None
-                    } else {
-                        Some(meta.metadata)
-                    },
-                    sel,
-                )
-            } else {
-                (0.0, None, None)
-            };
-
-            ServiceInfoResponse {
-                name: name.clone(),
-                group_name: group_name.to_string(),
-                cluster_count: clusters.len() as i32,
-                ip_count: instances.len() as i32,
-                healthy_instance_count: healthy_count as i32,
-                trigger_flag: false,
-                protect_threshold,
-                metadata,
-                selector,
-            }
-        })
-        .collect();
-
-    let response = ServiceListResponse {
-        count: total_count as i32,
-        service_list,
-    };
-
-    Result::<ServiceListResponse>::http_success(response)
+    match data
+        .console_datasource
+        .service_list(
+            namespace_id,
+            group_name,
+            service_name_filter,
+            params.page_no,
+            params.page_size,
+            has_ip_count,
+        )
+        .await
+    {
+        Ok((count, service_list)) => {
+            let response = serde_json::json!({
+                "count": count,
+                "serviceList": service_list,
+            });
+            Result::<serde_json::Value>::http_success(response)
+        }
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
 }
 
 /// GET /ns/service
@@ -329,7 +244,6 @@ async fn list_services(
 async fn get_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     params: web::Query<ServiceDetailQuery>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();
@@ -347,61 +261,20 @@ async fn get_service(
             .build()
     );
 
-    if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
-        return Result::<Option<ServiceInfoResponse>>::http_response(
+    match data
+        .console_datasource
+        .service_get(namespace_id, group_name, &params.service_name)
+        .await
+    {
+        Ok(Some(service)) => Result::<serde_json::Value>::http_success(service),
+        Ok(None) => Result::<Option<serde_json::Value>>::http_response(
             404,
             20004,
             format!("service {} not found", params.service_name),
-            None::<ServiceInfoResponse>,
-        );
+            None::<serde_json::Value>,
+        ),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
-
-    let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
-    let clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
-    let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
-    let metadata_opt =
-        naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
-
-    let (protect_threshold, metadata, selector) = if let Some(meta) = metadata_opt {
-        let sel = if meta.selector_type != "none" && !meta.selector_type.is_empty() {
-            Some(SelectorResponse {
-                r#type: meta.selector_type,
-                expression: if meta.selector_expression.is_empty() {
-                    None
-                } else {
-                    Some(meta.selector_expression)
-                },
-            })
-        } else {
-            None
-        };
-        (
-            meta.protect_threshold,
-            if meta.metadata.is_empty() {
-                None
-            } else {
-                Some(meta.metadata)
-            },
-            sel,
-        )
-    } else {
-        (0.0, None, None)
-    };
-
-    let response = ServiceInfoResponse {
-        name: params.service_name.clone(),
-        group_name: group_name.to_string(),
-        cluster_count: clusters.len() as i32,
-        ip_count: instances.len() as i32,
-        healthy_instance_count: healthy_count as i32,
-        trigger_flag: false,
-        protect_threshold,
-        metadata,
-        selector,
-    };
-
-    Result::<ServiceInfoResponse>::http_success(response)
 }
 
 /// POST /ns/service
@@ -409,7 +282,6 @@ async fn get_service(
 async fn create_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     form: web::Json<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
@@ -436,49 +308,25 @@ async fn create_service(
             .build()
     );
 
-    if naming_service.service_exists(namespace_id, group_name, &form.service_name) {
-        return Result::<bool>::http_response(
-            400,
-            400,
-            format!("service {} already exists", form.service_name),
-            false,
-        );
-    }
+    let threshold = form.protect_threshold.unwrap_or(0.0);
+    let metadata_str = form.metadata.as_deref().unwrap_or("");
+    let selector_str = form.selector.as_deref().unwrap_or("");
 
-    let metadata: HashMap<String, String> = form
-        .metadata
-        .as_ref()
-        .and_then(|m| serde_json::from_str(m).ok())
-        .unwrap_or_default();
-
-    let (selector_type, selector_expression) = if let Some(selector) = &form.selector {
-        let selector_obj: serde_json::Value = serde_json::from_str(selector).unwrap_or_default();
-        (
-            selector_obj["type"].as_str().unwrap_or("none").to_string(),
-            selector_obj["expression"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
+    match data
+        .console_datasource
+        .service_create(
+            namespace_id,
+            group_name,
+            &form.service_name,
+            threshold,
+            metadata_str,
+            selector_str,
         )
-    } else {
-        ("none".to_string(), String::new())
-    };
-
-    let service_metadata = ServiceMetadata {
-        protect_threshold: form.protect_threshold.unwrap_or(0.0),
-        metadata,
-        selector_type,
-        selector_expression,
-    };
-
-    naming_service.set_service_metadata(
-        namespace_id,
-        group_name,
-        &form.service_name,
-        service_metadata,
-    );
-
-    Result::<bool>::http_success(true)
+        .await
+    {
+        Ok(result) => Result::<bool>::http_success(result),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
 }
 
 /// PUT /ns/service
@@ -486,7 +334,6 @@ async fn create_service(
 async fn update_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     form: web::Json<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
@@ -513,50 +360,21 @@ async fn update_service(
             .build()
     );
 
-    if !naming_service.service_exists(namespace_id, group_name, &form.service_name) {
-        return Result::<bool>::http_response(
-            404,
-            404,
-            format!("service {} not found", form.service_name),
-            false,
-        );
-    }
-
-    if let Some(threshold) = form.protect_threshold {
-        naming_service.update_service_protect_threshold(
+    match data
+        .console_datasource
+        .service_update(
             namespace_id,
             group_name,
             &form.service_name,
-            threshold,
-        );
+            form.protect_threshold,
+            form.metadata.as_deref(),
+            form.selector.as_deref(),
+        )
+        .await
+    {
+        Ok(result) => Result::<bool>::http_success(result),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
-
-    if let Some(metadata_str) = &form.metadata {
-        if let Ok(metadata) = serde_json::from_str::<HashMap<String, String>>(metadata_str) {
-            naming_service.update_service_metadata_map(
-                namespace_id,
-                group_name,
-                &form.service_name,
-                metadata,
-            );
-        }
-    }
-
-    if let Some(selector) = &form.selector {
-        let selector_obj: serde_json::Value = serde_json::from_str(selector).unwrap_or_default();
-        let selector_type = selector_obj["type"].as_str().unwrap_or("none");
-        let selector_expression = selector_obj["expression"].as_str().unwrap_or("");
-
-        naming_service.update_service_selector(
-            namespace_id,
-            group_name,
-            &form.service_name,
-            selector_type,
-            selector_expression,
-        );
-    }
-
-    Result::<bool>::http_success(true)
 }
 
 /// DELETE /ns/service
@@ -564,7 +382,6 @@ async fn update_service(
 async fn delete_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     params: web::Query<ServiceDetailQuery>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();
@@ -582,33 +399,14 @@ async fn delete_service(
             .build()
     );
 
-    if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
-        return Result::<bool>::http_response(
-            404,
-            404,
-            format!("service {} not found", params.service_name),
-            false,
-        );
+    match data
+        .console_datasource
+        .service_delete(namespace_id, group_name, &params.service_name)
+        .await
+    {
+        Ok(result) => Result::<bool>::http_success(result),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
-
-    let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
-    if !instances.is_empty() {
-        return Result::<bool>::http_response(
-            400,
-            400,
-            format!(
-                "service {} has {} instances, cannot delete",
-                params.service_name,
-                instances.len()
-            ),
-            false,
-        );
-    }
-
-    naming_service.delete_service_metadata(namespace_id, group_name, &params.service_name);
-
-    Result::<bool>::http_success(true)
 }
 
 /// GET /ns/subscriber/list
@@ -616,7 +414,6 @@ async fn delete_service(
 async fn list_subscribers(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     params: web::Query<SubscriberQuery>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();
@@ -634,27 +431,36 @@ async fn list_subscribers(
             .build()
     );
 
-    let all_subscribers =
-        naming_service.get_subscribers(namespace_id, group_name, &params.service_name);
-    let total = all_subscribers.len() as i32;
+    match data
+        .console_datasource
+        .service_subscriber_list(
+            namespace_id,
+            group_name,
+            &params.service_name,
+            params.page_no,
+            params.page_size,
+        )
+        .await
+    {
+        Ok((count, subscribers)) => {
+            let subscriber_list: Vec<serde_json::Value> = subscribers
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "addrStr": s,
+                        "agent": s,
+                    })
+                })
+                .collect();
 
-    let start = ((params.page_no - 1) * params.page_size) as usize;
-    let subscribers: Vec<SubscriberInfoResponse> = all_subscribers
-        .into_iter()
-        .skip(start)
-        .take(params.page_size as usize)
-        .map(|conn_id| SubscriberInfoResponse {
-            addr_str: conn_id.clone(),
-            agent: conn_id,
-        })
-        .collect();
-
-    let response = SubscriberListResponse {
-        count: total,
-        subscribers,
-    };
-
-    Result::<SubscriberListResponse>::http_success(response)
+            let response = serde_json::json!({
+                "count": count,
+                "subscribers": subscriber_list,
+            });
+            Result::<serde_json::Value>::http_success(response)
+        }
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
 }
 
 /// GET /ns/service/selector/types
@@ -669,7 +475,6 @@ async fn get_selector_types() -> impl Responder {
 async fn update_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     form: web::Json<UpdateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();
@@ -687,29 +492,23 @@ async fn update_cluster(
             .build()
     );
 
-    if let Some(checker) = &form.health_checker {
-        naming_service.update_cluster_health_check(
+    let health_checker_type = form.health_checker.as_ref().map(|c| c.r#type.as_str());
+
+    match data
+        .console_datasource
+        .service_update_cluster(
             namespace_id,
             group_name,
             &form.service_name,
             &form.cluster_name,
-            &checker.r#type,
-            80,
-            true,
-        );
+            health_checker_type,
+            form.metadata.clone(),
+        )
+        .await
+    {
+        Ok(result) => Result::<bool>::http_success(result),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
-
-    if let Some(metadata) = &form.metadata {
-        naming_service.update_cluster_metadata(
-            namespace_id,
-            group_name,
-            &form.service_name,
-            &form.cluster_name,
-            metadata.clone(),
-        );
-    }
-
-    Result::<bool>::http_success(true)
 }
 
 pub fn routes() -> Scope {

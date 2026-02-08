@@ -61,6 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sdk_server_port = configuration.sdk_server_port();
     let cluster_server_port = configuration.cluster_server_port();
     let consul_enabled = configuration.consul_enabled();
+    let consul_acl_enabled = configuration.consul_acl_enabled();
     let consul_server_port = configuration.consul_server_port();
     let consul_server_address = server_address.clone();
     let apollo_enabled = configuration.apollo_enabled();
@@ -82,11 +83,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create config subscriber manager (shared between gRPC and console)
     let config_subscriber_manager = Arc::new(batata_core::ConfigSubscriberManager::new());
 
+    // Create NamingService early so it can be shared with both console datasource and gRPC servers
+    let naming_service: Option<Arc<batata_naming::NamingService>> = if !is_console_remote {
+        Some(Arc::new(batata_naming::NamingService::new()))
+    } else {
+        None
+    };
+
     let console_datasource = datasource::create_datasource(
         &configuration,
         database_connection.clone(),
         server_member_manager.clone(),
         config_subscriber_manager.clone(),
+        naming_service.clone(),
     )
     .await?;
 
@@ -150,8 +159,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Start gRPC servers
-    let grpc_servers =
-        startup::start_grpc_servers(app_state.clone(), sdk_server_port, cluster_server_port)?;
+    let grpc_servers = startup::start_grpc_servers(
+        app_state.clone(),
+        naming_service.clone(),
+        sdk_server_port,
+        cluster_server_port,
+    )?;
 
     // Start cluster manager if in cluster mode
     if let Some(ref smm) = app_state.server_member_manager {
@@ -194,7 +207,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create Consul service adapters (only if enabled)
     let consul_services = if consul_enabled {
-        Some(ConsulServices::new(grpc_servers.naming_service.clone()))
+        Some(ConsulServices::new(
+            grpc_servers.naming_service.clone(),
+            consul_acl_enabled,
+        ))
     } else {
         info!("Consul compatibility server is disabled");
         None

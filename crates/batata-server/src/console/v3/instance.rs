@@ -3,14 +3,13 @@
 //! Provides HTTP handlers for instance operations on the main server.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType, api::naming::model::Instance, model::common::AppState,
-    model::response::Result, secured, service::naming::NamingService,
+    model::response::Result, secured,
 };
 
 const DEFAULT_NAMESPACE_ID: &str = "public";
@@ -107,7 +106,6 @@ struct InstanceListResponse {
 async fn list_instances(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     params: web::Query<InstanceListQuery>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();
@@ -126,13 +124,14 @@ async fn list_instances(
             .build()
     );
 
-    let instances = naming_service.get_instances(
-        namespace_id,
-        group_name,
-        &params.service_name,
-        cluster,
-        false,
-    );
+    let instances = match data
+        .console_datasource
+        .instance_list(namespace_id, group_name, &params.service_name, cluster)
+        .await
+    {
+        Ok(i) => i,
+        Err(e) => return Result::<String>::http_response(500, 500, e.to_string(), String::new()),
+    };
 
     let response = InstanceListResponse { hosts: instances };
 
@@ -144,7 +143,6 @@ async fn list_instances(
 async fn update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
     form: web::Json<InstanceUpdateForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();
@@ -179,7 +177,13 @@ async fn update_instance(
         ..Default::default()
     };
 
-    naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
+    if let Err(e) = data
+        .console_datasource
+        .instance_update(namespace_id, group_name, &form.service_name, instance)
+        .await
+    {
+        return Result::<String>::http_response(500, 500, e.to_string(), String::new());
+    }
 
     Result::<bool>::http_success(true)
 }

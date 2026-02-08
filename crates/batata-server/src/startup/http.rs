@@ -53,7 +53,7 @@ pub struct ConsulServices {
 
 impl ConsulServices {
     /// Creates Consul service adapters from a naming service.
-    pub fn new(naming_service: Arc<NamingService>) -> Self {
+    pub fn new(naming_service: Arc<NamingService>, acl_enabled: bool) -> Self {
         let session = ConsulSessionService::new();
         let kv = ConsulKVService::new();
         let kv_arc = Arc::new(kv.clone());
@@ -65,7 +65,11 @@ impl ConsulServices {
             health: ConsulHealthService::new(naming_service.clone()),
             kv,
             catalog: ConsulCatalogService::new(naming_service),
-            acl: AclService::new(),
+            acl: if acl_enabled {
+                AclService::new()
+            } else {
+                AclService::disabled()
+            },
             session,
             event: ConsulEventService::new(),
             query: ConsulQueryService::new(),

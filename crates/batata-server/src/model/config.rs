@@ -852,6 +852,13 @@ impl Configuration {
             .unwrap_or(8500) as u16
     }
 
+    /// Check if Consul ACL is enabled (default: false)
+    pub fn consul_acl_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.plugin.consul.acl.enabled")
+            .unwrap_or(false)
+    }
+
     // ========================================================================
     // Apollo Compatibility Plugin Configuration
     // ========================================================================

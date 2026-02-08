@@ -299,7 +299,12 @@ impl ConsulKVService {
     }
 
     /// Put a key-value pair with pre-encoded base64 value (for transactions).
-    pub fn put_base64(&self, key: String, base64_value: Option<String>, flags: Option<u64>) -> KVPair {
+    pub fn put_base64(
+        &self,
+        key: String,
+        base64_value: Option<String>,
+        flags: Option<u64>,
+    ) -> KVPair {
         let index = self.next_index();
         let now = current_timestamp();
 
@@ -812,7 +817,12 @@ impl ConsulKVServicePersistent {
     }
 
     /// Put a key-value pair with pre-encoded base64 value (for transactions).
-    pub async fn put_base64(&self, key: String, base64_value: Option<String>, flags: Option<u64>) -> Option<KVPair> {
+    pub async fn put_base64(
+        &self,
+        key: String,
+        base64_value: Option<String>,
+        flags: Option<u64>,
+    ) -> Option<KVPair> {
         let index = self.next_index();
         let now = current_timestamp();
         let data_id = Self::key_to_data_id(&key);
@@ -1132,7 +1142,9 @@ impl ConsulKVServicePersistent {
                     }
                     "set" => {
                         let base64_val = txn_value_base64(&kv_op.value);
-                        if let Some(pair) = self.put_base64(kv_op.key, base64_val, kv_op.flags).await {
+                        if let Some(pair) =
+                            self.put_base64(kv_op.key, base64_val, kv_op.flags).await
+                        {
                             results.push(TxnResultItem { kv: pair });
                         }
                     }

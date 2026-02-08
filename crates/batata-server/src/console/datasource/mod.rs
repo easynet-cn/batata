@@ -11,12 +11,17 @@ use batata_core::cluster::ServerMemberManager;
 
 use batata_config::Namespace;
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use crate::{
     api::{
         config::model::{
             ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+            ConfigListenerInfo,
         },
         model::{Member, Page},
+        naming::model::Instance,
     },
     config::{
         export_model::{ImportResult, SameConfigPolicy},
@@ -25,7 +30,6 @@ use crate::{
     console::v3::cluster::{ClusterHealthResponse, SelfMemberResponse},
     model::common::Configuration,
 };
-use std::sync::Arc;
 
 /// Console data source trait - abstracts data access for console operations
 #[async_trait]
@@ -172,6 +176,124 @@ pub trait ConsoleDataSource: Send + Sync {
         namespace_id: &str,
     ) -> anyhow::Result<Vec<ConfigBasicInfo>>;
 
+    // ============== Service Operations ==============
+
+    /// List services with pagination
+    #[allow(clippy::too_many_arguments)]
+    async fn service_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u64,
+        page_size: u64,
+        has_ip_count: bool,
+    ) -> anyhow::Result<(i32, Vec<serde_json::Value>)>;
+
+    /// Get service detail
+    async fn service_get(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>>;
+
+    /// Create a service
+    async fn service_create(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Update a service
+    async fn service_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: Option<f32>,
+        metadata: Option<&str>,
+        selector: Option<&str>,
+    ) -> anyhow::Result<bool>;
+
+    /// Delete a service
+    async fn service_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<bool>;
+
+    /// Get service subscribers with pagination
+    async fn service_subscriber_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<(i32, Vec<String>)>;
+
+    // ============== Instance Operations ==============
+
+    /// List instances for a service
+    async fn instance_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+    ) -> anyhow::Result<Vec<Instance>>;
+
+    /// Update an instance
+    #[allow(clippy::too_many_arguments)]
+    async fn instance_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        instance: Instance,
+    ) -> anyhow::Result<bool>;
+
+    // ============== Config Listener Operations ==============
+
+    /// Get config listener info
+    async fn config_listener_list(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<ConfigListenerInfo>;
+
+    // ============== Server State Operations ==============
+
+    /// Get server state map
+    async fn server_state(&self) -> HashMap<String, Option<String>>;
+
+    /// Check server readiness
+    async fn server_readiness(&self) -> bool;
+
+    // ============== History Operations (Advanced) ==============
+
+    /// Search history with advanced filters
+    #[allow(clippy::too_many_arguments)]
+    async fn history_search_with_filters(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        op_type: Option<&str>,
+        src_user: Option<&str>,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<ConfigHistoryBasicInfo>>;
+
     // ============== Cluster Operations ==============
 
     /// Get all cluster members
@@ -198,6 +320,36 @@ pub trait ConsoleDataSource: Send + Sync {
     /// Refresh self member
     fn cluster_refresh_self(&self);
 
+    /// Update member state, returns previous state
+    async fn cluster_update_member_state(
+        &self,
+        address: &str,
+        state: &str,
+    ) -> anyhow::Result<String>;
+
+    /// Check if this node is the leader
+    fn cluster_is_leader(&self) -> bool;
+
+    /// Get leader address
+    fn cluster_leader_address(&self) -> Option<String>;
+
+    /// Get local address
+    fn cluster_local_address(&self) -> String;
+
+    // ============== Service Operations (Cluster) ==============
+
+    /// Update cluster health check and metadata
+    #[allow(clippy::too_many_arguments)]
+    async fn service_update_cluster(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        health_checker_type: Option<&str>,
+        metadata: Option<HashMap<String, String>>,
+    ) -> anyhow::Result<bool>;
+
     // ============== Helper Methods ==============
 
     /// Check if this is a remote data source
@@ -216,6 +368,7 @@ pub async fn create_datasource(
     database_connection: Option<DatabaseConnection>,
     server_member_manager: Option<Arc<ServerMemberManager>>,
     config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+    naming_service: Option<Arc<crate::service::naming::NamingService>>,
 ) -> anyhow::Result<Arc<dyn ConsoleDataSource>> {
     if configuration.is_console_remote_mode() {
         // Remote mode: use HTTP client to connect to server
@@ -229,8 +382,13 @@ pub async fn create_datasource(
         let smm = server_member_manager.ok_or_else(|| {
             anyhow::anyhow!("Server member manager required for local console mode")
         })?;
-        let local_datasource =
-            local::LocalDataSource::new(db, smm, config_subscriber_manager, configuration.clone());
+        let local_datasource = local::LocalDataSource::new(
+            db,
+            smm,
+            config_subscriber_manager,
+            configuration.clone(),
+            naming_service,
+        );
         Ok(Arc::new(local_datasource))
     }
 }

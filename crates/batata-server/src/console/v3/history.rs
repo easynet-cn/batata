@@ -11,7 +11,7 @@ use crate::{
         self,
         common::{AppState, DEFAULT_NAMESPACE_ID},
     },
-    secured, service,
+    secured,
 };
 
 #[derive(Debug, Deserialize)]
@@ -103,9 +103,8 @@ async fn find_one(
             .build()
     );
 
-    match service::history::find_by_id(data.db(), params.nid).await {
-        Ok(result) => {
-            let config_info = result.map(ConfigHistoryDetailInfo::from);
+    match data.console_datasource.history_find_by_id(params.nid).await {
+        Ok(config_info) => {
             model::common::Result::<Option<ConfigHistoryDetailInfo>>::http_success(config_info)
         }
         Err(e) => {
@@ -145,27 +144,18 @@ async fn search(
             .unwrap_or(DEFAULT_NAMESPACE_ID.to_string());
     }
 
-    match service::history::search_page(
-        data.db(),
-        data_id,
-        group_name,
-        &namespace_id,
-        params.page_no,
-        params.page_size,
-    )
-    .await
+    match data
+        .console_datasource
+        .history_search_page(
+            data_id,
+            group_name,
+            &namespace_id,
+            params.page_no,
+            params.page_size,
+        )
+        .await
     {
-        Ok(result) => {
-            let page_result = Page::<ConfigHistoryBasicInfo>::new(
-                result.total_count,
-                result.page_number,
-                result.pages_available,
-                result
-                    .page_items
-                    .into_iter()
-                    .map(ConfigHistoryBasicInfo::from)
-                    .collect(),
-            );
+        Ok(page_result) => {
             model::common::Result::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
         }
         Err(e) => {
@@ -194,12 +184,12 @@ async fn find_configs_by_namespace_id(
             .build()
     );
 
-    match service::history::find_configs_by_namespace_id(data.db(), &params.namespace_id).await {
-        Ok(result) => {
-            let config_infos = result
-                .into_iter()
-                .map(ConfigBasicInfo::from)
-                .collect::<Vec<ConfigBasicInfo>>();
+    match data
+        .console_datasource
+        .history_find_configs_by_namespace_id(&params.namespace_id)
+        .await
+    {
+        Ok(config_infos) => {
             model::common::Result::<Vec<ConfigBasicInfo>>::http_success(config_infos)
         }
         Err(e) => {
@@ -231,74 +221,105 @@ async fn diff(
             .build()
     );
 
-    match service::history::compare_versions(data.db(), params.nid1, params.nid2).await {
-        Ok(Some((v1, v2))) => {
-            // Generate simple line-by-line diff
-            let lines1: Vec<&str> = v1.content.lines().collect();
-            let lines2: Vec<&str> = v2.content.lines().collect();
-
-            let mut diff_lines = Vec::new();
-            let max_lines = lines1.len().max(lines2.len());
-
-            for i in 0..max_lines {
-                let line1 = lines1.get(i).map(|s| *s).unwrap_or("");
-                let line2 = lines2.get(i).map(|s| *s).unwrap_or("");
-
-                if i >= lines1.len() {
-                    diff_lines.push(DiffLine {
-                        line_number: i + 1,
-                        operation: "add".to_string(),
-                        content: line2.to_string(),
-                    });
-                } else if i >= lines2.len() {
-                    diff_lines.push(DiffLine {
-                        line_number: i + 1,
-                        operation: "remove".to_string(),
-                        content: line1.to_string(),
-                    });
-                } else if line1 != line2 {
-                    diff_lines.push(DiffLine {
-                        line_number: i + 1,
-                        operation: "remove".to_string(),
-                        content: line1.to_string(),
-                    });
-                    diff_lines.push(DiffLine {
-                        line_number: i + 1,
-                        operation: "add".to_string(),
-                        content: line2.to_string(),
-                    });
-                } else {
-                    diff_lines.push(DiffLine {
-                        line_number: i + 1,
-                        operation: "unchanged".to_string(),
-                        content: line1.to_string(),
-                    });
-                }
-            }
-
-            let response = DiffResponse {
-                version1: ConfigHistoryDetailInfo::from(v1),
-                version2: ConfigHistoryDetailInfo::from(v2),
-                content_diff: diff_lines,
-            };
-            model::common::Result::<DiffResponse>::http_success(response)
-        }
-        Ok(None) => model::common::Result::<String>::http_response(
-            404,
-            404,
-            "One or both versions not found".to_string(),
-            String::new(),
-        ),
-        Err(e) => {
-            tracing::error!("Failed to compare versions: {}", e);
-            model::common::Result::<String>::http_response(
-                500,
-                500,
-                format!("Failed to compare versions: {}", e),
+    let v1 = match data
+        .console_datasource
+        .history_find_by_id(params.nid1)
+        .await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return model::common::Result::<String>::http_response(
+                404,
+                404,
+                format!("Version {} not found", params.nid1),
                 String::new(),
-            )
+            );
+        }
+        Err(e) => {
+            tracing::error!("Failed to find version {}: {}", params.nid1, e);
+            return model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find version: {}", e),
+                String::new(),
+            );
+        }
+    };
+
+    let v2 = match data
+        .console_datasource
+        .history_find_by_id(params.nid2)
+        .await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return model::common::Result::<String>::http_response(
+                404,
+                404,
+                format!("Version {} not found", params.nid2),
+                String::new(),
+            );
+        }
+        Err(e) => {
+            tracing::error!("Failed to find version {}: {}", params.nid2, e);
+            return model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find version: {}", e),
+                String::new(),
+            );
+        }
+    };
+
+    // Generate simple line-by-line diff
+    let lines1: Vec<&str> = v1.content.lines().collect();
+    let lines2: Vec<&str> = v2.content.lines().collect();
+
+    let mut diff_lines = Vec::new();
+    let max_lines = lines1.len().max(lines2.len());
+
+    for i in 0..max_lines {
+        let line1 = lines1.get(i).copied().unwrap_or("");
+        let line2 = lines2.get(i).copied().unwrap_or("");
+
+        if i >= lines1.len() {
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "add".to_string(),
+                content: line2.to_string(),
+            });
+        } else if i >= lines2.len() {
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "remove".to_string(),
+                content: line1.to_string(),
+            });
+        } else if line1 != line2 {
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "remove".to_string(),
+                content: line1.to_string(),
+            });
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "add".to_string(),
+                content: line2.to_string(),
+            });
+        } else {
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "unchanged".to_string(),
+                content: line1.to_string(),
+            });
         }
     }
+
+    let response = DiffResponse {
+        version1: v1,
+        version2: v2,
+        content_diff: diff_lines,
+    };
+    model::common::Result::<DiffResponse>::http_success(response)
 }
 
 /// Rollback config to a previous version
@@ -329,10 +350,11 @@ async fn rollback(
     );
 
     // Get the history version to rollback to
-    match service::history::find_by_id(data.db(), params.nid).await {
+    match data.console_datasource.history_find_by_id(params.nid).await {
         Ok(Some(history)) => {
             // Verify it matches the requested config
-            if history.data_id != params.data_id || history.group != params.group_name {
+            let basic = &history.config_history_basic_info.config_basic_info;
+            if basic.data_id != params.data_id || basic.group_name != params.group_name {
                 return model::common::Result::<String>::http_response(
                     400,
                     400,
@@ -349,24 +371,25 @@ async fn rollback(
                 .unwrap_or_else(|| "unknown".to_string());
 
             // Publish the old content as a new version
-            match service::config::create_or_update(
-                data.db(),
-                &params.data_id,
-                &params.group_name,
-                &namespace_id,
-                &history.content,
-                &history.app_name, // app_name
-                "rollback",        // src_user
-                &src_ip,
-                "", // config_tags
-                "", // desc
-                "", // use
-                "", // effect
-                "", // type
-                "", // schema
-                &history.encrypted_data_key,
-            )
-            .await
+            match data
+                .console_datasource
+                .config_create_or_update(
+                    &params.data_id,
+                    &params.group_name,
+                    &namespace_id,
+                    &history.content,
+                    &basic.app_name, // app_name
+                    "rollback",      // src_user
+                    &src_ip,
+                    "", // config_tags
+                    "", // desc
+                    "", // use
+                    "", // effect
+                    "", // type
+                    "", // schema
+                    &history.encrypted_data_key,
+                )
+                .await
             {
                 Ok(_) => {
                     model::common::Result::<String>::http_success("Rollback successful".to_string())
@@ -426,31 +449,22 @@ async fn advanced_search(
     let page_no = params.page_no.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(20);
 
-    match service::history::search_with_filters(
-        data.db(),
-        &data_id,
-        &group_name,
-        &namespace_id,
-        params.op_type.as_deref(),
-        params.src_user.as_deref(),
-        params.start_time,
-        params.end_time,
-        page_no,
-        page_size,
-    )
-    .await
+    match data
+        .console_datasource
+        .history_search_with_filters(
+            &data_id,
+            &group_name,
+            &namespace_id,
+            params.op_type.as_deref(),
+            params.src_user.as_deref(),
+            params.start_time,
+            params.end_time,
+            page_no,
+            page_size,
+        )
+        .await
     {
-        Ok(result) => {
-            let page_result = Page::<ConfigHistoryBasicInfo>::new(
-                result.total_count,
-                result.page_number,
-                result.pages_available,
-                result
-                    .page_items
-                    .into_iter()
-                    .map(ConfigHistoryBasicInfo::from)
-                    .collect(),
-            );
+        Ok(page_result) => {
             model::common::Result::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
         }
         Err(e) => {

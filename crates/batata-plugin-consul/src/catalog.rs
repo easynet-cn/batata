@@ -463,9 +463,7 @@ impl ConsulCatalogService {
         }
 
         // If hostname matches but no services were found, still return the node
-        if node.is_none()
-            && (hostname == node_name || node_name == "batata-node")
-        {
+        if node.is_none() && (hostname == node_name || node_name == "batata-node") {
             node = Some(CatalogNode {
                 id: uuid::Uuid::new_v4().to_string(),
                 node: node_name.to_string(),

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, str::FromStr};
+use std::str::FromStr;
 
 use actix_multipart::Multipart;
 use actix_web::{
@@ -26,7 +26,7 @@ use crate::{
         self,
         common::{AppState, DEFAULT_NAMESPACE_ID, ErrorResult},
     },
-    secured, service,
+    secured,
 };
 
 #[derive(Debug, Deserialize)]
@@ -66,13 +66,10 @@ async fn find_one(
             .build()
     );
 
-    let result = match service::config::find_one(
-        data.db(),
-        &params.data_id,
-        &params.group_name,
-        &params.namespace_id,
-    )
-    .await
+    let result = match data
+        .console_datasource
+        .config_find_one(&params.data_id, &params.group_name, &params.namespace_id)
+        .await
     {
         Ok(config) => config.map(ConfigDetailInfo::from),
         Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
@@ -111,19 +108,20 @@ async fn search(
         .map(|e| e.to_string())
         .collect::<Vec<String>>();
 
-    let result = crate::service::config::search_page(
-        data.db(),
-        search_param.page_no,
-        search_param.page_size,
-        &search_param.config_form.namespace_id,
-        &search_param.config_form.data_id,
-        &search_param.config_form.group_name,
-        &search_param.config_form.app_name,
-        tags,
-        types,
-        &search_param.config_form.content,
-    )
-    .await;
+    let result = data
+        .console_datasource
+        .config_search_page(
+            search_param.page_no,
+            search_param.page_size,
+            &search_param.config_form.namespace_id,
+            &search_param.config_form.data_id,
+            &search_param.config_form.group_name,
+            &search_param.config_form.app_name,
+            tags,
+            types,
+            &search_param.config_form.content,
+        )
+        .await;
 
     match result {
         Ok(page_result) => {
@@ -231,24 +229,25 @@ async fn create_or_update(
         .unwrap_or_default()
         .to_owned();
 
-    let _ = service::config::create_or_update(
-        data.db(),
-        &config_form.data_id,
-        &config_form.group_name,
-        &config_form.namespace_id,
-        &config_form.content,
-        &config_form.app_name,
-        &src_user,
-        &src_ip,
-        &config_form.config_tags,
-        &config_form.desc,
-        &config_form.r#use.unwrap_or_default(),
-        &config_form.effect.unwrap_or_default(),
-        &config_form.r#type,
-        &config_form.schema.unwrap_or_default(),
-        &config_form.encrypted_data_key.unwrap_or_default(),
-    )
-    .await;
+    let _ = data
+        .console_datasource
+        .config_create_or_update(
+            &config_form.data_id,
+            &config_form.group_name,
+            &config_form.namespace_id,
+            &config_form.content,
+            &config_form.app_name,
+            &src_user,
+            &src_ip,
+            &config_form.config_tags,
+            &config_form.desc,
+            &config_form.r#use.unwrap_or_default(),
+            &config_form.effect.unwrap_or_default(),
+            &config_form.r#type,
+            &config_form.schema.unwrap_or_default(),
+            &config_form.encrypted_data_key.unwrap_or_default(),
+        )
+        .await;
 
     model::common::Result::<bool>::http_success(true)
 }
@@ -295,16 +294,18 @@ async fn delete(
 
     let src_user = auth_content.username;
 
-    if let Err(e) = service::config::delete(
-        data.db(),
-        &params.data_id,
-        &params.group_name,
-        &tenant,
-        "",
-        &client_ip,
-        &src_user,
-    )
-    .await
+    if let Err(e) = data
+        .console_datasource
+        .config_delete(
+            &params.data_id,
+            &params.group_name,
+            &tenant,
+            "",
+            &client_ip,
+            &src_user,
+            "",
+        )
+        .await
     {
         return HttpResponse::InternalServerError().body(e.to_string());
     }
@@ -326,15 +327,12 @@ async fn find_beta_one(
             .build()
     );
 
-    let result = match service::config::find_gray_one(
-        data.db(),
-        &params.data_id,
-        &params.group_name,
-        &params.namespace_id,
-    )
-    .await
+    let result = match data
+        .console_datasource
+        .config_find_gray_one(&params.data_id, &params.group_name, &params.namespace_id)
+        .await
     {
-        Ok(config) => config.map(ConfigGrayInfo::from),
+        Ok(config) => config,
         Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
     };
 
@@ -345,7 +343,7 @@ async fn find_beta_one(
 async fn find_listeners(
     req: HttpRequest,
     data: web::Data<AppState>,
-    _params: web::Query<ConfigForm>,
+    params: web::Query<ConfigForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -355,10 +353,16 @@ async fn find_listeners(
             .build()
     );
 
-    model::common::Result::<Option<ConfigListenerInfo>>::http_success(ConfigListenerInfo {
-        query_type: ConfigListenerInfo::QUERY_TYPE_CONFIG.to_string(),
-        listeners_status: HashMap::new(),
-    })
+    match data
+        .console_datasource
+        .config_listener_list(&params.data_id, &params.group_name, &params.namespace_id)
+        .await
+    {
+        Ok(listener_info) => {
+            model::common::Result::<Option<ConfigListenerInfo>>::http_success(listener_info)
+        }
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
 }
 
 #[get("export")]
@@ -389,28 +393,19 @@ async fn export_configs(
             .collect::<Vec<String>>()
     });
 
-    // Find configs for export
-    let configs = match service::config_export::find_configs_for_export(
-        data.db(),
-        &namespace_id,
-        params.group.as_deref(),
-        data_ids,
-        params.app_name.as_deref(),
-    )
-    .await
+    // Export configs via datasource
+    let zip_data = match data
+        .console_datasource
+        .config_export(
+            &namespace_id,
+            params.group.as_deref(),
+            data_ids,
+            params.app_name.as_deref(),
+        )
+        .await
     {
-        Ok(c) => c,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
-    };
-
-    if configs.is_empty() {
-        return HttpResponse::NotFound().body("No configurations found to export");
-    }
-
-    // Create ZIP file
-    let zip_data = match service::config_export::create_nacos_export_zip(configs) {
         Ok(z) => z,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => return HttpResponse::NotFound().body(e.to_string()),
     };
 
     let filename = format!(
@@ -488,41 +483,21 @@ async fn import_configs(
         );
     }
 
-    // Parse ZIP file
-    let items = match service::config_import::parse_nacos_import_zip(&file_data) {
-        Ok(i) => i,
+    // Import configs via datasource
+    let result = match data
+        .console_datasource
+        .config_import(file_data, &namespace_id, policy, &src_user, &src_ip)
+        .await
+    {
+        Ok(r) => r,
         Err(e) => {
             return model::common::Result::<ImportResult>::http_response(
                 StatusCode::BAD_REQUEST.as_u16(),
                 error::PARAMETER_VALIDATE_ERROR.code,
                 error::PARAMETER_VALIDATE_ERROR.message.to_string(),
-                format!("Invalid ZIP file: {}", e),
+                format!("Import failed: {}", e),
             );
         }
-    };
-
-    if items.is_empty() {
-        return model::common::Result::<ImportResult>::http_response(
-            StatusCode::BAD_REQUEST.as_u16(),
-            error::DATA_EMPTY.code,
-            error::DATA_EMPTY.message.to_string(),
-            "No configurations found in ZIP file",
-        );
-    }
-
-    // Import configs
-    let result = match service::config_import::import_nacos_items(
-        data.db(),
-        items,
-        &namespace_id,
-        policy,
-        &src_user,
-        &src_ip,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
     };
 
     model::common::Result::<ImportResult>::http_success(result)

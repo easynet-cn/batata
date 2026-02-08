@@ -3,10 +3,7 @@ use std::{collections::HashMap, fs};
 use actix_web::{Scope, get, web};
 use serde::Deserialize;
 
-use crate::{
-    auth,
-    model::common::{self, AppState},
-};
+use crate::model::common::{self, AppState};
 
 pub const ANNOUNCEMENT_FILE: &str = "announcement.conf";
 pub const GUIDE_FILE: &str = "console-guide.conf";
@@ -19,63 +16,7 @@ struct LanguageParam {
 
 #[get("/state")]
 async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {
-    // config module state
-    let config_state = data.config_state();
-
-    // auth module state
-    let auth_enabled = data.configuration.auth_enabled();
-    let global_admin = auth::service::role::has_global_admin_role(data.db())
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to check global admin role: {}", e);
-            false
-        });
-
-    let auth_state = data.auth_state(auth_enabled && !global_admin);
-
-    // env module state
-    let env_state = data.env_state();
-
-    //console module state
-    let console_state = data.console_state();
-
-    // plugin module state (Consul, Apollo)
-    let plugin_state = data.plugin_state();
-
-    let mut state_map: HashMap<String, Option<String>> = HashMap::with_capacity(
-        config_state.len()
-            + auth_state.len()
-            + env_state.len()
-            + console_state.len()
-            + plugin_state.len()
-            + 1,
-    );
-
-    state_map.insert(
-        common::SERVER_PORT_STATE.to_string(),
-        Some(format!("{}", data.configuration.console_server_port())),
-    );
-
-    for (k, v) in config_state {
-        state_map.insert(k, v);
-    }
-
-    for (k, v) in auth_state {
-        state_map.insert(k, v);
-    }
-
-    for (k, v) in env_state {
-        state_map.insert(k, v);
-    }
-
-    for (k, v) in console_state {
-        state_map.insert(k, v);
-    }
-
-    for (k, v) in plugin_state {
-        state_map.insert(k, v);
-    }
-
+    let state_map = data.console_datasource.server_state().await;
     web::Json(state_map)
 }
 

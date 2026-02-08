@@ -1,5 +1,4 @@
 use actix_web::{HttpResponse, Responder, Scope, get, web};
-use sea_orm::DatabaseConnection;
 use serde::Serialize;
 
 use crate::model::common::{AppState, Result};
@@ -44,14 +43,6 @@ impl ComponentStatus {
     }
 }
 
-async fn check_database(db: &DatabaseConnection) -> ComponentStatus {
-    use sea_orm::ConnectionTrait;
-    match db.execute_unprepared("SELECT 1").await {
-        Ok(_) => ComponentStatus::up(),
-        Err(e) => ComponentStatus::down(e.to_string()),
-    }
-}
-
 #[get("/liveness")]
 async fn liveness() -> web::Json<Result<String>> {
     web::Json(Result::<String>::success("ok".to_string()))
@@ -59,12 +50,19 @@ async fn liveness() -> web::Json<Result<String>> {
 
 #[get("/readiness")]
 async fn readiness(data: web::Data<AppState>) -> impl Responder {
-    let db_status = check_database(data.db()).await;
+    let ds = &data.console_datasource;
+    let db_ready = ds.server_readiness().await;
+
+    let db_status = if db_ready {
+        ComponentStatus::up()
+    } else {
+        ComponentStatus::down("Database check failed".to_string())
+    };
 
     let cluster_status = ClusterStatus {
         status: "UP".to_string(),
-        member_count: data.member_manager().all_members().len(),
-        is_leader: data.member_manager().is_leader(),
+        member_count: ds.cluster_member_count(),
+        is_leader: ds.cluster_is_leader(),
     };
 
     let overall_status = if db_status.status == "UP" && cluster_status.status == "UP" {
@@ -88,12 +86,19 @@ async fn readiness(data: web::Data<AppState>) -> impl Responder {
 
 #[get("")]
 async fn health_check(data: web::Data<AppState>) -> impl Responder {
-    let db_status = check_database(data.db()).await;
+    let ds = &data.console_datasource;
+    let db_ready = ds.server_readiness().await;
+
+    let db_status = if db_ready {
+        ComponentStatus::up()
+    } else {
+        ComponentStatus::down("Database check failed".to_string())
+    };
 
     let cluster_status = ClusterStatus {
         status: "UP".to_string(),
-        member_count: data.member_manager().all_members().len(),
-        is_leader: data.member_manager().is_leader(),
+        member_count: ds.cluster_member_count(),
+        is_leader: ds.cluster_is_leader(),
     };
 
     let overall_status = if db_status.status == "UP" && cluster_status.status == "UP" {

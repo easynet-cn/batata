@@ -16,12 +16,16 @@ use batata_core::cluster::ServerMemberManager;
 
 use batata_config::Namespace;
 
+use std::collections::HashMap;
+
 use crate::{
     api::{
         config::model::{
             ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+            ConfigListenerInfo,
         },
         model::{Member, Page},
+        naming::model::Instance,
     },
     config::export_model::{ImportResult, SameConfigPolicy},
     config::model::ConfigAllInfo,
@@ -438,6 +442,248 @@ impl ConsoleDataSource for RemoteDataSource {
             .await
     }
 
+    // ============== History Operations (Advanced) ==============
+
+    async fn history_search_with_filters(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        _op_type: Option<&str>,
+        _src_user: Option<&str>,
+        _start_time: Option<i64>,
+        _end_time: Option<i64>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<ConfigHistoryBasicInfo>> {
+        // Remote mode: fall back to basic search (admin API may not support all filters)
+        self.api_client
+            .history_search_page(data_id, group_name, namespace_id, page_no, page_size)
+            .await
+    }
+
+    // ============== Service Operations ==============
+
+    async fn service_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u64,
+        page_size: u64,
+        _has_ip_count: bool,
+    ) -> anyhow::Result<(i32, Vec<serde_json::Value>)> {
+        let data = self
+            .api_client
+            .service_list(namespace_id, group_name, service_name, page_no, page_size)
+            .await?;
+
+        let count = data.get("count").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let service_list = data
+            .get("serviceList")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        Ok((count, service_list))
+    }
+
+    async fn service_get(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        match self
+            .api_client
+            .service_get(namespace_id, group_name, service_name)
+            .await
+        {
+            Ok(data) => {
+                if data.is_null() {
+                    Ok(None)
+                } else {
+                    Ok(Some(data))
+                }
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn service_create(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: f32,
+        metadata: &str,
+        selector: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .service_create(
+                namespace_id,
+                group_name,
+                service_name,
+                protect_threshold,
+                metadata,
+                selector,
+            )
+            .await
+    }
+
+    async fn service_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: Option<f32>,
+        metadata: Option<&str>,
+        selector: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .service_update(
+                namespace_id,
+                group_name,
+                service_name,
+                protect_threshold.unwrap_or(0.0),
+                metadata.unwrap_or(""),
+                selector.unwrap_or(""),
+            )
+            .await
+    }
+
+    async fn service_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<bool> {
+        self.api_client
+            .service_delete(namespace_id, group_name, service_name)
+            .await
+    }
+
+    async fn service_subscriber_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<(i32, Vec<String>)> {
+        let data = self
+            .api_client
+            .service_subscriber_list(namespace_id, group_name, service_name, page_no, page_size)
+            .await?;
+
+        let count = data.get("count").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let subscribers = data
+            .get("subscribers")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        v.get("addrStr")
+                            .and_then(|s| s.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok((count, subscribers))
+    }
+
+    // ============== Instance Operations ==============
+
+    async fn instance_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+    ) -> anyhow::Result<Vec<Instance>> {
+        let data = self
+            .api_client
+            .instance_list(namespace_id, group_name, service_name, cluster_name)
+            .await?;
+
+        let hosts = data
+            .get("hosts")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| serde_json::from_value::<Instance>(v.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Ok(hosts)
+    }
+
+    async fn instance_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        instance: Instance,
+    ) -> anyhow::Result<bool> {
+        let metadata_str = serde_json::to_string(&instance.metadata).unwrap_or_default();
+        self.api_client
+            .instance_update(
+                namespace_id,
+                group_name,
+                service_name,
+                &instance.ip,
+                instance.port,
+                &instance.cluster_name,
+                instance.weight,
+                instance.enabled,
+                &metadata_str,
+            )
+            .await
+    }
+
+    // ============== Config Listener Operations ==============
+
+    async fn config_listener_list(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<ConfigListenerInfo> {
+        let data = self
+            .api_client
+            .config_listener_list(data_id, group_name, namespace_id)
+            .await?;
+
+        // Try to deserialize from remote response, fall back to empty
+        let listener_info: ConfigListenerInfo =
+            serde_json::from_value(data).unwrap_or(ConfigListenerInfo {
+                query_type: ConfigListenerInfo::QUERY_TYPE_CONFIG.to_string(),
+                listeners_status: HashMap::new(),
+            });
+
+        Ok(listener_info)
+    }
+
+    // ============== Server State Operations ==============
+
+    async fn server_state(&self) -> HashMap<String, Option<String>> {
+        match self.api_client.server_state().await {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("Failed to fetch server state from remote server: {}", e);
+                HashMap::new()
+            }
+        }
+    }
+
+    async fn server_readiness(&self) -> bool {
+        // In remote mode, check if we can reach the server
+        self.api_client.cluster_get_health().await.is_ok()
+    }
+
     // ============== Cluster Operations ==============
 
     fn cluster_all_members(&self) -> Vec<Member> {
@@ -520,6 +766,46 @@ impl ConsoleDataSource for RemoteDataSource {
         // Remote data source uses HTTP API, cache is refreshed periodically via other means
         // This method is a no-op for remote sources as the HTTP client handles connection failover
         // and the cluster cache is refreshed in the constructor and by other operations
+    }
+
+    async fn cluster_update_member_state(
+        &self,
+        _address: &str,
+        _state: &str,
+    ) -> anyhow::Result<String> {
+        // In remote mode, member state updates are not supported directly
+        Err(anyhow::anyhow!(
+            "Member state update not supported in remote console mode"
+        ))
+    }
+
+    fn cluster_is_leader(&self) -> bool {
+        false
+    }
+
+    fn cluster_leader_address(&self) -> Option<String> {
+        None
+    }
+
+    fn cluster_local_address(&self) -> String {
+        self.cluster_get_self().address
+    }
+
+    // ============== Service Operations (Cluster) ==============
+
+    async fn service_update_cluster(
+        &self,
+        _namespace_id: &str,
+        _group_name: &str,
+        _service_name: &str,
+        _cluster_name: &str,
+        _health_checker_type: Option<&str>,
+        _metadata: Option<HashMap<String, String>>,
+    ) -> anyhow::Result<bool> {
+        // In remote mode, cluster updates would go through the admin API
+        Err(anyhow::anyhow!(
+            "Service cluster update not supported in remote console mode"
+        ))
     }
 
     // ============== Helper Methods ==============
