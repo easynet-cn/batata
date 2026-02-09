@@ -3,7 +3,10 @@
 
 use std::sync::Arc;
 
-use batata_core::model::Connection;
+use batata_core::{
+    model::Connection,
+    service::distro::{DistroDataType, DistroProtocol},
+};
 use tonic::Status;
 use tracing::{debug, info, warn};
 
@@ -35,6 +38,8 @@ pub struct InstanceRequestHandler {
     pub naming_service: Arc<NamingService>,
     pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
     pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
+    /// Distro protocol for syncing ephemeral instances across cluster nodes
+    pub distro_protocol: Option<Arc<DistroProtocol>>,
 }
 
 #[tonic::async_trait]
@@ -89,6 +94,17 @@ impl PayloadHandler for InstanceRequestHandler {
                 .await
             {
                 warn!("Failed to notify fuzzy watchers: {}", e);
+            }
+
+            // Trigger distro sync to other cluster nodes (ephemeral instances only)
+            if let Some(ref distro) = self.distro_protocol {
+                let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
+                let distro = distro.clone();
+                tokio::spawn(async move {
+                    distro
+                        .sync_data(DistroDataType::NamingInstance, &service_key)
+                        .await;
+                });
             }
         }
 
@@ -258,6 +274,8 @@ impl InstanceRequestHandler {
 pub struct BatchInstanceRequestHandler {
     pub naming_service: Arc<NamingService>,
     pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
+    /// Distro protocol for syncing ephemeral instances across cluster nodes
+    pub distro_protocol: Option<Arc<DistroProtocol>>,
 }
 
 #[tonic::async_trait]
@@ -303,6 +321,17 @@ impl PayloadHandler for BatchInstanceRequestHandler {
         if result {
             self.notify_subscribers(namespace, group_name, service_name)
                 .await;
+
+            // Trigger distro sync to other cluster nodes (ephemeral instances only)
+            if let Some(ref distro) = self.distro_protocol {
+                let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
+                let distro = distro.clone();
+                tokio::spawn(async move {
+                    distro
+                        .sync_data(DistroDataType::NamingInstance, &service_key)
+                        .await;
+                });
+            }
         }
 
         let mut response = BatchInstanceResponse::new();

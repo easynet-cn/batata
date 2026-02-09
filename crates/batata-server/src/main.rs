@@ -214,6 +214,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Starting in {} mode", startup_mode);
 
         if !app_state.configuration.is_standalone() {
+            // Wire the shared DistroProtocol to ServerMemberManager before starting
+            // so it uses the same protocol instance as the gRPC handlers
+            smm.set_distro_protocol(grpc_servers.distro_protocol.clone())
+                .await;
+
             info!("Initializing cluster management...");
             if let Err(e) = smm.start().await {
                 error!("Failed to start cluster manager: {}", e);

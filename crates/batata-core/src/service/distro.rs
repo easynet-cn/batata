@@ -11,7 +11,11 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use batata_api::{
-    distro::{DistroDataItem, DistroDataSyncRequest, DistroDataSyncResponse},
+    distro::{
+        DistroDataItem, DistroDataSnapshotRequest, DistroDataSnapshotResponse,
+        DistroDataSyncRequest, DistroDataSyncResponse, DistroDataVerifyRequest,
+        DistroDataVerifyResponse,
+    },
     model::Member,
     remote::model::ResponseTrait,
 };
@@ -201,6 +205,9 @@ impl DistroProtocol {
 
         info!("Starting Distro protocol");
 
+        // Load initial data from peers (for new nodes joining the cluster)
+        self.load_initial_data().await;
+
         // Start sync task processor
         self.start_sync_task_processor().await;
 
@@ -378,12 +385,18 @@ impl DistroProtocol {
         });
     }
 
-    /// Start the verification task
+    /// Start the verification task - periodically verifies data consistency with peers.
+    ///
+    /// Sends verify requests to ALL peers in parallel using `tokio::spawn` per peer,
+    /// then collects results and schedules sync tasks for any keys the peers are missing.
     async fn start_verify_task(&self) {
         let running = self.running.clone();
         let members = self.members.clone();
         let local_address = self.local_address.clone();
         let config = self.config.clone();
+        let handlers = self.handlers.clone();
+        let client_manager = self.client_manager.clone();
+        let sync_tasks = self.sync_tasks.clone();
 
         tokio::spawn(async move {
             loop {
@@ -403,12 +416,265 @@ impl DistroProtocol {
                     .map(|e| e.key().clone())
                     .collect();
 
-                // For each member, log verification (actual implementation would send verify requests)
-                for member_address in &other_members {
-                    debug!("Verifying distro data with {}", member_address);
+                if other_members.is_empty() {
+                    continue;
+                }
+
+                // Collect handler data types and handlers before iteration
+                let handler_entries: Vec<(DistroDataType, Arc<dyn DistroDataHandler>)> = handlers
+                    .iter()
+                    .map(|e| (e.key().clone(), e.value().clone()))
+                    .collect();
+
+                // For each registered handler, collect local key-version data
+                for (data_type, handler) in &handler_entries {
+                    let keys = handler.get_all_keys().await;
+                    if keys.is_empty() {
+                        continue;
+                    }
+
+                    // Build verify_data: key -> version
+                    let mut verify_data = std::collections::HashMap::new();
+                    for key in &keys {
+                        if let Some(data) = handler.get_data(key).await {
+                            verify_data.insert(key.clone(), data.version);
+                        }
+                    }
+
+                    if verify_data.is_empty() {
+                        continue;
+                    }
+
+                    // Send verify requests to ALL peers in parallel
+                    let mut handles = Vec::with_capacity(other_members.len());
+
+                    for member_address in &other_members {
+                        let (api_data_type, custom_type_name) = match data_type {
+                            DistroDataType::NamingInstance => {
+                                (batata_api::distro::DistroDataType::NamingInstance, None)
+                            }
+                            DistroDataType::Custom(name) => (
+                                batata_api::distro::DistroDataType::Custom,
+                                Some(name.clone()),
+                            ),
+                        };
+
+                        let mut request = DistroDataVerifyRequest::new();
+                        request.data_type = api_data_type;
+                        request.custom_type_name = custom_type_name;
+                        request.verify_data = verify_data.clone();
+
+                        let cm = client_manager.clone();
+                        let addr = member_address.clone();
+                        let dt = data_type.clone();
+
+                        // Each peer verification runs concurrently
+                        handles.push(tokio::spawn(async move {
+                            match cm.send_request(&addr, request).await {
+                                Ok(response) => {
+                                    if let Some(body) = response.body {
+                                        if let Ok(verify_response) =
+                                            serde_json::from_slice::<DistroDataVerifyResponse>(
+                                                &body.value,
+                                            )
+                                        {
+                                            if !verify_response.keys_need_sync.is_empty() {
+                                                debug!(
+                                                    "Verify: {} needs {} keys synced for type {}",
+                                                    addr,
+                                                    verify_response.keys_need_sync.len(),
+                                                    dt
+                                                );
+                                            }
+                                            return Some((
+                                                addr,
+                                                dt,
+                                                verify_response.keys_need_sync,
+                                            ));
+                                        }
+                                    }
+                                    None
+                                }
+                                Err(e) => {
+                                    warn!("Failed to verify distro data with {}: {}", addr, e);
+                                    None
+                                }
+                            }
+                        }));
+                    }
+
+                    // Collect results from all parallel verify requests
+                    let now = chrono::Utc::now().timestamp_millis();
+                    for handle in handles {
+                        if let Ok(Some((addr, dt, keys_need_sync))) = handle.await {
+                            for key in keys_need_sync {
+                                let task_key = format!("{}:{}:{}", dt, key, addr);
+                                let task = DistroSyncTask {
+                                    data_type: dt.clone(),
+                                    key,
+                                    target_address: addr.clone(),
+                                    scheduled_time: now + config.sync_delay.as_millis() as i64,
+                                    retry_count: 0,
+                                };
+                                sync_tasks.insert(task_key, task);
+                            }
+                        }
+                    }
                 }
             }
         });
+    }
+
+    /// Maximum number of full retry rounds for initial data loading.
+    const LOAD_MAX_RETRIES: u32 = 5;
+
+    /// Load initial data from peers when this node starts (snapshot load).
+    ///
+    /// For each registered data type, tries every peer in order. If no peer
+    /// succeeds, waits `load_retry_delay` and retries the full round up to
+    /// [`LOAD_MAX_RETRIES`] times. This prevents the node from silently
+    /// starting with empty data when peers are temporarily unavailable.
+    async fn load_initial_data(&self) {
+        // Skip if no peers (standalone mode)
+        let other_members: Vec<String> = self
+            .members
+            .iter()
+            .filter(|e| e.key() != &self.local_address)
+            .map(|e| e.key().clone())
+            .collect();
+
+        if other_members.is_empty() {
+            debug!("No peers available, skipping initial data load");
+            return;
+        }
+
+        info!("Loading initial data from {} peers", other_members.len());
+
+        // For each registered handler, request snapshot from a peer
+        let handler_entries: Vec<(DistroDataType, Arc<dyn DistroDataHandler>)> = self
+            .handlers
+            .iter()
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+
+        for (data_type, handler) in &handler_entries {
+            let api_data_type = match data_type {
+                DistroDataType::NamingInstance => {
+                    batata_api::distro::DistroDataType::NamingInstance
+                }
+                DistroDataType::Custom(name) => {
+                    // For custom types we need to use for_custom_type constructor
+                    // but store the name for logging. The api_data_type is Custom.
+                    let _ = name;
+                    batata_api::distro::DistroDataType::Custom
+                }
+            };
+
+            let mut loaded = false;
+
+            for attempt in 0..Self::LOAD_MAX_RETRIES {
+                // Refresh member list on retry — new nodes may have joined
+                let peers: Vec<String> = if attempt == 0 {
+                    other_members.clone()
+                } else {
+                    self.members
+                        .iter()
+                        .filter(|e| e.key() != &self.local_address)
+                        .map(|e| e.key().clone())
+                        .collect()
+                };
+
+                if peers.is_empty() {
+                    break;
+                }
+
+                // Try each peer until one succeeds
+                for member_address in &peers {
+                    let request = DistroDataSnapshotRequest::new(api_data_type.clone());
+
+                    match self
+                        .client_manager
+                        .send_request(member_address, request)
+                        .await
+                    {
+                        Ok(response) => {
+                            if let Some(body) = response.body {
+                                if let Ok(snapshot_response) =
+                                    serde_json::from_slice::<DistroDataSnapshotResponse>(
+                                        &body.value,
+                                    )
+                                {
+                                    let item_count = snapshot_response.snapshot.len();
+                                    for item in snapshot_response.snapshot {
+                                        let internal_data_type = match item.data_type {
+                                            batata_api::distro::DistroDataType::NamingInstance => {
+                                                DistroDataType::NamingInstance
+                                            }
+                                            batata_api::distro::DistroDataType::Custom => {
+                                                DistroDataType::Custom(
+                                                    item.custom_type_name
+                                                        .clone()
+                                                        .unwrap_or_default(),
+                                                )
+                                            }
+                                        };
+
+                                        let data = DistroData::new(
+                                            internal_data_type,
+                                            item.key,
+                                            item.content.into_bytes(),
+                                            item.source,
+                                        );
+
+                                        if let Err(e) = handler.process_sync_data(data).await {
+                                            warn!("Failed to process snapshot data: {}", e);
+                                        }
+                                    }
+
+                                    info!(
+                                        "Loaded {} items for type {} from {}",
+                                        item_count, data_type, member_address
+                                    );
+                                    loaded = true;
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to load snapshot from {}: {}, trying next peer",
+                                member_address, e
+                            );
+                        }
+                    }
+                }
+
+                if loaded {
+                    break;
+                }
+
+                // All peers failed — wait and retry
+                error!(
+                    "Failed to load initial data for type {} from any peer (attempt {}/{}), \
+                     retrying in {:?}",
+                    data_type,
+                    attempt + 1,
+                    Self::LOAD_MAX_RETRIES,
+                    self.config.load_retry_delay,
+                );
+                tokio::time::sleep(self.config.load_retry_delay).await;
+            }
+
+            if !loaded {
+                error!(
+                    "CRITICAL: Could not load initial data for type {} after {} attempts. \
+                     Node is starting with EMPTY data — clients may see missing services \
+                     until the next verification cycle reconciles the state.",
+                    data_type,
+                    Self::LOAD_MAX_RETRIES,
+                );
+            }
+        }
     }
 
     /// Send sync data to a target node via gRPC

@@ -69,7 +69,7 @@ pub struct ServerMemberManager {
     health_checker: Arc<RwLock<Option<MemberHealthChecker>>>,
     event_publisher: Arc<MemberChangeEventPublisher>,
     client_manager: Arc<RwLock<Option<Arc<ClusterClientManager>>>>,
-    distro_protocol: Arc<RwLock<Option<DistroProtocol>>>,
+    distro_protocol: Arc<RwLock<Option<Arc<DistroProtocol>>>>,
     running: Arc<RwLock<bool>>,
 }
 
@@ -200,16 +200,24 @@ impl ServerMemberManager {
 
             // Start distro protocol if enabled
             if self.manager_config.distro_enabled {
-                let distro = DistroProtocol::new(
-                    self.local_address.clone(),
-                    self.manager_config.distro.clone(),
-                    client_manager.clone(),
-                    self.server_list.clone(),
-                );
-                distro.start().await;
+                let dp_guard = self.distro_protocol.read().await;
+                if let Some(ref distro) = *dp_guard {
+                    // Use externally set distro protocol (shared with gRPC handlers)
+                    distro.start().await;
+                } else {
+                    drop(dp_guard);
+                    // Create a new distro protocol if none was set externally
+                    let distro = Arc::new(DistroProtocol::new(
+                        self.local_address.clone(),
+                        self.manager_config.distro.clone(),
+                        client_manager.clone(),
+                        self.server_list.clone(),
+                    ));
+                    distro.start().await;
 
-                let mut dp_guard = self.distro_protocol.write().await;
-                *dp_guard = Some(distro);
+                    let mut dp_guard = self.distro_protocol.write().await;
+                    *dp_guard = Some(distro);
+                }
             }
 
             info!(
@@ -289,6 +297,20 @@ impl ServerMemberManager {
                     .await;
             }
         }
+    }
+
+    /// Get the shared server list map (for wiring to DistroProtocol)
+    pub fn server_list(&self) -> Arc<DashMap<String, Member>> {
+        self.server_list.clone()
+    }
+
+    /// Set the distro protocol externally (shared with gRPC handlers)
+    ///
+    /// Must be called before `start()`. The protocol will be started
+    /// during `start()` instead of creating a new one.
+    pub async fn set_distro_protocol(&self, protocol: Arc<DistroProtocol>) {
+        let mut dp_guard = self.distro_protocol.write().await;
+        *dp_guard = Some(protocol);
     }
 
     /// Get all cluster members

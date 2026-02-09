@@ -6,7 +6,13 @@ use std::sync::Arc;
 use tonic::Status;
 use tracing::{debug, info, warn};
 
-use batata_core::model::Connection;
+use batata_core::{
+    model::Connection,
+    service::{
+        cluster_client::{ClusterClientManager, ClusterRequestSender},
+        remote::ConnectionManager,
+    },
+};
 
 use crate::{
     api::{
@@ -95,7 +101,9 @@ impl PayloadHandler for ConfigQueryHandler {
 pub struct ConfigPublishHandler {
     pub app_state: Arc<AppState>,
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
-    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
+    pub connection_manager: Arc<ConnectionManager>,
+    /// Cluster client manager for broadcasting config changes to other nodes
+    pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
 }
 
 #[tonic::async_trait]
@@ -182,6 +190,31 @@ impl PayloadHandler for ConfigPublishHandler {
                     .await
                 {
                     warn!("Failed to notify fuzzy watchers: {}", e);
+                }
+
+                // Broadcast config change to other cluster nodes
+                if let Some(ref ccm) = self.cluster_client_manager {
+                    if let Some(smm) = self.app_state.try_member_manager() {
+                        if !smm.is_standalone() {
+                            let members = smm.all_members();
+                            let sender = ClusterRequestSender::new(ccm.clone());
+                            let data_id = data_id.to_string();
+                            let group = group.to_string();
+                            let tenant = tenant.to_string();
+                            let last_modified = chrono::Utc::now().timestamp_millis();
+                            tokio::spawn(async move {
+                                sender
+                                    .broadcast_config_change(
+                                        &members,
+                                        &data_id,
+                                        &group,
+                                        &tenant,
+                                        last_modified,
+                                    )
+                                    .await;
+                            });
+                        }
+                    }
                 }
 
                 let mut response = ConfigPublishResponse::new();
@@ -323,7 +356,9 @@ impl ConfigPublishHandler {
 pub struct ConfigRemoveHandler {
     pub app_state: Arc<AppState>,
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
-    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
+    pub connection_manager: Arc<ConnectionManager>,
+    /// Cluster client manager for broadcasting config removals to other nodes
+    pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
 }
 
 #[tonic::async_trait]
@@ -350,6 +385,31 @@ impl PayloadHandler for ConfigRemoveHandler {
                     .await
                 {
                     warn!("Failed to notify fuzzy watchers: {}", e);
+                }
+
+                // Broadcast config removal to other cluster nodes
+                if let Some(ref ccm) = self.cluster_client_manager {
+                    if let Some(smm) = self.app_state.try_member_manager() {
+                        if !smm.is_standalone() {
+                            let members = smm.all_members();
+                            let sender = ClusterRequestSender::new(ccm.clone());
+                            let data_id = data_id.to_string();
+                            let group = group.to_string();
+                            let tenant = tenant.to_string();
+                            let last_modified = chrono::Utc::now().timestamp_millis();
+                            tokio::spawn(async move {
+                                sender
+                                    .broadcast_config_change(
+                                        &members,
+                                        &data_id,
+                                        &group,
+                                        &tenant,
+                                        last_modified,
+                                    )
+                                    .await;
+                            });
+                        }
+                    }
                 }
 
                 let mut response = ConfigRemoveResponse::new();
@@ -586,6 +646,10 @@ impl PayloadHandler for ConfigChangeNotifyHandler {
 #[derive(Clone)]
 pub struct ConfigChangeClusterSyncHandler {
     pub app_state: Arc<AppState>,
+    /// Fuzzy watch manager for notifying local fuzzy watchers
+    pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+    /// Connection manager for pushing notifications to local clients
+    pub connection_manager: Arc<ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -643,32 +707,92 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
 }
 
 impl ConfigChangeClusterSyncHandler {
-    /// Notify local config subscribers about configuration changes
+    /// Notify local config subscribers and fuzzy watchers about configuration changes
+    /// received from another cluster node. Does NOT re-broadcast to avoid infinite loops.
     async fn notify_config_change(
         &self,
         data_id: &str,
         group: &str,
         tenant: &str,
-        gray_name: &str,
+        _gray_name: &str,
         source_ip: &str,
     ) -> anyhow::Result<()> {
-        // Build config key
-        let config_key = if gray_name.is_empty() {
-            format!("{}@@{}@@{}", tenant, group, data_id)
-        } else {
-            format!("{}@@{}@@{}@@{}", tenant, group, data_id, gray_name)
-        };
+        // Build the notification payload once for reuse
+        let notification = ConfigChangeNotifyRequest::for_config(data_id, group, tenant);
+        let payload = notification.build_server_push_payload();
 
-        // Notify subscribers
-        // Note: The actual notification mechanism depends on the implementation
-        // of config_subscriber_manager. For now, we log the action.
-        info!(
-            "Notifying config subscribers for key: {}, change_type: MODIFY, source: {}",
-            config_key, source_ip
-        );
+        // Notify fuzzy watchers
+        let fuzzy_watchers = self
+            .fuzzy_watch_manager
+            .get_watchers_for_config(tenant, group, data_id);
 
-        // Future enhancement: Call subscriber_manager.notify(&config_key, notification)
-        // to push the change to all subscribed clients.
+        if !fuzzy_watchers.is_empty() {
+            let group_key = ConfigFuzzyWatchPattern::build_group_key(tenant, group, data_id);
+
+            info!(
+                "Cluster sync: notifying {} fuzzy watchers for config change: {} (source: {})",
+                fuzzy_watchers.len(),
+                group_key,
+                source_ip
+            );
+
+            for connection_id in &fuzzy_watchers {
+                self.fuzzy_watch_manager
+                    .mark_received(connection_id, &group_key);
+
+                if self
+                    .connection_manager
+                    .push_message(connection_id, payload.clone())
+                    .await
+                {
+                    debug!(
+                        "Pushed cluster sync config notification to connection {} (fuzzy watch): {}",
+                        connection_id, group_key
+                    );
+                } else {
+                    warn!(
+                        "Failed to push cluster sync config notification to connection {}: {}",
+                        connection_id, group_key
+                    );
+                }
+            }
+        }
+
+        // Notify regular subscribers via ConfigSubscriberManager
+        let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
+        let subscribers = self
+            .app_state
+            .config_subscriber_manager
+            .get_subscribers(&config_key);
+
+        if !subscribers.is_empty() {
+            info!(
+                "Cluster sync: notifying {} regular subscribers for config change: {} (source: {})",
+                subscribers.len(),
+                config_key.to_key_string(),
+                source_ip
+            );
+
+            for subscriber in &subscribers {
+                if self
+                    .connection_manager
+                    .push_message(&subscriber.connection_id, payload.clone())
+                    .await
+                {
+                    debug!(
+                        "Pushed cluster sync config notification to connection {} (subscriber): {}",
+                        subscriber.connection_id,
+                        config_key.to_key_string()
+                    );
+                } else {
+                    warn!(
+                        "Failed to push cluster sync config notification to connection {}: {}",
+                        subscriber.connection_id,
+                        config_key.to_key_string()
+                    );
+                }
+            }
+        }
 
         Ok(())
     }

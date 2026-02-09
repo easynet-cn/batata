@@ -72,6 +72,10 @@ pub struct GrpcServers {
     pub naming_service: Arc<NamingService>,
     /// The connection manager for tracking client connections.
     pub connection_manager: Arc<ConnectionManager>,
+    /// The distro protocol for cluster data synchronization.
+    pub distro_protocol: Arc<DistroProtocol>,
+    /// The cluster client manager for inter-node communication.
+    pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
 }
 
 /// Registers all internal handlers (health check, connection setup, etc.).
@@ -102,6 +106,7 @@ fn register_config_handlers(
     app_state: Arc<AppState>,
     fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
     connection_manager: Arc<ConnectionManager>,
+    cluster_client_manager: Option<Arc<ClusterClientManager>>,
 ) {
     registry.register_handler(Arc::new(ConfigQueryHandler {
         app_state: app_state.clone(),
@@ -110,11 +115,13 @@ fn register_config_handlers(
         app_state: app_state.clone(),
         fuzzy_watch_manager: fuzzy_watch_manager.clone(),
         connection_manager: connection_manager.clone(),
+        cluster_client_manager: cluster_client_manager.clone(),
     }));
     registry.register_handler(Arc::new(ConfigRemoveHandler {
         app_state: app_state.clone(),
         fuzzy_watch_manager: fuzzy_watch_manager.clone(),
         connection_manager: connection_manager.clone(),
+        cluster_client_manager,
     }));
     registry.register_handler(Arc::new(ConfigBatchListenHandler {
         app_state: app_state.clone(),
@@ -124,6 +131,8 @@ fn register_config_handlers(
     }));
     registry.register_handler(Arc::new(ConfigChangeClusterSyncHandler {
         app_state: app_state.clone(),
+        fuzzy_watch_manager: fuzzy_watch_manager.clone(),
+        connection_manager: connection_manager.clone(),
     }));
     registry.register_handler(Arc::new(ConfigFuzzyWatchHandler {
         app_state: app_state.clone(),
@@ -148,15 +157,18 @@ fn register_naming_handlers(
     naming_service: Arc<NamingService>,
     naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
     connection_manager: Arc<ConnectionManager>,
+    distro_protocol: Option<Arc<DistroProtocol>>,
 ) {
     registry.register_handler(Arc::new(InstanceRequestHandler {
         naming_service: naming_service.clone(),
         naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
         connection_manager: connection_manager.clone(),
+        distro_protocol: distro_protocol.clone(),
     }));
     registry.register_handler(Arc::new(BatchInstanceRequestHandler {
         naming_service: naming_service.clone(),
         connection_manager: connection_manager.clone(),
+        distro_protocol,
     }));
     registry.register_handler(Arc::new(ServiceListRequestHandler {
         naming_service: naming_service.clone(),
@@ -253,18 +265,10 @@ fn register_ai_handlers(
 fn create_distro_protocol(
     local_address: &str,
     naming_service: Arc<batata_naming::NamingService>,
+    members: Arc<DashMap<String, Member>>,
+    cluster_client_manager: Arc<ClusterClientManager>,
 ) -> Arc<DistroProtocol> {
-    // Create cluster client manager for inter-node communication
-    let cluster_client_config = ClusterClientConfig::default();
-    let cluster_client_manager = Arc::new(ClusterClientManager::new(
-        local_address.to_string(),
-        cluster_client_config,
-    ));
-
-    // Create cluster members map (will be populated dynamically)
-    let members: Arc<DashMap<String, Member>> = Arc::new(DashMap::new());
-
-    // Create distro protocol
+    // Create distro protocol with the real cluster members and client manager
     let distro_config = DistroConfig::default();
     let distro_protocol = DistroProtocol::new(
         local_address.to_string(),
@@ -355,29 +359,65 @@ pub fn start_grpc_servers(
     let naming_fuzzy_watch_manager = Arc::new(NamingFuzzyWatchManager::new());
 
     register_internal_handlers(&mut handler_registry, connection_manager.clone());
+    // Determine cluster mode and create shared cluster resources
+    let is_standalone = app_state.configuration.is_standalone();
+    let local_ip = batata_common::local_ip();
+    let main_port = app_state.configuration.server_main_port();
+    let local_address = format!("{}:{}", local_ip, main_port);
+
+    // Get the real cluster members map and create a shared ClusterClientManager
+    let (members, cluster_client_manager) = if !is_standalone {
+        let members = app_state
+            .server_member_manager
+            .as_ref()
+            .map(|smm| smm.server_list())
+            .unwrap_or_else(|| Arc::new(DashMap::new()));
+        let ccm = Arc::new(ClusterClientManager::new(
+            local_address.clone(),
+            ClusterClientConfig::default(),
+        ));
+        (members, Some(ccm))
+    } else {
+        (Arc::new(DashMap::new()), None)
+    };
+
     register_config_handlers(
         &mut handler_registry,
         app_state.clone(),
-        config_fuzzy_watch_manager,
+        config_fuzzy_watch_manager.clone(),
         connection_manager.clone(),
+        cluster_client_manager.clone(),
     );
 
     let naming_service = naming_service.unwrap_or_else(|| Arc::new(NamingService::new()));
+
+    // Create and initialize distro protocol using the SAME naming service and real cluster members
+    let distro_protocol = create_distro_protocol(
+        &local_address,
+        naming_service.clone(),
+        members,
+        cluster_client_manager.clone().unwrap_or_else(|| {
+            Arc::new(ClusterClientManager::new(
+                local_address.clone(),
+                ClusterClientConfig::default(),
+            ))
+        }),
+    );
+
+    // Pass distro_protocol to naming handlers only in cluster mode
+    let distro_for_naming = if !is_standalone {
+        Some(distro_protocol.clone())
+    } else {
+        None
+    };
+
     register_naming_handlers(
         &mut handler_registry,
         naming_service.clone(),
         naming_fuzzy_watch_manager,
         connection_manager.clone(),
+        distro_for_naming,
     );
-
-    // Create local address for distro protocol
-    let local_ip = "127.0.0.1"; // Will be updated with actual cluster member discovery
-    let main_port = app_state.configuration.server_main_port();
-    let local_address = format!("{}:{}", local_ip, main_port);
-
-    // Create and initialize distro protocol
-    let naming_service_for_distro = Arc::new(batata_naming::NamingService::new());
-    let distro_protocol = create_distro_protocol(&local_address, naming_service_for_distro);
 
     // Register distro handlers
     register_distro_handlers(&mut handler_registry, distro_protocol.clone());
@@ -402,12 +442,6 @@ pub fn start_grpc_servers(
         agent_registry,
         grpc_auth_service_arc,
     );
-
-    // Start distro protocol background tasks
-    let distro_protocol_clone = distro_protocol.clone();
-    tokio::spawn(async move {
-        distro_protocol_clone.start().await;
-    });
 
     let handler_registry_arc = Arc::new(handler_registry);
 
@@ -501,5 +535,7 @@ pub fn start_grpc_servers(
         cluster_server,
         naming_service,
         connection_manager: connection_manager_for_http,
+        distro_protocol,
+        cluster_client_manager,
     })
 }
