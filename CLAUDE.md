@@ -94,11 +94,15 @@ Batata supports both MySQL and PostgreSQL databases.
 ### MySQL Setup
 ```bash
 mysql -u user -p database < conf/mysql-schema.sql
+mysql -u user -p database < conf/consul-mysql-schema.sql
+mysql -u user -p database < conf/apollo-mysql-schema.sql
 ```
 
 ### PostgreSQL Setup
 ```bash
 psql -U user -d batata -f conf/postgresql-schema.sql
+psql -U user -d batata -f conf/consul-postgresql-schema.sql
+psql -U user -d batata -f conf/apollo-postgresql-schema.sql
 ```
 
 ### Configuration

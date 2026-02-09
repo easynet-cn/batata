@@ -77,24 +77,6 @@ async fn test_config_tags_relation() {
     // WHERE t.tag_name = ?
 }
 
-/// Test config_info_aggr aggregate configs
-#[tokio::test]
-#[ignore = "requires test database"]
-async fn test_config_info_aggr() {
-    let db = TestDatabase::from_env()
-        .await
-        .expect("Database connection failed");
-    let data_id = unique_data_id("aggr");
-
-    // Insert aggregate config
-    // INSERT INTO config_info_aggr (data_id, group_id, datum_id, content, ...)
-
-    // Query aggregates for a data_id
-    // SELECT * FROM config_info_aggr WHERE data_id = ? AND group_id = ?
-
-    // Verify aggregation
-}
-
 /// Test MD5 calculation consistency
 #[tokio::test]
 #[ignore = "requires test database"]

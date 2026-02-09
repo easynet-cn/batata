@@ -11,11 +11,6 @@ pub use super::tenant_capacity::Entity as TenantCapacity;
 pub use super::tenant_info::Entity as TenantInfo;
 pub use super::users::Entity as Users;
 
-// Service discovery entities
-pub use super::cluster_info::Entity as ClusterInfo;
-pub use super::instance_info::Entity as InstanceInfo;
-pub use super::service_info::Entity as ServiceInfo;
-
 // Apollo Config entities
 pub use super::apollo_access_key::Entity as ApolloAccessKey;
 pub use super::apollo_app::Entity as ApolloApp;

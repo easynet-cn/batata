@@ -137,13 +137,23 @@ impl TestDatabase {
     /// Run database migrations (execute schema SQL)
     pub async fn run_migrations(&self) -> Result<(), TestDatabaseError> {
         // Load schema based on database type
-        let schema_sql = if self.is_mysql() {
-            include_str!("../../../../conf/mysql-schema.sql")
+        let schemas: Vec<&str> = if self.is_mysql() {
+            vec![
+                include_str!("../../../../conf/mysql-schema.sql"),
+                include_str!("../../../../conf/consul-mysql-schema.sql"),
+                include_str!("../../../../conf/apollo-mysql-schema.sql"),
+            ]
         } else if self.is_postgres() {
-            include_str!("../../../../conf/postgresql-schema.sql")
+            vec![
+                include_str!("../../../../conf/postgresql-schema.sql"),
+                include_str!("../../../../conf/consul-postgresql-schema.sql"),
+                include_str!("../../../../conf/apollo-postgresql-schema.sql"),
+            ]
         } else {
             return Err(TestDatabaseError::UnsupportedDatabase);
         };
+
+        let schema_sql = schemas.join(";\n");
 
         // Split by semicolon and execute each statement
         for statement in schema_sql.split(';') {
@@ -184,12 +194,8 @@ impl TestDatabase {
         let tables = vec![
             "config_info",
             "config_info_gray",
-            "config_info_aggr",
             "config_tags_relation",
             "his_config_info",
-            "service_info",
-            "cluster_info",
-            "instance_info",
             "tenant_info",
             "users",
             "roles",
@@ -198,7 +204,6 @@ impl TestDatabase {
             "tenant_capacity",
             "consul_acl_tokens",
             "consul_acl_policies",
-            "operation_log",
         ];
 
         use sea_orm::{ConnectionTrait, Statement};

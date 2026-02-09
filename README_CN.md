@@ -205,6 +205,8 @@ cd batata
 
 # 初始化数据库
 mysql -u root -p < conf/mysql-schema.sql
+mysql -u root -p < conf/consul-mysql-schema.sql
+mysql -u root -p < conf/apollo-mysql-schema.sql
 
 # 配置应用
 cp conf/application.yml.example conf/application.yml

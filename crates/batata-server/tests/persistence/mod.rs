@@ -4,4 +4,3 @@
 
 pub mod auth_test;
 pub mod config_test;
-pub mod naming_test;

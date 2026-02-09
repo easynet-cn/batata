@@ -401,7 +401,7 @@ nacos.plugin.consul.acl.enabled: false
 
 #*************** Apollo Compatibility Plugin Configurations ***************#
 ### Enable Apollo Config API compatibility server on its own port
-nacos.plugin.apollo.enabled: false
+nacos.plugin.apollo.enabled: true
 ### Apollo compatibility server port (default: 8080)
 nacos.plugin.apollo.port: 8080
 

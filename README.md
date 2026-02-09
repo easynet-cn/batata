@@ -205,6 +205,8 @@ cd batata
 
 # Initialize database
 mysql -u root -p < conf/mysql-schema.sql
+mysql -u root -p < conf/consul-mysql-schema.sql
+mysql -u root -p < conf/apollo-mysql-schema.sql
 
 # Configure application
 cp conf/application.yml.example conf/application.yml

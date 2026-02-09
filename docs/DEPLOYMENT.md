@@ -53,6 +53,8 @@ cd batata
 
 ```bash
 mysql -u root -p < conf/mysql-schema.sql
+mysql -u root -p < conf/consul-mysql-schema.sql
+mysql -u root -p < conf/apollo-mysql-schema.sql
 ```
 
 ### 3. 配置应用
@@ -290,7 +292,9 @@ services:
       MYSQL_DATABASE: batata
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./conf/mysql-schema.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./conf/consul-mysql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql
+      - ./conf/apollo-mysql-schema.sql:/docker-entrypoint-initdb.d/03-apollo-schema.sql
     ports:
       - "3306:3306"
 

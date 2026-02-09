@@ -3,22 +3,15 @@
 pub mod prelude;
 
 pub mod config_info;
-pub mod config_info_aggr;
 pub mod config_info_gray;
 pub mod config_tags_relation;
 pub mod group_capacity;
 pub mod his_config_info;
-pub mod operation_log;
 pub mod permissions;
 pub mod roles;
 pub mod tenant_capacity;
 pub mod tenant_info;
 pub mod users;
-
-// Service discovery entities
-pub mod cluster_info;
-pub mod instance_info;
-pub mod service_info;
 
 // Apollo Config entities
 pub mod apollo_access_key;

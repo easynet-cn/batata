@@ -11,7 +11,9 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - ../conf/mysql-schema.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ../conf/consul-mysql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql
+      - ../conf/apollo-mysql-schema.sql:/docker-entrypoint-initdb.d/03-apollo-schema.sql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s

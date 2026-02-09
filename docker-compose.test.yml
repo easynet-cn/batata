@@ -28,6 +28,8 @@ services:
     volumes:
       - mysql-test-data:/var/lib/mysql
       - ./conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./conf/consul-mysql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql:ro
+      - ./conf/apollo-mysql-schema.sql:/docker-entrypoint-initdb.d/03-apollo-schema.sql:ro
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
@@ -54,6 +56,8 @@ services:
     volumes:
       - postgres-test-data:/var/lib/postgresql/data
       - ./conf/postgresql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./conf/consul-postgresql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql:ro
+      - ./conf/apollo-postgresql-schema.sql:/docker-entrypoint-initdb.d/03-apollo-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U batata -d batata_test"]
       interval: 10s
