@@ -47,7 +47,9 @@ pub async fn get_lock_status(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<NamespacePathParams>,
 ) -> HttpResponse {
-    let lock = service.get_lock_status(&path.app_id, &path.cluster, &path.namespace, &path.env);
+    let lock = service
+        .get_lock_status(&path.app_id, &path.cluster, &path.namespace, &path.env)
+        .await;
     HttpResponse::Ok().json(lock)
 }
 
@@ -59,13 +61,16 @@ pub async fn acquire_lock(
     path: web::Path<NamespacePathParams>,
     body: web::Json<AcquireLockRequest>,
 ) -> HttpResponse {
-    match service.acquire_lock(
-        &path.app_id,
-        &path.cluster,
-        &path.namespace,
-        &path.env,
-        body.into_inner(),
-    ) {
+    match service
+        .acquire_lock(
+            &path.app_id,
+            &path.cluster,
+            &path.namespace,
+            &path.env,
+            body.into_inner(),
+        )
+        .await
+    {
         Ok(lock) => HttpResponse::Ok().json(lock),
         Err(e) => HttpResponse::Conflict().json(serde_json::json!({
             "error": e
@@ -81,13 +86,16 @@ pub async fn release_lock(
     path: web::Path<NamespacePathParams>,
     query: web::Query<ReleaseLockQuery>,
 ) -> HttpResponse {
-    match service.release_lock(
-        &path.app_id,
-        &path.cluster,
-        &path.namespace,
-        &path.env,
-        &query.user,
-    ) {
+    match service
+        .release_lock(
+            &path.app_id,
+            &path.cluster,
+            &path.namespace,
+            &path.env,
+            &query.user,
+        )
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({
             "success": true
         })),
@@ -136,7 +144,10 @@ pub async fn get_gray_release(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<NamespacePathParams>,
 ) -> HttpResponse {
-    match service.get_gray_release(&path.app_id, &path.cluster, &path.namespace, &path.env) {
+    match service
+        .get_gray_release(&path.app_id, &path.cluster, &path.namespace, &path.env)
+        .await
+    {
         Some(rule) => HttpResponse::Ok().json(rule),
         None => HttpResponse::NotFound().json(serde_json::json!({
             "error": "No gray release found"
@@ -151,7 +162,10 @@ pub async fn merge_gray_release(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<NamespacePathParams>,
 ) -> HttpResponse {
-    match service.merge_gray_release(&path.app_id, &path.cluster, &path.namespace, &path.env) {
+    match service
+        .merge_gray_release(&path.app_id, &path.cluster, &path.namespace, &path.env)
+        .await
+    {
         Ok(rule) => HttpResponse::Ok().json(rule),
         Err(e) => HttpResponse::NotFound().json(serde_json::json!({
             "error": e
@@ -166,7 +180,10 @@ pub async fn abandon_gray_release(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<NamespacePathParams>,
 ) -> HttpResponse {
-    match service.abandon_gray_release(&path.app_id, &path.cluster, &path.namespace, &path.env) {
+    match service
+        .abandon_gray_release(&path.app_id, &path.cluster, &path.namespace, &path.env)
+        .await
+    {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({
             "success": true
         })),
@@ -187,7 +204,7 @@ pub async fn create_access_key(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<AppIdPath>,
 ) -> HttpResponse {
-    let key = service.create_access_key(&path.app_id);
+    let key = service.create_access_key(&path.app_id).await;
     HttpResponse::Created().json(key)
 }
 
@@ -198,7 +215,7 @@ pub async fn list_access_keys(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<AppIdPath>,
 ) -> HttpResponse {
-    let keys = service.list_access_keys(&path.app_id);
+    let keys = service.list_access_keys(&path.app_id).await;
     HttpResponse::Ok().json(keys)
 }
 
@@ -209,7 +226,7 @@ pub async fn get_access_key(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<AccessKeyPathParams>,
 ) -> HttpResponse {
-    match service.get_access_key(&path.key_id) {
+    match service.get_access_key(&path.key_id).await {
         Some(key) => HttpResponse::Ok().json(key),
         None => HttpResponse::NotFound().json(serde_json::json!({
             "error": "Access key not found"
@@ -224,7 +241,7 @@ pub async fn delete_access_key(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<AccessKeyPathParams>,
 ) -> HttpResponse {
-    if service.delete_access_key(&path.key_id) {
+    if service.delete_access_key(&path.key_id).await {
         HttpResponse::Ok().json(serde_json::json!({
             "success": true
         }))
@@ -243,7 +260,10 @@ pub async fn set_access_key_enabled(
     path: web::Path<AccessKeyPathParams>,
     body: web::Json<EnableRequest>,
 ) -> HttpResponse {
-    match service.set_access_key_enabled(&path.key_id, body.enabled) {
+    match service
+        .set_access_key_enabled(&path.key_id, body.enabled)
+        .await
+    {
         Some(key) => HttpResponse::Ok().json(key),
         None => HttpResponse::NotFound().json(serde_json::json!({
             "error": "Access key not found"
@@ -269,7 +289,7 @@ pub struct AppIdPath {
 ///
 /// `GET /openapi/v1/metrics/clients`
 pub async fn get_client_metrics(service: web::Data<Arc<ApolloAdvancedService>>) -> HttpResponse {
-    let metrics = service.get_metrics();
+    let metrics = service.get_metrics().await;
     HttpResponse::Ok().json(metrics)
 }
 
@@ -280,7 +300,7 @@ pub async fn get_app_clients(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<AppIdPath>,
 ) -> HttpResponse {
-    let clients = service.get_clients_by_app(&path.app_id);
+    let clients = service.get_clients_by_app(&path.app_id).await;
     HttpResponse::Ok().json(clients)
 }
 
@@ -288,7 +308,7 @@ pub async fn get_app_clients(
 ///
 /// `POST /openapi/v1/metrics/clients/cleanup`
 pub async fn cleanup_stale_clients(service: web::Data<Arc<ApolloAdvancedService>>) -> HttpResponse {
-    service.cleanup_stale_connections();
+    service.cleanup_stale_connections().await;
     HttpResponse::Ok().json(serde_json::json!({
         "success": true
     }))

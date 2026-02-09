@@ -18,6 +18,6 @@ pub use batata_plugin_apollo::{
 
 // Re-export services for server initialization
 pub use batata_plugin_apollo::{
-    ApolloAdvancedService, ApolloConfigService, ApolloNotificationService, ApolloOpenApiService,
-    ConfigChangeEvent,
+    ApolloAdvancedService, ApolloBranchService, ApolloConfigService, ApolloNotificationService,
+    ApolloOpenApiService, ConfigChangeEvent,
 };

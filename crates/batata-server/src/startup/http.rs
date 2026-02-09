@@ -11,8 +11,8 @@ use batata_core::service::remote::ConnectionManager;
 use crate::{
     api::ai::{AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp},
     api::apollo::{
-        ApolloAdvancedService, ApolloNotificationService, ApolloOpenApiService,
-        apollo_advanced_routes, apollo_config_routes, apollo_openapi_routes,
+        ApolloAdvancedService, ApolloBranchService, ApolloNotificationService,
+        ApolloOpenApiService, apollo_advanced_routes, apollo_config_routes, apollo_openapi_routes,
     },
     api::cloud::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
@@ -194,9 +194,11 @@ pub fn apollo_server(
             .wrap(Logger::default())
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .app_data(web::Data::from(app_state.clone()))
+            .app_data(web::Data::new(apollo_services.db.clone()))
             .app_data(web::Data::new(apollo_services.notification_service.clone()))
             .app_data(web::Data::new(apollo_services.openapi_service.clone()))
             .app_data(web::Data::new(apollo_services.advanced_service.clone()))
+            .app_data(web::Data::new(apollo_services.branch_service.clone()))
             .service(apollo_config_routes())
             .service(apollo_openapi_routes())
             .service(apollo_advanced_routes())
@@ -254,18 +256,22 @@ impl Default for CloudServices {
 /// Apollo services for Apollo Config client compatibility.
 #[derive(Clone)]
 pub struct ApolloServices {
+    pub db: Arc<sea_orm::DatabaseConnection>,
     pub notification_service: Arc<ApolloNotificationService>,
     pub openapi_service: Arc<ApolloOpenApiService>,
     pub advanced_service: Arc<ApolloAdvancedService>,
+    pub branch_service: Arc<ApolloBranchService>,
 }
 
 impl ApolloServices {
     /// Creates Apollo service adapters from a database connection.
     pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
         Self {
+            db: db.clone(),
             notification_service: Arc::new(ApolloNotificationService::new(db.clone())),
             openapi_service: Arc::new(ApolloOpenApiService::new(db.clone())),
-            advanced_service: Arc::new(ApolloAdvancedService::new(db)),
+            advanced_service: Arc::new(ApolloAdvancedService::new(db.clone())),
+            branch_service: Arc::new(ApolloBranchService::new(db)),
         }
     }
 }

@@ -464,3 +464,411 @@ COMMENT ON COLUMN config_info_aggr.app_name IS 'Application name';
 CREATE TRIGGER update_config_info_aggr_modify_time
     BEFORE UPDATE ON config_info_aggr
     FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+/******************************************/
+/*   Apollo Config Compatibility Tables   */
+/******************************************/
+
+/******************************************/
+/*   Table: apollo_app                    */
+/******************************************/
+CREATE TABLE apollo_app (
+    id BIGSERIAL PRIMARY KEY,
+    app_id VARCHAR(64) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    org_id VARCHAR(32) DEFAULT '',
+    org_name VARCHAR(64) DEFAULT '',
+    owner_name VARCHAR(64) NOT NULL,
+    owner_email VARCHAR(128) DEFAULT '',
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_apollo_app_app_id UNIQUE (app_id)
+);
+
+CREATE INDEX idx_apollo_app_name ON apollo_app(name);
+CREATE INDEX idx_apollo_app_org_id ON apollo_app(org_id);
+CREATE INDEX idx_apollo_app_owner_name ON apollo_app(owner_name);
+
+COMMENT ON TABLE apollo_app IS 'Apollo application table';
+
+/******************************************/
+/*   Table: apollo_app_namespace          */
+/******************************************/
+CREATE TABLE apollo_app_namespace (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    app_id VARCHAR(64) NOT NULL,
+    format VARCHAR(32) DEFAULT 'properties',
+    is_public BOOLEAN DEFAULT FALSE,
+    comment VARCHAR(256) DEFAULT '',
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_apollo_app_namespace_app_id_name UNIQUE (app_id, name)
+);
+
+CREATE INDEX idx_apollo_app_namespace_app_id ON apollo_app_namespace(app_id);
+CREATE INDEX idx_apollo_app_namespace_name ON apollo_app_namespace(name);
+
+COMMENT ON TABLE apollo_app_namespace IS 'Apollo application namespace table';
+
+/******************************************/
+/*   Table: apollo_cluster                */
+/******************************************/
+CREATE TABLE apollo_cluster (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(32) NOT NULL,
+    app_id VARCHAR(64) NOT NULL,
+    parent_cluster_id BIGINT DEFAULT 0,
+    comment VARCHAR(256) DEFAULT '',
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_apollo_cluster_app_id_name UNIQUE (app_id, name)
+);
+
+CREATE INDEX idx_apollo_cluster_app_id ON apollo_cluster(app_id);
+CREATE INDEX idx_apollo_cluster_parent_cluster_id ON apollo_cluster(parent_cluster_id);
+
+COMMENT ON TABLE apollo_cluster IS 'Apollo cluster table';
+
+/******************************************/
+/*   Table: apollo_namespace              */
+/******************************************/
+CREATE TABLE apollo_namespace (
+    id BIGSERIAL PRIMARY KEY,
+    app_id VARCHAR(64) NOT NULL,
+    cluster_name VARCHAR(32) NOT NULL,
+    namespace_name VARCHAR(128) NOT NULL,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_apollo_namespace_app_cluster_ns UNIQUE (app_id, cluster_name, namespace_name)
+);
+
+CREATE INDEX idx_apollo_namespace_app_id ON apollo_namespace(app_id);
+CREATE INDEX idx_apollo_namespace_cluster_name ON apollo_namespace(cluster_name);
+CREATE INDEX idx_apollo_namespace_namespace_name ON apollo_namespace(namespace_name);
+
+COMMENT ON TABLE apollo_namespace IS 'Apollo namespace table';
+
+/******************************************/
+/*   Table: apollo_item                   */
+/******************************************/
+CREATE TABLE apollo_item (
+    id BIGSERIAL PRIMARY KEY,
+    namespace_id BIGINT NOT NULL,
+    key VARCHAR(128) NOT NULL DEFAULT '',
+    type SMALLINT DEFAULT 0,
+    value TEXT,
+    comment VARCHAR(256) DEFAULT '',
+    line_num INTEGER DEFAULT 0,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_item_namespace_id ON apollo_item(namespace_id);
+CREATE INDEX idx_apollo_item_key ON apollo_item(key);
+
+COMMENT ON TABLE apollo_item IS 'Apollo configuration item table';
+
+/******************************************/
+/*   Table: apollo_release                */
+/******************************************/
+CREATE TABLE apollo_release (
+    id BIGSERIAL PRIMARY KEY,
+    release_key VARCHAR(64) NOT NULL,
+    name VARCHAR(64) DEFAULT '',
+    app_id VARCHAR(64) NOT NULL,
+    cluster_name VARCHAR(32) NOT NULL,
+    namespace_name VARCHAR(128) NOT NULL,
+    configurations TEXT,
+    comment VARCHAR(256) DEFAULT '',
+    is_abandoned BOOLEAN DEFAULT FALSE,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_apollo_release_release_key UNIQUE (release_key)
+);
+
+CREATE INDEX idx_apollo_release_app_cluster_ns ON apollo_release(app_id, cluster_name, namespace_name);
+
+COMMENT ON TABLE apollo_release IS 'Apollo configuration release table';
+
+/******************************************/
+/*   Table: apollo_release_history        */
+/******************************************/
+CREATE TABLE apollo_release_history (
+    id BIGSERIAL PRIMARY KEY,
+    app_id VARCHAR(64) NOT NULL,
+    cluster_name VARCHAR(32) NOT NULL,
+    namespace_name VARCHAR(128) NOT NULL,
+    branch_name VARCHAR(32) DEFAULT 'default',
+    release_id BIGINT DEFAULT 0,
+    previous_release_id BIGINT DEFAULT 0,
+    operation SMALLINT DEFAULT 0,
+    operation_context TEXT,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_release_history_app_cluster_ns ON apollo_release_history(app_id, cluster_name, namespace_name);
+
+COMMENT ON TABLE apollo_release_history IS 'Apollo release history table';
+
+/******************************************/
+/*   Table: apollo_release_message        */
+/******************************************/
+CREATE TABLE apollo_release_message (
+    id BIGSERIAL PRIMARY KEY,
+    message VARCHAR(1024) NOT NULL DEFAULT '',
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_release_message_message ON apollo_release_message(message);
+
+COMMENT ON TABLE apollo_release_message IS 'Apollo release message table for notification';
+
+/******************************************/
+/*   Table: apollo_gray_release_rule      */
+/******************************************/
+CREATE TABLE apollo_gray_release_rule (
+    id BIGSERIAL PRIMARY KEY,
+    app_id VARCHAR(64) NOT NULL,
+    cluster_name VARCHAR(32) NOT NULL,
+    namespace_name VARCHAR(128) NOT NULL,
+    branch_name VARCHAR(32) NOT NULL,
+    rules TEXT,
+    release_id BIGINT DEFAULT 0,
+    branch_status SMALLINT DEFAULT 0,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_gray_release_rule_app_cluster_ns ON apollo_gray_release_rule(app_id, cluster_name, namespace_name);
+
+COMMENT ON TABLE apollo_gray_release_rule IS 'Apollo gray release rule table';
+
+/******************************************/
+/*   Table: apollo_namespace_lock         */
+/******************************************/
+CREATE TABLE apollo_namespace_lock (
+    id BIGSERIAL PRIMARY KEY,
+    namespace_id BIGINT NOT NULL,
+    locked_by VARCHAR(64) DEFAULT '',
+    lock_time TIMESTAMP DEFAULT NULL,
+    expire_time TIMESTAMP DEFAULT NULL,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_apollo_namespace_lock_namespace_id UNIQUE (namespace_id)
+);
+
+COMMENT ON TABLE apollo_namespace_lock IS 'Apollo namespace editing lock table';
+
+/******************************************/
+/*   Table: apollo_commit                 */
+/******************************************/
+CREATE TABLE apollo_commit (
+    id BIGSERIAL PRIMARY KEY,
+    change_sets TEXT,
+    app_id VARCHAR(64) NOT NULL,
+    cluster_name VARCHAR(32) NOT NULL,
+    namespace_name VARCHAR(128) NOT NULL,
+    comment VARCHAR(256) DEFAULT '',
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_commit_app_cluster_ns ON apollo_commit(app_id, cluster_name, namespace_name);
+
+COMMENT ON TABLE apollo_commit IS 'Apollo configuration change commit table';
+
+/******************************************/
+/*   Table: apollo_access_key             */
+/******************************************/
+CREATE TABLE apollo_access_key (
+    id BIGSERIAL PRIMARY KEY,
+    app_id VARCHAR(64) NOT NULL,
+    secret VARCHAR(128) NOT NULL,
+    mode VARCHAR(16) DEFAULT 'STS',
+    is_enabled BOOLEAN DEFAULT TRUE,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_access_key_app_id ON apollo_access_key(app_id);
+
+COMMENT ON TABLE apollo_access_key IS 'Apollo access key table';
+
+/******************************************/
+/*   Table: apollo_instance               */
+/******************************************/
+CREATE TABLE apollo_instance (
+    id BIGSERIAL PRIMARY KEY,
+    app_id VARCHAR(64) NOT NULL,
+    cluster_name VARCHAR(32) NOT NULL,
+    data_center VARCHAR(64) DEFAULT '',
+    ip VARCHAR(45) NOT NULL,
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_instance_app_cluster ON apollo_instance(app_id, cluster_name);
+
+COMMENT ON TABLE apollo_instance IS 'Apollo client instance table';
+
+/******************************************/
+/*   Table: apollo_instance_config        */
+/******************************************/
+CREATE TABLE apollo_instance_config (
+    id BIGSERIAL PRIMARY KEY,
+    instance_id BIGINT NOT NULL,
+    config_app_id VARCHAR(64),
+    config_cluster_name VARCHAR(32),
+    config_namespace_name VARCHAR(128),
+    release_key VARCHAR(64) DEFAULT '',
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_instance_config_instance_id ON apollo_instance_config(instance_id);
+
+COMMENT ON TABLE apollo_instance_config IS 'Apollo instance configuration mapping table';
+
+/******************************************/
+/*   Table: apollo_audit                  */
+/******************************************/
+CREATE TABLE apollo_audit (
+    id BIGSERIAL PRIMARY KEY,
+    entity_name VARCHAR(64) NOT NULL,
+    entity_id VARCHAR(64) DEFAULT '',
+    op_name VARCHAR(64) NOT NULL,
+    comment VARCHAR(256) DEFAULT '',
+    is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    deleted_at TIMESTAMP DEFAULT NULL,
+    created_by VARCHAR(64) DEFAULT '',
+    created_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_modified_by VARCHAR(64) DEFAULT '',
+    last_modified_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_apollo_audit_entity_name ON apollo_audit(entity_name);
+CREATE INDEX idx_apollo_audit_entity_id ON apollo_audit(entity_id);
+
+COMMENT ON TABLE apollo_audit IS 'Apollo audit log table';
+
+/******************************************/
+/*   Apollo Update Triggers               */
+/******************************************/
+CREATE TRIGGER update_apollo_app_modify_time
+    BEFORE UPDATE ON apollo_app
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_app_namespace_modify_time
+    BEFORE UPDATE ON apollo_app_namespace
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_cluster_modify_time
+    BEFORE UPDATE ON apollo_cluster
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_namespace_modify_time
+    BEFORE UPDATE ON apollo_namespace
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_item_modify_time
+    BEFORE UPDATE ON apollo_item
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_release_modify_time
+    BEFORE UPDATE ON apollo_release
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_release_history_modify_time
+    BEFORE UPDATE ON apollo_release_history
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_release_message_modify_time
+    BEFORE UPDATE ON apollo_release_message
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_gray_release_rule_modify_time
+    BEFORE UPDATE ON apollo_gray_release_rule
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_namespace_lock_modify_time
+    BEFORE UPDATE ON apollo_namespace_lock
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_commit_modify_time
+    BEFORE UPDATE ON apollo_commit
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_access_key_modify_time
+    BEFORE UPDATE ON apollo_access_key
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_instance_modify_time
+    BEFORE UPDATE ON apollo_instance
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_instance_config_modify_time
+    BEFORE UPDATE ON apollo_instance_config
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();
+
+CREATE TRIGGER update_apollo_audit_modify_time
+    BEFORE UPDATE ON apollo_audit
+    FOR EACH ROW EXECUTE FUNCTION update_modify_time();

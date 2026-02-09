@@ -9,14 +9,37 @@ use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 
 use crate::model::{
-    AppPathParams, CreateItemRequest, ItemPathParams, OpenApiPathParams, PublishReleaseRequest,
-    UpdateItemRequest,
+    AppPathParams, CreateAppRequest, CreateItemRequest, CreateNamespaceRequest, ItemPathParams,
+    OpenApiPathParams, PublishReleaseRequest, ReleasePathParams, UpdateItemRequest,
 };
 use crate::service::ApolloOpenApiService;
 
 /// Query parameters for delete item
 #[derive(Debug, Deserialize)]
 pub struct DeleteItemQuery {
+    pub operator: String,
+}
+
+/// Path parameters for cluster operations
+#[derive(Debug, Deserialize)]
+pub struct ClusterPathParams {
+    pub env: String,
+    pub app_id: String,
+    pub cluster: String,
+}
+
+/// Request to create a cluster
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateClusterRequest {
+    pub name: String,
+    pub operator: String,
+}
+
+/// Request for rollback
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RollbackQuery {
     pub operator: String,
 }
 
@@ -41,6 +64,98 @@ pub async fn get_apps(db: web::Data<Arc<DatabaseConnection>>) -> HttpResponse {
     }
 }
 
+/// Get a specific app
+///
+/// `GET /openapi/v1/apps/{appId}`
+pub async fn get_app(
+    db: web::Data<Arc<DatabaseConnection>>,
+    path: web::Path<AppPathParams>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    match service.get_app(&path.app_id).await {
+        Ok(Some(app)) => HttpResponse::Ok().json(app),
+        Ok(None) => HttpResponse::NotFound().json(serde_json::json!({
+            "error": "App not found"
+        })),
+        Err(e) => {
+            tracing::error!("Failed to get app: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+/// Create a new app
+///
+/// `POST /openapi/v1/apps`
+pub async fn create_app(
+    db: web::Data<Arc<DatabaseConnection>>,
+    body: web::Json<CreateAppRequest>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    match service.create_app(body.into_inner()).await {
+        Ok(app) => HttpResponse::Created().json(app),
+        Err(e) => {
+            tracing::error!("Failed to create app: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+/// Update an app
+///
+/// `PUT /openapi/v1/apps/{appId}`
+pub async fn update_app(
+    db: web::Data<Arc<DatabaseConnection>>,
+    path: web::Path<AppPathParams>,
+    body: web::Json<CreateAppRequest>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    match service.update_app(&path.app_id, body.into_inner()).await {
+        Ok(Some(app)) => HttpResponse::Ok().json(app),
+        Ok(None) => HttpResponse::NotFound().json(serde_json::json!({
+            "error": "App not found"
+        })),
+        Err(e) => {
+            tracing::error!("Failed to update app: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+/// Delete an app
+///
+/// `DELETE /openapi/v1/apps/{appId}`
+pub async fn delete_app(
+    db: web::Data<Arc<DatabaseConnection>>,
+    path: web::Path<AppPathParams>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    match service.delete_app(&path.app_id).await {
+        Ok(true) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true
+        })),
+        Ok(false) => HttpResponse::NotFound().json(serde_json::json!({
+            "error": "App not found"
+        })),
+        Err(e) => {
+            tracing::error!("Failed to delete app: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
 /// Get environment clusters for an app
 ///
 /// `GET /openapi/v1/apps/{appId}/envclusters`
@@ -54,6 +169,82 @@ pub async fn get_env_clusters(
         Ok(env_clusters) => HttpResponse::Ok().json(env_clusters),
         Err(e) => {
             tracing::error!("Failed to get env clusters: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+// ============================================================================
+// Cluster Management
+// ============================================================================
+
+/// Get a specific cluster
+///
+/// `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}`
+pub async fn get_cluster(
+    db: web::Data<Arc<DatabaseConnection>>,
+    path: web::Path<ClusterPathParams>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    match service.get_cluster(&path.app_id, &path.cluster).await {
+        Ok(Some(cluster)) => HttpResponse::Ok().json(cluster),
+        Ok(None) => HttpResponse::NotFound().json(serde_json::json!({
+            "error": "Cluster not found"
+        })),
+        Err(e) => {
+            tracing::error!("Failed to get cluster: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+/// Create a cluster
+///
+/// `POST /openapi/v1/envs/{env}/apps/{appId}/clusters`
+pub async fn create_cluster(
+    db: web::Data<Arc<DatabaseConnection>>,
+    path: web::Path<EnvAppPathParams>,
+    body: web::Json<CreateClusterRequest>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    match service
+        .create_cluster(&path.app_id, &body.name, &body.operator)
+        .await
+    {
+        Ok(cluster) => HttpResponse::Created().json(cluster),
+        Err(e) => {
+            tracing::error!("Failed to create cluster: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+/// Delete a cluster
+///
+/// `DELETE /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}`
+pub async fn delete_cluster(
+    db: web::Data<Arc<DatabaseConnection>>,
+    path: web::Path<ClusterPathParams>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    match service.delete_cluster(&path.app_id, &path.cluster).await {
+        Ok(true) => HttpResponse::Ok().json(serde_json::json!({
+            "success": true
+        })),
+        Ok(false) => HttpResponse::NotFound().json(serde_json::json!({
+            "error": "Cluster not found"
+        })),
+        Err(e) => {
+            tracing::error!("Failed to delete cluster: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": e.to_string()
             }))
@@ -107,6 +298,26 @@ pub async fn get_namespace(
         })),
         Err(e) => {
             tracing::error!("Failed to get namespace: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+/// Create a namespace
+///
+/// `POST /openapi/v1/apps/{appId}/appnamespaces`
+pub async fn create_namespace(
+    db: web::Data<Arc<DatabaseConnection>>,
+    body: web::Json<CreateNamespaceRequest>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    match service.create_namespace_definition(body.into_inner()).await {
+        Ok(ns) => HttpResponse::Created().json(ns),
+        Err(e) => {
+            tracing::error!("Failed to create namespace: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": e.to_string()
             }))
@@ -336,12 +547,56 @@ pub async fn get_latest_release(
     }
 }
 
+/// Rollback a release
+///
+/// `PUT /openapi/v1/envs/{env}/releases/{releaseId}/rollback`
+pub async fn rollback_release(
+    db: web::Data<Arc<DatabaseConnection>>,
+    path: web::Path<ReleasePathParams>,
+    query: web::Query<RollbackQuery>,
+) -> HttpResponse {
+    let service = ApolloOpenApiService::new(db.get_ref().clone());
+
+    let release_id: i64 = match path.release_id.parse() {
+        Ok(id) => id,
+        Err(_) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Invalid release ID"
+            }));
+        }
+    };
+
+    match service.rollback_release(release_id, &query.operator).await {
+        Ok(Some(release)) => HttpResponse::Ok().json(release),
+        Ok(None) => HttpResponse::NotFound().json(serde_json::json!({
+            "error": "Release not found"
+        })),
+        Err(e) => {
+            tracing::error!("Failed to rollback release: {}", e);
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": e.to_string()
+            }))
+        }
+    }
+}
+
+// ============================================================================
+// Path Parameter Types
+// ============================================================================
+
 /// Path parameters for namespace list
 #[derive(Debug, Deserialize)]
 pub struct NamespaceListPathParams {
     pub env: String,
     pub app_id: String,
     pub cluster: String,
+}
+
+/// Path parameters for env + app operations
+#[derive(Debug, Deserialize)]
+pub struct EnvAppPathParams {
+    pub env: String,
+    pub app_id: String,
 }
 
 #[cfg(test)]
@@ -355,5 +610,44 @@ mod tests {
         assert_eq!(params.env, "DEV");
         assert_eq!(params.app_id, "test-app");
         assert_eq!(params.cluster, "default");
+    }
+
+    #[test]
+    fn test_cluster_path_params() {
+        let json = r#"{"env":"PRO","app_id":"app1","cluster":"staging"}"#;
+        let params: ClusterPathParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.env, "PRO");
+        assert_eq!(params.app_id, "app1");
+        assert_eq!(params.cluster, "staging");
+    }
+
+    #[test]
+    fn test_env_app_path_params() {
+        let json = r#"{"env":"DEV","app_id":"my-app"}"#;
+        let params: EnvAppPathParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.env, "DEV");
+        assert_eq!(params.app_id, "my-app");
+    }
+
+    #[test]
+    fn test_create_cluster_request() {
+        let json = r#"{"name":"staging","operator":"admin"}"#;
+        let req: CreateClusterRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "staging");
+        assert_eq!(req.operator, "admin");
+    }
+
+    #[test]
+    fn test_delete_item_query() {
+        let json = r#"{"operator":"admin"}"#;
+        let query: DeleteItemQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.operator, "admin");
+    }
+
+    #[test]
+    fn test_rollback_query() {
+        let json = r#"{"operator":"release-admin"}"#;
+        let query: RollbackQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.operator, "release-admin");
     }
 }

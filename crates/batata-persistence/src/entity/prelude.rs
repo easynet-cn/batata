@@ -15,3 +15,20 @@ pub use super::users::Entity as Users;
 pub use super::cluster_info::Entity as ClusterInfo;
 pub use super::instance_info::Entity as InstanceInfo;
 pub use super::service_info::Entity as ServiceInfo;
+
+// Apollo Config entities
+pub use super::apollo_access_key::Entity as ApolloAccessKey;
+pub use super::apollo_app::Entity as ApolloApp;
+pub use super::apollo_app_namespace::Entity as ApolloAppNamespace;
+pub use super::apollo_audit::Entity as ApolloAudit;
+pub use super::apollo_cluster::Entity as ApolloCluster;
+pub use super::apollo_commit::Entity as ApolloCommit;
+pub use super::apollo_gray_release_rule::Entity as ApolloGrayReleaseRule;
+pub use super::apollo_instance::Entity as ApolloInstance;
+pub use super::apollo_instance_config::Entity as ApolloInstanceConfig;
+pub use super::apollo_item::Entity as ApolloItem;
+pub use super::apollo_namespace::Entity as ApolloNamespace;
+pub use super::apollo_namespace_lock::Entity as ApolloNamespaceLock;
+pub use super::apollo_release::Entity as ApolloRelease;
+pub use super::apollo_release_history::Entity as ApolloReleaseHistory;
+pub use super::apollo_release_message::Entity as ApolloReleaseMessage;

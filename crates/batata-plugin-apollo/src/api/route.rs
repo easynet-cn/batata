@@ -4,27 +4,11 @@
 
 use actix_web::web;
 
-use super::{advanced, config, configfiles, notification, openapi};
+use super::{advanced, branch, config, configfiles, notification, openapi, services};
 
 /// Configure Apollo Config Service routes
 ///
 /// These routes implement the Apollo client SDK protocol.
-///
-/// ## Endpoints
-/// - `GET /configs/{appId}/{clusterName}/{namespace}` - Get configuration
-/// - `GET /configfiles/{appId}/{clusterName}/{namespace}` - Get config as plain text
-/// - `GET /configfiles/json/{appId}/{clusterName}/{namespace}` - Get config as JSON
-/// - `GET /notifications/v2` - Long polling for updates
-///
-/// ## Usage
-///
-/// ```ignore
-/// use batata_plugin_apollo::apollo_config_routes;
-///
-/// // In your actix-web app configuration:
-/// App::new()
-///     .service(apollo_config_routes())
-/// ```
 pub fn apollo_config_routes() -> actix_web::Scope {
     web::scope("")
         // Config endpoints
@@ -47,19 +31,18 @@ pub fn apollo_config_routes() -> actix_web::Scope {
             "/notifications/v2",
             web::get().to(notification::get_notifications),
         )
+        // Service discovery
+        .route(
+            "/services/config",
+            web::get().to(services::get_config_service),
+        )
+        .route(
+            "/services/admin",
+            web::get().to(services::get_admin_service),
+        )
 }
 
 /// Configure Apollo routes under a custom prefix
-///
-/// This allows mounting Apollo routes under a specific path prefix.
-///
-/// ## Example
-///
-/// ```ignore
-/// // Mount under /apollo prefix
-/// App::new()
-///     .service(apollo_config_routes_with_prefix("/apollo"))
-/// ```
 pub fn apollo_config_routes_with_prefix(prefix: &str) -> actix_web::Scope {
     web::scope(prefix)
         .route(
@@ -78,19 +61,17 @@ pub fn apollo_config_routes_with_prefix(prefix: &str) -> actix_web::Scope {
             "/notifications/v2",
             web::get().to(notification::get_notifications),
         )
+        .route(
+            "/services/config",
+            web::get().to(services::get_config_service),
+        )
+        .route(
+            "/services/admin",
+            web::get().to(services::get_admin_service),
+        )
 }
 
 /// Configure function for use with actix-web service configuration
-///
-/// ## Example
-///
-/// ```ignore
-/// use batata_plugin_apollo::configure_apollo_routes;
-///
-/// // In your App configuration:
-/// App::new()
-///     .configure(configure_apollo_routes)
-/// ```
 pub fn configure_apollo_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(apollo_config_routes());
     cfg.service(apollo_openapi_routes());
@@ -98,31 +79,6 @@ pub fn configure_apollo_routes(cfg: &mut web::ServiceConfig) {
 }
 
 /// Configure Apollo Advanced routes
-///
-/// These routes implement Apollo advanced features.
-///
-/// ## Namespace Lock Endpoints
-/// - `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/lock` - Get lock status
-/// - `POST /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/lock` - Acquire lock
-/// - `DELETE /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/lock` - Release lock
-///
-/// ## Gray Release Endpoints
-/// - `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray` - Get gray release
-/// - `POST /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray` - Create gray release
-/// - `PUT /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray/merge` - Merge gray release
-/// - `DELETE /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray` - Abandon gray release
-///
-/// ## Access Key Endpoints
-/// - `GET /openapi/v1/apps/{appId}/accesskeys` - List access keys
-/// - `POST /openapi/v1/apps/{appId}/accesskeys` - Create access key
-/// - `GET /openapi/v1/apps/{appId}/accesskeys/{keyId}` - Get access key
-/// - `PUT /openapi/v1/apps/{appId}/accesskeys/{keyId}/enable` - Enable/disable access key
-/// - `DELETE /openapi/v1/apps/{appId}/accesskeys/{keyId}` - Delete access key
-///
-/// ## Client Metrics Endpoints
-/// - `GET /openapi/v1/metrics/clients` - Get client metrics summary
-/// - `GET /openapi/v1/apps/{appId}/clients` - Get clients for an app
-/// - `POST /openapi/v1/metrics/clients/cleanup` - Cleanup stale connections
 pub fn apollo_advanced_routes() -> actix_web::Scope {
     web::scope("/openapi/v1")
         // Namespace Lock
@@ -192,34 +148,30 @@ pub fn apollo_advanced_routes() -> actix_web::Scope {
 }
 
 /// Configure Apollo Open API routes
-///
-/// These routes implement the Apollo Open API management protocol.
-///
-/// ## App Endpoints
-/// - `GET /openapi/v1/apps` - Get all apps
-/// - `GET /openapi/v1/apps/{appId}/envclusters` - Get env clusters
-///
-/// ## Namespace Endpoints
-/// - `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces` - List namespaces
-/// - `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}` - Get namespace
-///
-/// ## Item Endpoints
-/// - `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items` - List items
-/// - `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items/{key}` - Get item
-/// - `POST /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items` - Create item
-/// - `PUT /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items/{key}` - Update item
-/// - `DELETE /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items/{key}` - Delete item
-///
-/// ## Release Endpoints
-/// - `POST /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/releases` - Publish release
-/// - `GET /openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/releases/latest` - Get latest release
 pub fn apollo_openapi_routes() -> actix_web::Scope {
     web::scope("/openapi/v1")
         // App Management
         .route("/apps", web::get().to(openapi::get_apps))
+        .route("/apps", web::post().to(openapi::create_app))
+        .route("/apps/{app_id}", web::get().to(openapi::get_app))
+        .route("/apps/{app_id}", web::put().to(openapi::update_app))
+        .route("/apps/{app_id}", web::delete().to(openapi::delete_app))
         .route(
             "/apps/{app_id}/envclusters",
             web::get().to(openapi::get_env_clusters),
+        )
+        // Cluster Management
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}",
+            web::get().to(openapi::get_cluster),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters",
+            web::post().to(openapi::create_cluster),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}",
+            web::delete().to(openapi::delete_cluster),
         )
         // Namespace Management
         .route(
@@ -229,6 +181,10 @@ pub fn apollo_openapi_routes() -> actix_web::Scope {
         .route(
             "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}",
             web::get().to(openapi::get_namespace),
+        )
+        .route(
+            "/apps/{app_id}/appnamespaces",
+            web::post().to(openapi::create_namespace),
         )
         // Item Management
         .route(
@@ -259,5 +215,38 @@ pub fn apollo_openapi_routes() -> actix_web::Scope {
         .route(
             "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/releases/latest",
             web::get().to(openapi::get_latest_release),
+        )
+        .route(
+            "/envs/{env}/releases/{release_id}/rollback",
+            web::put().to(openapi::rollback_release),
+        )
+        // Branch Management
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/branches",
+            web::get().to(branch::get_branches),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/branches",
+            web::post().to(branch::create_branch),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/branches/{branch}",
+            web::delete().to(branch::delete_branch),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/branches/{branch}/rules",
+            web::get().to(branch::get_gray_rules),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/branches/{branch}/rules",
+            web::put().to(branch::update_gray_rules),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/branches/{branch}/releases",
+            web::post().to(branch::gray_release),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/branches/{branch}/merge",
+            web::post().to(branch::merge_branch),
         )
 }
