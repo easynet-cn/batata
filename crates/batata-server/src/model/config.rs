@@ -408,6 +408,26 @@ impl Configuration {
     }
 
     // ========================================================================
+    // Persistence Mode Configuration
+    // ========================================================================
+
+    /// Get the persistence storage mode
+    pub fn persistence_mode(&self) -> batata_persistence::StorageMode {
+        self.config
+            .get_string("nacos.persistence.mode")
+            .unwrap_or_else(|_| "external_db".to_string())
+            .parse()
+            .unwrap_or(batata_persistence::StorageMode::ExternalDb)
+    }
+
+    /// Get the RocksDB data directory for embedded modes
+    pub fn embedded_data_dir(&self) -> String {
+        self.config
+            .get_string("nacos.persistence.embedded.data_dir")
+            .unwrap_or_else(|_| "data/rocksdb".to_string())
+    }
+
+    // ========================================================================
     // Database Configuration
     // ========================================================================
 

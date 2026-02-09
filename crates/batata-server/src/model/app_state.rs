@@ -8,6 +8,7 @@ use sea_orm::DatabaseConnection;
 
 use batata_auth::service::oauth::OAuthService;
 use batata_core::cluster::ServerMemberManager;
+use batata_persistence::PersistenceService;
 
 use crate::console::datasource::ConsoleDataSource;
 
@@ -41,6 +42,8 @@ pub struct AppState {
     pub console_datasource: Arc<dyn ConsoleDataSource>,
     /// OAuth2/OIDC service for external authentication
     pub oauth_service: Option<Arc<OAuthService>>,
+    /// Unified persistence service (SQL, embedded RocksDB, or distributed Raft)
+    pub persistence: Option<Arc<dyn PersistenceService>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -55,6 +58,7 @@ impl std::fmt::Debug for AppState {
             .field("config_subscriber_manager", &"<ConfigSubscriberManager>")
             .field("console_datasource", &"<dyn ConsoleDataSource>")
             .field("oauth_service", &self.oauth_service.is_some())
+            .field("persistence", &self.persistence.is_some())
             .finish()
     }
 }
@@ -68,11 +72,29 @@ impl Clone for AppState {
             config_subscriber_manager: self.config_subscriber_manager.clone(),
             console_datasource: self.console_datasource.clone(),
             oauth_service: self.oauth_service.clone(),
+            persistence: self.persistence.clone(),
         }
     }
 }
 
 impl AppState {
+    // ========================================================================
+    // Persistence Service Access
+    // ========================================================================
+
+    /// Get the persistence service (panics if not available)
+    pub fn persistence(&self) -> &dyn PersistenceService {
+        self.persistence
+            .as_ref()
+            .expect("Persistence service not available")
+            .as_ref()
+    }
+
+    /// Try to get the persistence service
+    pub fn try_persistence(&self) -> Option<&dyn PersistenceService> {
+        self.persistence.as_deref()
+    }
+
     // ========================================================================
     // Database Access
     // ========================================================================

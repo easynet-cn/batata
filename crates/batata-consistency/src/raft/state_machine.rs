@@ -35,13 +35,15 @@ fn sm_error(
 }
 
 // Column family names for state machine
-const CF_CONFIG: &str = "config";
-const CF_NAMESPACE: &str = "namespace";
-const CF_USERS: &str = "users";
-const CF_ROLES: &str = "roles";
-const CF_PERMISSIONS: &str = "permissions";
-const CF_INSTANCES: &str = "instances";
-const CF_LOCKS: &str = "locks";
+pub const CF_CONFIG: &str = "config";
+pub const CF_CONFIG_HISTORY: &str = "config_history";
+pub const CF_CONFIG_GRAY: &str = "config_gray";
+pub const CF_NAMESPACE: &str = "namespace";
+pub const CF_USERS: &str = "users";
+pub const CF_ROLES: &str = "roles";
+pub const CF_PERMISSIONS: &str = "permissions";
+pub const CF_INSTANCES: &str = "instances";
+pub const CF_LOCKS: &str = "locks";
 const CF_META: &str = "meta";
 
 // Meta keys
@@ -58,6 +60,11 @@ pub struct RocksStateMachine {
 }
 
 impl RocksStateMachine {
+    /// Get a reference to the underlying RocksDB instance
+    pub fn db(&self) -> Arc<DB> {
+        self.db.clone()
+    }
+
     /// Create a new RocksDB state machine
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError<NodeId>> {
         let mut db_opts = Options::default();
@@ -88,6 +95,8 @@ impl RocksStateMachine {
 
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_CONFIG, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_CONFIG_HISTORY, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_CONFIG_GRAY, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_NAMESPACE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_USERS, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_ROLES, cf_opts.clone()),
@@ -187,6 +196,19 @@ impl RocksStateMachine {
             .expect("CF_LOCKS must exist - database may be corrupted")
     }
 
+    fn cf_config_history(&self) -> &ColumnFamily {
+        self.db
+            .cf_handle(CF_CONFIG_HISTORY)
+            .expect("CF_CONFIG_HISTORY must exist - database may be corrupted")
+    }
+
+    #[allow(dead_code)]
+    fn cf_config_gray(&self) -> &ColumnFamily {
+        self.db
+            .cf_handle(CF_CONFIG_GRAY)
+            .expect("CF_CONFIG_GRAY must exist - database may be corrupted")
+    }
+
     fn cf_meta(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_META)
@@ -194,32 +216,42 @@ impl RocksStateMachine {
     }
 
     /// Generate config key
-    fn config_key(data_id: &str, group: &str, tenant: &str) -> String {
+    pub fn config_key(data_id: &str, group: &str, tenant: &str) -> String {
         format!("{}@@{}@@{}", tenant, group, data_id)
     }
 
+    /// Generate config history key
+    pub fn config_history_key(data_id: &str, group: &str, tenant: &str, id: u64) -> String {
+        format!("{}@@{}@@{}@@{}", tenant, group, data_id, id)
+    }
+
+    /// Generate config gray key
+    pub fn config_gray_key(data_id: &str, group: &str, tenant: &str, gray_name: &str) -> String {
+        format!("{}@@{}@@{}@@{}", tenant, group, data_id, gray_name)
+    }
+
     /// Generate namespace key
-    fn namespace_key(namespace_id: &str) -> String {
+    pub fn namespace_key(namespace_id: &str) -> String {
         namespace_id.to_string()
     }
 
     /// Generate user key
-    fn user_key(username: &str) -> String {
+    pub fn user_key(username: &str) -> String {
         username.to_string()
     }
 
     /// Generate role key
-    fn role_key(role: &str, username: &str) -> String {
+    pub fn role_key(role: &str, username: &str) -> String {
         format!("{}@@{}", role, username)
     }
 
     /// Generate permission key
-    fn permission_key(role: &str, resource: &str, action: &str) -> String {
+    pub fn permission_key(role: &str, resource: &str, action: &str) -> String {
         format!("{}@@{}@@{}", role, resource, action)
     }
 
     /// Generate instance key
-    fn instance_key(
+    pub fn instance_key(
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
@@ -232,7 +264,7 @@ impl RocksStateMachine {
     }
 
     /// Generate lock key
-    fn lock_key(namespace: &str, name: &str) -> String {
+    pub fn lock_key(namespace: &str, name: &str) -> String {
         format!("{}::{}", namespace, name)
     }
 
@@ -313,17 +345,46 @@ impl RocksStateMachine {
                 action,
             } => self.apply_permission_revoke(&role, &resource, &action),
 
-            RaftRequest::ConfigHistoryInsert { .. } => {
-                // Config history is typically stored separately
-                RaftResponse::success()
-            }
+            RaftRequest::ConfigHistoryInsert {
+                id,
+                data_id,
+                group,
+                tenant,
+                content,
+                md5,
+                src_user,
+                src_ip,
+                op_type,
+                created_time,
+                last_modified_time,
+            } => self.apply_config_history_insert(
+                id,
+                &data_id,
+                &group,
+                &tenant,
+                &content,
+                &md5,
+                src_user,
+                src_ip,
+                &op_type,
+                created_time,
+                last_modified_time,
+            ),
 
-            RaftRequest::ConfigTagsUpdate { .. } => {
-                // Config tags are stored with config
-                RaftResponse::success()
-            }
+            RaftRequest::ConfigTagsUpdate {
+                data_id,
+                group,
+                tenant,
+                tag,
+                ..
+            } => self.apply_config_tags_update(&data_id, &group, &tenant, &tag),
 
-            RaftRequest::ConfigTagsDelete { .. } => RaftResponse::success(),
+            RaftRequest::ConfigTagsDelete {
+                data_id,
+                group,
+                tenant,
+                tag,
+            } => self.apply_config_tags_delete(&data_id, &group, &tenant, &tag),
 
             RaftRequest::PersistentInstanceRegister {
                 namespace_id,
@@ -485,6 +546,130 @@ impl RocksStateMachine {
                 error!("Failed to remove config: {}", e);
                 RaftResponse::failure(format!("Failed to remove config: {}", e))
             }
+        }
+    }
+
+    // Config history operations
+    #[allow(clippy::too_many_arguments)]
+    fn apply_config_history_insert(
+        &self,
+        id: i64,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        content: &str,
+        md5: &str,
+        src_user: Option<String>,
+        src_ip: Option<String>,
+        op_type: &str,
+        created_time: i64,
+        last_modified_time: i64,
+    ) -> RaftResponse {
+        let key = Self::config_history_key(data_id, group, tenant, id as u64);
+        let value = serde_json::json!({
+            "id": id,
+            "data_id": data_id,
+            "group": group,
+            "tenant": tenant,
+            "content": content,
+            "md5": md5,
+            "src_user": src_user,
+            "src_ip": src_ip,
+            "op_type": op_type,
+            "created_time": created_time,
+            "last_modified_time": last_modified_time,
+        });
+
+        match self.db.put_cf(
+            self.cf_config_history(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
+            Ok(_) => {
+                debug!("Config history inserted: {}", key);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to insert config history: {}", e);
+                RaftResponse::failure(format!("Failed to insert config history: {}", e))
+            }
+        }
+    }
+
+    // Config tags operations - tags are stored as comma-separated in the config entry
+    fn apply_config_tags_update(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        tag: &str,
+    ) -> RaftResponse {
+        let key = Self::config_key(data_id, group, tenant);
+
+        // Read existing config and update tags
+        let existing = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
+            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            _ => None,
+        };
+
+        if let Some(mut existing) = existing {
+            existing["config_tags"] = serde_json::json!(tag);
+            existing["modified_time"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
+
+            match self.db.put_cf(
+                self.cf_config(),
+                key.as_bytes(),
+                existing.to_string().as_bytes(),
+            ) {
+                Ok(_) => {
+                    debug!("Config tags updated: {}", key);
+                    RaftResponse::success()
+                }
+                Err(e) => {
+                    error!("Failed to update config tags: {}", e);
+                    RaftResponse::failure(format!("Failed to update config tags: {}", e))
+                }
+            }
+        } else {
+            RaftResponse::failure("Config not found for tag update")
+        }
+    }
+
+    fn apply_config_tags_delete(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        _tag: &str,
+    ) -> RaftResponse {
+        let key = Self::config_key(data_id, group, tenant);
+
+        // Read existing config and clear tags
+        let existing = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
+            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            _ => None,
+        };
+
+        if let Some(mut existing) = existing {
+            existing["config_tags"] = serde_json::json!("");
+            existing["modified_time"] = serde_json::json!(chrono::Utc::now().timestamp_millis());
+
+            match self.db.put_cf(
+                self.cf_config(),
+                key.as_bytes(),
+                existing.to_string().as_bytes(),
+            ) {
+                Ok(_) => {
+                    debug!("Config tags deleted: {}", key);
+                    RaftResponse::success()
+                }
+                Err(e) => {
+                    error!("Failed to delete config tags: {}", e);
+                    RaftResponse::failure(format!("Failed to delete config tags: {}", e))
+                }
+            }
+        } else {
+            RaftResponse::failure("Config not found for tag delete")
         }
     }
 
@@ -1203,6 +1388,8 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
 
         for cf_name in [
             CF_CONFIG,
+            CF_CONFIG_HISTORY,
+            CF_CONFIG_GRAY,
             CF_NAMESPACE,
             CF_USERS,
             CF_ROLES,

@@ -15,6 +15,10 @@ pub mod raft;
 // Re-export commonly used types
 pub use raft::types::*;
 
+// Re-export reader and state machine
+pub use raft::reader::RocksDbReader;
+pub use raft::state_machine::RocksStateMachine;
+
 // Re-export lock types
 pub use lock::{
     DistributedLock, DistributedLockService, LockAcquireRequest, LockAcquireResult, LockCommand,

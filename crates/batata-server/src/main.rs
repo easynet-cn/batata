@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use batata_auth::service::oauth::OAuthService;
 use batata_core::cluster::ServerMemberManager;
+use batata_persistence::{PersistenceService, StorageMode};
 use batata_server::{
     console::datasource,
     middleware::rate_limit,
@@ -68,15 +69,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let apollo_server_port = configuration.apollo_server_port();
     let apollo_server_address = server_address.clone();
 
-    // Initialize database and server member manager based on deployment mode
-    let (database_connection, server_member_manager) = if is_console_remote {
+    // Initialize database, persistence service, and server member manager based on deployment mode
+    let storage_mode = configuration.persistence_mode();
+    info!("Persistence mode: {}", storage_mode);
+
+    let (database_connection, server_member_manager, persistence): (
+        Option<sea_orm::DatabaseConnection>,
+        Option<Arc<ServerMemberManager>>,
+        Option<Arc<dyn PersistenceService>>,
+    ) = if is_console_remote {
         info!("Starting in console remote mode - connecting to remote server");
-        (None, None)
+        (None, None, None)
     } else {
-        let db = configuration.database_connection().await?;
-        let core_config = configuration.to_core_config();
-        let smm = Arc::new(ServerMemberManager::new(&core_config));
-        (Some(db), Some(smm))
+        match storage_mode {
+            StorageMode::ExternalDb => {
+                let db = configuration.database_connection().await?;
+                let core_config = configuration.to_core_config();
+                let smm = Arc::new(ServerMemberManager::new(&core_config));
+                let persist: Arc<dyn PersistenceService> = Arc::new(
+                    batata_persistence::ExternalDbPersistService::new(db.clone()),
+                );
+                (Some(db), Some(smm), Some(persist))
+            }
+            StorageMode::StandaloneEmbedded => {
+                let data_dir = configuration.embedded_data_dir();
+                info!("Initializing standalone embedded storage at: {}", data_dir);
+                let sm = batata_consistency::RocksStateMachine::new(&data_dir)
+                    .await
+                    .map_err(|e| format!("Failed to initialize RocksDB state machine: {}", e))?;
+                let persist: Arc<dyn PersistenceService> =
+                    Arc::new(batata_persistence::EmbeddedPersistService::from_state_machine(&sm));
+                let core_config = configuration.to_core_config();
+                let smm = Arc::new(ServerMemberManager::new(&core_config));
+                (None, Some(smm), Some(persist))
+            }
+            StorageMode::DistributedEmbedded => {
+                // Distributed mode requires Raft setup which is handled by the cluster manager.
+                // For now, initialize the DB connection as fallback until full Raft integration is done.
+                let db = configuration.database_connection().await?;
+                let core_config = configuration.to_core_config();
+                let smm = Arc::new(ServerMemberManager::new(&core_config));
+                let persist: Arc<dyn PersistenceService> = Arc::new(
+                    batata_persistence::ExternalDbPersistService::new(db.clone()),
+                );
+                info!(
+                    "Distributed embedded mode: using external DB as fallback until Raft cluster is initialized"
+                );
+                (Some(db), Some(smm), Some(persist))
+            }
+        }
     };
 
     // Create console datasource based on mode
@@ -119,6 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_subscriber_manager,
         console_datasource,
         oauth_service,
+        persistence,
     });
 
     // Initialize graceful shutdown handler

@@ -27,6 +27,16 @@ nacos.server.main.port: 8848
 ### Specify local server's IP:
 # nacos.inetutils.ip-address=
 
+#*************** Persistence Mode Related Configurations ***************#
+### Storage mode: "external_db" (default), "standalone_embedded", "distributed_embedded"
+### external_db: Uses MySQL/PostgreSQL via SeaORM (requires db.url)
+### standalone_embedded: Uses RocksDB locally (no external DB needed, single node)
+### distributed_embedded: Uses Raft + RocksDB (no external DB needed, multi-node cluster)
+nacos.persistence.mode: external_db
+
+### RocksDB data directory for embedded modes (standalone_embedded / distributed_embedded)
+#nacos.persistence.embedded.data_dir: data/rocksdb
+
 #*************** Datasource Related Configurations ***************#
 ### nacos.plugin.datasource.log.enabled=true
 ### Database platform: mysql or postgresql
