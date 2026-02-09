@@ -1938,7 +1938,7 @@ pub async fn get_token(
 
     match token {
         Some(t) => HttpResponse::Ok().json(t),
-        None => HttpResponse::Ok().json(serde_json::Value::Null),
+        None => HttpResponse::NotFound().json(serde_json::Value::Null),
     }
 }
 

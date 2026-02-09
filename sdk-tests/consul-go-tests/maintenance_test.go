@@ -278,11 +278,11 @@ func TestMaintenanceListServices(t *testing.T) {
 		prefix + "-svc3",
 	}
 
-	for _, id := range serviceIDs {
+	for i, id := range serviceIDs {
 		err := client.Agent().ServiceRegister(&api.AgentServiceRegistration{
 			ID:   id,
 			Name: "maintenance-list-test",
-			Port: 8080,
+			Port: 8080 + i,
 		})
 		require.NoError(t, err)
 		defer client.Agent().ServiceDeregister(id)

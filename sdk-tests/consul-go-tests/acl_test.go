@@ -75,10 +75,9 @@ func TestACLTokenDelete(t *testing.T) {
 	_, err = client.ACL().TokenDelete(created.AccessorID, nil)
 	assert.NoError(t, err, "Token delete should succeed")
 
-	// Verify deleted
-	read, _, err := client.ACL().TokenRead(created.AccessorID, nil)
-	assert.NoError(t, err)
-	assert.Nil(t, read, "Token should be deleted")
+	// Verify deleted - reading a deleted token should return an error (404/403)
+	_, _, err = client.ACL().TokenRead(created.AccessorID, nil)
+	assert.Error(t, err, "Reading deleted token should return an error")
 }
 
 // CACL-004: Test list ACL tokens
