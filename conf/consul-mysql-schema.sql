@@ -27,7 +27,7 @@ CREATE TABLE `consul_acl_tokens` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_accessor_id` (`accessor_id`),
     UNIQUE KEY `uk_secret_id` (`secret_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Consul ACL Tokens';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='Consul ACL Tokens';
 
 -- Consul ACL Policies
 CREATE TABLE `consul_acl_policies` (
@@ -42,7 +42,7 @@ CREATE TABLE `consul_acl_policies` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_policy_id` (`policy_id`),
     UNIQUE KEY `uk_name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Consul ACL Policies';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='Consul ACL Policies';
 
 -- Bootstrap token (management token)
 INSERT INTO `consul_acl_tokens` (`accessor_id`, `secret_id`, `description`, `policies`, `roles`, `local`)

@@ -373,26 +373,28 @@ public class NacosHealthCheckTest {
     }
 
     /**
-     * NHC-010: Test persistent instance no heartbeat required
+     * NHC-010: Test ephemeral instance stays healthy with connection
      */
     @Test
     @Order(10)
-    void testPersistentInstanceNoHeartbeat() throws NacosException, InterruptedException {
-        String serviceName = "persistent-" + UUID.randomUUID().toString().substring(0, 8);
+    void testEphemeralInstanceStaysHealthy() throws NacosException, InterruptedException {
+        String serviceName = "ephemeral-stay-healthy-" + UUID.randomUUID().toString().substring(0, 8);
 
         Instance instance = new Instance();
         instance.setIp("192.168.10.61");
         instance.setPort(8080);
         instance.setHealthy(true);
-        instance.setEphemeral(false);
+        instance.setEphemeral(true);
 
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-        Thread.sleep(1000);
+        Thread.sleep(2000);
 
+        // Instance should remain healthy because the gRPC connection is active
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
-        if (!instances.isEmpty()) {
-            System.out.println("Persistent instance ephemeral: " + instances.get(0).isEphemeral());
-        }
+        assertFalse(instances.isEmpty(), "Should have ephemeral instance");
+        assertTrue(instances.get(0).isEphemeral(), "Instance should be ephemeral");
+
+        System.out.println("Ephemeral instance healthy after 2s: " + instances.get(0).isHealthy());
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);

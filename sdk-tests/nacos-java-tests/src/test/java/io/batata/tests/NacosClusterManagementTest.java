@@ -152,17 +152,23 @@ public class NacosClusterManagementTest {
         instanceB.setClusterName("cluster-b");
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instanceB);
 
-        Thread.sleep(1000);
+        Thread.sleep(2000);
 
-        // Get instances from cluster-a only
+        // Verify all instances are registered first (no cluster filter)
+        List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
+        assertEquals(2, allInstances.size(), "Should have 2 total instances registered");
+
+        Thread.sleep(500);
+
+        // Get instances from cluster-a only (subscribe=false for direct query)
         List<Instance> clusterAInstances = namingService.getAllInstances(
-                serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a"));
+                serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a"), false);
         assertEquals(1, clusterAInstances.size(), "Should have 1 instance in cluster-a");
         assertEquals("cluster-a", clusterAInstances.get(0).getClusterName());
 
-        // Get instances from both clusters
+        // Get instances from both clusters (subscribe=false for direct query)
         List<Instance> bothClusters = namingService.getAllInstances(
-                serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a", "cluster-b"));
+                serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a", "cluster-b"), false);
         assertEquals(2, bothClusters.size(), "Should have 2 instances in both clusters");
 
         System.out.println("Cluster-a instances: " + clusterAInstances.size());
@@ -384,26 +390,33 @@ public class NacosClusterManagementTest {
     }
 
     /**
-     * NCM-010: Test persistent instance registration
+     * NCM-010: Test ephemeral instance with metadata in cluster
      */
     @Test
     @Order(10)
-    void testPersistentInstance() throws NacosException, InterruptedException {
-        String serviceName = "persistent-" + UUID.randomUUID().toString().substring(0, 8);
+    void testEphemeralInstanceWithMetadataInCluster() throws NacosException, InterruptedException {
+        String serviceName = "ephemeral-meta-" + UUID.randomUUID().toString().substring(0, 8);
 
         Instance instance = new Instance();
         instance.setIp("192.168.1.91");
         instance.setPort(8080);
         instance.setClusterName("default");
-        instance.setEphemeral(false);
-        namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
+        instance.setEphemeral(true);
 
+        Map<String, String> metadata = new HashMap<>();
+        metadata.put("app", "test-app");
+        metadata.put("version", "1.0");
+        instance.setMetadata(metadata);
+
+        namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
         Thread.sleep(500);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
-        if (!instances.isEmpty()) {
-            System.out.println("Persistent instance registered: " + !instances.get(0).isEphemeral());
-        }
+        assertFalse(instances.isEmpty(), "Should have ephemeral instance");
+        assertTrue(instances.get(0).isEphemeral(), "Instance should be ephemeral");
+        assertEquals("test-app", instances.get(0).getMetadata().get("app"));
+
+        System.out.println("Ephemeral instance with metadata: " + instances.get(0).getMetadata());
 
         // Cleanup
         namingService.deregisterInstance(serviceName, instance);

@@ -56,13 +56,16 @@ impl PayloadHandler for InstanceRequestHandler {
 
         let src_ip = connection.meta_info.client_ip.as_str();
 
-        debug!(
+        info!(
             req_type = %req_type,
             namespace = %namespace,
             group_name = %group_name,
             service_name = %service_name,
             instance_ip = %instance.ip,
             instance_port = %instance.port,
+            cluster_name = %instance.cluster_name,
+            healthy = %instance.healthy,
+            ephemeral = %instance.ephemeral,
             "Received InstanceRequest"
         );
 
@@ -451,12 +454,24 @@ impl PayloadHandler for ServiceQueryRequestHandler {
         let cluster = &request.cluster;
         let healthy_only = request.healthy_only;
 
+        info!(
+            "ServiceQueryRequest: namespace='{}', group='{}', service='{}', cluster='{}', healthy_only={}",
+            namespace, group_name, service_name, cluster, healthy_only
+        );
+
         let service_info = self.naming_service.get_service(
             namespace,
             group_name,
             service_name,
             cluster,
             healthy_only,
+        );
+
+        info!(
+            "ServiceQueryResponse: service='{}', hosts_count={}, clusters='{}'",
+            service_name,
+            service_info.hosts.len(),
+            service_info.clusters
         );
 
         let mut response = QueryServiceResponse::new();
@@ -508,6 +523,13 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
         let service_info =
             self.naming_service
                 .get_service(namespace, group_name, service_name, clusters, false);
+
+        info!(
+            "SubscribeServiceResponse: service='{}', clusters='{}', hosts_count={}",
+            service_name,
+            service_info.clusters,
+            service_info.hosts.len()
+        );
 
         let mut response = SubscribeServiceResponse::new();
         response.response.request_id = request_id;

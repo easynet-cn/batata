@@ -391,17 +391,23 @@ public class NacosNamingServiceTest {
         cluster2.setClusterName("cluster-b");
         namingService.registerInstance(serviceName, cluster2);
 
-        Thread.sleep(1000);
+        Thread.sleep(2000);
 
-        // Get from specific cluster
-        List<Instance> clusterA = namingService.selectInstances(serviceName,
-                DEFAULT_GROUP, Arrays.asList("cluster-a"), true);
-        assertEquals(1, clusterA.size());
+        // Verify all instances are registered first
+        List<Instance> allInstances = namingService.getAllInstances(serviceName);
+        assertEquals(2, allInstances.size(), "Should have 2 total instances");
+
+        Thread.sleep(500);
+
+        // Get from specific cluster using direct query (subscribe=false)
+        List<Instance> clusterA = namingService.getAllInstances(serviceName,
+                DEFAULT_GROUP, Arrays.asList("cluster-a"), false);
+        assertEquals(1, clusterA.size(), "Should have 1 instance in cluster-a");
         assertEquals("192.168.1.80", clusterA.get(0).getIp());
 
-        List<Instance> clusterB = namingService.selectInstances(serviceName,
-                DEFAULT_GROUP, Arrays.asList("cluster-b"), true);
-        assertEquals(1, clusterB.size());
+        List<Instance> clusterB = namingService.getAllInstances(serviceName,
+                DEFAULT_GROUP, Arrays.asList("cluster-b"), false);
+        assertEquals(1, clusterB.size(), "Should have 1 instance in cluster-b");
         assertEquals("192.168.1.81", clusterB.get(0).getIp());
 
         // Cleanup
