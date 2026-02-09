@@ -131,6 +131,7 @@ kube = { version = "0.98", features = ["runtime", "client", "derive", "rustls-tl
 k8s-openapi = { version = "0.24", features = ["v1_31"] }
 
 [dev-dependencies]
+batata-client = { path = "../batata-client" }
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio = { version = "1.49", features = ["full", "test-util"] }
 reqwest = { version = "0.12", features = ["json"] }

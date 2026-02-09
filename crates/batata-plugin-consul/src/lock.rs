@@ -255,41 +255,41 @@ impl ConsulLockService {
         let lock_value = opts.value.clone().unwrap_or_default();
 
         // Check if key exists and is locked
-        if let Some(existing) = self.kv_service.get(&lock_key) {
-            if existing.session.is_some() {
-                // Lock is held by another session
-                // Try waiting if wait time is specified
-                if let Some(wait_time) = &opts.lock_wait_time {
-                    let wait_ms = parse_duration_ms(wait_time).unwrap_or(0);
-                    if wait_ms > 0 {
-                        // Add to wait queue
-                        let (tx, rx) = tokio::sync::oneshot::channel();
-                        {
-                            let mut waiters = self.lock_waiters.write().await;
-                            waiters.entry(lock_key.clone()).or_default().push(tx);
-                        }
+        if let Some(existing) = self.kv_service.get(&lock_key)
+            && existing.session.is_some()
+        {
+            // Lock is held by another session
+            // Try waiting if wait time is specified
+            if let Some(wait_time) = &opts.lock_wait_time {
+                let wait_ms = parse_duration_ms(wait_time).unwrap_or(0);
+                if wait_ms > 0 {
+                    // Add to wait queue
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    {
+                        let mut waiters = self.lock_waiters.write().await;
+                        waiters.entry(lock_key.clone()).or_default().push(tx);
+                    }
 
-                        // Wait for notification or timeout
-                        let result = tokio::time::timeout(Duration::from_millis(wait_ms), rx).await;
+                    // Wait for notification or timeout
+                    let result = tokio::time::timeout(Duration::from_millis(wait_ms), rx).await;
 
-                        if result.is_ok() {
-                            // Retry lock acquisition
-                            return self
-                                .try_acquire_lock(&lock_key, &session_id, &lock_value)
-                                .await;
-                        }
+                    if result.is_ok() {
+                        // Retry lock acquisition
+                        return self
+                            .try_acquire_lock(&lock_key, &session_id, &lock_value)
+                            .await;
                     }
                 }
-
-                // Could not acquire lock
-                // Destroy the session we created
-                self.session_service.destroy_session(&session_id);
-                return LockAcquireResult {
-                    acquired: false,
-                    lock: None,
-                    session: None,
-                };
             }
+
+            // Could not acquire lock
+            // Destroy the session we created
+            self.session_service.destroy_session(&session_id);
+            return LockAcquireResult {
+                acquired: false,
+                lock: None,
+                session: None,
+            };
         }
 
         self.try_acquire_lock(&lock_key, &session_id, &lock_value)
@@ -538,30 +538,30 @@ impl ConsulSemaphoreService {
     fn get_holders(&self, prefix: &str, _limit: u32) -> Vec<SemaphoreHolder> {
         let lock_key = format!("{}/.lock", prefix);
 
-        if let Some(pair) = self.kv_service.get(&lock_key) {
-            if let Ok(entry) = serde_json::from_str::<SemaphoreLockEntry>(
+        if let Some(pair) = self.kv_service.get(&lock_key)
+            && let Ok(entry) = serde_json::from_str::<SemaphoreLockEntry>(
                 &pair.decoded_value().unwrap_or_default(),
-            ) {
-                return entry
-                    .holders
-                    .keys()
-                    .map(|session| {
-                        // Get contender info for value
-                        let contender_key = format!("{}/{}", prefix, session);
-                        let value = self
-                            .kv_service
-                            .get(&contender_key)
-                            .and_then(|p| p.decoded_value())
-                            .and_then(|v| serde_json::from_str::<SemaphoreContender>(&v).ok())
-                            .and_then(|c| c.value);
+            )
+        {
+            return entry
+                .holders
+                .keys()
+                .map(|session| {
+                    // Get contender info for value
+                    let contender_key = format!("{}/{}", prefix, session);
+                    let value = self
+                        .kv_service
+                        .get(&contender_key)
+                        .and_then(|p| p.decoded_value())
+                        .and_then(|v| serde_json::from_str::<SemaphoreContender>(&v).ok())
+                        .and_then(|c| c.value);
 
-                        SemaphoreHolder {
-                            session: session.clone(),
-                            value,
-                        }
-                    })
-                    .collect();
-            }
+                    SemaphoreHolder {
+                        session: session.clone(),
+                        value,
+                    }
+                })
+                .collect();
         }
 
         Vec::new()
@@ -573,14 +573,14 @@ impl ConsulSemaphoreService {
         let contender_key = format!("{}/{}", prefix, session_id);
 
         // Remove from holders
-        if let Some(pair) = self.kv_service.get(&lock_key) {
-            if let Ok(mut entry) = serde_json::from_str::<SemaphoreLockEntry>(
+        if let Some(pair) = self.kv_service.get(&lock_key)
+            && let Ok(mut entry) = serde_json::from_str::<SemaphoreLockEntry>(
                 &pair.decoded_value().unwrap_or_default(),
-            ) {
-                entry.holders.remove(session_id);
-                let lock_json = serde_json::to_string(&entry).unwrap_or_default();
-                self.kv_service.put(lock_key, &lock_json, None);
-            }
+            )
+        {
+            entry.holders.remove(session_id);
+            let lock_json = serde_json::to_string(&entry).unwrap_or_default();
+            self.kv_service.put(lock_key, &lock_json, None);
         }
 
         // Remove contender entry
@@ -596,19 +596,19 @@ impl ConsulSemaphoreService {
     pub fn get_info(&self, prefix: &str) -> Option<Semaphore> {
         let lock_key = format!("{}/.lock", prefix);
 
-        if let Some(pair) = self.kv_service.get(&lock_key) {
-            if let Ok(entry) = serde_json::from_str::<SemaphoreLockEntry>(
+        if let Some(pair) = self.kv_service.get(&lock_key)
+            && let Ok(entry) = serde_json::from_str::<SemaphoreLockEntry>(
                 &pair.decoded_value().unwrap_or_default(),
-            ) {
-                let holders = self.get_holders(prefix, entry.limit);
-                return Some(Semaphore {
-                    prefix: prefix.to_string(),
-                    limit: entry.limit,
-                    holders,
-                    is_held: false,
-                    session: None,
-                });
-            }
+            )
+        {
+            let holders = self.get_holders(prefix, entry.limit);
+            return Some(Semaphore {
+                prefix: prefix.to_string(),
+                limit: entry.limit,
+                holders,
+                is_held: false,
+                session: None,
+            });
         }
 
         None
@@ -862,5 +862,224 @@ mod tests {
         let opts = SemaphoreOptions::default();
         assert_eq!(opts.limit, 1);
         assert_eq!(opts.session_ttl, Some("15s".to_string()));
+    }
+
+    #[test]
+    fn test_parse_duration_ms_edge_cases() {
+        assert_eq!(parse_duration_ms("0s"), Some(0));
+        assert_eq!(parse_duration_ms(""), None);
+        assert_eq!(parse_duration_ms("abc"), None);
+        assert_eq!(parse_duration_ms("100"), Some(100_000)); // default seconds
+        assert_eq!(parse_duration_ms("2h"), Some(7_200_000));
+    }
+
+    #[tokio::test]
+    async fn test_lock_acquire_release() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let lock_svc = ConsulLockService::new(kv.clone(), session.clone());
+
+        let opts = LockOptions {
+            key: "service/leader".to_string(),
+            session_ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+
+        // Acquire lock
+        let result = lock_svc.lock(&opts).await;
+        assert!(result.acquired);
+        assert!(result.session.is_some());
+        let session_id = result.session.unwrap();
+
+        // Lock info should be available
+        let info = lock_svc.get_lock_info("service/leader");
+        assert!(info.is_some());
+        let lock = info.unwrap();
+        assert!(lock.is_held);
+        assert_eq!(lock.session, session_id);
+
+        // Release lock
+        let released = lock_svc.unlock("service/leader", &session_id).await;
+        assert!(released);
+
+        // Lock should no longer exist
+        assert!(lock_svc.get_lock_info("service/leader").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_lock_release_wrong_session() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let lock_svc = ConsulLockService::new(kv.clone(), session.clone());
+
+        let opts = LockOptions {
+            key: "test/lock".to_string(),
+            session_ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+
+        let result = lock_svc.lock(&opts).await;
+        assert!(result.acquired);
+
+        // Try to release with wrong session
+        let released = lock_svc.unlock("test/lock", "wrong-session-id").await;
+        assert!(!released);
+
+        // Lock should still be held
+        assert!(lock_svc.get_lock_info("test/lock").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_lock_destroy() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let lock_svc = ConsulLockService::new(kv.clone(), session.clone());
+
+        let opts = LockOptions {
+            key: "destroy/me".to_string(),
+            session_ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+
+        let result = lock_svc.lock(&opts).await;
+        assert!(result.acquired);
+
+        // Destroy lock
+        let destroyed = lock_svc.destroy("destroy/me").await;
+        assert!(destroyed);
+
+        // Lock should not exist
+        assert!(lock_svc.get_lock_info("destroy/me").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_lock_renew() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let lock_svc = ConsulLockService::new(kv.clone(), session.clone());
+
+        let opts = LockOptions {
+            key: "renew/me".to_string(),
+            session_ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+
+        let result = lock_svc.lock(&opts).await;
+        assert!(result.acquired);
+        let session_id = result.session.unwrap();
+
+        // Renew lock
+        assert!(lock_svc.renew_lock("renew/me", &session_id));
+
+        // Renew with wrong session
+        assert!(!lock_svc.renew_lock("renew/me", "wrong-session"));
+
+        // Renew nonexistent lock
+        assert!(!lock_svc.renew_lock("nonexistent", &session_id));
+    }
+
+    #[tokio::test]
+    async fn test_lock_with_value() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let lock_svc = ConsulLockService::new(kv.clone(), session.clone());
+
+        let opts = LockOptions {
+            key: "valued/lock".to_string(),
+            value: Some("leader-node-1".to_string()),
+            session_ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+
+        let result = lock_svc.lock(&opts).await;
+        assert!(result.acquired);
+
+        let info = lock_svc.get_lock_info("valued/lock").unwrap();
+        assert_eq!(info.value, Some("leader-node-1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_lock() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let lock_svc = ConsulLockService::new(kv.clone(), session.clone());
+
+        assert!(lock_svc.get_lock_info("nonexistent").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_semaphore_acquire_release() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let sem_svc = ConsulSemaphoreService::new(kv.clone(), session.clone());
+
+        let opts = SemaphoreOptions {
+            prefix: "service/workers".to_string(),
+            limit: 3,
+            session_ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+
+        // Acquire first slot
+        let result = sem_svc.acquire(&opts).await;
+        assert!(result.is_some());
+        let sem = result.unwrap();
+        assert!(sem.is_held);
+        assert_eq!(sem.limit, 3);
+        assert_eq!(sem.holders.len(), 1);
+        let session_id = sem.session.unwrap();
+
+        // Release
+        let released = sem_svc.release("service/workers", &session_id).await;
+        assert!(released);
+    }
+
+    #[tokio::test]
+    async fn test_semaphore_limit_enforcement() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let sem_svc = ConsulSemaphoreService::new(kv.clone(), session.clone());
+
+        let opts = SemaphoreOptions {
+            prefix: "limited/sem".to_string(),
+            limit: 2,
+            session_ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+
+        // Acquire 2 slots (the limit)
+        let r1 = sem_svc.acquire(&opts).await;
+        assert!(r1.is_some());
+        let r2 = sem_svc.acquire(&opts).await;
+        assert!(r2.is_some());
+
+        // Third should fail
+        let r3 = sem_svc.acquire(&opts).await;
+        assert!(r3.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_semaphore_info() {
+        let kv = Arc::new(ConsulKVService::new());
+        let session = Arc::new(ConsulSessionService::new());
+        let sem_svc = ConsulSemaphoreService::new(kv.clone(), session.clone());
+
+        // No semaphore exists yet
+        assert!(sem_svc.get_info("nonexistent").is_none());
+
+        let opts = SemaphoreOptions {
+            prefix: "info/sem".to_string(),
+            limit: 5,
+            session_ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+
+        sem_svc.acquire(&opts).await;
+
+        let info = sem_svc.get_info("info/sem");
+        assert!(info.is_some());
+        let sem = info.unwrap();
+        assert_eq!(sem.limit, 5);
+        assert_eq!(sem.holders.len(), 1);
     }
 }

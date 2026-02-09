@@ -201,6 +201,7 @@ pub enum ResourceType {
     Agent,
     Key,
     Node,
+    Operator,
     Service,
     Session,
     Query,
@@ -752,7 +753,7 @@ query_prefix "" { policy = "write" }
 
         // Select rules based on resource type
         let rules = match resource_type {
-            ResourceType::Agent => &all_rules.agent_rules,
+            ResourceType::Agent | ResourceType::Operator => &all_rules.agent_rules,
             ResourceType::Key => &all_rules.key_rules,
             ResourceType::Node => &all_rules.node_rules,
             ResourceType::Service => &all_rules.service_rules,
@@ -839,13 +840,13 @@ pub struct AclServicePersistent {
     enabled: bool,
     default_policy: RulePolicy,
     /// In-memory cache for tokens
-    token_cache: Arc<DashMap<String, AclToken>>,
+    pub(crate) token_cache: Arc<DashMap<String, AclToken>>,
     /// In-memory cache for policies
-    policy_cache: Arc<DashMap<String, AclPolicy>>,
+    pub(crate) policy_cache: Arc<DashMap<String, AclPolicy>>,
     /// In-memory cache for roles
-    role_cache: Arc<DashMap<String, AclRole>>,
+    pub(crate) role_cache: Arc<DashMap<String, AclRole>>,
     /// In-memory cache for auth methods
-    auth_method_cache: Arc<DashMap<String, AuthMethod>>,
+    pub(crate) auth_method_cache: Arc<DashMap<String, AuthMethod>>,
 }
 
 impl AclServicePersistent {
@@ -1220,7 +1221,7 @@ query_prefix "" { policy = "write" }
     /// Delete a policy by ID
     pub async fn delete_policy(&self, id: &str) -> bool {
         let data_id = format!("policy:{}", id);
-        match batata_config::service::config::delete(
+        batata_config::service::config::delete(
             &self.db,
             &data_id,
             CONSUL_ACL_GROUP,
@@ -1230,10 +1231,7 @@ query_prefix "" { policy = "write" }
             "",
         )
         .await
-        {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        .is_ok()
     }
 
     /// List all policies
@@ -1771,7 +1769,7 @@ query_prefix "" { policy = "write" }
         }
 
         let rules = match resource_type {
-            ResourceType::Agent => &all_rules.agent_rules,
+            ResourceType::Agent | ResourceType::Operator => &all_rules.agent_rules,
             ResourceType::Key => &all_rules.key_rules,
             ResourceType::Node => &all_rules.node_rules,
             ResourceType::Service => &all_rules.service_rules,
@@ -1844,10 +1842,8 @@ struct AclError {
 }
 
 impl AclError {
-    fn new(msg: &str) -> Self {
-        Self {
-            error: msg.to_string(),
-        }
+    fn new(msg: impl Into<String>) -> Self {
+        Self { error: msg.into() }
     }
 }
 
@@ -2122,7 +2118,7 @@ pub async fn acl_login(
     let auth_method = match acl_service.get_auth_method(&body.auth_method) {
         Some(m) => m,
         None => {
-            return HttpResponse::NotFound().json(AclError::new(&format!(
+            return HttpResponse::NotFound().json(AclError::new(format!(
                 "Auth method '{}' not found",
                 body.auth_method
             )));
@@ -2186,10 +2182,10 @@ pub async fn acl_logout(acl_service: web::Data<AclService>, req: HttpRequest) ->
     }
 
     // Find and delete the token
-    if let Some(token) = acl_service.get_token(&secret_id) {
-        if acl_service.delete_token(&token.accessor_id) {
-            return HttpResponse::Ok().json(true);
-        }
+    if let Some(token) = acl_service.get_token(&secret_id)
+        && acl_service.delete_token(&token.accessor_id)
+    {
+        return HttpResponse::Ok().json(true);
     }
 
     // Also try direct removal from memory
@@ -2906,7 +2902,7 @@ pub async fn acl_login_persistent(
     let auth_method = match acl_service.get_auth_method(&body.auth_method).await {
         Some(m) => m,
         None => {
-            return HttpResponse::NotFound().json(AclError::new(&format!(
+            return HttpResponse::NotFound().json(AclError::new(format!(
                 "Auth method '{}' not found",
                 body.auth_method
             )));
@@ -2960,13 +2956,668 @@ pub async fn acl_logout_persistent(
     }
 
     // Find and delete the token
-    if let Some(token) = acl_service.get_token(&secret_id).await {
-        if acl_service.delete_token(&token.accessor_id).await {
-            return HttpResponse::Ok().json(true);
-        }
+    if let Some(token) = acl_service.get_token(&secret_id).await
+        && acl_service.delete_token(&token.accessor_id).await
+    {
+        return HttpResponse::Ok().json(true);
     }
 
     HttpResponse::NotFound().json(AclError::new("Token not found"))
+}
+
+// ============================================================================
+// In-memory stores for binding rules and templated policies
+// ============================================================================
+static MEMORY_BINDING_RULES: LazyLock<DashMap<String, BindingRule>> = LazyLock::new(DashMap::new);
+
+/// ACL Binding Rule structure
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BindingRule {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub description: String,
+    pub auth_method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector: Option<String>,
+    pub bind_type: String,
+    pub bind_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bind_vars: Option<HashMap<String, String>>,
+    pub create_index: u64,
+    pub modify_index: u64,
+}
+
+/// Binding Rule create/update request
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BindingRuleRequest {
+    #[serde(default)]
+    pub description: Option<String>,
+    pub auth_method: String,
+    #[serde(default)]
+    pub selector: Option<String>,
+    pub bind_type: String,
+    pub bind_name: String,
+    #[serde(default)]
+    pub bind_vars: Option<HashMap<String, String>>,
+}
+
+/// ACL Replication status
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AclReplicationStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub source_datacenter: String,
+    pub replication_type: String,
+    pub replicated_index: u64,
+    pub replicated_role_index: u64,
+    pub replicated_token_index: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_success: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error_message: Option<String>,
+}
+
+/// Templated policy definition
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TemplatedPolicy {
+    pub template_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Templated policy preview request
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TemplatedPolicyPreviewRequest {
+    pub name: String,
+}
+
+/// Token update request
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct TokenUpdateRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accessor_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policies: Option<Vec<PolicyLink>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<RoleLink>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local: Option<bool>,
+}
+
+/// Policy update request
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct PolicyUpdateRequest {
+    #[serde(rename = "ID", skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub rules: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub datacenters: Option<Vec<String>>,
+}
+
+// ============================================================================
+// Missing ACL Service methods (in-memory)
+// ============================================================================
+
+impl AclService {
+    /// Update an existing token
+    pub fn update_token(&self, accessor_id: &str, update: TokenUpdateRequest) -> Option<AclToken> {
+        let now = chrono::Utc::now().to_rfc3339();
+        // Find token by accessor_id
+        let secret_key = {
+            let mut found_key = None;
+            for entry in MEMORY_TOKENS.iter() {
+                if entry.value().accessor_id == accessor_id {
+                    found_key = Some(entry.key().clone());
+                    break;
+                }
+            }
+            found_key?
+        };
+
+        let mut token = MEMORY_TOKENS.get(&secret_key)?.value().clone();
+
+        if let Some(desc) = update.description {
+            token.description = desc;
+        }
+        if let Some(policies) = update.policies {
+            token.policies = policies;
+        }
+        if let Some(roles) = update.roles {
+            token.roles = roles;
+        }
+        if let Some(local) = update.local {
+            token.local = local;
+        }
+        token.modify_time = now;
+
+        MEMORY_TOKENS.insert(secret_key, token.clone());
+        Some(token)
+    }
+
+    /// Update an existing policy
+    pub fn update_policy(&self, id: &str, update: PolicyUpdateRequest) -> Option<AclPolicy> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut policy = MEMORY_POLICIES.get(id)?.value().clone();
+
+        let old_name = policy.name.clone();
+        policy.name = update.name;
+        if let Some(desc) = update.description {
+            policy.description = desc;
+        }
+        policy.rules = update.rules;
+        policy.datacenters = update.datacenters;
+        policy.modify_time = now;
+
+        // Update name mapping if name changed
+        if old_name != policy.name {
+            MEMORY_POLICIES.remove(&old_name);
+            MEMORY_POLICIES.insert(policy.name.clone(), policy.clone());
+        }
+        MEMORY_POLICIES.insert(policy.id.clone(), policy.clone());
+        Some(policy)
+    }
+
+    /// Create a binding rule
+    pub fn create_binding_rule(&self, req: BindingRuleRequest) -> BindingRule {
+        let id = uuid::Uuid::new_v4().to_string();
+        let rule = BindingRule {
+            id: id.clone(),
+            description: req.description.unwrap_or_default(),
+            auth_method: req.auth_method,
+            selector: req.selector,
+            bind_type: req.bind_type,
+            bind_name: req.bind_name,
+            bind_vars: req.bind_vars,
+            create_index: 1,
+            modify_index: 1,
+        };
+        MEMORY_BINDING_RULES.insert(id, rule.clone());
+        rule
+    }
+
+    /// Get a binding rule by ID
+    pub fn get_binding_rule(&self, id: &str) -> Option<BindingRule> {
+        MEMORY_BINDING_RULES.get(id).map(|r| r.value().clone())
+    }
+
+    /// Update a binding rule
+    pub fn update_binding_rule(&self, id: &str, req: BindingRuleRequest) -> Option<BindingRule> {
+        let mut rule = MEMORY_BINDING_RULES.get(id)?.value().clone();
+        if let Some(desc) = req.description {
+            rule.description = desc;
+        }
+        rule.auth_method = req.auth_method;
+        rule.selector = req.selector;
+        rule.bind_type = req.bind_type;
+        rule.bind_name = req.bind_name;
+        rule.bind_vars = req.bind_vars;
+        rule.modify_index += 1;
+        MEMORY_BINDING_RULES.insert(id.to_string(), rule.clone());
+        Some(rule)
+    }
+
+    /// Delete a binding rule
+    pub fn delete_binding_rule(&self, id: &str) -> bool {
+        MEMORY_BINDING_RULES.remove(id).is_some()
+    }
+
+    /// List binding rules
+    pub fn list_binding_rules(&self) -> Vec<BindingRule> {
+        MEMORY_BINDING_RULES
+            .iter()
+            .map(|r| r.value().clone())
+            .collect()
+    }
+}
+
+// ============================================================================
+// Missing ACL HTTP handlers (in-memory)
+// ============================================================================
+
+/// PUT /v1/acl/token/{id} - Update token
+pub async fn update_token(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    body: web::Json<TokenUpdateRequest>,
+) -> HttpResponse {
+    let accessor_id = path.into_inner();
+    match acl_service.update_token(&accessor_id, body.into_inner()) {
+        Some(token) => HttpResponse::Ok().json(token),
+        None => HttpResponse::NotFound().json(AclError::new("Token not found")),
+    }
+}
+
+/// PUT /v1/acl/policy/{id} - Update policy
+pub async fn update_policy(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    body: web::Json<PolicyUpdateRequest>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    match acl_service.update_policy(&id, body.into_inner()) {
+        Some(policy) => HttpResponse::Ok().json(policy),
+        None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
+    }
+}
+
+/// GET /v1/acl/policy/name/{name} - Get policy by name
+pub async fn get_policy_by_name(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let name = path.into_inner();
+    match acl_service.get_policy(&name) {
+        Some(policy) => HttpResponse::Ok().json(policy),
+        None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
+    }
+}
+
+/// GET /v1/acl/role/name/{name} - Get role by name
+pub async fn get_role_by_name(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let name = path.into_inner();
+    match acl_service.get_role(&name) {
+        Some(role) => HttpResponse::Ok().json(role),
+        None => HttpResponse::NotFound().json(AclError::new("Role not found")),
+    }
+}
+
+/// GET /v1/acl/replication - ACL replication status
+pub async fn acl_replication() -> HttpResponse {
+    HttpResponse::Ok().json(AclReplicationStatus {
+        enabled: false,
+        running: false,
+        source_datacenter: "dc1".to_string(),
+        replication_type: "tokens".to_string(),
+        replicated_index: 0,
+        replicated_role_index: 0,
+        replicated_token_index: 0,
+        last_success: None,
+        last_error: None,
+        last_error_message: None,
+    })
+}
+
+/// GET /v1/acl/binding-rules - List binding rules
+pub async fn list_binding_rules(acl_service: web::Data<AclService>) -> HttpResponse {
+    HttpResponse::Ok().json(acl_service.list_binding_rules())
+}
+
+/// PUT /v1/acl/binding-rule - Create binding rule
+pub async fn create_binding_rule(
+    acl_service: web::Data<AclService>,
+    body: web::Json<BindingRuleRequest>,
+) -> HttpResponse {
+    let rule = acl_service.create_binding_rule(body.into_inner());
+    HttpResponse::Ok().json(rule)
+}
+
+/// GET /v1/acl/binding-rule/{id} - Get binding rule
+pub async fn get_binding_rule(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    match acl_service.get_binding_rule(&id) {
+        Some(rule) => HttpResponse::Ok().json(rule),
+        None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
+    }
+}
+
+/// PUT /v1/acl/binding-rule/{id} - Update binding rule
+pub async fn update_binding_rule(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    body: web::Json<BindingRuleRequest>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    match acl_service.update_binding_rule(&id, body.into_inner()) {
+        Some(rule) => HttpResponse::Ok().json(rule),
+        None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
+    }
+}
+
+/// DELETE /v1/acl/binding-rule/{id} - Delete binding rule
+pub async fn delete_binding_rule(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    if acl_service.delete_binding_rule(&id) {
+        HttpResponse::Ok().json(true)
+    } else {
+        HttpResponse::NotFound().json(AclError::new("Binding rule not found"))
+    }
+}
+
+/// GET /v1/acl/templated-policies - List templated policies
+pub async fn list_templated_policies() -> HttpResponse {
+    let mut policies = HashMap::new();
+    policies.insert(
+        "builtin/service".to_string(),
+        TemplatedPolicy {
+            template_name: "builtin/service".to_string(),
+            schema: Some(
+                r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string(),
+            ),
+            template: None,
+            description: Some(
+                "Gives the token or role permissions for a service and its sidecar proxy"
+                    .to_string(),
+            ),
+        },
+    );
+    policies.insert(
+        "builtin/node".to_string(),
+        TemplatedPolicy {
+            template_name: "builtin/node".to_string(),
+            schema: Some(
+                r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string(),
+            ),
+            template: None,
+            description: Some("Gives the token or role permissions for a node".to_string()),
+        },
+    );
+    policies.insert(
+        "builtin/dns".to_string(),
+        TemplatedPolicy {
+            template_name: "builtin/dns".to_string(),
+            schema: None,
+            template: None,
+            description: Some(
+                "Gives the token or role permissions for the DNS catalog".to_string(),
+            ),
+        },
+    );
+    HttpResponse::Ok().json(policies)
+}
+
+/// GET /v1/acl/templated-policy/name/{name} - Get templated policy by name
+pub async fn get_templated_policy(path: web::Path<String>) -> HttpResponse {
+    let name = path.into_inner();
+    match name.as_str() {
+        "builtin/service" => HttpResponse::Ok().json(TemplatedPolicy {
+            template_name: "builtin/service".to_string(),
+            schema: Some(r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string()),
+            template: Some(r#"service "{{.Name}}" { policy = "write" } service "{{.Name}}-sidecar-proxy" { policy = "write" }"#.to_string()),
+            description: Some("Gives the token or role permissions for a service and its sidecar proxy".to_string()),
+        }),
+        "builtin/node" => HttpResponse::Ok().json(TemplatedPolicy {
+            template_name: "builtin/node".to_string(),
+            schema: Some(r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string()),
+            template: Some(r#"node "{{.Name}}" { policy = "write" }"#.to_string()),
+            description: Some("Gives the token or role permissions for a node".to_string()),
+        }),
+        "builtin/dns" => HttpResponse::Ok().json(TemplatedPolicy {
+            template_name: "builtin/dns".to_string(),
+            schema: None,
+            template: Some(r#"node_prefix "" { policy = "read" } service_prefix "" { policy = "read" }"#.to_string()),
+            description: Some("Gives the token or role permissions for the DNS catalog".to_string()),
+        }),
+        _ => HttpResponse::BadRequest().json(AclError::new(format!("Unknown templated policy: {}", name))),
+    }
+}
+
+/// POST /v1/acl/templated-policy/preview/{name} - Preview rendered template
+pub async fn preview_templated_policy(
+    path: web::Path<String>,
+    body: web::Json<TemplatedPolicyPreviewRequest>,
+) -> HttpResponse {
+    let template_name = path.into_inner();
+    let var_name = &body.name;
+
+    let rules = match template_name.as_str() {
+        "builtin/service" => format!(
+            r#"service "{}" {{ policy = "write" }} service "{}-sidecar-proxy" {{ policy = "write" }}"#,
+            var_name, var_name
+        ),
+        "builtin/node" => format!(r#"node "{}" {{ policy = "write" }}"#, var_name),
+        "builtin/dns" => {
+            r#"node_prefix "" { policy = "read" } service_prefix "" { policy = "read" }"#
+                .to_string()
+        }
+        _ => {
+            return HttpResponse::BadRequest().json(AclError::new(format!(
+                "Unknown templated policy: {}",
+                template_name
+            )));
+        }
+    };
+
+    HttpResponse::Ok().json(serde_json::json!({ "Rules": rules }))
+}
+
+// ============================================================================
+// Missing ACL HTTP handlers (persistent)
+// ============================================================================
+
+/// PUT /v1/acl/token/{id} - Update token (persistent)
+pub async fn update_token_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    path: web::Path<String>,
+    body: web::Json<TokenUpdateRequest>,
+) -> HttpResponse {
+    let accessor_id = path.into_inner();
+    let update = body.into_inner();
+
+    // Find token by accessor_id
+    let token_opt = {
+        let mut found = None;
+        for entry in acl_service.token_cache.iter() {
+            if entry.value().accessor_id == accessor_id {
+                found = Some(entry.key().clone());
+                break;
+            }
+        }
+        found
+    };
+
+    let secret_key = match token_opt {
+        Some(k) => k,
+        None => return HttpResponse::NotFound().json(AclError::new("Token not found")),
+    };
+
+    if let Some(entry) = acl_service.token_cache.get(&secret_key) {
+        let mut token = entry.value().clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        if let Some(desc) = update.description {
+            token.description = desc;
+        }
+        if let Some(policies) = update.policies {
+            token.policies = policies;
+        }
+        if let Some(roles) = update.roles {
+            token.roles = roles;
+        }
+        if let Some(local) = update.local {
+            token.local = local;
+        }
+        token.modify_time = now;
+        drop(entry);
+        acl_service.token_cache.insert(secret_key, token.clone());
+        HttpResponse::Ok().json(token)
+    } else {
+        HttpResponse::NotFound().json(AclError::new("Token not found"))
+    }
+}
+
+/// PUT /v1/acl/policy/{id} - Update policy (persistent)
+pub async fn update_policy_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    path: web::Path<String>,
+    body: web::Json<PolicyUpdateRequest>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    let update = body.into_inner();
+
+    if let Some(entry) = acl_service.policy_cache.get(&id) {
+        let mut policy = entry.value().clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        let old_name = policy.name.clone();
+        policy.name = update.name;
+        if let Some(desc) = update.description {
+            policy.description = desc;
+        }
+        policy.rules = update.rules;
+        policy.datacenters = update.datacenters;
+        policy.modify_time = now;
+        drop(entry);
+
+        if old_name != policy.name {
+            acl_service.policy_cache.remove(&old_name);
+            acl_service
+                .policy_cache
+                .insert(policy.name.clone(), policy.clone());
+        }
+        acl_service
+            .policy_cache
+            .insert(policy.id.clone(), policy.clone());
+        HttpResponse::Ok().json(policy)
+    } else {
+        HttpResponse::NotFound().json(AclError::new("Policy not found"))
+    }
+}
+
+/// GET /v1/acl/policy/name/{name} - Get policy by name (persistent)
+pub async fn get_policy_by_name_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let name = path.into_inner();
+    match acl_service.get_policy(&name).await {
+        Some(policy) => HttpResponse::Ok().json(policy),
+        None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
+    }
+}
+
+/// GET /v1/acl/role/name/{name} - Get role by name (persistent)
+pub async fn get_role_by_name_persistent(
+    acl_service: web::Data<AclServicePersistent>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let name = path.into_inner();
+    match acl_service.get_role(&name).await {
+        Some(role) => HttpResponse::Ok().json(role),
+        None => HttpResponse::NotFound().json(AclError::new("Role not found")),
+    }
+}
+
+/// GET /v1/acl/replication (persistent)
+pub async fn acl_replication_persistent() -> HttpResponse {
+    acl_replication().await
+}
+
+/// GET /v1/acl/binding-rules (persistent)
+pub async fn list_binding_rules_persistent() -> HttpResponse {
+    // Re-use in-memory store for binding rules
+    let rules: Vec<BindingRule> = MEMORY_BINDING_RULES
+        .iter()
+        .map(|r| r.value().clone())
+        .collect();
+    HttpResponse::Ok().json(rules)
+}
+
+/// PUT /v1/acl/binding-rule (persistent)
+pub async fn create_binding_rule_persistent(body: web::Json<BindingRuleRequest>) -> HttpResponse {
+    let req = body.into_inner();
+    let id = uuid::Uuid::new_v4().to_string();
+    let rule = BindingRule {
+        id: id.clone(),
+        description: req.description.unwrap_or_default(),
+        auth_method: req.auth_method,
+        selector: req.selector,
+        bind_type: req.bind_type,
+        bind_name: req.bind_name,
+        bind_vars: req.bind_vars,
+        create_index: 1,
+        modify_index: 1,
+    };
+    MEMORY_BINDING_RULES.insert(id, rule.clone());
+    HttpResponse::Ok().json(rule)
+}
+
+/// GET /v1/acl/binding-rule/{id} (persistent)
+pub async fn get_binding_rule_persistent(path: web::Path<String>) -> HttpResponse {
+    let id = path.into_inner();
+    match MEMORY_BINDING_RULES.get(&id) {
+        Some(rule) => HttpResponse::Ok().json(rule.value().clone()),
+        None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
+    }
+}
+
+/// PUT /v1/acl/binding-rule/{id} (persistent)
+pub async fn update_binding_rule_persistent(
+    path: web::Path<String>,
+    body: web::Json<BindingRuleRequest>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    let req = body.into_inner();
+
+    if let Some(entry) = MEMORY_BINDING_RULES.get(&id) {
+        let mut rule = entry.value().clone();
+        if let Some(desc) = req.description {
+            rule.description = desc;
+        }
+        rule.auth_method = req.auth_method;
+        rule.selector = req.selector;
+        rule.bind_type = req.bind_type;
+        rule.bind_name = req.bind_name;
+        rule.bind_vars = req.bind_vars;
+        rule.modify_index += 1;
+        drop(entry);
+        MEMORY_BINDING_RULES.insert(id, rule.clone());
+        HttpResponse::Ok().json(rule)
+    } else {
+        HttpResponse::NotFound().json(AclError::new("Binding rule not found"))
+    }
+}
+
+/// DELETE /v1/acl/binding-rule/{id} (persistent)
+pub async fn delete_binding_rule_persistent(path: web::Path<String>) -> HttpResponse {
+    let id = path.into_inner();
+    if MEMORY_BINDING_RULES.remove(&id).is_some() {
+        HttpResponse::Ok().json(true)
+    } else {
+        HttpResponse::NotFound().json(AclError::new("Binding rule not found"))
+    }
+}
+
+/// GET /v1/acl/templated-policies (persistent)
+pub async fn list_templated_policies_persistent() -> HttpResponse {
+    list_templated_policies().await
+}
+
+/// GET /v1/acl/templated-policy/name/{name} (persistent)
+pub async fn get_templated_policy_persistent(path: web::Path<String>) -> HttpResponse {
+    get_templated_policy(path).await
+}
+
+/// POST /v1/acl/templated-policy/preview/{name} (persistent)
+pub async fn preview_templated_policy_persistent(
+    path: web::Path<String>,
+    body: web::Json<TemplatedPolicyPreviewRequest>,
+) -> HttpResponse {
+    preview_templated_policy(path, body).await
 }
 
 #[cfg(test)]
@@ -3085,5 +3736,209 @@ mod tests {
         let denied = AuthzResult::denied("No permission");
         assert!(!denied.allowed);
         assert_eq!(denied.reason, "No permission");
+    }
+
+    #[test]
+    fn test_delete_token() {
+        let service = AclService::new();
+        let token = service.create_token(
+            "to-delete",
+            vec!["global-management".to_string()],
+            vec![],
+            false,
+        );
+        assert!(service.delete_token(&token.accessor_id));
+        // Deleting again should return false
+        assert!(!service.delete_token(&token.accessor_id));
+    }
+
+    #[test]
+    fn test_list_tokens_hides_secret() {
+        let service = AclService::new();
+        let tokens = service.list_tokens();
+        // All tokens in list should have secret_id = None
+        for t in &tokens {
+            assert!(t.secret_id.is_none());
+        }
+    }
+
+    #[test]
+    fn test_create_and_delete_policy() {
+        let service = AclService::new();
+        let policy = service.create_policy(
+            "acl-test-del-policy",
+            "For deletion test",
+            r#"key_prefix "" { policy = "read" }"#,
+        );
+
+        assert!(service.get_policy(&policy.id).is_some());
+        assert!(service.delete_policy(&policy.id));
+        assert!(service.get_policy(&policy.id).is_none());
+    }
+
+    #[test]
+    fn test_delete_nonexistent_policy() {
+        let service = AclService::new();
+        assert!(!service.delete_policy("nonexistent-policy-id"));
+    }
+
+    #[test]
+    fn test_role_crud() {
+        let service = AclService::new();
+
+        // Create policy first (roles link to policies)
+        let policy = service.create_policy(
+            "acl-role-test-policy",
+            "Test",
+            r#"service_prefix "" { policy = "read" }"#,
+        );
+
+        // Create role
+        let role = service.create_role("acl-test-role", "Test role", vec![policy.name.clone()]);
+        assert_eq!(role.name, "acl-test-role");
+        assert!(!role.policies.is_empty());
+
+        // Get by ID
+        let fetched = service.get_role(&role.id);
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().name, "acl-test-role");
+
+        // Get by name
+        let by_name = service.get_role("acl-test-role");
+        assert!(by_name.is_some());
+
+        // Update
+        let updated = service.update_role(
+            &role.id,
+            Some("acl-renamed-role"),
+            Some("Updated desc"),
+            None,
+        );
+        assert!(updated.is_some());
+        assert_eq!(updated.unwrap().name, "acl-renamed-role");
+
+        // Delete
+        assert!(service.delete_role(&role.id));
+        assert!(service.get_role(&role.id).is_none());
+    }
+
+    #[test]
+    fn test_delete_nonexistent_role() {
+        let service = AclService::new();
+        assert!(!service.delete_role("nonexistent-role-id"));
+    }
+
+    #[test]
+    fn test_auth_method_crud() {
+        let service = AclService::new();
+
+        let method = service.create_auth_method(
+            "acl-test-kubernetes",
+            "kubernetes",
+            Some("K8s Auth"),
+            Some("Kubernetes auth method"),
+            Some("5m"),
+            Some("local"),
+            None,
+        );
+        assert_eq!(method.name, "acl-test-kubernetes");
+        assert_eq!(method.method_type, "kubernetes");
+
+        // Get
+        let fetched = service.get_auth_method("acl-test-kubernetes");
+        assert!(fetched.is_some());
+
+        // Get nonexistent
+        assert!(service.get_auth_method("nonexistent-method").is_none());
+    }
+
+    #[test]
+    fn test_authorize_with_custom_policy() {
+        let service = AclService::new();
+
+        // Create a read-only policy for services
+        let policy = service.create_policy(
+            "acl-test-readonly-svc",
+            "Read only",
+            r#"service_prefix "" { policy = "read" }"#,
+        );
+
+        // Create token with this policy
+        let token =
+            service.create_token("readonly-token", vec![policy.name.clone()], vec![], false);
+
+        // Read should be allowed
+        let result = service.authorize(&token, ResourceType::Service, "web", false);
+        assert!(result.allowed);
+
+        // Write should be denied
+        let result = service.authorize(&token, ResourceType::Service, "web", true);
+        assert!(!result.allowed);
+    }
+
+    #[test]
+    fn test_authorize_deny_policy() {
+        let service = AclService::new();
+
+        let policy = service.create_policy(
+            "acl-test-deny-policy",
+            "Deny",
+            r#"key_prefix "secret/" { policy = "deny" }"#,
+        );
+
+        let token = service.create_token("deny-token", vec![policy.name.clone()], vec![], false);
+
+        // Should be denied for both read and write on secret/
+        let result = service.authorize(&token, ResourceType::Key, "secret/data", false);
+        assert!(!result.allowed);
+    }
+
+    #[test]
+    fn test_disabled_acl_allows_all() {
+        let service = AclService::disabled();
+
+        let token = AclToken::default();
+        let result = service.authorize(&token, ResourceType::Service, "anything", true);
+        assert!(result.allowed);
+    }
+
+    #[test]
+    fn test_parse_rules_node_and_session() {
+        let service = AclService::new();
+        let rules = r#"
+            node_prefix "web-" { policy = "write" }
+            session_prefix "" { policy = "read" }
+            query_prefix "q-" { policy = "write" }
+        "#;
+
+        let parsed = service.parse_rules(rules);
+        assert_eq!(parsed.node_rules.len(), 1);
+        assert_eq!(parsed.session_rules.len(), 1);
+        assert_eq!(parsed.query_rules.len(), 1);
+    }
+
+    #[test]
+    fn test_resource_type_coverage() {
+        // Ensure all resource types can be used in authorization
+        let service = AclService::new();
+        let token = service.get_token("root").unwrap();
+
+        let types = vec![
+            ResourceType::Service,
+            ResourceType::Key,
+            ResourceType::Node,
+            ResourceType::Session,
+            ResourceType::Query,
+            ResourceType::Agent,
+            ResourceType::Operator,
+        ];
+
+        for rt in types {
+            let result = service.authorize(&token, rt, "test", false);
+            assert!(
+                result.allowed,
+                "Root token should access all resource types"
+            );
+        }
     }
 }

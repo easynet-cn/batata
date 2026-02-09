@@ -1,7 +1,10 @@
 //! HTTP test client for API testing
 //!
 //! Provides a lightweight HTTP client optimized for integration testing.
+//! Uses `BatataHttpClient` from `batata-client` for HTTP transport,
+//! adding test-specific features (raw responses, token management, error types).
 
+use batata_client::{BatataHttpClient, HttpClientConfig};
 use reqwest::{Client, Response, StatusCode};
 use serde::{Serialize, de::DeserializeOwned};
 use std::time::Duration;
@@ -46,11 +49,20 @@ pub struct LoginResponse {
     pub username: String,
 }
 
-/// Test HTTP client
+/// Test HTTP client backed by `BatataHttpClient` for transport.
+///
+/// Adds test-specific features on top:
+/// - Raw response access (`raw_get`, `raw_post_form`)
+/// - Mutable token management (`set_token`, `clear_token`)
+/// - Cross-port login (`login_via`)
+/// - Test-specific error types (`TestClientError`)
 pub struct TestClient {
+    /// Low-level reqwest client for raw requests and login
     client: Client,
     base_url: String,
     access_token: Option<String>,
+    /// High-level HTTP client for typed requests (initialized after login)
+    http_client: Option<BatataHttpClient>,
 }
 
 impl TestClient {
@@ -67,6 +79,7 @@ impl TestClient {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
             access_token: None,
+            http_client: None,
         }
     }
 
@@ -84,6 +97,18 @@ impl TestClient {
     /// Get the base URL
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Initialize the `BatataHttpClient` with credentials for typed requests.
+    fn init_http_client(&mut self, username: &str, password: &str, auth_url: &str) {
+        let config = HttpClientConfig::new(&self.base_url)
+            .with_auth(username, password)
+            .with_auth_endpoint(auth_url);
+
+        // Use new_without_auth since we already have the token
+        if let Ok(hc) = BatataHttpClient::new_without_auth(config) {
+            self.http_client = Some(hc);
+        }
     }
 
     /// Parse login response body, supporting both flat and wrapped formats.
@@ -132,7 +157,9 @@ impl TestClient {
                 .text()
                 .await
                 .map_err(|e| TestClientError::ParseFailed(e.to_string()))?;
-            return self.parse_login_response(&body);
+            self.parse_login_response(&body)?;
+            self.init_http_client(username, password, "/v3/auth/user/login");
+            return Ok(());
         }
 
         Err(TestClientError::LoginFailed)
@@ -155,7 +182,9 @@ impl TestClient {
                 .text()
                 .await
                 .map_err(|e| TestClientError::ParseFailed(e.to_string()))?;
-            return self.parse_login_response(&body);
+            self.parse_login_response(&body)?;
+            self.init_http_client(username, password, "/v3/auth/user/login");
+            return Ok(());
         }
 
         Err(TestClientError::LoginFailed)
@@ -407,6 +436,12 @@ impl TestClient {
                 body,
             })
         }
+    }
+
+    /// Get the underlying `BatataHttpClient` (available after login).
+    /// Useful for tests that want to use typed API client methods.
+    pub fn http_client(&self) -> Option<&BatataHttpClient> {
+        self.http_client.as_ref()
     }
 }
 

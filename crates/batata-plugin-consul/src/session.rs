@@ -800,4 +800,175 @@ mod tests {
         let gone = service.get_session(&session.id);
         assert!(gone.is_none());
     }
+
+    #[test]
+    fn test_destroy_nonexistent_session() {
+        let service = ConsulSessionService::new();
+        assert!(!service.destroy_session("nonexistent-id"));
+    }
+
+    #[test]
+    fn test_get_nonexistent_session() {
+        let service = ConsulSessionService::new();
+        assert!(service.get_session("nonexistent-id").is_none());
+    }
+
+    #[test]
+    fn test_renew_nonexistent_session() {
+        let service = ConsulSessionService::new();
+        assert!(service.renew_session("nonexistent-id").is_none());
+    }
+
+    #[test]
+    fn test_list_sessions() {
+        let service = ConsulSessionService::new();
+
+        // Initially empty
+        assert!(service.list_sessions().is_empty());
+
+        let req1 = SessionCreateRequest {
+            name: Some("session-1".to_string()),
+            ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+        let req2 = SessionCreateRequest {
+            name: Some("session-2".to_string()),
+            ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+        service.create_session(req1);
+        service.create_session(req2);
+
+        let sessions = service.list_sessions();
+        assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
+    fn test_list_node_sessions() {
+        let service = ConsulSessionService::new();
+        let node_name = &service.node_name.clone();
+
+        let req = SessionCreateRequest {
+            name: Some("node-session".to_string()),
+            ttl: Some("60s".to_string()),
+            node: Some(node_name.clone()),
+            ..Default::default()
+        };
+        service.create_session(req);
+
+        let node_sessions = service.list_node_sessions(node_name);
+        assert_eq!(node_sessions.len(), 1);
+
+        let other = service.list_node_sessions("other-node");
+        assert!(other.is_empty());
+    }
+
+    #[test]
+    fn test_session_behavior_release() {
+        let service = ConsulSessionService::new();
+
+        let req = SessionCreateRequest {
+            name: Some("release-session".to_string()),
+            behavior: Some("release".to_string()),
+            ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+        let session = service.create_session(req);
+        assert_eq!(session.behavior, "release");
+    }
+
+    #[test]
+    fn test_session_behavior_delete() {
+        let service = ConsulSessionService::new();
+
+        let req = SessionCreateRequest {
+            name: Some("delete-session".to_string()),
+            behavior: Some("delete".to_string()),
+            ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+        let session = service.create_session(req);
+        assert_eq!(session.behavior, "delete");
+    }
+
+    #[test]
+    fn test_session_default_ttl() {
+        let service = ConsulSessionService::new();
+
+        let req = SessionCreateRequest {
+            name: Some("default-ttl".to_string()),
+            ..Default::default()
+        };
+        let session = service.create_session(req);
+        assert_eq!(session.ttl, "15s"); // default
+    }
+
+    #[test]
+    fn test_session_lock_delay() {
+        let service = ConsulSessionService::new();
+
+        let req = SessionCreateRequest {
+            name: Some("delayed".to_string()),
+            lock_delay: Some("30s".to_string()),
+            ttl: Some("60s".to_string()),
+            ..Default::default()
+        };
+        let session = service.create_session(req);
+        assert_eq!(session.lock_delay, 30);
+    }
+
+    #[test]
+    fn test_session_with_checks() {
+        let service = ConsulSessionService::new();
+
+        let req = SessionCreateRequest {
+            name: Some("checked-session".to_string()),
+            ttl: Some("60s".to_string()),
+            node_checks: Some(vec!["serfHealth".to_string()]),
+            service_checks: Some(vec!["service:web".to_string()]),
+            ..Default::default()
+        };
+        let session = service.create_session(req);
+        assert_eq!(session.node_checks, Some(vec!["serfHealth".to_string()]));
+        assert_eq!(
+            session.service_checks,
+            Some(vec!["service:web".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_session_unique_ids() {
+        let service = ConsulSessionService::new();
+
+        let ids: Vec<String> = (0..10)
+            .map(|_| {
+                let req = SessionCreateRequest {
+                    ttl: Some("60s".to_string()),
+                    ..Default::default()
+                };
+                service.create_session(req).id
+            })
+            .collect();
+
+        // All IDs should be unique
+        let mut deduped = ids.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(ids.len(), deduped.len());
+    }
+
+    #[test]
+    fn test_destroy_then_list() {
+        let service = ConsulSessionService::new();
+
+        let session = service.create_session(SessionCreateRequest {
+            name: Some("to-destroy".to_string()),
+            ttl: Some("60s".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(service.list_sessions().len(), 1);
+
+        service.destroy_session(&session.id);
+        assert_eq!(service.list_sessions().len(), 0);
+    }
 }

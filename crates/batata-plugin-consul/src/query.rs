@@ -891,4 +891,152 @@ mod tests {
         assert!(service.delete_query(&created.id));
         assert!(service.get_query(&created.id).is_none());
     }
+
+    #[test]
+    fn test_delete_nonexistent_query() {
+        let service = ConsulQueryService::new();
+        assert!(!service.delete_query("nonexistent-id"));
+    }
+
+    #[test]
+    fn test_list_queries() {
+        let service = ConsulQueryService::new();
+
+        // Create queries with unique names
+        let unique = uuid::Uuid::new_v4().to_string();
+        let mut created_ids = Vec::new();
+        for i in 0..3 {
+            let q = service.create_query(PreparedQueryCreateRequest {
+                name: Some(format!("list-query-{}-{}", unique, i)),
+                session: None,
+                token: None,
+                service: PreparedQueryService {
+                    service: format!("list-svc-{}", i),
+                    failover: None,
+                    only_passing: false,
+                    near: None,
+                    tags: None,
+                    node_meta: None,
+                    service_meta: None,
+                },
+                dns: None,
+                template: None,
+            });
+            created_ids.push(q.id);
+        }
+
+        let all = service.list_queries();
+        // All created queries should appear in the list
+        for id in &created_ids {
+            assert!(all.iter().any(|q| &q.id == id));
+        }
+    }
+
+    #[test]
+    fn test_update_query() {
+        let service = ConsulQueryService::new();
+
+        let created = service.create_query(PreparedQueryCreateRequest {
+            name: Some("original".to_string()),
+            session: None,
+            token: None,
+            service: PreparedQueryService {
+                service: "web".to_string(),
+                failover: None,
+                only_passing: false,
+                near: None,
+                tags: None,
+                node_meta: None,
+                service_meta: None,
+            },
+            dns: None,
+            template: None,
+        });
+
+        let updated = service.update_query(
+            &created.id,
+            PreparedQueryCreateRequest {
+                name: Some("updated".to_string()),
+                session: None,
+                token: None,
+                service: PreparedQueryService {
+                    service: "api".to_string(),
+                    failover: None,
+                    only_passing: true,
+                    near: None,
+                    tags: Some(vec!["v2".to_string()]),
+                    node_meta: None,
+                    service_meta: None,
+                },
+                dns: None,
+                template: None,
+            },
+        );
+
+        assert!(updated.is_some());
+        let q = updated.unwrap();
+        assert_eq!(q.name, "updated");
+        assert_eq!(q.service.service, "api");
+        assert!(q.service.only_passing);
+        assert_eq!(q.id, created.id); // ID preserved
+    }
+
+    #[test]
+    fn test_update_nonexistent_query() {
+        let service = ConsulQueryService::new();
+
+        let result = service.update_query(
+            "nonexistent",
+            PreparedQueryCreateRequest {
+                name: Some("x".to_string()),
+                session: None,
+                token: None,
+                service: PreparedQueryService {
+                    service: "x".to_string(),
+                    failover: None,
+                    only_passing: false,
+                    near: None,
+                    tags: None,
+                    node_meta: None,
+                    service_meta: None,
+                },
+                dns: None,
+                template: None,
+            },
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_query_unique_ids() {
+        let service = ConsulQueryService::new();
+
+        let ids: Vec<String> = (0..5)
+            .map(|i| {
+                service
+                    .create_query(PreparedQueryCreateRequest {
+                        name: Some(format!("q-{}", i)),
+                        session: None,
+                        token: None,
+                        service: PreparedQueryService {
+                            service: "s".to_string(),
+                            failover: None,
+                            only_passing: false,
+                            near: None,
+                            tags: None,
+                            node_meta: None,
+                            service_meta: None,
+                        },
+                        dns: None,
+                        template: None,
+                    })
+                    .id
+            })
+            .collect();
+
+        let mut deduped = ids.clone();
+        deduped.sort();
+        deduped.dedup();
+        assert_eq!(ids.len(), deduped.len());
+    }
 }

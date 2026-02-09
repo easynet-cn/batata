@@ -23,6 +23,8 @@ pub struct HttpClientConfig {
     pub read_timeout_ms: u64,
     /// Context path (e.g., "/nacos")
     pub context_path: String,
+    /// Auth endpoint path (default: "/v1/auth/login")
+    pub auth_endpoint: String,
 }
 
 impl Default for HttpClientConfig {
@@ -34,6 +36,7 @@ impl Default for HttpClientConfig {
             connect_timeout_ms: 5000,
             read_timeout_ms: 30000,
             context_path: String::new(),
+            auth_endpoint: "/v1/auth/login".to_string(),
         }
     }
 }
@@ -72,6 +75,12 @@ impl HttpClientConfig {
     /// Set context path
     pub fn with_context_path(mut self, path: &str) -> Self {
         self.context_path = path.to_string();
+        self
+    }
+
+    /// Set auth endpoint path
+    pub fn with_auth_endpoint(mut self, endpoint: &str) -> Self {
+        self.auth_endpoint = endpoint.to_string();
         self
     }
 }
@@ -188,7 +197,7 @@ impl BatataHttpClient {
 
     /// Authenticate with the server
     pub async fn authenticate(&self) -> anyhow::Result<()> {
-        let url = self.build_url("/v1/auth/login");
+        let url = self.build_url(&self.config.auth_endpoint);
 
         debug!("Authenticating with server: {}", url);
 
@@ -505,6 +514,48 @@ impl BatataHttpClient {
                     return Err(anyhow::anyhow!("Token expired, please retry"));
                 }
                 self.handle_response(response).await
+            }
+            Err(e) => {
+                warn!("Request failed: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Make a POST request with multipart form data and return raw bytes
+    /// Note: multipart requests cannot be retried across servers since Form cannot be cloned
+    pub async fn post_multipart_bytes(
+        &self,
+        path: &str,
+        form: reqwest::multipart::Form,
+    ) -> anyhow::Result<Vec<u8>> {
+        let url = self.build_url(path);
+        let token = self.ensure_token().await?;
+
+        match self
+            .client
+            .post(&url)
+            .header("accessToken", &token)
+            .multipart(form)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    Ok(response.bytes().await?.to_vec())
+                } else if response.status() == StatusCode::UNAUTHORIZED {
+                    warn!("Token expired, re-authenticating...");
+                    self.authenticate().await?;
+                    Err(anyhow::anyhow!("Token expired, please retry"))
+                } else {
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    Err(anyhow::anyhow!(
+                        "Request failed with status {}: {}",
+                        status,
+                        body
+                    ))
+                }
             }
             Err(e) => {
                 warn!("Request failed: {}", e);

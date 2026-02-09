@@ -536,7 +536,7 @@ impl ConsulKVService {
         // Phase 2: Apply all operations
         let mut results: Vec<TxnResultItem> = Vec::new();
 
-        for (_idx, op) in ops.into_iter().enumerate() {
+        for op in ops.into_iter() {
             if let Some(kv_op) = op.kv {
                 match kv_op.verb.to_lowercase().as_str() {
                     "get" => {
@@ -1126,7 +1126,7 @@ impl ConsulKVServicePersistent {
         // Phase 2: Apply all operations
         let mut results: Vec<TxnResultItem> = Vec::new();
 
-        for (_idx, op) in ops.into_iter().enumerate() {
+        for op in ops.into_iter() {
             if let Some(kv_op) = op.kv {
                 match kv_op.verb.to_lowercase().as_str() {
                     "get" => {
@@ -1327,11 +1327,12 @@ pub async fn put_kv(
     // Handle acquire (session-based lock)
     if let Some(ref session_id) = query.acquire {
         // Try to acquire lock: only succeeds if no other session holds it
-        if let Some(existing) = kv_service.get(&key) {
-            if existing.session.is_some() && existing.session.as_deref() != Some(session_id) {
-                // Another session holds the lock
-                return HttpResponse::Ok().json(false);
-            }
+        if let Some(existing) = kv_service.get(&key)
+            && existing.session.is_some()
+            && existing.session.as_deref() != Some(session_id)
+        {
+            // Another session holds the lock
+            return HttpResponse::Ok().json(false);
         }
         let pair = kv_service.put(key.clone(), &value, query.flags);
         // Set session on the pair
@@ -1345,15 +1346,15 @@ pub async fn put_kv(
 
     // Handle release (session-based unlock)
     if let Some(ref session_id) = query.release {
-        if let Some(existing) = kv_service.get(&key) {
-            if existing.session.as_deref() == Some(session_id) {
-                // Release the lock: update the value and clear session
-                kv_service.put(key.clone(), &value, query.flags);
-                if let Some(mut entry) = kv_service.store.get_mut(&key) {
-                    entry.pair.session = None;
-                }
-                return HttpResponse::Ok().json(true);
+        if let Some(existing) = kv_service.get(&key)
+            && existing.session.as_deref() == Some(session_id)
+        {
+            // Release the lock: update the value and clear session
+            kv_service.put(key.clone(), &value, query.flags);
+            if let Some(mut entry) = kv_service.store.get_mut(&key) {
+                entry.pair.session = None;
             }
+            return HttpResponse::Ok().json(true);
         }
         return HttpResponse::Ok().json(false);
     }
@@ -1822,6 +1823,375 @@ mod tests {
         // Verify the keys exist
         assert!(service.get("txn/key1").is_some());
         assert!(service.get("txn/key2").is_some());
+    }
+
+    #[test]
+    fn test_kv_get_nonexistent() {
+        let service = ConsulKVService::new();
+        assert!(service.get("nonexistent/key").is_none());
+    }
+
+    #[test]
+    fn test_kv_delete_nonexistent() {
+        let service = ConsulKVService::new();
+        assert!(!service.delete("nonexistent/key"));
+    }
+
+    #[test]
+    fn test_kv_delete_prefix_empty() {
+        let service = ConsulKVService::new();
+        let count = service.delete_prefix("nonexistent/");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_kv_put_update_preserves_create_index() {
+        let service = ConsulKVService::new();
+
+        let pair1 = service.put("key".to_string(), "value1", None);
+        let create_index = pair1.create_index;
+
+        let pair2 = service.put("key".to_string(), "value2", None);
+        // create_index should be preserved on update
+        assert_eq!(pair2.create_index, create_index);
+        // modify_index should change
+        assert!(pair2.modify_index > pair1.modify_index);
+        assert_eq!(pair2.decoded_value(), Some("value2".to_string()));
+    }
+
+    #[test]
+    fn test_kv_cas_create_if_not_exists() {
+        let service = ConsulKVService::new();
+
+        // cas=0 creates if key doesn't exist
+        assert!(service.cas("cas0_key".to_string(), "value", 0, None));
+        assert!(service.get("cas0_key").is_some());
+        assert_eq!(
+            service.get("cas0_key").unwrap().decoded_value(),
+            Some("value".to_string())
+        );
+    }
+
+    #[test]
+    fn test_kv_cas_with_wrong_index_on_nonexistent() {
+        let service = ConsulKVService::new();
+
+        // CAS with non-zero index on nonexistent key should fail
+        assert!(!service.cas("nonexistent".to_string(), "value", 999, None));
+    }
+
+    #[test]
+    fn test_kv_flags() {
+        let service = ConsulKVService::new();
+
+        let pair = service.put("flagged".to_string(), "data", Some(42));
+        assert_eq!(pair.flags, 42);
+
+        // Update value, keep flags
+        let pair2 = service.put("flagged".to_string(), "data2", None);
+        assert_eq!(pair2.flags, 42); // flags preserved
+
+        // Update flags
+        let pair3 = service.put("flagged".to_string(), "data3", Some(100));
+        assert_eq!(pair3.flags, 100);
+    }
+
+    #[test]
+    fn test_kv_keys_with_separator() {
+        let service = ConsulKVService::new();
+
+        service.put("web/config/host".to_string(), "localhost", None);
+        service.put("web/config/port".to_string(), "8080", None);
+        service.put("web/static/index.html".to_string(), "<html>", None);
+        service.put("web/api".to_string(), "v1", None);
+
+        // Without separator: all keys
+        let all = service.get_keys("web/", None);
+        assert_eq!(all.len(), 4);
+
+        // With separator "/": folder-level grouping
+        let folders = service.get_keys("web/", Some("/"));
+        assert!(folders.contains(&"web/config/".to_string()));
+        assert!(folders.contains(&"web/static/".to_string()));
+        assert!(folders.contains(&"web/api".to_string()));
+    }
+
+    #[test]
+    fn test_kv_empty_value() {
+        let service = ConsulKVService::new();
+
+        let pair = service.put("empty".to_string(), "", None);
+        assert_eq!(pair.decoded_value(), Some(String::new()));
+    }
+
+    #[test]
+    fn test_kv_special_characters_in_key() {
+        let service = ConsulKVService::new();
+
+        // Keys with dots, dashes, underscores
+        service.put("service.name-v2_config".to_string(), "val", None);
+        assert!(service.get("service.name-v2_config").is_some());
+
+        // Keys with unicode
+        service.put("config/日本語".to_string(), "unicode-value", None);
+        assert!(service.get("config/日本語").is_some());
+    }
+
+    #[test]
+    fn test_kv_large_value() {
+        let service = ConsulKVService::new();
+
+        // 512KB value
+        let large = "x".repeat(512 * 1024);
+        let pair = service.put("large".to_string(), &large, None);
+        assert_eq!(pair.decoded_value(), Some(large));
+    }
+
+    #[test]
+    fn test_kv_raw_value_binary() {
+        let pair = KVPair::new("binary".to_string(), "hello\x00world");
+        let raw = pair.raw_value().unwrap();
+        assert_eq!(raw, b"hello\x00world");
+    }
+
+    #[test]
+    fn test_kv_key_only() {
+        let pair = KVPair::key_only("test/key".to_string());
+        assert_eq!(pair.key, "test/key");
+        assert!(pair.value.is_none());
+        assert!(pair.decoded_value().is_none());
+        assert_eq!(pair.create_index, 0);
+    }
+
+    #[test]
+    fn test_kv_index_increments() {
+        let service = ConsulKVService::new();
+
+        let idx1 = service.current_index();
+        service.put("k1".to_string(), "v1", None);
+        let idx2 = service.current_index();
+        service.put("k2".to_string(), "v2", None);
+        let idx3 = service.current_index();
+
+        assert!(idx2 > idx1);
+        assert!(idx3 > idx2);
+    }
+
+    #[test]
+    fn test_kv_transaction_check_index() {
+        let service = ConsulKVService::new();
+
+        // Set a key first
+        let pair = service.put("txn/checked".to_string(), "original", None);
+        let modify_index = pair.modify_index;
+
+        // Transaction with check-index (correct index)
+        let ops = vec![
+            TxnOp {
+                kv: Some(KVTxnOp {
+                    verb: "check-index".to_string(),
+                    key: "txn/checked".to_string(),
+                    value: None,
+                    flags: None,
+                    index: Some(modify_index),
+                }),
+            },
+            TxnOp {
+                kv: Some(KVTxnOp {
+                    verb: "set".to_string(),
+                    key: "txn/checked".to_string(),
+                    value: Some(BASE64.encode("updated".as_bytes())),
+                    flags: None,
+                    index: None,
+                }),
+            },
+        ];
+        let result = service.transaction(ops);
+        assert!(result.errors.is_none());
+
+        // Transaction with wrong check-index should fail
+        let ops_fail = vec![TxnOp {
+            kv: Some(KVTxnOp {
+                verb: "check-index".to_string(),
+                key: "txn/checked".to_string(),
+                value: None,
+                flags: None,
+                index: Some(999),
+            }),
+        }];
+        let result_fail = service.transaction(ops_fail);
+        assert!(result_fail.errors.is_some());
+    }
+
+    #[test]
+    fn test_kv_transaction_check_not_exists() {
+        let service = ConsulKVService::new();
+
+        // Should succeed: key doesn't exist
+        let ops = vec![TxnOp {
+            kv: Some(KVTxnOp {
+                verb: "check-not-exists".to_string(),
+                key: "new/key".to_string(),
+                value: None,
+                flags: None,
+                index: None,
+            }),
+        }];
+        let result = service.transaction(ops);
+        assert!(result.errors.is_none());
+
+        // Create the key, then check-not-exists should fail
+        service.put("new/key".to_string(), "exists", None);
+        let ops_fail = vec![TxnOp {
+            kv: Some(KVTxnOp {
+                verb: "check-not-exists".to_string(),
+                key: "new/key".to_string(),
+                value: None,
+                flags: None,
+                index: None,
+            }),
+        }];
+        let result_fail = service.transaction(ops_fail);
+        assert!(result_fail.errors.is_some());
+    }
+
+    #[test]
+    fn test_kv_transaction_unknown_verb() {
+        let service = ConsulKVService::new();
+
+        let ops = vec![TxnOp {
+            kv: Some(KVTxnOp {
+                verb: "invalid-verb".to_string(),
+                key: "key".to_string(),
+                value: None,
+                flags: None,
+                index: None,
+            }),
+        }];
+        let result = service.transaction(ops);
+        assert!(result.errors.is_some());
+        let err = &result.errors.unwrap()[0];
+        assert!(err.what.contains("unknown verb"));
+    }
+
+    #[test]
+    fn test_kv_transaction_delete_tree() {
+        let service = ConsulKVService::new();
+
+        service.put("tree/a".to_string(), "1", None);
+        service.put("tree/b".to_string(), "2", None);
+        service.put("other/c".to_string(), "3", None);
+
+        let ops = vec![TxnOp {
+            kv: Some(KVTxnOp {
+                verb: "delete-tree".to_string(),
+                key: "tree/".to_string(),
+                value: None,
+                flags: None,
+                index: None,
+            }),
+        }];
+        let result = service.transaction(ops);
+        assert!(result.errors.is_none());
+
+        assert!(service.get("tree/a").is_none());
+        assert!(service.get("tree/b").is_none());
+        assert!(service.get("other/c").is_some()); // untouched
+    }
+
+    #[test]
+    fn test_kv_transaction_get_tree() {
+        let service = ConsulKVService::new();
+
+        service.put("prefix/a".to_string(), "1", None);
+        service.put("prefix/b".to_string(), "2", None);
+
+        let ops = vec![TxnOp {
+            kv: Some(KVTxnOp {
+                verb: "get-tree".to_string(),
+                key: "prefix/".to_string(),
+                value: None,
+                flags: None,
+                index: None,
+            }),
+        }];
+        let result = service.transaction(ops);
+        assert!(result.errors.is_none());
+        assert_eq!(result.results.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_kv_release_session() {
+        let service = ConsulKVService::new();
+
+        // Put keys and manually set session
+        service.put("locked/key1".to_string(), "v1", None);
+        service.put("locked/key2".to_string(), "v2", None);
+        service.put("unlocked/key3".to_string(), "v3", None);
+
+        // Simulate session on key1 and key2
+        if let Some(mut entry) = service.store.get_mut("locked/key1") {
+            entry.pair.session = Some("session-abc".to_string());
+        }
+        if let Some(mut entry) = service.store.get_mut("locked/key2") {
+            entry.pair.session = Some("session-abc".to_string());
+        }
+
+        // Release session
+        service.release_session("session-abc");
+
+        // Sessions should be cleared
+        assert!(service.get("locked/key1").unwrap().session.is_none());
+        assert!(service.get("locked/key2").unwrap().session.is_none());
+        assert!(service.get("unlocked/key3").unwrap().session.is_none());
+    }
+
+    #[test]
+    fn test_kv_concurrent_puts() {
+        let service = ConsulKVService::new();
+
+        // Simulate rapid sequential puts (testing index correctness)
+        for i in 0..100 {
+            service.put(format!("key/{}", i), &format!("value-{}", i), None);
+        }
+
+        assert_eq!(service.get_prefix("key/").len(), 100);
+
+        // Each key should have a unique modify_index
+        let mut indices: Vec<u64> = service
+            .get_prefix("key/")
+            .iter()
+            .map(|p| p.modify_index)
+            .collect();
+        indices.sort();
+        indices.dedup();
+        assert_eq!(indices.len(), 100);
+    }
+
+    #[test]
+    fn test_kv_transaction_cas_failure_rollback() {
+        let service = ConsulKVService::new();
+
+        service.put("cas_key".to_string(), "original", None);
+
+        // Transaction with CAS that uses wrong index
+        let ops = vec![TxnOp {
+            kv: Some(KVTxnOp {
+                verb: "cas".to_string(),
+                key: "cas_key".to_string(),
+                value: Some(BASE64.encode("updated".as_bytes())),
+                flags: None,
+                index: Some(99999), // wrong index
+            }),
+        }];
+        let result = service.transaction(ops);
+        assert!(result.errors.is_some());
+
+        // Value should remain unchanged
+        assert_eq!(
+            service.get("cas_key").unwrap().decoded_value(),
+            Some("original".to_string())
+        );
     }
 }
 

@@ -4,7 +4,6 @@ pub mod client;
 pub mod config;
 pub mod constants;
 pub mod error;
-pub mod http_proxy;
 pub mod model;
 
 pub use client::MaintainerClient;

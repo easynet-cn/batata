@@ -1637,4 +1637,434 @@ mod tests {
         health_service.deregister_check("check-1").unwrap();
         assert!(health_service.get_check("check-1").is_none());
     }
+
+    fn make_check_reg(
+        name: &str,
+        check_id: Option<&str>,
+        service_id: Option<&str>,
+    ) -> CheckRegistration {
+        CheckRegistration {
+            name: name.to_string(),
+            check_id: check_id.map(|s| s.to_string()),
+            service_id: service_id.map(|s| s.to_string()),
+            notes: None,
+            ttl: Some("30s".to_string()),
+            http: None,
+            method: None,
+            header: None,
+            tcp: None,
+            grpc: None,
+            interval: None,
+            timeout: None,
+            deregister_critical_service_after: None,
+            status: None,
+        }
+    }
+
+    #[test]
+    fn test_auto_generate_check_id_from_service_id() {
+        let reg = make_check_reg("my-check", None, Some("web-svc"));
+        assert_eq!(reg.effective_check_id(), "service:web-svc");
+    }
+
+    #[test]
+    fn test_auto_generate_check_id_from_name() {
+        let reg = CheckRegistration {
+            name: "my-check".to_string(),
+            check_id: None,
+            service_id: None,
+            notes: None,
+            ttl: None,
+            http: None,
+            method: None,
+            header: None,
+            tcp: None,
+            grpc: None,
+            interval: None,
+            timeout: None,
+            deregister_critical_service_after: None,
+            status: None,
+        };
+        assert_eq!(reg.effective_check_id(), "check:my-check");
+    }
+
+    #[test]
+    fn test_check_type_detection() {
+        // HTTP check
+        let mut reg = make_check_reg("http-check", None, None);
+        reg.ttl = None;
+        reg.http = Some("http://localhost:8080/health".to_string());
+        assert_eq!(reg.check_type(), "http");
+
+        // TCP check
+        let mut reg = make_check_reg("tcp-check", None, None);
+        reg.ttl = None;
+        reg.tcp = Some("localhost:8080".to_string());
+        assert_eq!(reg.check_type(), "tcp");
+
+        // gRPC check
+        let mut reg = make_check_reg("grpc-check", None, None);
+        reg.ttl = None;
+        reg.grpc = Some("localhost:50051".to_string());
+        assert_eq!(reg.check_type(), "grpc");
+
+        // Default to ttl when no type specified
+        let mut reg = make_check_reg("default-check", None, None);
+        reg.ttl = None;
+        assert_eq!(reg.check_type(), "ttl");
+    }
+
+    #[test]
+    fn test_default_status_is_critical() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let reg = make_check_reg("crit-check", Some("crit-1"), None);
+        service.register_check(reg).unwrap();
+
+        let check = service.get_check("crit-1").unwrap();
+        assert_eq!(check.status, "critical");
+    }
+
+    #[test]
+    fn test_deregister_nonexistent_check() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let result = service.deregister_check("nonexistent");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Check not found"));
+    }
+
+    #[test]
+    fn test_update_nonexistent_check() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let result = service.update_check_status("nonexistent", "passing", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Check not found"));
+    }
+
+    #[test]
+    fn test_get_nonexistent_check() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        assert!(service.get_check("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_service_checks_mapping() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        // Register multiple checks for the same service
+        let mut reg1 = make_check_reg("check-a", Some("svc-chk-a"), Some("svc-mapping"));
+        reg1.status = Some("passing".to_string());
+        service.register_check(reg1).unwrap();
+
+        let mut reg2 = make_check_reg("check-b", Some("svc-chk-b"), Some("svc-mapping"));
+        reg2.status = Some("warning".to_string());
+        service.register_check(reg2).unwrap();
+
+        let checks = service.get_service_checks("svc-mapping");
+        assert_eq!(checks.len(), 2);
+
+        let ids: Vec<&str> = checks.iter().map(|c| c.check_id.as_str()).collect();
+        assert!(ids.contains(&"svc-chk-a"));
+        assert!(ids.contains(&"svc-chk-b"));
+    }
+
+    #[test]
+    fn test_service_checks_empty_for_unknown_service() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let checks = service.get_service_checks("unknown-service");
+        assert!(checks.is_empty());
+    }
+
+    #[test]
+    fn test_deregister_removes_from_service_mapping() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut reg = make_check_reg("dereg-map", Some("dereg-chk"), Some("dereg-svc"));
+        reg.status = Some("passing".to_string());
+        service.register_check(reg).unwrap();
+
+        assert_eq!(service.get_service_checks("dereg-svc").len(), 1);
+
+        service.deregister_check("dereg-chk").unwrap();
+        assert!(service.get_service_checks("dereg-svc").is_empty());
+    }
+
+    #[test]
+    fn test_get_all_checks() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let reg1 = make_check_reg("all-a", Some("all-chk-1"), None);
+        let reg2 = make_check_reg("all-b", Some("all-chk-2"), None);
+        service.register_check(reg1).unwrap();
+        service.register_check(reg2).unwrap();
+
+        let all = service.get_all_checks();
+        assert!(all.len() >= 2);
+        let ids: Vec<&str> = all.iter().map(|c| c.check_id.as_str()).collect();
+        assert!(ids.contains(&"all-chk-1"));
+        assert!(ids.contains(&"all-chk-2"));
+    }
+
+    #[test]
+    fn test_get_checks_by_status() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut reg1 = make_check_reg("stat-a", Some("stat-pass"), None);
+        reg1.status = Some("passing".to_string());
+        service.register_check(reg1).unwrap();
+
+        let mut reg2 = make_check_reg("stat-b", Some("stat-warn"), None);
+        reg2.status = Some("warning".to_string());
+        service.register_check(reg2).unwrap();
+
+        let mut reg3 = make_check_reg("stat-c", Some("stat-crit"), None);
+        reg3.status = Some("critical".to_string());
+        service.register_check(reg3).unwrap();
+
+        let passing = service.get_checks_by_status("passing");
+        assert!(passing.iter().any(|c| c.check_id == "stat-pass"));
+        assert!(passing.iter().all(|c| c.status == "passing"));
+
+        let warning = service.get_checks_by_status("warning");
+        assert!(warning.iter().any(|c| c.check_id == "stat-warn"));
+        assert!(warning.iter().all(|c| c.status == "warning"));
+
+        let critical = service.get_checks_by_status("critical");
+        assert!(critical.iter().any(|c| c.check_id == "stat-crit"));
+        assert!(critical.iter().all(|c| c.status == "critical"));
+    }
+
+    #[test]
+    fn test_status_transitions() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut reg = make_check_reg("trans", Some("trans-chk"), None);
+        reg.status = Some("passing".to_string());
+        service.register_check(reg).unwrap();
+
+        // passing -> warning -> critical -> passing
+        service
+            .update_check_status("trans-chk", "warning", Some("Slow response".to_string()))
+            .unwrap();
+        let check = service.get_check("trans-chk").unwrap();
+        assert_eq!(check.status, "warning");
+        assert_eq!(check.output, "Slow response");
+
+        service
+            .update_check_status("trans-chk", "critical", Some("Down".to_string()))
+            .unwrap();
+        let check = service.get_check("trans-chk").unwrap();
+        assert_eq!(check.status, "critical");
+
+        service
+            .update_check_status("trans-chk", "passing", None)
+            .unwrap();
+        let check = service.get_check("trans-chk").unwrap();
+        assert_eq!(check.status, "passing");
+        // output should remain from previous update since we passed None
+        assert_eq!(check.output, "Down");
+    }
+
+    #[test]
+    fn test_check_node_name() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let reg = make_check_reg("node-chk", Some("node-chk-1"), None);
+        service.register_check(reg).unwrap();
+
+        let check = service.get_check("node-chk-1").unwrap();
+        assert_eq!(check.node, "batata-node");
+    }
+
+    #[test]
+    fn test_check_notes_and_output() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut reg = make_check_reg("noted", Some("noted-chk"), None);
+        reg.notes = Some("Important check".to_string());
+        reg.status = Some("passing".to_string());
+        service.register_check(reg).unwrap();
+
+        let check = service.get_check("noted-chk").unwrap();
+        assert_eq!(check.notes, "Important check");
+        assert!(check.output.is_empty()); // output starts empty
+    }
+
+    #[test]
+    fn test_ttl_and_deregister_timeout_parsing() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let reg = CheckRegistration {
+            name: "ttl-check".to_string(),
+            check_id: Some("ttl-chk".to_string()),
+            service_id: None,
+            notes: None,
+            ttl: Some("1m".to_string()),
+            http: None,
+            method: None,
+            header: None,
+            tcp: None,
+            grpc: None,
+            interval: None,
+            timeout: None,
+            deregister_critical_service_after: Some("5m".to_string()),
+            status: None,
+        };
+        service.register_check(reg).unwrap();
+
+        // Verify stored metadata (access the internal DashMap)
+        let stored = service.checks.get("ttl-chk").unwrap();
+        assert_eq!(stored.ttl_seconds, Some(60));
+        assert_eq!(stored.deregister_after_secs, Some(300));
+    }
+
+    #[test]
+    fn test_create_instance_check_healthy() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut instance = NacosInstance::new("10.0.0.1".to_string(), 8080);
+        instance.instance_id = "web-001".to_string();
+        instance.service_name = "web".to_string();
+        instance.healthy = true;
+        instance.enabled = true;
+
+        let check = service.create_instance_check(&instance);
+        assert_eq!(check.status, "passing");
+        assert_eq!(check.check_id, "service:web-001");
+        assert!(check.name.contains("web"));
+        assert_eq!(check.output, "Instance is healthy");
+        assert_eq!(check.service_id, "web-001");
+        assert_eq!(check.service_name, "web");
+    }
+
+    #[test]
+    fn test_create_instance_check_unhealthy() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut instance = NacosInstance::new("10.0.0.2".to_string(), 8080);
+        instance.instance_id = "web-002".to_string();
+        instance.service_name = "web".to_string();
+        instance.healthy = false;
+        instance.enabled = true;
+
+        let check = service.create_instance_check(&instance);
+        assert_eq!(check.status, "critical");
+        assert_eq!(check.output, "Instance is unhealthy");
+    }
+
+    #[test]
+    fn test_create_instance_check_with_consul_tags() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut instance = NacosInstance::new("10.0.0.3".to_string(), 8080);
+        instance.instance_id = "tagged-001".to_string();
+        instance.service_name = "tagged-svc".to_string();
+        instance.healthy = true;
+        instance
+            .metadata
+            .insert("consul_tags".to_string(), r#"["v1","primary"]"#.to_string());
+
+        let check = service.create_instance_check(&instance);
+        assert_eq!(
+            check.service_tags,
+            Some(vec!["v1".to_string(), "primary".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_create_instance_check_without_tags() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut instance = NacosInstance::new("10.0.0.4".to_string(), 8080);
+        instance.instance_id = "notag-001".to_string();
+        instance.service_name = "notag-svc".to_string();
+        instance.healthy = true;
+
+        let check = service.create_instance_check(&instance);
+        assert!(check.service_tags.is_none());
+    }
+
+    #[test]
+    fn test_parse_duration_edge_cases() {
+        // Zero values
+        assert_eq!(parse_duration("0s"), Some(0));
+        assert_eq!(parse_duration("0m"), Some(0));
+        assert_eq!(parse_duration("0h"), Some(0));
+
+        // Large values
+        assert_eq!(parse_duration("3600s"), Some(3600));
+        assert_eq!(parse_duration("60m"), Some(3600));
+
+        // Edge case: ms rounding
+        assert_eq!(parse_duration("500ms"), Some(0));
+        assert_eq!(parse_duration("1500ms"), Some(1));
+
+        // No unit defaults to seconds
+        assert_eq!(parse_duration("123"), Some(123));
+
+        // Empty string
+        assert_eq!(parse_duration(""), None);
+    }
+
+    #[test]
+    fn test_register_multiple_services_separate_checks() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let reg1 = make_check_reg("chk-svc1", Some("multi-svc1-chk"), Some("multi-svc1"));
+        let reg2 = make_check_reg("chk-svc2", Some("multi-svc2-chk"), Some("multi-svc2"));
+        service.register_check(reg1).unwrap();
+        service.register_check(reg2).unwrap();
+
+        assert_eq!(service.get_service_checks("multi-svc1").len(), 1);
+        assert_eq!(service.get_service_checks("multi-svc2").len(), 1);
+
+        // Deregistering one doesn't affect the other
+        service.deregister_check("multi-svc1-chk").unwrap();
+        assert!(service.get_service_checks("multi-svc1").is_empty());
+        assert_eq!(service.get_service_checks("multi-svc2").len(), 1);
+    }
+
+    #[test]
+    fn test_check_reregistration_overwrites() {
+        let naming_service = Arc::new(NamingService::new());
+        let service = ConsulHealthService::new(naming_service);
+
+        let mut reg = make_check_reg("overwrite", Some("ow-chk"), None);
+        reg.status = Some("passing".to_string());
+        service.register_check(reg).unwrap();
+
+        let check = service.get_check("ow-chk").unwrap();
+        assert_eq!(check.status, "passing");
+
+        // Re-register with different status
+        let mut reg2 = make_check_reg("overwrite-v2", Some("ow-chk"), None);
+        reg2.status = Some("critical".to_string());
+        service.register_check(reg2).unwrap();
+
+        let check = service.get_check("ow-chk").unwrap();
+        assert_eq!(check.name, "overwrite-v2");
+        assert_eq!(check.status, "critical");
+    }
 }

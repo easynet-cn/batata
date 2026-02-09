@@ -2,12 +2,12 @@
 
 use std::collections::HashMap;
 
+use batata_client::{BatataHttpClient, HttpClientConfig};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     config::MaintainerClientConfig,
     constants::admin_api_path,
-    http_proxy::HttpProxy,
     model::common::ApiResponse,
     model::{
         AgentCard, AgentCardDetailInfo, AgentCardVersionInfo, AgentVersionDetail,
@@ -23,14 +23,20 @@ use crate::{
 
 /// Admin/maintainer HTTP client for Batata/Nacos
 pub struct MaintainerClient {
-    http_proxy: HttpProxy,
+    http_client: BatataHttpClient,
 }
 
 impl MaintainerClient {
     /// Create a new MaintainerClient with the given configuration
     pub async fn new(config: MaintainerClientConfig) -> anyhow::Result<Self> {
-        let http_proxy = HttpProxy::new(config).await?;
-        Ok(Self { http_proxy })
+        let http_config = HttpClientConfig::with_servers(config.server_addrs)
+            .with_auth(&config.username, &config.password)
+            .with_timeouts(config.connect_timeout_ms, config.read_timeout_ms)
+            .with_context_path(&config.context_path)
+            .with_auth_endpoint(admin_api_path::AUTH_LOGIN);
+
+        let http_client = BatataHttpClient::new(http_config).await?;
+        Ok(Self { http_client })
     }
 
     /// Create a new MaintainerClient from a single server address
@@ -54,7 +60,7 @@ impl MaintainerClient {
 
     pub async fn server_state(&self) -> anyhow::Result<HashMap<String, Option<String>>> {
         let response: ApiResponse<HashMap<String, Option<String>>> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::SERVER_STATE)
             .await
             .unwrap_or(ApiResponse {
@@ -70,14 +76,16 @@ impl MaintainerClient {
     }
 
     pub async fn liveness(&self) -> anyhow::Result<bool> {
-        let response: ApiResponse<serde_json::Value> =
-            self.http_proxy.get(admin_api_path::SERVER_LIVENESS).await?;
+        let response: ApiResponse<serde_json::Value> = self
+            .http_client
+            .get(admin_api_path::SERVER_LIVENESS)
+            .await?;
         Ok(response.code == 0 || response.code == 200)
     }
 
     pub async fn readiness(&self) -> anyhow::Result<bool> {
         let response: ApiResponse<serde_json::Value> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::SERVER_READINESS)
             .await?;
         Ok(response.code == 0 || response.code == 200)
@@ -102,7 +110,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .post_form(
                 admin_api_path::CORE_OPS_RAFT,
                 &Form {
@@ -117,7 +125,7 @@ impl MaintainerClient {
 
     pub async fn get_id_generators(&self) -> anyhow::Result<Vec<IdGeneratorInfo>> {
         let response: ApiResponse<Vec<IdGeneratorInfo>> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::CORE_OPS_ID_GENERATOR)
             .await?;
         Ok(response.data)
@@ -136,7 +144,7 @@ impl MaintainerClient {
         }
 
         let _response: ApiResponse<serde_json::Value> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::CORE_OPS_LOG,
                 &Form {
@@ -154,7 +162,7 @@ impl MaintainerClient {
 
     pub async fn cluster_members(&self) -> anyhow::Result<Vec<Member>> {
         let response: ApiResponse<Vec<Member>> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::CLUSTER_NODE_LIST)
             .await?;
         Ok(response.data)
@@ -174,7 +182,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<Member>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CLUSTER_NODE_LIST,
                 &Query {
@@ -193,7 +201,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<HealthResponse> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::CLUSTER_SELF_HEALTH)
             .await?;
 
@@ -228,7 +236,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<NodeSelfResponse> =
-            self.http_proxy.get(admin_api_path::CLUSTER_SELF).await?;
+            self.http_client.get(admin_api_path::CLUSTER_SELF).await?;
 
         let node = response.data;
         let version = node
@@ -262,7 +270,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<Member>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CLUSTER_NODE_LIST,
                 &Query { keyword: address },
@@ -283,7 +291,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .put_form(admin_api_path::CLUSTER_LOOKUP, &Form { r#type: mode })
             .await?;
         Ok(response.data)
@@ -291,7 +299,7 @@ impl MaintainerClient {
 
     pub async fn get_current_clients(&self) -> anyhow::Result<HashMap<String, ConnectionInfo>> {
         let response: ApiResponse<HashMap<String, ConnectionInfo>> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::CORE_LOADER_CURRENT)
             .await?;
         Ok(response.data)
@@ -312,7 +320,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CORE_LOADER_RELOAD,
                 &Query {
@@ -336,7 +344,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CORE_LOADER_SMART_RELOAD,
                 &Query { loader_factor },
@@ -358,7 +366,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CORE_LOADER_RELOAD_CLIENT,
                 &Query {
@@ -372,7 +380,7 @@ impl MaintainerClient {
 
     pub async fn get_cluster_loader_metrics(&self) -> anyhow::Result<ServerLoaderMetrics> {
         let response: ApiResponse<ServerLoaderMetrics> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::CORE_LOADER_METRICS)
             .await?;
         Ok(response.data)
@@ -384,7 +392,7 @@ impl MaintainerClient {
 
     pub async fn namespace_list(&self) -> anyhow::Result<Vec<Namespace>> {
         let response: ApiResponse<Vec<Namespace>> =
-            self.http_proxy.get(admin_api_path::NAMESPACE_LIST).await?;
+            self.http_client.get(admin_api_path::NAMESPACE_LIST).await?;
         Ok(response.data)
     }
 
@@ -396,7 +404,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Namespace> = self
-            .http_proxy
+            .http_client
             .get_with_query(admin_api_path::NAMESPACE, &Query { namespace_id })
             .await?;
         Ok(response.data)
@@ -417,7 +425,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .post_form(
                 admin_api_path::NAMESPACE,
                 &Form {
@@ -445,7 +453,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::NAMESPACE,
                 &Form {
@@ -466,7 +474,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .delete_with_query(admin_api_path::NAMESPACE, &Query { namespace_id })
             .await?;
         Ok(response.data)
@@ -480,7 +488,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::NAMESPACE_EXIST,
                 &Query {
@@ -510,7 +518,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Option<ConfigDetailInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG,
                 &Query {
@@ -551,7 +559,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<ConfigBasicInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_LIST,
                 &Query {
@@ -600,7 +608,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<ConfigBasicInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_SEARCH,
                 &Query {
@@ -654,7 +662,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .post_form(
                 admin_api_path::CONFIG,
                 &Form {
@@ -695,7 +703,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::CONFIG_METADATA,
                 &Form {
@@ -725,7 +733,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .delete_with_query(
                 admin_api_path::CONFIG,
                 &Query {
@@ -740,7 +748,7 @@ impl MaintainerClient {
 
     pub async fn config_batch_delete(&self, ids: &[i64]) -> anyhow::Result<bool> {
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .delete_with_query(
                 admin_api_path::CONFIG_BATCH_DELETE,
                 &[("ids", &serde_json::to_string(ids)?)],
@@ -769,7 +777,7 @@ impl MaintainerClient {
         let policy_str = format!("{}", policy);
 
         let response: ApiResponse<HashMap<String, serde_json::Value>> = self
-            .http_proxy
+            .http_client
             .post_form(
                 admin_api_path::CONFIG_CLONE,
                 &Form {
@@ -811,7 +819,7 @@ impl MaintainerClient {
         let query_string = serde_urlencoded::to_string(&query)?;
         let path = format!("{}?{}", admin_api_path::CONFIG_EXPORT, query_string);
 
-        self.http_proxy.get_bytes(&path).await
+        self.http_client.get_bytes(&path).await
     }
 
     pub async fn config_import(
@@ -832,7 +840,7 @@ impl MaintainerClient {
         let form = reqwest::multipart::Form::new().part("file", part);
 
         let response: ApiResponse<ImportResult> =
-            self.http_proxy.post_multipart(&path, form).await?;
+            self.http_client.post_multipart(&path, form).await?;
         Ok(response.data)
     }
 
@@ -855,7 +863,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Option<ConfigGrayInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_BETA,
                 &Query {
@@ -898,7 +906,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .post_form(
                 admin_api_path::CONFIG_BETA_PUBLISH,
                 &Form {
@@ -933,7 +941,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<bool> = self
-            .http_proxy
+            .http_client
             .delete_with_query(
                 admin_api_path::CONFIG_BETA_STOP,
                 &Query {
@@ -967,7 +975,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Option<ConfigHistoryDetailInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_HISTORY,
                 &Query {
@@ -1000,7 +1008,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<ConfigHistoryBasicInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_HISTORY_LIST,
                 &Query {
@@ -1026,7 +1034,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<ConfigBasicInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_HISTORY_CONFIGS,
                 &Query { namespace_id },
@@ -1052,7 +1060,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Option<ConfigHistoryDetailInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_HISTORY_PREVIOUS,
                 &Query {
@@ -1085,7 +1093,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<ConfigListenerInfo> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_LISTENER,
                 &Query {
@@ -1115,7 +1123,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<ConfigListenerInfo> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_LISTENER,
                 &Query {
@@ -1146,7 +1154,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<ConfigListenerInfo> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::CONFIG_LISTENER_IP,
                 &Query {
@@ -1166,7 +1174,7 @@ impl MaintainerClient {
 
     pub async fn config_update_local_cache(&self) -> anyhow::Result<String> {
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .post_form(admin_api_path::CONFIG_OPS_LOCAL_CACHE, &[("", "")])
             .await?;
         Ok(response.data)
@@ -1185,7 +1193,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::CONFIG_OPS_LOG,
                 &Form {
@@ -1222,7 +1230,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<ServiceView>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::SERVICE_LIST,
                 &Query {
@@ -1260,7 +1268,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<ServiceView>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::SERVICE_LIST,
                 &Query {
@@ -1297,7 +1305,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<ServiceDetailInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::SERVICE_LIST_DETAIL,
                 &Query {
@@ -1327,7 +1335,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<ServiceDetailInfo> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::SERVICE_DETAIL,
                 &Query {
@@ -1363,7 +1371,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .post_json(
                 admin_api_path::SERVICE,
                 &Form {
@@ -1402,7 +1410,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::SERVICE,
                 &Form {
@@ -1433,7 +1441,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .delete_with_query(
                 admin_api_path::SERVICE,
                 &Query {
@@ -1465,7 +1473,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<SubscriberInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::SUBSCRIBER_LIST,
                 &Query {
@@ -1501,7 +1509,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<SubscriberInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::SUBSCRIBER_LIST,
                 &Query {
@@ -1519,7 +1527,7 @@ impl MaintainerClient {
 
     pub async fn service_selector_types(&self) -> anyhow::Result<Vec<String>> {
         let response: ApiResponse<Vec<String>> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::SERVICE_SELECTOR_TYPES)
             .await?;
         Ok(response.data)
@@ -1547,7 +1555,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<Instance>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::INSTANCE_LIST,
                 &Query {
@@ -1581,7 +1589,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<Instance>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::INSTANCE_LIST,
                 &Query {
@@ -1618,7 +1626,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Instance> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::INSTANCE_DETAIL,
                 &Query {
@@ -1666,7 +1674,7 @@ impl MaintainerClient {
         };
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .post_form(
                 admin_api_path::INSTANCE,
                 &Form {
@@ -1708,7 +1716,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .delete_with_query(
                 admin_api_path::INSTANCE,
                 &Query {
@@ -1754,7 +1762,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::INSTANCE,
                 &Form {
@@ -1803,7 +1811,7 @@ impl MaintainerClient {
         };
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .put_form(
                 &format!("{}/partial", admin_api_path::INSTANCE),
                 &Form {
@@ -1843,7 +1851,7 @@ impl MaintainerClient {
         let metadata_str = serde_json::to_string(metadata)?;
 
         let response: ApiResponse<InstanceMetadataBatchResult> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::INSTANCE_METADATA_BATCH,
                 &Form {
@@ -1879,7 +1887,7 @@ impl MaintainerClient {
         let metadata_str = serde_json::to_string(metadata)?;
 
         let response: ApiResponse<InstanceMetadataBatchResult> = self
-            .http_proxy
+            .http_client
             .delete_with_query(
                 admin_api_path::INSTANCE_METADATA_BATCH,
                 &Form {
@@ -1919,7 +1927,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::NAMING_HEALTH_INSTANCE,
                 &Form {
@@ -1937,7 +1945,7 @@ impl MaintainerClient {
 
     pub async fn get_health_checkers(&self) -> anyhow::Result<HashMap<String, serde_json::Value>> {
         let response: ApiResponse<HashMap<String, serde_json::Value>> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::NAMING_HEALTH_CHECKERS)
             .await?;
         Ok(response.data)
@@ -1979,7 +1987,7 @@ impl MaintainerClient {
         };
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::NAMING_CLUSTER,
                 &Form {
@@ -2007,7 +2015,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<MetricsInfo> = self
-            .http_proxy
+            .http_client
             .get_with_query(admin_api_path::NAMING_OPS_METRICS, &Query { only_status })
             .await?;
         Ok(response.data)
@@ -2026,7 +2034,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .put_form(
                 admin_api_path::NAMING_OPS_LOG,
                 &Form {
@@ -2044,7 +2052,7 @@ impl MaintainerClient {
 
     pub async fn client_list(&self) -> anyhow::Result<Vec<String>> {
         let response: ApiResponse<Vec<String>> = self
-            .http_proxy
+            .http_client
             .get(admin_api_path::NAMING_CLIENT_LIST)
             .await?;
         Ok(response.data)
@@ -2058,7 +2066,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<ClientSummaryInfo> = self
-            .http_proxy
+            .http_client
             .get_with_query(admin_api_path::NAMING_CLIENT, &Query { client_id })
             .await?;
         Ok(response.data)
@@ -2075,7 +2083,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<ClientServiceInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(admin_api_path::NAMING_CLIENT_PUBLISH, &Query { client_id })
             .await?;
         Ok(response.data)
@@ -2092,7 +2100,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<ClientServiceInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::NAMING_CLIENT_SUBSCRIBE,
                 &Query { client_id },
@@ -2122,7 +2130,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<ClientPublisherInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::NAMING_CLIENT_SERVICE_PUBLISH,
                 &Query {
@@ -2158,7 +2166,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<ClientSubscriberInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::NAMING_CLIENT_SERVICE_SUBSCRIBE,
                 &Query {
@@ -2195,7 +2203,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<McpServerBasicInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::AI_MCP_LIST,
                 &Query {
@@ -2228,7 +2236,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<McpServerBasicInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::AI_MCP_LIST,
                 &Query {
@@ -2260,7 +2268,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<McpServerDetailInfo> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::AI_MCP,
                 &Query {
@@ -2303,7 +2311,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<String> = self
-            .http_proxy
+            .http_client
             .post_form(admin_api_path::AI_MCP, &params)
             .await?;
         Ok(response.data)
@@ -2346,7 +2354,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<serde_json::Value> = self
-            .http_proxy
+            .http_client
             .put_form(admin_api_path::AI_MCP, &params)
             .await?;
         Ok(response.code == 0 || response.code == 200)
@@ -2369,7 +2377,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<serde_json::Value> = self
-            .http_proxy
+            .http_client
             .delete_with_query(
                 admin_api_path::AI_MCP,
                 &Query {
@@ -2403,7 +2411,7 @@ impl MaintainerClient {
         );
 
         let response: ApiResponse<serde_json::Value> = self
-            .http_proxy
+            .http_client
             .post_form(admin_api_path::AI_AGENT, &params)
             .await?;
         Ok(response.code == 0 || response.code == 200)
@@ -2424,7 +2432,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<AgentCardDetailInfo> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::AI_AGENT,
                 &Query {
@@ -2455,7 +2463,7 @@ impl MaintainerClient {
         );
 
         let response: ApiResponse<serde_json::Value> = self
-            .http_proxy
+            .http_client
             .put_form(admin_api_path::AI_AGENT, &params)
             .await?;
         Ok(response.code == 0 || response.code == 200)
@@ -2476,7 +2484,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<serde_json::Value> = self
-            .http_proxy
+            .http_client
             .delete_with_query(
                 admin_api_path::AI_AGENT,
                 &Query {
@@ -2502,7 +2510,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Vec<AgentVersionDetail>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::AI_AGENT_VERSION_LIST,
                 &Query {
@@ -2532,7 +2540,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<AgentCardVersionInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::AI_AGENT_LIST,
                 &Query {
@@ -2565,7 +2573,7 @@ impl MaintainerClient {
         }
 
         let response: ApiResponse<Page<AgentCardVersionInfo>> = self
-            .http_proxy
+            .http_client
             .get_with_query(
                 admin_api_path::AI_AGENT_LIST,
                 &Query {

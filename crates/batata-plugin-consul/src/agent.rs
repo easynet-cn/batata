@@ -1254,4 +1254,83 @@ mod tests {
         // Verify the service was stored correctly
         assert!(Arc::ptr_eq(&agent.naming_service, &naming_service_clone));
     }
+
+    #[test]
+    fn test_node_state_to_consul_status_all_variants() {
+        assert_eq!(node_state_to_consul_status(&NodeState::Up), 1); // alive
+        assert_eq!(node_state_to_consul_status(&NodeState::Down), 4); // failed
+        assert_eq!(node_state_to_consul_status(&NodeState::Suspicious), 2); // leaving
+        assert_eq!(node_state_to_consul_status(&NodeState::Starting), 3); // left
+        assert_eq!(node_state_to_consul_status(&NodeState::Isolation), 4); // failed
+    }
+
+    #[test]
+    fn test_create_health_check_healthy_instance() {
+        let mut instance = NacosInstance::new("10.0.0.1".to_string(), 8080);
+        instance.instance_id = "healthy-001".to_string();
+        instance.service_name = "web".to_string();
+        instance.healthy = true;
+        instance.enabled = true;
+
+        let check = create_service_health_check(&instance, "web");
+        assert_eq!(check.status, "passing");
+        assert_eq!(check.check_id, "service:web:healthy-001");
+        assert_eq!(check.name, "web Health Check");
+        assert!(check.output.contains("healthy"));
+        assert_eq!(check.service_id, "healthy-001");
+        assert_eq!(check.service_name, "web");
+        assert_eq!(check.check_type, "service");
+    }
+
+    #[test]
+    fn test_create_health_check_unhealthy_instance() {
+        let mut instance = NacosInstance::new("10.0.0.2".to_string(), 8080);
+        instance.instance_id = "unhealthy-001".to_string();
+        instance.service_name = "api".to_string();
+        instance.healthy = false;
+        instance.enabled = true;
+
+        let check = create_service_health_check(&instance, "api");
+        assert_eq!(check.status, "critical");
+        assert!(check.output.contains("unhealthy"));
+    }
+
+    #[test]
+    fn test_create_health_check_disabled_instance() {
+        let mut instance = NacosInstance::new("10.0.0.3".to_string(), 8080);
+        instance.instance_id = "disabled-001".to_string();
+        instance.service_name = "worker".to_string();
+        instance.healthy = true;
+        instance.enabled = false;
+
+        let check = create_service_health_check(&instance, "worker");
+        assert_eq!(check.status, "critical");
+        assert!(check.output.contains("maintenance"));
+    }
+
+    #[test]
+    fn test_create_health_check_disabled_and_unhealthy() {
+        let mut instance = NacosInstance::new("10.0.0.4".to_string(), 8080);
+        instance.instance_id = "bad-001".to_string();
+        instance.service_name = "cache".to_string();
+        instance.healthy = false;
+        instance.enabled = false;
+
+        let check = create_service_health_check(&instance, "cache");
+        // Disabled takes precedence over unhealthy
+        assert_eq!(check.status, "critical");
+        assert!(check.output.contains("maintenance"));
+    }
+
+    #[test]
+    fn test_create_health_check_id_format() {
+        let mut instance = NacosInstance::new("192.168.1.1".to_string(), 9090);
+        instance.instance_id = "svc-abc-123".to_string();
+        instance.service_name = "my-service".to_string();
+        instance.healthy = true;
+        instance.enabled = true;
+
+        let check = create_service_health_check(&instance, "my-service");
+        assert_eq!(check.check_id, "service:my-service:svc-abc-123");
+    }
 }

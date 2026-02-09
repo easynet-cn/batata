@@ -53,3 +53,6 @@ sysinfo = "0.33"
 
 # Hostname
 hostname = "0.4"
+
+[dev-dependencies]
+actix-http = "3"

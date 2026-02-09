@@ -495,4 +495,92 @@ mod tests {
         let events = service.list_events(Some("specific-event"), None, None, None);
         assert!(events.iter().all(|e| e.name == "specific-event"));
     }
+
+    #[test]
+    fn test_event_unique_ids() {
+        let service = ConsulEventService::new();
+
+        let e1 = service.fire_event("evt", None, "", "", "");
+        let e2 = service.fire_event("evt", None, "", "", "");
+        assert_ne!(e1.id, e2.id);
+    }
+
+    #[test]
+    fn test_event_with_all_filters() {
+        let service = ConsulEventService::new();
+
+        // Use unique filter values to avoid interference from other tests
+        service.fire_event(
+            "filter-deploy",
+            None,
+            "filter-node-1",
+            "filter-web",
+            "filter-v1",
+        );
+        service.fire_event(
+            "filter-deploy",
+            None,
+            "filter-node-2",
+            "filter-api",
+            "filter-v2",
+        );
+        service.fire_event(
+            "filter-restart",
+            None,
+            "filter-node-1",
+            "filter-web",
+            "filter-v1",
+        );
+
+        // Filter by node — events with empty node_filter also pass through (match-all semantics)
+        let by_node = service.list_events(None, Some("filter-node-1"), None, None);
+        assert!(by_node.len() >= 2);
+        assert!(
+            by_node
+                .iter()
+                .all(|e| e.node_filter.is_empty() || e.node_filter.contains("filter-node-1"))
+        );
+
+        // Filter by service — events with empty service_filter also pass through
+        let by_svc = service.list_events(None, None, Some("filter-web"), None);
+        assert!(by_svc.len() >= 2);
+        assert!(
+            by_svc
+                .iter()
+                .all(|e| e.service_filter.is_empty() || e.service_filter.contains("filter-web"))
+        );
+
+        // Filter by tag — events with empty tag_filter also pass through
+        let by_tag = service.list_events(None, None, None, Some("filter-v2"));
+        assert!(by_tag.len() >= 1);
+        assert!(
+            by_tag
+                .iter()
+                .all(|e| e.tag_filter.is_empty() || e.tag_filter.contains("filter-v2"))
+        );
+
+        // Combined filters
+        let combined =
+            service.list_events(Some("filter-deploy"), Some("filter-node-1"), None, None);
+        assert!(combined.len() >= 1);
+        assert!(combined.iter().all(|e| e.name == "filter-deploy"
+            && (e.node_filter.is_empty() || e.node_filter.contains("filter-node-1"))));
+    }
+
+    #[test]
+    fn test_event_empty_payload() {
+        let service = ConsulEventService::new();
+
+        let event = service.fire_event("no-payload-evt", None, "", "", "");
+        assert!(event.payload.is_none());
+    }
+
+    #[test]
+    fn test_event_ltime_increments() {
+        let service = ConsulEventService::new();
+
+        let e1 = service.fire_event("ltime-a", None, "", "", "");
+        let e2 = service.fire_event("ltime-b", None, "", "", "");
+        assert!(e2.ltime > e1.ltime);
+    }
 }
