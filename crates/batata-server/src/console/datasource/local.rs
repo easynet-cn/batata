@@ -26,12 +26,12 @@ use crate::{
         ClusterHealthResponse, ClusterHealthSummaryResponse, SelfMemberResponse,
     },
     model::common::{
-        Configuration, AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE,
-        APOLLO_ENABLED_STATE, APOLLO_PORT_STATE, CONFIG_RENTENTION_DAYS_PROPERTY_STATE,
-        CONSUL_ENABLED_STATE, CONSUL_PORT_STATE, DATASOURCE_PLATFORM_PROPERTY_STATE,
-        DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT,
-        DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE, IS_CAPACITY_LIMIT_CHECK,
-        IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT,
+        APOLLO_ENABLED_STATE, APOLLO_PORT_STATE, AUTH_ADMIN_REQUEST, AUTH_ENABLED,
+        AUTH_SYSTEM_TYPE, CONFIG_RENTENTION_DAYS_PROPERTY_STATE, CONSUL_ENABLED_STATE,
+        CONSUL_PORT_STATE, Configuration, DATASOURCE_PLATFORM_PROPERTY_STATE,
+        DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE,
+        DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK,
+        IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT,
         NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION, NOTIFY_CONNECT_TIMEOUT,
         NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE, STARTUP_MODE_STATE,
     },
@@ -791,40 +791,24 @@ impl ConsoleDataSource for LocalDataSource {
 
         // Auth module state
         let auth_enabled = cfg.auth_enabled();
-        let global_admin = crate::auth::service::role::has_global_admin_role(
-            &self.database_connection,
-        )
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!("Failed to check global admin role: {}", e);
-            false
-        });
-        state_map.insert(
-            AUTH_ENABLED.to_string(),
-            Some(format!("{}", auth_enabled)),
-        );
-        state_map.insert(
-            AUTH_SYSTEM_TYPE.to_string(),
-            Some(cfg.auth_system_type()),
-        );
+        let global_admin =
+            crate::auth::service::role::has_global_admin_role(&self.database_connection)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to check global admin role: {}", e);
+                    false
+                });
+        state_map.insert(AUTH_ENABLED.to_string(), Some(format!("{}", auth_enabled)));
+        state_map.insert(AUTH_SYSTEM_TYPE.to_string(), Some(cfg.auth_system_type()));
         state_map.insert(
             AUTH_ADMIN_REQUEST.to_string(),
             Some(format!("{}", auth_enabled && !global_admin)),
         );
 
         // Env module state
-        state_map.insert(
-            STARTUP_MODE_STATE.to_string(),
-            Some(cfg.startup_mode()),
-        );
-        state_map.insert(
-            FUNCTION_MODE_STATE.to_string(),
-            cfg.function_mode(),
-        );
-        state_map.insert(
-            NACOS_VERSION.to_string(),
-            Some(cfg.version()),
-        );
+        state_map.insert(STARTUP_MODE_STATE.to_string(), Some(cfg.startup_mode()));
+        state_map.insert(FUNCTION_MODE_STATE.to_string(), cfg.function_mode());
+        state_map.insert(NACOS_VERSION.to_string(), Some(cfg.version()));
 
         // Console module state
         state_map.insert(

@@ -15,6 +15,7 @@ members = [
     "crates/batata-console",
     "crates/batata-client",
     "crates/batata-mesh",
+    "crates/batata-maintainer-client",
     "crates/batata-server",
 ]
 
@@ -40,6 +41,7 @@ batata-plugin-consul = { path = "crates/batata-plugin-consul" }
 batata-plugin-apollo = { path = "crates/batata-plugin-apollo" }
 batata-console = { path = "crates/batata-console" }
 batata-client = { path = "crates/batata-client" }
+batata-maintainer-client = { path = "crates/batata-maintainer-client" }
 batata-server = { path = "crates/batata-server" }
 
 # Async runtime

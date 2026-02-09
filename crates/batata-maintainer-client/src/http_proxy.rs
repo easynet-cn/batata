@@ -1,4 +1,4 @@
-// HTTP client wrapper for remote console mode
+// HTTP transport layer for MaintainerClient
 // Handles authentication, retries, and failover
 
 use reqwest::{Client, Response, StatusCode};
@@ -6,38 +6,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{sync::RwLock, time::Duration};
 use tracing::{debug, error, warn};
 
-use crate::model::common::Configuration;
-
-/// Configuration for remote console HTTP client
-#[derive(Clone, Debug)]
-pub struct RemoteConsoleConfig {
-    pub server_addrs: Vec<String>,
-    pub username: String,
-    pub password: String,
-    pub connect_timeout_ms: u64,
-    pub read_timeout_ms: u64,
-    pub context_path: String,
-}
-
-impl RemoteConsoleConfig {
-    pub fn from_configuration(config: &Configuration) -> Self {
-        let server_addr = config.console_remote_server_addr();
-        let server_addrs: Vec<String> = server_addr
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        Self {
-            server_addrs,
-            username: config.console_remote_username(),
-            password: config.console_remote_password(),
-            connect_timeout_ms: config.console_remote_connect_timeout_ms(),
-            read_timeout_ms: config.console_remote_read_timeout_ms(),
-            context_path: config.server_context_path(),
-        }
-    }
-}
+use crate::{config::MaintainerClientConfig, constants::admin_api_path};
 
 /// Token info for authentication
 #[derive(Clone, Debug)]
@@ -46,17 +15,17 @@ struct TokenInfo {
     expires_at: std::time::Instant,
 }
 
-/// HTTP client for remote console operations
-pub struct ConsoleHttpClient {
+/// HTTP proxy handling auth, retry, and failover for admin API requests
+pub struct HttpProxy {
     client: Client,
-    config: RemoteConsoleConfig,
+    config: MaintainerClientConfig,
     current_server_index: RwLock<usize>,
     token: RwLock<Option<TokenInfo>>,
 }
 
-impl ConsoleHttpClient {
-    /// Create a new console HTTP client
-    pub async fn new(config: RemoteConsoleConfig) -> anyhow::Result<Self> {
+impl HttpProxy {
+    /// Create a new HTTP proxy and authenticate
+    pub async fn new(config: MaintainerClientConfig) -> anyhow::Result<Self> {
         let client = Client::builder()
             .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
             .timeout(Duration::from_millis(config.read_timeout_ms))
@@ -136,7 +105,7 @@ impl ConsoleHttpClient {
 
     /// Authenticate with the remote server
     pub async fn authenticate(&self) -> anyhow::Result<()> {
-        let url = self.build_url("/v3/auth/user/login");
+        let url = self.build_url(admin_api_path::AUTH_LOGIN);
 
         debug!("Authenticating with server: {}", url);
 
@@ -317,7 +286,6 @@ impl ConsoleHttpClient {
                 if response.status() == StatusCode::UNAUTHORIZED {
                     warn!("Token expired, re-authenticating...");
                     self.authenticate().await?;
-                    // Token expired, caller should retry
                     return Err(anyhow::anyhow!("Token expired, please retry"));
                 }
                 self.handle_response(response).await
