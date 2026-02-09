@@ -52,7 +52,7 @@ public class ApolloAsyncConfigTest {
      */
     @Test
     @Order(1)
-    void testAsyncConfigLoading() throws InterruptedException, ExecutionException {
+    void testAsyncConfigLoading() throws InterruptedException, ExecutionException, TimeoutException {
         CompletableFuture<Config> future = CompletableFuture.supplyAsync(() ->
             ConfigService.getAppConfig(), executorService);
 
@@ -100,7 +100,7 @@ public class ApolloAsyncConfigTest {
      */
     @Test
     @Order(3)
-    void testAsyncPropertyAccess() throws InterruptedException, ExecutionException {
+    void testAsyncPropertyAccess() throws InterruptedException, ExecutionException, TimeoutException {
         Config config = ConfigService.getAppConfig();
 
         CompletableFuture<String> future = CompletableFuture.supplyAsync(() ->
@@ -334,7 +334,7 @@ public class ApolloAsyncConfigTest {
      */
     @Test
     @Order(11)
-    void testConfigCompletableFutureChain() throws InterruptedException, ExecutionException {
+    void testConfigCompletableFutureChain() throws InterruptedException, ExecutionException, TimeoutException {
         CompletableFuture<String> result = CompletableFuture.supplyAsync(() ->
             ConfigService.getAppConfig(), executorService)
             .thenApply(config -> config.getProperty("chain.key", "default"))
@@ -352,7 +352,7 @@ public class ApolloAsyncConfigTest {
      */
     @Test
     @Order(12)
-    void testConfigCompletableFutureCombine() throws InterruptedException, ExecutionException {
+    void testConfigCompletableFutureCombine() throws InterruptedException, ExecutionException, TimeoutException {
         CompletableFuture<String> future1 = CompletableFuture.supplyAsync(() -> {
             Config config = ConfigService.getConfig("application");
             return config.getProperty("combine.key1", "value1");
@@ -377,7 +377,7 @@ public class ApolloAsyncConfigTest {
      */
     @Test
     @Order(13)
-    void testConfigCompletableFutureExceptionally() throws InterruptedException, ExecutionException {
+    void testConfigCompletableFutureExceptionally() throws InterruptedException, ExecutionException, TimeoutException {
         CompletableFuture<String> result = CompletableFuture.supplyAsync(() -> {
             Config config = ConfigService.getConfig("non-existent-namespace-" + UUID.randomUUID());
             return config.getProperty("key", "default");

@@ -33,7 +33,7 @@ pub struct AccessKeyPathParams {
 /// Query parameters for release lock
 #[derive(Debug, Deserialize)]
 pub struct ReleaseLockQuery {
-    pub user: String,
+    pub operator: String,
 }
 
 // ============================================================================
@@ -92,7 +92,7 @@ pub async fn release_lock(
             &path.cluster,
             &path.namespace,
             &path.env,
-            &query.user,
+            &query.operator,
         )
         .await
     {
@@ -129,10 +129,19 @@ pub async fn create_gray_release(
     {
         Ok(rule) => HttpResponse::Created().json(rule),
         Err(e) => {
-            tracing::error!("Failed to create gray release: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": e.to_string()
-            }))
+            let err_msg = e.to_string();
+            tracing::error!("Failed to create gray release: {}", err_msg);
+            if err_msg.to_lowercase().contains("not found") {
+                HttpResponse::BadRequest().json(serde_json::json!({
+                    "status": 400,
+                    "message": err_msg
+                }))
+            } else {
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "status": 500,
+                    "message": err_msg
+                }))
+            }
         }
     }
 }
@@ -258,10 +267,10 @@ pub async fn delete_access_key(
 pub async fn set_access_key_enabled(
     service: web::Data<Arc<ApolloAdvancedService>>,
     path: web::Path<AccessKeyPathParams>,
-    body: web::Json<EnableRequest>,
+    query: web::Query<EnableQuery>,
 ) -> HttpResponse {
     match service
-        .set_access_key_enabled(&path.key_id, body.enabled)
+        .set_access_key_enabled(&path.key_id, query.enabled)
         .await
     {
         Some(key) => HttpResponse::Ok().json(key),
@@ -272,8 +281,10 @@ pub async fn set_access_key_enabled(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct EnableRequest {
+pub struct EnableQuery {
     pub enabled: bool,
+    #[serde(default)]
+    pub operator: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

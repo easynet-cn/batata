@@ -808,15 +808,16 @@ public class ApolloConfigVersionTest {
     // ==================== Helper Methods ====================
 
     private void createNamespace(String namespace) throws Exception {
-        String url = openApiUrl + "/openapi/v1/envs/" + ENV + "/apps/" + APP_ID + "/clusters/" + CLUSTER + "/namespaces";
+        String url = openApiUrl + "/openapi/v1/apps/" + APP_ID + "/appnamespaces";
         String body = String.format(
-                "{\"name\":\"%s\",\"appId\":\"%s\",\"format\":\"properties\",\"isPublic\":false}",
+                "{\"name\":\"%s\",\"appId\":\"%s\",\"format\":\"properties\",\"isPublic\":false,\"dataChangeCreatedBy\":\"test\"}",
                 namespace, APP_ID);
 
         try {
             httpPost(url, body, "application/json");
         } catch (Exception e) {
             // Namespace may already exist
+            System.out.println("Create namespace " + namespace + ": " + e.getMessage());
         }
     }
 

@@ -42,7 +42,7 @@ pub async fn get_config(
         .map(|s| s.to_string());
 
     // Normalize namespace (remove .properties suffix)
-    let namespace = path
+    let namespace_stripped = path
         .namespace
         .strip_suffix(".properties")
         .unwrap_or(&path.namespace);
@@ -53,29 +53,54 @@ pub async fn get_config(
         Some(query.release_key.as_str())
     };
 
+    // Try stripped name first (handles "application.properties" → "application")
     match service
         .get_config(
             &path.app_id,
             &path.cluster_name,
-            namespace,
+            namespace_stripped,
             env.as_deref(),
             client_release_key,
         )
         .await
     {
-        Ok(Some(config)) => HttpResponse::Ok().json(config),
-        Ok(None) => {
-            // 304 Not Modified
-            HttpResponse::NotModified().finish()
-        }
+        Ok(Some(config)) => return HttpResponse::Ok().json(config),
         Err(e) => {
             tracing::error!("Failed to get Apollo config: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
+            return HttpResponse::InternalServerError().json(serde_json::json!({
                 "status": 500,
                 "message": format!("Failed to get config: {}", e)
-            }))
+            }));
+        }
+        Ok(None) => {}
+    }
+
+    // If not found and suffix was stripped, try original name
+    if namespace_stripped != path.namespace {
+        match service
+            .get_config(
+                &path.app_id,
+                &path.cluster_name,
+                &path.namespace,
+                env.as_deref(),
+                client_release_key,
+            )
+            .await
+        {
+            Ok(Some(config)) => return HttpResponse::Ok().json(config),
+            Err(e) => {
+                tracing::error!("Failed to get Apollo config: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "status": 500,
+                    "message": format!("Failed to get config: {}", e)
+                }));
+            }
+            Ok(None) => {}
         }
     }
+
+    // 304 Not Modified
+    HttpResponse::NotModified().finish()
 }
 
 #[cfg(test)]

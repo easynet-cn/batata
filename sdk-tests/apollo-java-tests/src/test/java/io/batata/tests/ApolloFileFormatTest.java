@@ -634,15 +634,16 @@ public class ApolloFileFormatTest {
     // ==================== Helper Methods ====================
 
     private void createNamespace(String namespace, String format) throws Exception {
-        String url = openApiUrl + "/openapi/v1/envs/" + ENV + "/apps/" + APP_ID + "/clusters/" + CLUSTER + "/namespaces";
+        String url = openApiUrl + "/openapi/v1/apps/" + APP_ID + "/appnamespaces";
         String body = String.format(
-                "{\"name\":\"%s\",\"appId\":\"%s\",\"format\":\"%s\",\"isPublic\":false,\"comment\":\"Test namespace\"}",
+                "{\"name\":\"%s\",\"appId\":\"%s\",\"format\":\"%s\",\"isPublic\":false,\"comment\":\"Test namespace\",\"dataChangeCreatedBy\":\"test\"}",
                 namespace, APP_ID, format);
 
         try {
             httpPost(url, body, "application/json");
         } catch (Exception e) {
             // Namespace may already exist
+            System.out.println("Create namespace " + namespace + ": " + e.getMessage());
         }
     }
 

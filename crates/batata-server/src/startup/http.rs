@@ -12,7 +12,7 @@ use crate::{
     api::ai::{AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp},
     api::apollo::{
         ApolloAdvancedService, ApolloBranchService, ApolloNotificationService,
-        ApolloOpenApiService, apollo_advanced_routes, apollo_config_routes, apollo_openapi_routes,
+        ApolloOpenApiService, apollo_config_routes, apollo_openapi_routes,
     },
     api::cloud::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
@@ -199,9 +199,8 @@ pub fn apollo_server(
             .app_data(web::Data::new(apollo_services.openapi_service.clone()))
             .app_data(web::Data::new(apollo_services.advanced_service.clone()))
             .app_data(web::Data::new(apollo_services.branch_service.clone()))
-            .service(apollo_config_routes())
             .service(apollo_openapi_routes())
-            .service(apollo_advanced_routes())
+            .service(apollo_config_routes())
     })
     .bind((address, port))?
     .run())

@@ -374,7 +374,7 @@ public class ApolloIntegrationTest {
         }
 
         // Verify config is still accessible (from cache)
-        String valueAfterCheck = config.getProperty(testKey, "fallback");
+        String valueAfterCheck = config.getProperty(testKey, "cached-default");
         System.out.println("  Value after cache check: " + valueAfterCheck);
 
         // Default values should be returned consistently
@@ -462,7 +462,7 @@ public class ApolloIntegrationTest {
                     Config config = ConfigService.getConfig(NAMESPACE);
                     clientConfigs.put(clientId, config);
 
-                    String value = config.getProperty(consistencyKey, "default-" + clientId);
+                    String value = config.getProperty(consistencyKey, "default-consistency");
                     clientValues.put(clientId, value);
 
                     System.out.println("  Client " + clientId + ": " + value);
@@ -1137,7 +1137,7 @@ public class ApolloIntegrationTest {
 
         // Step 5: Verify system stability after recovery
         System.out.println("  Step 5: Verifying post-recovery stability");
-        String postRecoveryValue = config.getProperty(drKey, "recovered");
+        String postRecoveryValue = config.getProperty(drKey, "baseline");
         long postRecoveryTime = measureConfigAccess(config, drKey, 10);
         System.out.println("    Post-recovery value: " + postRecoveryValue);
         System.out.println("    Post-recovery access time: " + postRecoveryTime + "ms (avg of 10)");

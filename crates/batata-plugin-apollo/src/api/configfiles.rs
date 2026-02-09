@@ -34,27 +34,50 @@ pub async fn get_configfiles(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    let namespace = path
+    let namespace_stripped = path
         .namespace
         .strip_suffix(".properties")
         .unwrap_or(&path.namespace);
 
+    // Try stripped name first (handles "application.properties" → "application")
     match service
-        .get_config_content(&path.app_id, &path.cluster_name, namespace, env.as_deref())
+        .get_config_content(&path.app_id, &path.cluster_name, namespace_stripped, env.as_deref())
         .await
     {
         Ok(Some(content)) => {
             let format = ConfigFormat::from_namespace(&path.namespace);
-            HttpResponse::Ok()
+            return HttpResponse::Ok()
                 .content_type(format.content_type())
-                .body(content)
+                .body(content);
         }
-        Ok(None) => HttpResponse::NotFound().body("Config not found"),
         Err(e) => {
             tracing::error!("Failed to get Apollo configfiles: {}", e);
-            HttpResponse::InternalServerError().body(format!("Error: {}", e))
+            return HttpResponse::InternalServerError().body(format!("Error: {}", e));
+        }
+        Ok(None) => {}
+    }
+
+    // If not found and suffix was stripped, try original name
+    if namespace_stripped != path.namespace {
+        match service
+            .get_config_content(&path.app_id, &path.cluster_name, &path.namespace, env.as_deref())
+            .await
+        {
+            Ok(Some(content)) => {
+                let format = ConfigFormat::from_namespace(&path.namespace);
+                return HttpResponse::Ok()
+                    .content_type(format.content_type())
+                    .body(content);
+            }
+            Err(e) => {
+                tracing::error!("Failed to get Apollo configfiles: {}", e);
+                return HttpResponse::InternalServerError().body(format!("Error: {}", e));
+            }
+            Ok(None) => {}
         }
     }
+
+    HttpResponse::NotFound().body("Config not found")
 }
 
 /// Get configuration as JSON
@@ -73,31 +96,58 @@ pub async fn get_configfiles_json(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    let namespace = path
+    let namespace_stripped = path
         .namespace
         .strip_suffix(".properties")
         .unwrap_or(&path.namespace);
 
+    // Try stripped name first
     match service
         .get_config(
             &path.app_id,
             &path.cluster_name,
-            namespace,
+            namespace_stripped,
             env.as_deref(),
             None,
         )
         .await
     {
-        Ok(Some(config)) => HttpResponse::Ok().json(config.configurations),
-        Ok(None) => HttpResponse::NotModified().finish(),
+        Ok(Some(config)) => return HttpResponse::Ok().json(config.configurations),
         Err(e) => {
             tracing::error!("Failed to get Apollo configfiles/json: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
+            return HttpResponse::InternalServerError().json(serde_json::json!({
                 "status": 500,
                 "message": format!("Error: {}", e)
-            }))
+            }));
+        }
+        Ok(None) => {}
+    }
+
+    // If not found and suffix was stripped, try original name
+    if namespace_stripped != path.namespace {
+        match service
+            .get_config(
+                &path.app_id,
+                &path.cluster_name,
+                &path.namespace,
+                env.as_deref(),
+                None,
+            )
+            .await
+        {
+            Ok(Some(config)) => return HttpResponse::Ok().json(config.configurations),
+            Err(e) => {
+                tracing::error!("Failed to get Apollo configfiles/json: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "status": 500,
+                    "message": format!("Error: {}", e)
+                }));
+            }
+            Ok(None) => {}
         }
     }
+
+    HttpResponse::NotModified().finish()
 }
 
 #[cfg(test)]

@@ -18,6 +18,10 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <apollo.version>2.4.0</apollo.version>
         <junit.version>5.10.2</junit.version>
+        <apollo.app.id>test-app</apollo.app.id>
+        <apollo.env>DEV</apollo.env>
+        <apollo.server>http://127.0.0.1:8080</apollo.server>
+        <apollo.cluster.name>default</apollo.cluster.name>
     </properties>
 
     <dependencies>
@@ -69,11 +73,13 @@
                 <version>3.2.5</version>
                 <configuration>
                     <systemPropertyVariables>
-                        <app.id>${env.APOLLO_APP_ID:-test-app}</app.id>
-                        <env>${env.APOLLO_ENV:-DEV}</env>
-                        <apollo.meta>${env.APOLLO_META:-http://127.0.0.1:8848}</apollo.meta>
-                        <apollo.configService>${env.APOLLO_CONFIG_SERVICE:-http://127.0.0.1:8848}</apollo.configService>
-                        <apollo.cluster>${env.APOLLO_CLUSTER:-default}</apollo.cluster>
+                        <app.id>${apollo.app.id}</app.id>
+                        <env>${apollo.env}</env>
+                        <apollo.meta>${apollo.server}</apollo.meta>
+                        <apollo.configService>${apollo.server}</apollo.configService>
+                        <apollo.cluster>${apollo.cluster.name}</apollo.cluster>
+                        <apollo.config.service>${apollo.server}</apollo.config.service>
+                        <apollo.openapi.url>${apollo.server}</apollo.openapi.url>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

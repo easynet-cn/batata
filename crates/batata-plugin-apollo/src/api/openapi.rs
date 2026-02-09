@@ -406,10 +406,19 @@ pub async fn create_item(
     {
         Ok(item) => HttpResponse::Created().json(item),
         Err(e) => {
-            tracing::error!("Failed to create item: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": e.to_string()
-            }))
+            let err_msg = e.to_string();
+            tracing::error!("Failed to create item: {}", err_msg);
+            if err_msg.to_lowercase().contains("not found") {
+                HttpResponse::BadRequest().json(serde_json::json!({
+                    "status": 400,
+                    "message": err_msg
+                }))
+            } else {
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "status": 500,
+                    "message": err_msg
+                }))
+            }
         }
     }
 }

@@ -75,79 +75,12 @@ pub fn apollo_config_routes_with_prefix(prefix: &str) -> actix_web::Scope {
 pub fn configure_apollo_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(apollo_config_routes());
     cfg.service(apollo_openapi_routes());
-    cfg.service(apollo_advanced_routes());
 }
 
-/// Configure Apollo Advanced routes
-pub fn apollo_advanced_routes() -> actix_web::Scope {
-    web::scope("/openapi/v1")
-        // Namespace Lock
-        .route(
-            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/lock",
-            web::get().to(advanced::get_lock_status),
-        )
-        .route(
-            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/lock",
-            web::post().to(advanced::acquire_lock),
-        )
-        .route(
-            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/lock",
-            web::delete().to(advanced::release_lock),
-        )
-        // Gray Release
-        .route(
-            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/gray",
-            web::get().to(advanced::get_gray_release),
-        )
-        .route(
-            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/gray",
-            web::post().to(advanced::create_gray_release),
-        )
-        .route(
-            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/gray/merge",
-            web::put().to(advanced::merge_gray_release),
-        )
-        .route(
-            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/gray",
-            web::delete().to(advanced::abandon_gray_release),
-        )
-        // Access Keys
-        .route(
-            "/apps/{app_id}/accesskeys",
-            web::get().to(advanced::list_access_keys),
-        )
-        .route(
-            "/apps/{app_id}/accesskeys",
-            web::post().to(advanced::create_access_key),
-        )
-        .route(
-            "/apps/{app_id}/accesskeys/{key_id}",
-            web::get().to(advanced::get_access_key),
-        )
-        .route(
-            "/apps/{app_id}/accesskeys/{key_id}/enable",
-            web::put().to(advanced::set_access_key_enabled),
-        )
-        .route(
-            "/apps/{app_id}/accesskeys/{key_id}",
-            web::delete().to(advanced::delete_access_key),
-        )
-        // Client Metrics
-        .route(
-            "/metrics/clients",
-            web::get().to(advanced::get_client_metrics),
-        )
-        .route(
-            "/apps/{app_id}/clients",
-            web::get().to(advanced::get_app_clients),
-        )
-        .route(
-            "/metrics/clients/cleanup",
-            web::post().to(advanced::cleanup_stale_clients),
-        )
-}
-
-/// Configure Apollo Open API routes
+/// Configure Apollo Open API routes (includes both OpenAPI and Advanced routes)
+///
+/// All routes under `/openapi/v1` are merged into a single scope to avoid
+/// actix-web scope prefix conflicts.
 pub fn apollo_openapi_routes() -> actix_web::Scope {
     web::scope("/openapi/v1")
         // App Management
@@ -249,4 +182,75 @@ pub fn apollo_openapi_routes() -> actix_web::Scope {
             "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/branches/{branch}/merge",
             web::post().to(branch::merge_branch),
         )
+        // Advanced: Namespace Lock
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/lock",
+            web::get().to(advanced::get_lock_status),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/lock",
+            web::post().to(advanced::acquire_lock),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/lock",
+            web::delete().to(advanced::release_lock),
+        )
+        // Advanced: Gray Release
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/gray",
+            web::get().to(advanced::get_gray_release),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/gray",
+            web::post().to(advanced::create_gray_release),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/gray/merge",
+            web::put().to(advanced::merge_gray_release),
+        )
+        .route(
+            "/envs/{env}/apps/{app_id}/clusters/{cluster}/namespaces/{namespace}/gray",
+            web::delete().to(advanced::abandon_gray_release),
+        )
+        // Advanced: Access Keys
+        .route(
+            "/apps/{app_id}/accesskeys",
+            web::get().to(advanced::list_access_keys),
+        )
+        .route(
+            "/apps/{app_id}/accesskeys",
+            web::post().to(advanced::create_access_key),
+        )
+        .route(
+            "/apps/{app_id}/accesskeys/{key_id}",
+            web::get().to(advanced::get_access_key),
+        )
+        .route(
+            "/apps/{app_id}/accesskeys/{key_id}/enable",
+            web::put().to(advanced::set_access_key_enabled),
+        )
+        .route(
+            "/apps/{app_id}/accesskeys/{key_id}",
+            web::delete().to(advanced::delete_access_key),
+        )
+        // Advanced: Client Metrics
+        .route(
+            "/metrics/clients",
+            web::get().to(advanced::get_client_metrics),
+        )
+        .route(
+            "/apps/{app_id}/clients",
+            web::get().to(advanced::get_app_clients),
+        )
+        .route(
+            "/metrics/clients/cleanup",
+            web::post().to(advanced::cleanup_stale_clients),
+        )
+}
+
+/// Backward compatibility alias
+pub fn apollo_advanced_routes() -> actix_web::Scope {
+    // Advanced routes are now merged into apollo_openapi_routes()
+    // This returns an empty scope to avoid breaking callers
+    web::scope("/openapi/v1/legacy-noop")
 }

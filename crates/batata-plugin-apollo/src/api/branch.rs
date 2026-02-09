@@ -105,10 +105,19 @@ pub async fn create_branch(
             "branchName": name
         })),
         Err(e) => {
-            tracing::error!("Failed to create branch: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": e.to_string()
-            }))
+            let err_msg = e.to_string();
+            tracing::error!("Failed to create branch: {}", err_msg);
+            if err_msg.to_lowercase().contains("not found") {
+                HttpResponse::BadRequest().json(serde_json::json!({
+                    "status": 400,
+                    "message": err_msg
+                }))
+            } else {
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "status": 500,
+                    "message": err_msg
+                }))
+            }
         }
     }
 }
@@ -211,10 +220,19 @@ pub async fn gray_release(
     {
         Ok(release) => HttpResponse::Ok().json(release),
         Err(e) => {
-            tracing::error!("Failed to publish gray release: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": e.to_string()
-            }))
+            let err_msg = e.to_string();
+            tracing::error!("Failed to publish gray release: {}", err_msg);
+            if err_msg.to_lowercase().contains("not found") {
+                HttpResponse::BadRequest().json(serde_json::json!({
+                    "status": 400,
+                    "message": err_msg
+                }))
+            } else {
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "status": 500,
+                    "message": err_msg
+                }))
+            }
         }
     }
 }
@@ -239,10 +257,19 @@ pub async fn merge_branch(
     {
         Ok(release) => HttpResponse::Ok().json(release),
         Err(e) => {
-            tracing::error!("Failed to merge branch: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": e.to_string()
-            }))
+            let err_msg = e.to_string();
+            tracing::error!("Failed to merge branch: {}", err_msg);
+            if err_msg.to_lowercase().contains("not found") {
+                HttpResponse::BadRequest().json(serde_json::json!({
+                    "status": 400,
+                    "message": err_msg
+                }))
+            } else {
+                HttpResponse::InternalServerError().json(serde_json::json!({
+                    "status": 500,
+                    "message": err_msg
+                }))
+            }
         }
     }
 }
