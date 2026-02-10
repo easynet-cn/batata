@@ -258,17 +258,6 @@ pub fn consul_kv_routes() -> actix_web::Scope {
         .route("/txn", web::put().to(kv::txn))
 }
 
-/// Configure Consul KV Store API routes (persistent database storage)
-pub fn consul_kv_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1")
-        .route("/kv/{key:.*}", web::get().to(kv::get_kv_persistent))
-        .route("/kv/{key:.*}", web::put().to(kv::put_kv_persistent))
-        .route("/kv/{key:.*}", web::delete().to(kv::delete_kv_persistent))
-        .route("/kv/export", web::get().to(kv::export_kv_persistent))
-        .route("/kv/import", web::post().to(kv::import_kv_persistent))
-        .route("/txn", web::put().to(kv::txn_persistent))
-}
-
 /// Configure Consul Catalog API routes
 pub fn consul_catalog_routes() -> actix_web::Scope {
     web::scope("/v1/catalog")
@@ -369,118 +358,6 @@ pub fn consul_acl_routes() -> actix_web::Scope {
         )
 }
 
-/// Configure Consul ACL API routes (persistent database storage)
-pub fn consul_acl_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1/acl")
-        // Bootstrap and auth endpoints - persistent versions
-        .route("/bootstrap", web::put().to(acl::acl_bootstrap_persistent))
-        .route("/login", web::post().to(acl::acl_login_persistent))
-        .route("/logout", web::post().to(acl::acl_logout_persistent))
-        // Replication status
-        .route(
-            "/replication",
-            web::get().to(acl::acl_replication_persistent),
-        )
-        // Token management - persistent versions
-        .route("/tokens", web::get().to(acl::list_tokens_persistent))
-        .route("/token/self", web::get().to(acl::get_token_self_persistent))
-        .route("/token", web::put().to(acl::create_token_persistent))
-        .route(
-            "/token/{accessor_id}/clone",
-            web::put().to(acl::clone_token_persistent),
-        )
-        .route(
-            "/token/{accessor_id}",
-            web::get().to(acl::get_token_persistent),
-        )
-        .route(
-            "/token/{accessor_id}",
-            web::put().to(acl::update_token_persistent),
-        )
-        .route(
-            "/token/{accessor_id}",
-            web::delete().to(acl::delete_token_persistent),
-        )
-        // Policy management - persistent versions
-        .route("/policies", web::get().to(acl::list_policies_persistent))
-        .route("/policy", web::put().to(acl::create_policy_persistent))
-        .route(
-            "/policy/name/{name}",
-            web::get().to(acl::get_policy_by_name_persistent),
-        )
-        .route("/policy/{id}", web::get().to(acl::get_policy_persistent))
-        .route("/policy/{id}", web::put().to(acl::update_policy_persistent))
-        .route(
-            "/policy/{id}",
-            web::delete().to(acl::delete_policy_persistent),
-        )
-        // Role management - persistent versions
-        .route("/roles", web::get().to(acl::list_roles_persistent))
-        .route("/role", web::put().to(acl::create_role_persistent))
-        .route(
-            "/role/name/{name}",
-            web::get().to(acl::get_role_by_name_persistent),
-        )
-        .route("/role/{id}", web::get().to(acl::get_role_persistent))
-        .route("/role/{id}", web::put().to(acl::update_role_persistent))
-        .route("/role/{id}", web::delete().to(acl::delete_role_persistent))
-        // Binding Rule management - persistent versions
-        .route(
-            "/binding-rules",
-            web::get().to(acl::list_binding_rules_persistent),
-        )
-        .route(
-            "/binding-rule",
-            web::put().to(acl::create_binding_rule_persistent),
-        )
-        .route(
-            "/binding-rule/{id}",
-            web::get().to(acl::get_binding_rule_persistent),
-        )
-        .route(
-            "/binding-rule/{id}",
-            web::put().to(acl::update_binding_rule_persistent),
-        )
-        .route(
-            "/binding-rule/{id}",
-            web::delete().to(acl::delete_binding_rule_persistent),
-        )
-        // Auth Method management - persistent versions
-        .route(
-            "/auth-methods",
-            web::get().to(acl::list_auth_methods_persistent),
-        )
-        .route(
-            "/auth-method",
-            web::put().to(acl::create_auth_method_persistent),
-        )
-        .route(
-            "/auth-method/{name}",
-            web::get().to(acl::get_auth_method_persistent),
-        )
-        .route(
-            "/auth-method/{name}",
-            web::put().to(acl::update_auth_method_persistent),
-        )
-        .route(
-            "/auth-method/{name}",
-            web::delete().to(acl::delete_auth_method_persistent),
-        )
-        // Templated policies
-        .route(
-            "/templated-policies",
-            web::get().to(acl::list_templated_policies_persistent),
-        )
-        .route(
-            "/templated-policy/name/{name}",
-            web::get().to(acl::get_templated_policy_persistent),
-        )
-        .route(
-            "/templated-policy/preview/{name}",
-            web::post().to(acl::preview_templated_policy_persistent),
-        )
-}
-
 /// Configure Consul Session API routes
 pub fn consul_session_routes() -> actix_web::Scope {
     web::scope("/v1/session")
@@ -490,29 +367,6 @@ pub fn consul_session_routes() -> actix_web::Scope {
         .route("/list", web::get().to(session::list_sessions))
         .route("/node/{node}", web::get().to(session::list_node_sessions))
         .route("/renew/{uuid}", web::put().to(session::renew_session))
-}
-
-/// Configure Consul Session API routes (persistent database storage)
-pub fn consul_session_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1/session")
-        .route("/create", web::put().to(session::create_session_persistent))
-        .route(
-            "/destroy/{uuid}",
-            web::put().to(session::destroy_session_persistent),
-        )
-        .route(
-            "/info/{uuid}",
-            web::get().to(session::get_session_info_persistent),
-        )
-        .route("/list", web::get().to(session::list_sessions_persistent))
-        .route(
-            "/node/{node}",
-            web::get().to(session::list_node_sessions_persistent),
-        )
-        .route(
-            "/renew/{uuid}",
-            web::put().to(session::renew_session_persistent),
-        )
 }
 
 /// Configure Consul Status API routes (fixed/fallback version)
@@ -553,24 +407,6 @@ pub fn consul_query_routes() -> actix_web::Scope {
         .route("/{uuid}", web::delete().to(query::delete_query))
         .route("/{uuid}/execute", web::get().to(query::execute_query))
         .route("/{uuid}/explain", web::get().to(query::explain_query))
-}
-
-/// Configure Consul Prepared Query API routes (persistent database storage)
-pub fn consul_query_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1/query")
-        .route("", web::post().to(query::create_query_persistent))
-        .route("", web::get().to(query::list_queries_persistent))
-        .route("/{uuid}", web::get().to(query::get_query_persistent))
-        .route("/{uuid}", web::put().to(query::update_query_persistent))
-        .route("/{uuid}", web::delete().to(query::delete_query_persistent))
-        .route(
-            "/{uuid}/execute",
-            web::get().to(query::execute_query_persistent),
-        )
-        .route(
-            "/{uuid}/explain",
-            web::get().to(query::explain_query_persistent),
-        )
 }
 
 /// Configure Consul Lock API routes
@@ -989,17 +825,19 @@ pub fn consul_routes() -> actix_web::Scope {
 }
 
 /// Configure all Consul API routes with database persistence
+/// Note: KV, ACL, Session, Query now use RocksDB write-through persistence
+/// via the unified service types (no separate persistent route functions needed).
 pub fn consul_routes_persistent() -> actix_web::Scope {
     web::scope("")
         .service(consul_agent_routes_persistent())
         .service(consul_health_routes_persistent())
-        .service(consul_kv_routes_persistent())
+        .service(consul_kv_routes())
         .service(consul_catalog_routes())
-        .service(consul_acl_routes_persistent())
-        .service(consul_session_routes_persistent())
+        .service(consul_acl_routes())
+        .service(consul_session_routes())
         .service(consul_status_routes())
         .service(consul_event_routes_persistent())
-        .service(consul_query_routes_persistent())
+        .service(consul_query_routes())
         .service(consul_snapshot_routes_persistent())
         .service(consul_operator_routes())
         .service(consul_config_entry_routes_persistent())
@@ -1034,17 +872,19 @@ fn consul_test_routes() -> actix_web::Scope {
 
 /// Configure all Consul API routes with full features
 /// Database persistence + real cluster information
+/// Note: KV, ACL, Session, Query now use RocksDB write-through persistence
+/// via the unified service types (no separate persistent route functions needed).
 pub fn consul_routes_full() -> actix_web::Scope {
     web::scope("")
         .service(consul_agent_routes_real())
         .service(consul_health_routes_persistent())
-        .service(consul_kv_routes_persistent())
+        .service(consul_kv_routes())
         .service(consul_catalog_routes())
-        .service(consul_acl_routes_persistent())
-        .service(consul_session_routes_persistent())
+        .service(consul_acl_routes())
+        .service(consul_session_routes())
         .service(consul_status_routes_real())
         .service(consul_event_routes_persistent())
-        .service(consul_query_routes_persistent())
+        .service(consul_query_routes())
         .service(consul_snapshot_routes_persistent())
         .service(consul_operator_routes_real())
         .service(consul_config_entry_routes_persistent())
@@ -1068,6 +908,7 @@ mod tests {
     use crate::health::ConsulHealthService;
     use crate::kv::ConsulKVService;
     use crate::lock::{ConsulLockService, ConsulSemaphoreService};
+    use crate::query::ConsulQueryService;
     use crate::session::ConsulSessionService;
     use crate::snapshot::ConsulSnapshotService;
 
@@ -1087,6 +928,7 @@ mod tests {
         let acl_service = AclService::disabled();
         let event_service = ConsulEventService::new();
         let snapshot_service = ConsulSnapshotService::new();
+        let query_service = ConsulQueryService::new();
         let kv_arc = Arc::new(kv_service.clone());
         let session_arc = Arc::new(session_service.clone());
         let lock_service = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
@@ -1101,6 +943,7 @@ mod tests {
                 .app_data(web::Data::new(acl_service))
                 .app_data(web::Data::new(event_service))
                 .app_data(web::Data::new(snapshot_service))
+                .app_data(web::Data::new(query_service))
                 .app_data(web::Data::new(lock_service))
                 .app_data(web::Data::new(semaphore_service))
                 .service(consul_test_routes()),

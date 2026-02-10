@@ -7,7 +7,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::acl::{AclService, AclServicePersistent, ResourceType};
+use crate::acl::{AclService, ResourceType};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -366,13 +366,11 @@ pub async fn get_coordinate_datacenters_persistent(
 /// GET /v1/coordinate/nodes (persistent)
 pub async fn get_coordinate_nodes_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     coord_service: web::Data<ConsulCoordinateServicePersistent>,
     query: web::Query<CoordinateQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Node, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -384,14 +382,12 @@ pub async fn get_coordinate_nodes_persistent(
 /// GET /v1/coordinate/node/{node} (persistent)
 pub async fn get_coordinate_node_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     coord_service: web::Data<ConsulCoordinateServicePersistent>,
     path: web::Path<String>,
     _query: web::Query<CoordinateQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Node, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -408,13 +404,11 @@ pub async fn get_coordinate_node_persistent(
 /// PUT /v1/coordinate/update (persistent)
 pub async fn update_coordinate_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     coord_service: web::Data<ConsulCoordinateServicePersistent>,
     body: web::Json<CoordinateUpdateRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Node, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Node, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }

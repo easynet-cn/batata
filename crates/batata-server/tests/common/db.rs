@@ -140,13 +140,11 @@ impl TestDatabase {
         let schemas: Vec<&str> = if self.is_mysql() {
             vec![
                 include_str!("../../../../conf/mysql-schema.sql"),
-                include_str!("../../../../conf/consul-mysql-schema.sql"),
                 include_str!("../../../../conf/apollo-mysql-schema.sql"),
             ]
         } else if self.is_postgres() {
             vec![
                 include_str!("../../../../conf/postgresql-schema.sql"),
-                include_str!("../../../../conf/consul-postgresql-schema.sql"),
                 include_str!("../../../../conf/apollo-postgresql-schema.sql"),
             ]
         } else {

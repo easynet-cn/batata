@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::acl::{AclService, AclServicePersistent, ResourceType};
+use crate::acl::{AclService, ResourceType};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -427,13 +427,11 @@ pub async fn list_peerings(
 /// POST /v1/peering/token (persistent)
 pub async fn generate_peering_token_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     body: web::Json<PeeringGenerateTokenRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -447,13 +445,11 @@ pub async fn generate_peering_token_persistent(
 /// POST /v1/peering/establish (persistent)
 pub async fn establish_peering_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     body: web::Json<PeeringEstablishRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -467,14 +463,12 @@ pub async fn establish_peering_persistent(
 /// GET /v1/peering/{name} (persistent)
 pub async fn get_peering_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     path: web::Path<String>,
     _query: web::Query<PeeringQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -495,14 +489,12 @@ pub async fn get_peering_persistent(
 /// DELETE /v1/peering/{name} (persistent)
 pub async fn delete_peering_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     path: web::Path<String>,
     _query: web::Query<PeeringQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -522,13 +514,11 @@ pub async fn delete_peering_persistent(
 /// GET /v1/peerings (persistent)
 pub async fn list_peerings_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     _query: web::Query<PeeringQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }

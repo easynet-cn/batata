@@ -7,7 +7,11 @@ use std::time::{Duration, Instant};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use dashmap::DashMap;
-use serde::Deserialize;
+use rocksdb::DB;
+use serde::{Deserialize, Serialize};
+use tracing::{error, info, warn};
+
+use batata_consistency::raft::state_machine::CF_CONSUL_SESSIONS;
 
 use crate::acl::{AclService, ResourceType};
 use crate::kv::ConsulKVService;
@@ -21,12 +25,23 @@ pub struct SessionEntry {
     pub ttl: Duration,
 }
 
+/// Serializable session data for RocksDB persistence
+#[derive(Clone, Serialize, Deserialize)]
+struct SessionPersist {
+    session: Session,
+    created_at_unix: u64,
+    ttl_secs: u64,
+}
+
 /// Consul Session service
-/// Provides distributed locking via session management
+/// Provides distributed locking via session management.
+/// When `rocks_db` is `Some`, writes are persisted to RocksDB (write-through cache).
 #[derive(Clone)]
 pub struct ConsulSessionService {
     sessions: Arc<DashMap<String, SessionEntry>>,
     node_name: String,
+    /// Optional RocksDB handle for persistence
+    rocks_db: Option<Arc<DB>>,
 }
 
 impl ConsulSessionService {
@@ -38,6 +53,107 @@ impl ConsulSessionService {
         Self {
             sessions: Arc::new(DashMap::new()),
             node_name,
+            rocks_db: None,
+        }
+    }
+
+    /// Create a new session service with RocksDB persistence.
+    /// Loads existing sessions from RocksDB, skipping expired ones.
+    pub fn with_rocks(db: Arc<DB>) -> Self {
+        let node_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
+
+        let sessions = Arc::new(DashMap::new());
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        if let Some(cf) = db.cf_handle(CF_CONSUL_SESSIONS) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut loaded = 0u64;
+            let mut expired = 0u64;
+
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if let Ok(persist) = serde_json::from_slice::<SessionPersist>(&value_bytes) {
+                    // Skip expired sessions
+                    if now_unix > persist.created_at_unix + persist.ttl_secs {
+                        expired += 1;
+                        // Delete expired entry from RocksDB
+                        let _ = db.delete_cf(cf, &key_bytes);
+                        continue;
+                    }
+
+                    // Reconstruct Instant: approximate by computing remaining TTL
+                    let elapsed = now_unix.saturating_sub(persist.created_at_unix);
+                    let created_at = Instant::now() - Duration::from_secs(elapsed);
+
+                    let entry = SessionEntry {
+                        session: persist.session.clone(),
+                        created_at,
+                        ttl: Duration::from_secs(persist.ttl_secs),
+                    };
+                    sessions.insert(persist.session.id.clone(), entry);
+                    loaded += 1;
+                } else if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                    warn!("Failed to deserialize session entry: {}", key);
+                }
+            }
+            info!(
+                "Loaded {} sessions from RocksDB ({} expired sessions cleaned up)",
+                loaded, expired
+            );
+        }
+
+        Self {
+            sessions,
+            node_name,
+            rocks_db: Some(db),
+        }
+    }
+
+    /// Persist a session to RocksDB
+    fn persist_session(&self, session_id: &str, entry: &SessionEntry) {
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_SESSIONS)
+        {
+            let now_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let elapsed = entry.created_at.elapsed().as_secs();
+            let created_at_unix = now_unix.saturating_sub(elapsed);
+
+            let persist = SessionPersist {
+                session: entry.session.clone(),
+                created_at_unix,
+                ttl_secs: entry.ttl.as_secs(),
+            };
+            match serde_json::to_vec(&persist) {
+                Ok(bytes) => {
+                    if let Err(e) = db.put_cf(cf, session_id.as_bytes(), &bytes) {
+                        error!("Failed to persist session '{}': {}", session_id, e);
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to serialize session '{}': {}", session_id, e);
+                }
+            }
+        }
+    }
+
+    /// Delete a session from RocksDB
+    fn delete_session_rocks(&self, session_id: &str) {
+        if let Some(ref db) = self.rocks_db
+            && let Some(cf) = db.cf_handle(CF_CONSUL_SESSIONS)
+            && let Err(e) = db.delete_cf(cf, session_id.as_bytes())
+        {
+            error!(
+                "Failed to delete session '{}' from RocksDB: {}",
+                session_id, e
+            );
         }
     }
 
@@ -72,13 +188,18 @@ impl ConsulSessionService {
             ttl: Duration::from_secs(ttl_secs),
         };
 
-        self.sessions.insert(session_id, entry);
+        self.sessions.insert(session_id.clone(), entry.clone());
+        self.persist_session(&session_id, &entry);
         session
     }
 
     /// Destroy a session
     pub fn destroy_session(&self, session_id: &str) -> bool {
-        self.sessions.remove(session_id).is_some()
+        let removed = self.sessions.remove(session_id).is_some();
+        if removed {
+            self.delete_session_rocks(session_id);
+        }
+        removed
     }
 
     /// Get session info
@@ -95,14 +216,18 @@ impl ConsulSessionService {
 
     /// Renew a session
     pub fn renew_session(&self, session_id: &str) -> Option<Session> {
-        self.sessions.get_mut(session_id).and_then(|mut entry| {
+        let result = self.sessions.get_mut(session_id).and_then(|mut entry| {
             if entry.created_at.elapsed() > entry.ttl {
                 None
             } else {
                 entry.created_at = Instant::now();
-                Some(entry.session.clone())
+                Some(entry.clone())
             }
-        })
+        });
+        if let Some(ref entry) = result {
+            self.persist_session(session_id, entry);
+        }
+        result.map(|e| e.session)
     }
 
     /// List all sessions
@@ -128,8 +253,16 @@ impl ConsulSessionService {
     /// Clean up expired sessions
     pub fn cleanup_expired(&self) {
         let now = Instant::now();
-        self.sessions
-            .retain(|_, entry| now.duration_since(entry.created_at) <= entry.ttl);
+        let expired_ids: Vec<String> = self
+            .sessions
+            .iter()
+            .filter(|e| now.duration_since(e.created_at) > e.ttl)
+            .map(|e| e.key().clone())
+            .collect();
+        for id in &expired_ids {
+            self.sessions.remove(id);
+            self.delete_session_rocks(id);
+        }
     }
 }
 
@@ -300,458 +433,6 @@ pub async fn renew_session(
     }
 
     match session_service.renew_session(&session_id) {
-        Some(session) => HttpResponse::Ok().json(vec![session]),
-        None => HttpResponse::NotFound().json(ConsulError::new("Session not found or expired")),
-    }
-}
-
-// ============================================================================
-// Persistent Session Service (Using ConfigService)
-// ============================================================================
-
-use std::sync::Arc as StdArc;
-
-use sea_orm::DatabaseConnection;
-use serde::Serialize;
-
-/// Constants for ConfigService mapping
-const CONSUL_SESSION_NAMESPACE: &str = "public";
-const CONSUL_SESSION_GROUP: &str = "consul-sessions";
-
-/// Stored session metadata for persistent storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SessionMetadata {
-    session: Session,
-    created_at_unix: u64,
-    ttl_secs: u64,
-}
-
-/// Consul Session service with database persistence
-/// Uses Batata's ConfigService for storage
-#[derive(Clone)]
-pub struct ConsulSessionServicePersistent {
-    db: StdArc<DatabaseConnection>,
-    node_name: String,
-    /// In-memory cache for sessions
-    session_cache: StdArc<DashMap<String, SessionMetadata>>,
-}
-
-impl ConsulSessionServicePersistent {
-    pub fn new(db: StdArc<DatabaseConnection>) -> Self {
-        let node_name = hostname::get()
-            .map(|h| h.to_string_lossy().to_string())
-            .unwrap_or_else(|_| "batata-node".to_string());
-
-        Self {
-            db,
-            node_name,
-            session_cache: StdArc::new(DashMap::new()),
-        }
-    }
-
-    fn session_data_id(session_id: &str) -> String {
-        format!("session:{}", session_id.replace('/', ":"))
-    }
-
-    fn current_unix_time() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    }
-
-    async fn save_session(&self, metadata: &SessionMetadata) -> Result<(), String> {
-        let content =
-            serde_json::to_string(metadata).map_err(|e| format!("Serialization error: {}", e))?;
-        let data_id = Self::session_data_id(&metadata.session.id);
-
-        batata_config::service::config::create_or_update(
-            &self.db,
-            &data_id,
-            CONSUL_SESSION_GROUP,
-            CONSUL_SESSION_NAMESPACE,
-            &content,
-            "consul-session",
-            "system",
-            "127.0.0.1",
-            "",
-            &format!("Consul Session: {}", metadata.session.name),
-            "",
-            "",
-            "json",
-            "",
-            "",
-        )
-        .await
-        .map_err(|e| format!("Database error: {}", e))?;
-
-        // Update cache
-        self.session_cache
-            .insert(metadata.session.id.clone(), metadata.clone());
-        Ok(())
-    }
-
-    async fn delete_session_from_db(&self, session_id: &str) -> bool {
-        let data_id = Self::session_data_id(session_id);
-        self.session_cache.remove(session_id);
-        batata_config::service::config::delete(
-            &self.db,
-            &data_id,
-            CONSUL_SESSION_GROUP,
-            CONSUL_SESSION_NAMESPACE,
-            "",
-            "127.0.0.1",
-            "system",
-        )
-        .await
-        .unwrap_or(false)
-    }
-
-    fn is_session_expired(metadata: &SessionMetadata) -> bool {
-        let now = Self::current_unix_time();
-        now > metadata.created_at_unix + metadata.ttl_secs
-    }
-
-    /// Create a new session
-    pub async fn create_session(&self, req: SessionCreateRequest) -> Result<Session, String> {
-        let session_id = uuid::Uuid::new_v4().to_string();
-        let now = Self::current_unix_time();
-
-        let ttl_str = req.ttl.clone().unwrap_or_else(|| "15s".to_string());
-        let ttl_secs = parse_duration(&ttl_str).unwrap_or(15);
-
-        let session = Session {
-            id: session_id.clone(),
-            name: req.name.unwrap_or_default(),
-            node: req.node.unwrap_or_else(|| self.node_name.clone()),
-            lock_delay: parse_duration(&req.lock_delay.unwrap_or_else(|| "15s".to_string()))
-                .unwrap_or(15),
-            behavior: req.behavior.unwrap_or_else(|| "release".to_string()),
-            ttl: ttl_str,
-            node_checks: req.node_checks,
-            service_checks: req.service_checks,
-            create_index: now,
-            modify_index: now,
-        };
-
-        let metadata = SessionMetadata {
-            session: session.clone(),
-            created_at_unix: now,
-            ttl_secs,
-        };
-
-        self.save_session(&metadata).await?;
-        Ok(session)
-    }
-
-    /// Destroy a session
-    pub async fn destroy_session(&self, session_id: &str) -> bool {
-        self.delete_session_from_db(session_id).await
-    }
-
-    /// Get session info
-    pub async fn get_session(&self, session_id: &str) -> Option<Session> {
-        // Check cache first
-        if let Some(metadata) = self.session_cache.get(session_id) {
-            if Self::is_session_expired(&metadata) {
-                // Clean up expired session
-                self.session_cache.remove(session_id);
-                let _ = self.delete_session_from_db(session_id).await;
-                return None;
-            }
-            return Some(metadata.session.clone());
-        }
-
-        // Query from database
-        let data_id = Self::session_data_id(session_id);
-        if let Ok(Some(config)) = batata_config::service::config::find_one(
-            &self.db,
-            &data_id,
-            CONSUL_SESSION_GROUP,
-            CONSUL_SESSION_NAMESPACE,
-        )
-        .await
-            && let Ok(metadata) = serde_json::from_str::<SessionMetadata>(
-                &config.config_info.config_info_base.content,
-            )
-        {
-            if Self::is_session_expired(&metadata) {
-                let _ = self.delete_session_from_db(session_id).await;
-                return None;
-            }
-            self.session_cache
-                .insert(session_id.to_string(), metadata.clone());
-            return Some(metadata.session);
-        }
-
-        None
-    }
-
-    /// Renew a session
-    pub async fn renew_session(&self, session_id: &str) -> Option<Session> {
-        // Get current session
-        let metadata = if let Some(m) = self.session_cache.get(session_id) {
-            m.clone()
-        } else {
-            let data_id = Self::session_data_id(session_id);
-            if let Ok(Some(config)) = batata_config::service::config::find_one(
-                &self.db,
-                &data_id,
-                CONSUL_SESSION_GROUP,
-                CONSUL_SESSION_NAMESPACE,
-            )
-            .await
-                && let Ok(m) = serde_json::from_str::<SessionMetadata>(
-                    &config.config_info.config_info_base.content,
-                )
-            {
-                m
-            } else {
-                return None;
-            }
-        };
-
-        if Self::is_session_expired(&metadata) {
-            let _ = self.delete_session_from_db(session_id).await;
-            return None;
-        }
-
-        // Renew by updating created_at
-        let now = Self::current_unix_time();
-        let mut updated = metadata;
-        updated.created_at_unix = now;
-        updated.session.modify_index = now;
-
-        if self.save_session(&updated).await.is_ok() {
-            Some(updated.session)
-        } else {
-            None
-        }
-    }
-
-    /// List all sessions
-    pub async fn list_sessions(&self) -> Vec<Session> {
-        let mut sessions = Vec::new();
-
-        if let Ok(page) = batata_config::service::config::search_page(
-            &self.db,
-            1,
-            1000,
-            CONSUL_SESSION_NAMESPACE,
-            "session:*",
-            CONSUL_SESSION_GROUP,
-            "",
-            vec![],
-            vec![],
-            "",
-        )
-        .await
-        {
-            for info in page.page_items {
-                if let Ok(Some(config)) = batata_config::service::config::find_one(
-                    &self.db,
-                    &info.data_id,
-                    CONSUL_SESSION_GROUP,
-                    CONSUL_SESSION_NAMESPACE,
-                )
-                .await
-                    && let Ok(metadata) = serde_json::from_str::<SessionMetadata>(
-                        &config.config_info.config_info_base.content,
-                    )
-                    && !Self::is_session_expired(&metadata)
-                {
-                    sessions.push(metadata.session);
-                }
-            }
-        }
-
-        sessions
-    }
-
-    /// List sessions for a specific node
-    pub async fn list_node_sessions(&self, node: &str) -> Vec<Session> {
-        self.list_sessions()
-            .await
-            .into_iter()
-            .filter(|s| s.node == node)
-            .collect()
-    }
-
-    /// Clean up expired sessions
-    pub async fn cleanup_expired(&self) {
-        // Clean cache
-        let expired_ids: Vec<String> = self
-            .session_cache
-            .iter()
-            .filter(|e| Self::is_session_expired(e.value()))
-            .map(|e| e.key().clone())
-            .collect();
-
-        for id in expired_ids {
-            self.session_cache.remove(&id);
-            let _ = self.delete_session_from_db(&id).await;
-        }
-
-        // Also clean database entries not in cache
-        if let Ok(page) = batata_config::service::config::search_page(
-            &self.db,
-            1,
-            1000,
-            CONSUL_SESSION_NAMESPACE,
-            "session:*",
-            CONSUL_SESSION_GROUP,
-            "",
-            vec![],
-            vec![],
-            "",
-        )
-        .await
-        {
-            for info in page.page_items {
-                if let Ok(Some(config)) = batata_config::service::config::find_one(
-                    &self.db,
-                    &info.data_id,
-                    CONSUL_SESSION_GROUP,
-                    CONSUL_SESSION_NAMESPACE,
-                )
-                .await
-                    && let Ok(metadata) = serde_json::from_str::<SessionMetadata>(
-                        &config.config_info.config_info_base.content,
-                    )
-                    && Self::is_session_expired(&metadata)
-                {
-                    let _ = self.delete_session_from_db(&metadata.session.id).await;
-                }
-            }
-        }
-    }
-}
-
-// ============================================================================
-// Persistent HTTP Handlers
-// ============================================================================
-
-/// PUT /v1/session/create (Persistent)
-/// Creates a new session with database persistence
-pub async fn create_session_persistent(
-    req: HttpRequest,
-    session_service: web::Data<ConsulSessionServicePersistent>,
-    acl_service: web::Data<AclService>,
-    body: web::Json<SessionCreateRequest>,
-) -> HttpResponse {
-    // Check ACL authorization for session write
-    let authz = acl_service.authorize_request(&req, ResourceType::Session, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-    }
-
-    match session_service.create_session(body.into_inner()).await {
-        Ok(session) => {
-            let response = SessionCreateResponse {
-                id: session.id.clone(),
-            };
-            HttpResponse::Ok().json(response)
-        }
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(&e)),
-    }
-}
-
-/// PUT /v1/session/destroy/{uuid} (Persistent)
-/// Destroys a session with database persistence
-pub async fn destroy_session_persistent(
-    req: HttpRequest,
-    session_service: web::Data<ConsulSessionServicePersistent>,
-    acl_service: web::Data<AclService>,
-    path: web::Path<String>,
-) -> HttpResponse {
-    let session_id = path.into_inner();
-
-    // Check ACL authorization for session write
-    let authz = acl_service.authorize_request(&req, ResourceType::Session, &session_id, true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-    }
-
-    let destroyed = session_service.destroy_session(&session_id).await;
-    HttpResponse::Ok().json(destroyed)
-}
-
-/// GET /v1/session/info/{uuid} (Persistent)
-/// Returns information about a specific session with database persistence
-pub async fn get_session_info_persistent(
-    req: HttpRequest,
-    session_service: web::Data<ConsulSessionServicePersistent>,
-    acl_service: web::Data<AclService>,
-    path: web::Path<String>,
-) -> HttpResponse {
-    let session_id = path.into_inner();
-
-    // Check ACL authorization for session read
-    let authz = acl_service.authorize_request(&req, ResourceType::Session, &session_id, false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-    }
-
-    match session_service.get_session(&session_id).await {
-        Some(session) => HttpResponse::Ok().json(vec![session]),
-        None => HttpResponse::Ok().json(Vec::<Session>::new()),
-    }
-}
-
-/// GET /v1/session/list (Persistent)
-/// Returns all active sessions with database persistence
-pub async fn list_sessions_persistent(
-    req: HttpRequest,
-    session_service: web::Data<ConsulSessionServicePersistent>,
-    acl_service: web::Data<AclService>,
-) -> HttpResponse {
-    // Check ACL authorization for session read
-    let authz = acl_service.authorize_request(&req, ResourceType::Session, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-    }
-
-    let sessions = session_service.list_sessions().await;
-    HttpResponse::Ok().json(sessions)
-}
-
-/// GET /v1/session/node/{node} (Persistent)
-/// Returns sessions for a specific node with database persistence
-pub async fn list_node_sessions_persistent(
-    req: HttpRequest,
-    session_service: web::Data<ConsulSessionServicePersistent>,
-    acl_service: web::Data<AclService>,
-    path: web::Path<String>,
-) -> HttpResponse {
-    let node = path.into_inner();
-
-    // Check ACL authorization for session read
-    let authz = acl_service.authorize_request(&req, ResourceType::Session, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-    }
-
-    let sessions = session_service.list_node_sessions(&node).await;
-    HttpResponse::Ok().json(sessions)
-}
-
-/// PUT /v1/session/renew/{uuid} (Persistent)
-/// Renews a session TTL with database persistence
-pub async fn renew_session_persistent(
-    req: HttpRequest,
-    session_service: web::Data<ConsulSessionServicePersistent>,
-    acl_service: web::Data<AclService>,
-    path: web::Path<String>,
-) -> HttpResponse {
-    let session_id = path.into_inner();
-
-    // Check ACL authorization for session write
-    let authz = acl_service.authorize_request(&req, ResourceType::Session, &session_id, true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-    }
-
-    match session_service.renew_session(&session_id).await {
         Some(session) => HttpResponse::Ok().json(vec![session]),
         None => HttpResponse::NotFound().json(ConsulError::new("Session not found or expired")),
     }

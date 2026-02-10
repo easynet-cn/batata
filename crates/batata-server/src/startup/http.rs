@@ -7,6 +7,7 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use batata_core::service::remote::ConnectionManager;
+use rocksdb::DB;
 
 use crate::{
     api::ai::{AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp},
@@ -52,7 +53,7 @@ pub struct ConsulServices {
 }
 
 impl ConsulServices {
-    /// Creates Consul service adapters from a naming service.
+    /// Creates Consul service adapters from a naming service (in-memory only).
     pub fn new(naming_service: Arc<NamingService>, acl_enabled: bool) -> Self {
         let session = ConsulSessionService::new();
         let kv = ConsulKVService::new();
@@ -73,6 +74,38 @@ impl ConsulServices {
             session,
             event: ConsulEventService::new(),
             query: ConsulQueryService::new(),
+            lock,
+            semaphore,
+        }
+    }
+
+    /// Creates Consul service adapters with RocksDB persistence.
+    /// KV, ACL, Session, and Query data are persisted to RocksDB using
+    /// a write-through cache pattern (DashMap as L1, RocksDB as durable store).
+    pub fn with_persistence(
+        naming_service: Arc<NamingService>,
+        acl_enabled: bool,
+        db: Arc<DB>,
+    ) -> Self {
+        let session = ConsulSessionService::with_rocks(db.clone());
+        let kv = ConsulKVService::with_rocks(db.clone());
+        let kv_arc = Arc::new(kv.clone());
+        let session_arc = Arc::new(session.clone());
+        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
+        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+        Self {
+            agent: ConsulAgentService::new(naming_service.clone()),
+            health: ConsulHealthService::new(naming_service.clone()),
+            kv,
+            catalog: ConsulCatalogService::new(naming_service),
+            acl: if acl_enabled {
+                AclService::with_rocks(db.clone())
+            } else {
+                AclService::disabled()
+            },
+            session,
+            event: ConsulEventService::new(),
+            query: ConsulQueryService::with_rocks(db),
             lock,
             semaphore,
         }

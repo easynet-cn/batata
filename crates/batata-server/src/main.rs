@@ -73,13 +73,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_mode = configuration.persistence_mode();
     info!("Persistence mode: {}", storage_mode);
 
-    let (database_connection, server_member_manager, persistence): (
+    let (database_connection, server_member_manager, persistence, rocks_db): (
         Option<sea_orm::DatabaseConnection>,
         Option<Arc<ServerMemberManager>>,
         Option<Arc<dyn PersistenceService>>,
+        Option<Arc<rocksdb::DB>>,
     ) = if is_console_remote {
         info!("Starting in console remote mode - connecting to remote server");
-        (None, None, None)
+        (None, None, None, None)
     } else {
         match storage_mode {
             StorageMode::ExternalDb => {
@@ -89,7 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let persist: Arc<dyn PersistenceService> = Arc::new(
                     batata_persistence::ExternalDbPersistService::new(db.clone()),
                 );
-                (Some(db), Some(smm), Some(persist))
+                (Some(db), Some(smm), Some(persist), None)
             }
             StorageMode::StandaloneEmbedded => {
                 let data_dir = configuration.embedded_data_dir();
@@ -97,11 +98,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let sm = batata_consistency::RocksStateMachine::new(&data_dir)
                     .await
                     .map_err(|e| format!("Failed to initialize RocksDB state machine: {}", e))?;
+                let rdb = sm.db();
                 let persist: Arc<dyn PersistenceService> =
                     Arc::new(batata_persistence::EmbeddedPersistService::from_state_machine(&sm));
                 let core_config = configuration.to_core_config();
                 let smm = Arc::new(ServerMemberManager::new(&core_config));
-                (None, Some(smm), Some(persist))
+                (None, Some(smm), Some(persist), Some(rdb))
             }
             StorageMode::DistributedEmbedded => {
                 // Distributed mode requires Raft setup which is handled by the cluster manager.
@@ -115,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!(
                     "Distributed embedded mode: using external DB as fallback until Raft cluster is initialized"
                 );
-                (Some(db), Some(smm), Some(persist))
+                (Some(db), Some(smm), Some(persist), None)
             }
         }
     };
@@ -254,10 +256,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create Consul service adapters (only if enabled)
     let consul_services = if consul_enabled {
-        Some(ConsulServices::new(
-            grpc_servers.naming_service.clone(),
-            consul_acl_enabled,
-        ))
+        if let Some(ref db) = rocks_db {
+            info!("Consul services using RocksDB persistence");
+            Some(ConsulServices::with_persistence(
+                grpc_servers.naming_service.clone(),
+                consul_acl_enabled,
+                db.clone(),
+            ))
+        } else {
+            Some(ConsulServices::new(
+                grpc_servers.naming_service.clone(),
+                consul_acl_enabled,
+            ))
+        }
     } else {
         info!("Consul compatibility server is disabled");
         None

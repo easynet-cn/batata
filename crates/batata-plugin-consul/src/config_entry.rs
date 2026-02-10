@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::acl::{AclService, AclServicePersistent, ResourceType};
+use crate::acl::{AclService, ResourceType};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -466,14 +466,12 @@ pub async fn delete_config_entry(
 /// GET /v1/config/{kind} - List config entries (persistent)
 pub async fn list_config_entries_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     path: web::Path<String>,
     _query: web::Query<ConfigEntryListParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -493,14 +491,12 @@ pub async fn list_config_entries_persistent(
 /// GET /v1/config/{kind}/{name} - Read config entry (persistent)
 pub async fn get_config_entry_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     path: web::Path<(String, String)>,
     _query: web::Query<ConfigEntryListParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -515,14 +511,12 @@ pub async fn get_config_entry_persistent(
 /// PUT /v1/config - Apply config entry (persistent)
 pub async fn apply_config_entry_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     query: web::Query<ConfigEntryApplyParams>,
     body: web::Json<ConfigEntryRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -544,14 +538,12 @@ pub async fn apply_config_entry_persistent(
 /// DELETE /v1/config/{kind}/{name} - Delete config entry (persistent)
 pub async fn delete_config_entry_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     path: web::Path<(String, String)>,
     query: web::Query<ConfigEntryDeleteParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }

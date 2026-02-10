@@ -14,6 +14,7 @@ batata-api = { path = "../batata-api" }
 batata-naming = { path = "../batata-naming" }
 batata-config = { path = "../batata-config" }
 batata-core = { path = "../batata-core" }
+batata-consistency = { path = "../batata-consistency" }
 
 # Web framework
 actix-web = "4"
@@ -38,6 +39,9 @@ anyhow = "1.0"
 
 # Database
 sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+
+# Storage
+rocksdb = "0.24"
 
 # Caching
 moka = { version = "0.12", features = ["sync"] }

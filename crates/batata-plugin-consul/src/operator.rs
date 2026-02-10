@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::acl::{AclService, AclServicePersistent, ResourceType};
+use crate::acl::{AclService, ResourceType};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -794,13 +794,11 @@ pub async fn keyring_remove(
 /// GET /v1/operator/raft/configuration (real cluster)
 pub async fn get_raft_configuration_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     _query: web::Query<OperatorQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -818,13 +816,11 @@ pub async fn get_raft_configuration_real(
 /// POST /v1/operator/raft/transfer-leader (real cluster)
 pub async fn transfer_leader_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     _operator_service: web::Data<ConsulOperatorServiceReal>,
     _query: web::Query<TransferLeaderParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -835,13 +831,11 @@ pub async fn transfer_leader_real(
 /// DELETE /v1/operator/raft/peer (real cluster)
 pub async fn remove_raft_peer_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     _operator_service: web::Data<ConsulOperatorServiceReal>,
     query: web::Query<RaftPeerParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -863,13 +857,11 @@ pub async fn remove_raft_peer_real(
 /// GET /v1/operator/autopilot/configuration (real cluster)
 pub async fn get_autopilot_configuration_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     _query: web::Query<OperatorQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -881,14 +873,12 @@ pub async fn get_autopilot_configuration_real(
 /// PUT /v1/operator/autopilot/configuration (real cluster)
 pub async fn set_autopilot_configuration_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     query: web::Query<AutopilotConfigParams>,
     body: web::Json<AutopilotConfiguration>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -905,13 +895,11 @@ pub async fn set_autopilot_configuration_real(
 /// GET /v1/operator/autopilot/health (real cluster)
 pub async fn get_autopilot_health_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     _query: web::Query<OperatorQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -927,13 +915,11 @@ pub async fn get_autopilot_health_real(
 /// GET /v1/operator/autopilot/state (real cluster)
 pub async fn get_autopilot_state_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     _query: web::Query<OperatorQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -945,13 +931,11 @@ pub async fn get_autopilot_state_real(
 /// GET /v1/operator/keyring (real cluster)
 pub async fn keyring_list_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     _query: web::Query<KeyringParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -961,13 +945,11 @@ pub async fn keyring_list_real(
 /// POST /v1/operator/keyring (real cluster)
 pub async fn keyring_install_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -978,13 +960,11 @@ pub async fn keyring_install_real(
 /// PUT /v1/operator/keyring (real cluster)
 pub async fn keyring_use_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -997,13 +977,11 @@ pub async fn keyring_use_real(
 /// DELETE /v1/operator/keyring (real cluster)
 pub async fn keyring_remove_real(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
     body: web::Json<KeyringRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }

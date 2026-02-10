@@ -47,8 +47,6 @@ pub mod status;
 pub use route::{
     // Individual route scopes (in-memory)
     consul_acl_routes,
-    // Individual route scopes (persistent)
-    consul_acl_routes_persistent,
     consul_agent_routes,
     consul_agent_routes_persistent,
     // Individual route scopes (real cluster)
@@ -67,19 +65,17 @@ pub use route::{
     consul_health_routes,
     consul_health_routes_persistent,
     consul_kv_routes,
-    consul_kv_routes_persistent,
+    consul_lock_routes,
     consul_operator_routes,
     consul_operator_routes_real,
     consul_peering_routes,
     consul_peering_routes_persistent,
     consul_query_routes,
-    consul_query_routes_persistent,
     // Combined route scopes
     consul_routes,            // In-memory (for development/testing)
     consul_routes_full,       // Persistent + real cluster (recommended for production)
     consul_routes_persistent, // Persistent only
     consul_session_routes,
-    consul_session_routes_persistent,
     consul_snapshot_routes,
     consul_snapshot_routes_persistent,
     consul_status_routes,
@@ -87,17 +83,17 @@ pub use route::{
 };
 
 // Re-export key services
-pub use acl::{AclService, AclServicePersistent};
+pub use acl::AclService;
 pub use agent::ConsulAgentService;
 pub use catalog::ConsulCatalogService;
 pub use config_entry::{ConsulConfigEntryService, ConsulConfigEntryServicePersistent};
 pub use event::{ConsulEventService, ConsulEventServicePersistent};
 pub use health::{ConsulHealthService, ConsulHealthServicePersistent};
-pub use kv::{ConsulKVService, ConsulKVServicePersistent};
+pub use kv::ConsulKVService;
 pub use lock::{ConsulLockService, ConsulSemaphoreService};
 pub use operator::{ConsulOperatorService, ConsulOperatorServiceReal};
-pub use query::{ConsulQueryService, ConsulQueryServicePersistent};
-pub use session::{ConsulSessionService, ConsulSessionServicePersistent};
+pub use query::ConsulQueryService;
+pub use session::ConsulSessionService;
 pub use snapshot::{ConsulSnapshotService, ConsulSnapshotServicePersistent};
 
 // Tier 2 services

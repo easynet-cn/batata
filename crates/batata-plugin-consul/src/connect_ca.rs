@@ -9,7 +9,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::acl::{AclService, AclServicePersistent, ResourceType};
+use crate::acl::{AclService, ResourceType};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -708,13 +708,11 @@ pub async fn connect_authorize(
 /// GET /v1/connect/ca/roots (persistent)
 pub async fn get_ca_roots_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     _query: web::Query<CARootQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -725,12 +723,10 @@ pub async fn get_ca_roots_persistent(
 /// GET /v1/connect/ca/configuration (persistent)
 pub async fn get_ca_configuration_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -741,13 +737,11 @@ pub async fn get_ca_configuration_persistent(
 /// PUT /v1/connect/ca/configuration (persistent)
 pub async fn set_ca_configuration_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     body: web::Json<CAConfig>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -761,13 +755,11 @@ pub async fn set_ca_configuration_persistent(
 /// GET /v1/agent/connect/ca/leaf/{service} (persistent)
 pub async fn get_leaf_cert_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -779,13 +771,11 @@ pub async fn get_leaf_cert_persistent(
 /// GET /v1/connect/intentions (persistent)
 pub async fn list_intentions_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     _query: web::Query<IntentionQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -796,13 +786,11 @@ pub async fn list_intentions_persistent(
 /// POST /v1/connect/intentions (persistent)
 pub async fn create_intention_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     body: web::Json<IntentionRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -814,13 +802,11 @@ pub async fn create_intention_persistent(
 /// GET /v1/connect/intentions/{id} (persistent)
 pub async fn get_intention_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -835,14 +821,12 @@ pub async fn get_intention_persistent(
 /// PUT /v1/connect/intentions/{id} (persistent)
 pub async fn update_intention_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     path: web::Path<String>,
     body: web::Json<IntentionRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -857,13 +841,11 @@ pub async fn update_intention_persistent(
 /// DELETE /v1/connect/intentions/{id} (persistent)
 pub async fn delete_intention_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -879,13 +861,11 @@ pub async fn delete_intention_persistent(
 /// GET /v1/connect/intentions/check (persistent)
 pub async fn check_intention_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     query: web::Query<IntentionQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -899,13 +879,11 @@ pub async fn check_intention_persistent(
 /// GET /v1/connect/intentions/match (persistent)
 pub async fn match_intentions_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     query: web::Query<IntentionMatchQuery>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -919,13 +897,11 @@ pub async fn match_intentions_persistent(
 /// POST /v1/agent/connect/authorize (persistent)
 pub async fn connect_authorize_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     body: web::Json<AgentAuthorizeRequest>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }

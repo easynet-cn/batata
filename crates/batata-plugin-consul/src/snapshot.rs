@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::acl::{AclService, AclServicePersistent, ResourceType};
+use crate::acl::{AclService, ResourceType};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -180,13 +180,11 @@ pub async fn restore_snapshot(
 /// GET /v1/snapshot - Save/export a snapshot (persistent)
 pub async fn save_snapshot_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     snapshot_service: web::Data<ConsulSnapshotServicePersistent>,
     _query: web::Query<SnapshotQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -205,14 +203,12 @@ pub async fn save_snapshot_persistent(
 /// PUT /v1/snapshot - Restore/import a snapshot (persistent)
 pub async fn restore_snapshot_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     snapshot_service: web::Data<ConsulSnapshotServicePersistent>,
     body: web::Bytes,
     _query: web::Query<SnapshotQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Agent, "", true)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }

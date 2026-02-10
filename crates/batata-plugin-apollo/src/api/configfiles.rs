@@ -41,7 +41,12 @@ pub async fn get_configfiles(
 
     // Try stripped name first (handles "application.properties" → "application")
     match service
-        .get_config_content(&path.app_id, &path.cluster_name, namespace_stripped, env.as_deref())
+        .get_config_content(
+            &path.app_id,
+            &path.cluster_name,
+            namespace_stripped,
+            env.as_deref(),
+        )
         .await
     {
         Ok(Some(content)) => {
@@ -60,7 +65,12 @@ pub async fn get_configfiles(
     // If not found and suffix was stripped, try original name
     if namespace_stripped != path.namespace {
         match service
-            .get_config_content(&path.app_id, &path.cluster_name, &path.namespace, env.as_deref())
+            .get_config_content(
+                &path.app_id,
+                &path.cluster_name,
+                &path.namespace,
+                env.as_deref(),
+            )
             .await
         {
             Ok(Some(content)) => {

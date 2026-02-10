@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::acl::{AclService, AclServicePersistent, ResourceType};
+use crate::acl::{AclService, ResourceType};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -438,14 +438,12 @@ pub async fn list_imported_services(
 /// GET /v1/discovery-chain/{service} (persistent)
 pub async fn get_discovery_chain_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     connect_service: web::Data<ConsulConnectService>,
     path: web::Path<String>,
     _query: web::Query<DiscoveryChainQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Service, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -457,13 +455,11 @@ pub async fn get_discovery_chain_persistent(
 /// GET /v1/exported-services (persistent)
 pub async fn list_exported_services_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     connect_service: web::Data<ConsulConnectService>,
     _query: web::Query<ServiceVisibilityQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
@@ -474,13 +470,11 @@ pub async fn list_exported_services_persistent(
 /// GET /v1/imported-services (persistent)
 pub async fn list_imported_services_persistent(
     req: HttpRequest,
-    acl_service: web::Data<AclServicePersistent>,
+    acl_service: web::Data<AclService>,
     connect_service: web::Data<ConsulConnectService>,
     _query: web::Query<ServiceVisibilityQueryParams>,
 ) -> HttpResponse {
-    let authz = acl_service
-        .authorize_request(&req, ResourceType::Operator, "", false)
-        .await;
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
