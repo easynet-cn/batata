@@ -6,6 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use batata_auth::service::oauth::OAuthService;
+use batata_consistency::raft::state_machine::{
+    CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
+};
 use batata_core::cluster::ServerMemberManager;
 use batata_persistence::{PersistenceService, StorageMode};
 use batata_server::{
@@ -17,6 +20,7 @@ use batata_server::{
         XdsServerHandle, start_xds_service,
     },
 };
+use rocksdb::{BlockBasedOptions, ColumnFamilyDescriptor, Options};
 use tracing::{error, info};
 
 #[actix_web::main]
@@ -73,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_mode = configuration.persistence_mode();
     info!("Persistence mode: {}", storage_mode);
 
-    let (database_connection, server_member_manager, persistence, rocks_db): (
+    let (database_connection, server_member_manager, persistence, _rocks_db): (
         Option<sea_orm::DatabaseConnection>,
         Option<Arc<ServerMemberManager>>,
         Option<Arc<dyn PersistenceService>>,
@@ -153,6 +157,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+
+    // Get Consul data directory before moving configuration to app_state
+    let consul_data_dir_for_init = configuration.consul_data_dir();
 
     // Create application state
     let app_state = Arc::new(AppState {
@@ -255,15 +262,68 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create Consul service adapters (only if enabled)
+    // Consul uses independent RocksDB for persistence, separate from Nacos storage
     let consul_services = if consul_enabled {
-        if let Some(ref db) = rocks_db {
+        let consul_rocks_db = if is_console_remote {
+            info!("Console remote mode: Consul will use in-memory storage");
+            None
+        } else {
+            // Create independent RocksDB for Consul KV storage
+            info!(
+                "Initializing Consul RocksDB persistence at: {}",
+                consul_data_dir_for_init
+            );
+
+            let mut db_opts = Options::default();
+            db_opts.create_if_missing(true);
+            db_opts.create_missing_column_families(true);
+
+            // Performance optimizations
+            db_opts.set_write_buffer_size(64 * 1024 * 1024);
+            db_opts.set_max_write_buffer_number(3);
+            db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+
+            // Block-based table options with block cache
+            let mut block_opts = BlockBasedOptions::default();
+            let cache = rocksdb::Cache::new_lru_cache(256 * 1024 * 1024);
+            block_opts.set_block_cache(&cache);
+            block_opts.set_bloom_filter(10.0, false);
+
+            // Column family options
+            let mut cf_opts = Options::default();
+            cf_opts.set_write_buffer_size(64 * 1024 * 1024);
+            cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            cf_opts.set_block_based_table_factory(&block_opts);
+
+            let consul_cfs = vec![
+                ColumnFamilyDescriptor::new(CF_CONSUL_KV, cf_opts.clone()),
+                ColumnFamilyDescriptor::new(CF_CONSUL_ACL, cf_opts.clone()),
+                ColumnFamilyDescriptor::new(CF_CONSUL_SESSIONS, cf_opts.clone()),
+                ColumnFamilyDescriptor::new(CF_CONSUL_QUERIES, cf_opts),
+            ];
+
+            match rocksdb::DB::open_cf_descriptors(&db_opts, &consul_data_dir_for_init, consul_cfs) {
+                Ok(db) => {
+                    info!("Consul RocksDB initialized successfully");
+                    Some(Arc::new(db))
+                }
+                Err(e) => {
+                    error!("Failed to initialize Consul RocksDB: {}, falling back to in-memory", e);
+                    None
+                }
+            }
+        };
+
+        // Always use persistent mode if RocksDB is available, otherwise in-memory
+        if let Some(db) = consul_rocks_db {
             info!("Consul services using RocksDB persistence");
             Some(ConsulServices::with_persistence(
                 grpc_servers.naming_service.clone(),
                 consul_acl_enabled,
-                db.clone(),
+                db,
             ))
         } else {
+            info!("Consul services using in-memory storage (no persistence)");
             Some(ConsulServices::new(
                 grpc_servers.naming_service.clone(),
                 consul_acl_enabled,

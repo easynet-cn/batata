@@ -29,3 +29,5 @@ target/
 .vscode/*
 .VSCodeCounter
 Cargo.lock
+
+/data

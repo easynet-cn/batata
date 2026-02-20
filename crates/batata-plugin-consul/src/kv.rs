@@ -766,9 +766,7 @@ pub async fn get_kv(
     // Handle keys-only request
     if keys_only {
         let keys = kv_service.get_keys(&key, query.separator.as_deref());
-        if keys.is_empty() {
-            return HttpResponse::NotFound().finish();
-        }
+        // Return empty array instead of 404 for empty keys (Consul standard behavior)
         return HttpResponse::Ok()
             .insert_header(("X-Consul-Index", current_idx.to_string()))
             .json(keys);
@@ -777,9 +775,7 @@ pub async fn get_kv(
     // Handle recursive get
     if recurse {
         let pairs = kv_service.get_prefix(&key);
-        if pairs.is_empty() {
-            return HttpResponse::NotFound().finish();
-        }
+        // Return empty array instead of 404 for empty results (Consul standard behavior)
         return HttpResponse::Ok()
             .insert_header(("X-Consul-Index", current_idx.to_string()))
             .json(pairs);

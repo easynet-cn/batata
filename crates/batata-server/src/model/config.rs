@@ -879,6 +879,13 @@ impl Configuration {
             .unwrap_or(false)
     }
 
+    /// Get Consul data directory for RocksDB persistence (default: data/consul_rocksdb)
+    pub fn consul_data_dir(&self) -> String {
+        self.config
+            .get_string("nacos.plugin.consul.data_dir")
+            .unwrap_or_else(|_| "data/consul_rocksdb".to_string())
+    }
+
     // ========================================================================
     // Apollo Compatibility Plugin Configuration
     // ========================================================================
@@ -1083,6 +1090,18 @@ mod tests {
     fn test_consul_server_port_custom() {
         let cfg = build_config(vec![("nacos.plugin.consul.port", 9500_i64.into())]);
         assert_eq!(cfg.consul_server_port(), 9500);
+    }
+
+    #[test]
+    fn test_consul_data_dir_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.consul_data_dir(), "data/consul_rocksdb");
+    }
+
+    #[test]
+    fn test_consul_data_dir_custom() {
+        let cfg = build_config(vec![("nacos.plugin.consul.data_dir", "/custom/path/consul".into())]);
+        assert_eq!(cfg.consul_data_dir(), "/custom/path/consul");
     }
 
     #[test]

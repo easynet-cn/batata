@@ -396,6 +396,8 @@ nacos.istio.mcp.server.enabled: false
 nacos.plugin.consul.enabled: false
 ### Consul compatibility server port (default: 8500, same as real Consul)
 nacos.plugin.consul.port: 8500
+### Consul data directory for RocksDB persistence (default: data/consul_rocksdb)
+nacos.plugin.consul.data_dir: data/consul_rocksdb
 ### Enable Consul ACL (default: false, Consul can work without ACL)
 nacos.plugin.consul.acl.enabled: false
 
