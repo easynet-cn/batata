@@ -893,6 +893,15 @@ impl Configuration {
             .unwrap_or(true)
     }
 
+    /// Get Consul check reap interval in seconds (default: 30)
+    /// This is the interval at which services with critical health checks
+    /// will be checked for automatic deregistration.
+    pub fn consul_check_reap_interval(&self) -> u64 {
+        self.config
+            .get_int("nacos.plugin.consul.check_reap_interval")
+            .unwrap_or(30) as u64
+    }
+
     // ========================================================================
     // Apollo Compatibility Plugin Configuration
     // ========================================================================

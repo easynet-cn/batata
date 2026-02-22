@@ -402,6 +402,9 @@ nacos.plugin.consul.data_dir: data/consul_rocksdb
 nacos.plugin.consul.register_self: true
 ### Enable Consul ACL (default: false, Consul can work without ACL)
 nacos.plugin.consul.acl.enabled: false
+### Interval in seconds to reap services with critical health checks (default: 30)
+### Only deregisters services that have deregister_critical_service_after configured
+nacos.plugin.consul.check_reap_interval: 30
 
 #*************** Apollo Compatibility Plugin Configurations ***************#
 ### Enable Apollo Config API compatibility server on its own port

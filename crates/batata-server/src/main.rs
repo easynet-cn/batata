@@ -317,18 +317,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // Always use persistent mode if RocksDB is available, otherwise in-memory
+        let consul_check_reap_interval = app_state.configuration.consul_check_reap_interval();
         let services = if let Some(db) = consul_rocks_db {
             info!("Consul services using RocksDB persistence");
             ConsulServices::with_persistence(
                 grpc_servers.naming_service.clone(),
                 consul_acl_enabled,
                 db,
+                consul_check_reap_interval,
             )
         } else {
             info!("Consul services using in-memory storage (no persistence)");
             ConsulServices::new(
                 grpc_servers.naming_service.clone(),
                 consul_acl_enabled,
+                consul_check_reap_interval,
             )
         };
 
@@ -349,8 +352,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Starting Consul health check executor...");
         let health = Arc::new(services.health.clone());
         let health_actor = services.health.health_actor_handle();
+        let naming_service_clone = grpc_servers.naming_service.clone();
         tokio::spawn(async move {
-            let executor = HealthCheckExecutor::new(health, health_actor);
+            let executor = HealthCheckExecutor::new(health, health_actor, naming_service_clone);
             executor.start().await;
         });
 

@@ -9,16 +9,22 @@ use tokio::time::sleep;
 
 use crate::health::ConsulHealthService;
 use crate::health_actor::HealthActorHandle;
+use batata_naming::service::NamingService;
 
 /// Health check executor that runs periodic checks
 pub struct HealthCheckExecutor {
     health_service: Arc<ConsulHealthService>,
     health_actor: HealthActorHandle,
+    naming_service: Arc<NamingService>,
     http_client: reqwest::Client,
 }
 
 impl HealthCheckExecutor {
-    pub fn new(health_service: Arc<ConsulHealthService>, health_actor: HealthActorHandle) -> Self {
+    pub fn new(
+        health_service: Arc<ConsulHealthService>,
+        health_actor: HealthActorHandle,
+        naming_service: Arc<NamingService>,
+    ) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
@@ -27,6 +33,7 @@ impl HealthCheckExecutor {
         Self {
             health_service,
             health_actor,
+            naming_service,
             http_client,
         }
     }
@@ -96,6 +103,74 @@ impl HealthCheckExecutor {
         }
     }
 
+    /// Sync instance health status in NamingService based on check status
+    fn sync_instance_health(&self, service_id: &str, service_name: &str, status: &str) {
+        if service_id.is_empty() || service_name.is_empty() {
+            return;
+        }
+
+        let healthy = status == "passing";
+
+        // Parse service_id to extract instance information
+        // Try different formats:
+        // 1. service-ip-port (e.g., "file-service-192.168.3.47-8005")
+        // 2. namespace@@group@@service@@ip@@port@@cluster
+        let (namespace, group, ip, port, cluster) = if service_id.contains("@@") {
+            let parts: Vec<&str> = service_id.split("@@").collect();
+            if parts.len() >= 5 {
+                let port: i32 = parts[4].parse().unwrap_or(0);
+                let cluster = if parts.len() > 5 {
+                    parts[5].to_string()
+                } else {
+                    "DEFAULT".to_string()
+                };
+                (parts[0].to_string(), parts[1].to_string(), parts[3].to_string(), port, cluster)
+            } else {
+                ("public".to_string(), "DEFAULT_GROUP".to_string(), "".to_string(), 0, "DEFAULT".to_string())
+            }
+        } else if service_id.contains("-") {
+            // Try to parse as service-ip-port format
+            let last_dash = match service_id.rfind('-') {
+                Some(idx) => idx,
+                None => return,
+            };
+            let port_str = &service_id[last_dash + 1..];
+            let port: i32 = match port_str.parse() {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let prefix = &service_id[..last_dash];
+            let last_dash2 = prefix.rfind('-');
+            if let Some(idx) = last_dash2 {
+                let ip = prefix[idx + 1..].to_string();
+                // service_name is passed as a parameter, use it directly
+                ("public".to_string(), "DEFAULT_GROUP".to_string(), ip, port, "DEFAULT".to_string())
+            } else {
+                ("public".to_string(), "DEFAULT_GROUP".to_string(), "".to_string(), 0, "DEFAULT".to_string())
+            }
+        } else {
+            // Can't parse, skip update
+            return;
+        };
+
+        if !ip.is_empty() && port > 0 {
+            let _ = self.naming_service.update_instance_health(
+                &namespace,
+                &group,
+                service_name,
+                &ip,
+                port,
+                &cluster,
+                healthy,
+            );
+
+            tracing::debug!(
+                "Synced instance health: service={}, ip={}, port={}, healthy={}",
+                service_name, ip, port, healthy
+            );
+        }
+    }
+
     /// Execute HTTP health check
     async fn execute_http_check(&self, check_id: &str, config: &crate::health_actor::CheckConfig) {
         tracing::info!("HTTP check {} called", check_id);
@@ -152,6 +227,9 @@ impl HealthCheckExecutor {
                     Ok(()) => tracing::info!("HTTP check {}: status={}, http_status={}, output={}", check_id, status, status_code, output),
                     Err(e) => tracing::error!("HTTP check {} failed to update status: {}", check_id, e),
                 }
+
+                // Sync instance health status to NamingService
+                self.sync_instance_health(&config.service_id, &config.service_name, status);
             }
             Ok(Err(e)) => {
                 tracing::info!("HTTP check {} inside Ok(Err), error: {:?}", check_id, e);
@@ -167,6 +245,9 @@ impl HealthCheckExecutor {
                     Ok(()) => tracing::warn!("HTTP check {} failed: {}, output={}", check_id, e, output),
                     Err(e) => tracing::error!("HTTP check {} failed to update status: {}", check_id, e),
                 }
+
+                // Sync instance health status to NamingService
+                self.sync_instance_health(&config.service_id, &config.service_name, "critical");
             }
             Err(_) => {
                 tracing::info!("HTTP check {} inside Err(timeout)", check_id);
@@ -182,6 +263,9 @@ impl HealthCheckExecutor {
                     Ok(()) => tracing::warn!("HTTP check {} timeout, output={}", check_id, output),
                     Err(e) => tracing::error!("HTTP check {} failed to update status: {}", check_id, e),
                 }
+
+                // Sync instance health status to NamingService
+                self.sync_instance_health(&config.service_id, &config.service_name, "critical");
             }
         }
     }
@@ -218,6 +302,9 @@ impl HealthCheckExecutor {
                 ).await;
 
                 tracing::debug!("TCP check {}: passed", check_id);
+
+                // Sync instance health status to NamingService
+                self.sync_instance_health(&config.service_id, &config.service_name, "passing");
             }
             Ok(Err(e)) => {
                 let output = format!("TCP check failed: {} - {}", addr, e);
@@ -229,6 +316,9 @@ impl HealthCheckExecutor {
                 ).await;
 
                 tracing::warn!("TCP check {} failed: {}", check_id, e);
+
+                // Sync instance health status to NamingService
+                self.sync_instance_health(&config.service_id, &config.service_name, "critical");
             }
             Err(_) => {
                 let output = format!("TCP check timeout: {}", addr);
@@ -240,6 +330,9 @@ impl HealthCheckExecutor {
                 ).await;
 
                 tracing::warn!("TCP check {} timeout", check_id);
+
+                // Sync instance health status to NamingService
+                self.sync_instance_health(&config.service_id, &config.service_name, "critical");
             }
         }
     }
@@ -264,6 +357,7 @@ impl Clone for HealthCheckExecutor {
         Self {
             health_service: Arc::clone(&self.health_service),
             health_actor: self.health_actor.clone(),
+            naming_service: Arc::clone(&self.naming_service),
             http_client: self.http_client.clone(),
         }
     }
@@ -273,11 +367,11 @@ impl Clone for HealthCheckExecutor {
 fn parse_duration(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.ends_with('s') {
-        s[..s.len()-1].parse().ok()
+        s[..s.len() - 1].parse().ok()
     } else if s.ends_with('m') {
-        s[..s.len()-1].parse::<u64>().ok().map(|m| m * 60)
+        s[..s.len() - 1].parse::<u64>().ok().map(|m| m * 60)
     } else if s.ends_with('h') {
-        s[..s.len()-1].parse::<u64>().ok().map(|h| h * 3600)
+        s[..s.len() - 1].parse::<u64>().ok().map(|h| h * 3600)
     } else {
         s.parse().ok()
     }

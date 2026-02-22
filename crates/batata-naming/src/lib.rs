@@ -3,17 +3,23 @@
 //! This crate provides:
 //! - Service registration
 //! - Service discovery
-//! - Health checking (TCP/HTTP)
+//! - Nacos-compatible health checking (TCP/HTTP with heartbeat monitoring)
 //! - Load balancing
 //! - Service selector evaluation
 
 pub mod health_checker;
+pub mod healthcheck;
 pub mod model;
 pub mod selector;
 pub mod service;
 
 // Re-export commonly used types
 pub use health_checker::{InstanceHealthCheckConfig, InstanceHealthChecker, InstanceHealthStatus};
+pub use healthcheck::{
+    ExpiredInstanceChecker, HealthCheckConfig, HealthCheckManager, HealthCheckProcessor,
+    HealthCheckResult, HealthCheckReactor, HealthCheckTask, HealthCheckType, HttpHealthParams,
+    HttpHealthCheckProcessor, TcpHealthParams, TcpHealthCheckProcessor, UnhealthyInstanceChecker,
+};
 pub use model::{Instance, Service, ServiceInfo, ServiceQuery};
 pub use selector::{LabelOperator, LabelRequirement, SelectorBuilder, ServiceSelector};
 pub use service::{

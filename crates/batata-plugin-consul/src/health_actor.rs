@@ -3,7 +3,7 @@
 // Eliminates read/write lock contention through actor pattern
 
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
@@ -26,6 +26,7 @@ pub struct CheckConfig {
     pub timeout: Option<String>,
     pub ttl_seconds: Option<u64>,
     pub deregister_after_secs: Option<u64>,
+    pub initial_status: String,  // Initial status when check is registered (default: "critical")
 }
 
 /// Health check status (dynamic, write-frequent)
@@ -34,6 +35,7 @@ pub struct HealthStatus {
     pub status: String,           // "passing", "critical", "warning"
     pub output: String,
     pub last_updated: i64,
+    pub critical_time: Option<i64>, // Timestamp when status became critical
 }
 
 /// Actor messages
@@ -165,10 +167,19 @@ impl HealthStatusStore {
     }
 
     pub fn update(&self, check_id: &str, status: String, output: Option<String>) {
+        // Get old status to track critical time
+        let existing = self.statuses.get(check_id);
+        let critical_time = match (existing, status.as_str()) {
+            (Some(old), "critical") => old.critical_time.or(Some(current_timestamp())),
+            (_, "critical") => Some(current_timestamp()),
+            _ => None, // Non-critical status clears critical_time
+        };
+
         let health_status = HealthStatus {
             status,
             output: output.unwrap_or_default(),
             last_updated: current_timestamp(),
+            critical_time,
         };
         self.statuses.insert(check_id.to_string(), health_status);
     }
@@ -225,7 +236,18 @@ impl HealthStatusActor {
     async fn handle_message(&mut self, msg: HealthActorMessage) {
         match msg {
             HealthActorMessage::RegisterCheck { check_config, respond_to } => {
+                let check_id = check_config.check_id.clone();
+                let initial_status = check_config.initial_status.clone();
+
                 self.config_registry.register(check_config);
+
+                // Initialize health status with initial status
+                self.status_store.update(&check_id, initial_status.clone(), None);
+
+                info!(
+                    "Registered check: id={}, initial_status={}",
+                    check_id, initial_status
+                );
                 let _ = respond_to.send(Ok(()));
             }
 
@@ -288,6 +310,8 @@ impl HealthStatusActor {
                             service_name: config.service_name,
                             service_tags: None,
                             check_type: config.check_type,
+                            interval: config.interval.clone(),
+                            timeout: config.timeout.clone(),
                             create_index: Some(1),
                             modify_index: Some(1),
                         });
@@ -315,6 +339,8 @@ impl HealthStatusActor {
                             service_name: config.service_name,
                             service_tags: None,
                             check_type: config.check_type,
+                            interval: config.interval.clone(),
+                            timeout: config.timeout.clone(),
                             create_index: Some(1),
                             modify_index: Some(1),
                         });
@@ -421,11 +447,17 @@ impl HealthActorHandle {
             .as_ref()
             .and_then(|s| parse_duration(s));
 
+        // Get initial status (defaults to "critical" as per Consul behavior)
+        let initial_status = registration
+            .status
+            .clone()
+            .unwrap_or_else(|| "critical".to_string());
+
         CheckConfig {
             check_id: registration.effective_check_id(),
             name: registration.name.clone(),
             service_id: registration.service_id.clone().unwrap_or_default(),
-            service_name: String::new(), // Will be filled later
+            service_name: registration.service_name.clone().unwrap_or_default(),
             check_type: registration.check_type().to_string(),
             http: registration.http.clone(),
             tcp: registration.tcp.clone(),
@@ -434,6 +466,7 @@ impl HealthActorHandle {
             timeout: registration.timeout.clone(),
             ttl_seconds,
             deregister_after_secs,
+            initial_status,
         }
     }
 }
@@ -455,8 +488,6 @@ fn current_timestamp() -> i64 {
         .as_secs() as i64
 }
 
-use std::time::SystemTime;
-
 fn parse_duration(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.ends_with('s') {
@@ -469,3 +500,86 @@ fn parse_duration(s: &str) -> Option<u64> {
         s.parse().ok()
     }
 }
+
+// ============================================================================
+// Service Deregistration Monitor (Critical Check Auto-Remove)
+// ============================================================================
+
+/// Start the service deregistration monitor for critical health checks
+pub async fn start_deregistration_monitor(
+    health_actor: HealthActorHandle,
+    naming_service: Option<Arc<dyn NamingServiceTrait>>,
+    interval_secs: u64,
+) {
+    tokio::spawn(async move {
+        info!("Starting service deregistration monitor with interval: {}s", interval_secs);
+        loop {
+            tokio::time::sleep(Duration::from_secs(interval_secs)).await;
+            reap_services(health_actor.clone(), naming_service.clone()).await;
+        }
+    });
+}
+
+/// Reap services that have been in critical state for too long
+async fn reap_services(
+    health_actor: HealthActorHandle,
+    naming_service: Option<Arc<dyn NamingServiceTrait>>,
+) {
+    let configs = health_actor.get_all_configs().await;
+    let statuses = health_actor.get_all_status().await;
+
+    let now = current_timestamp();
+    let mut deregistered_services = std::collections::HashSet::new();
+
+    for (check_id, config) in configs {
+        if let Some(deregister_after_secs) = config.deregister_after_secs {
+            if let Some((_, status_data)) = statuses.iter().find(|(id, _)| id == &check_id) {
+                if status_data.status == "critical" {
+                    if let Some(critical_time) = status_data.critical_time {
+                        let critical_duration_secs = now - critical_time;
+                        if critical_duration_secs >= deregister_after_secs as i64 {
+                            // Exceeded threshold, deregister the service
+                            if !config.service_id.is_empty()
+                                && !deregistered_services.contains(&config.service_id)
+                            {
+                                info!(
+                                    "Deregistering service due to critical health: service={}, check={}, duration={}s, threshold={}s",
+                                    config.service_id, check_id, critical_duration_secs, deregister_after_secs
+                                );
+
+                                if let Some(ns) = &naming_service {
+                                    let _ = ns.deregister_instance(
+                                        "public",
+                                        "DEFAULT_GROUP",
+                                        &config.service_name,
+                                        &config.service_id,
+                                        true,  // ephemeral: service instances are typically ephemeral
+                                    ).await;
+                                }
+
+                                deregistered_services.insert(config.service_id.clone());
+
+                                // Also deregister the check
+                                let _ = health_actor.deregister_check(check_id.clone()).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Trait for naming service operations (for decoupling)
+#[async_trait::async_trait]
+pub trait NamingServiceTrait: Send + Sync {
+    async fn deregister_instance(
+        &self,
+        namespace: &str,
+        group: &str,
+        service_name: &str,
+        instance_id: &str,
+        ephemeral: bool,
+    ) -> Result<(), String>;
+}
+

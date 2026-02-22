@@ -14,7 +14,7 @@ use batata_api::naming::model::Instance as NacosInstance;
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
-use crate::health_actor::HealthActorHandle;
+use crate::health_actor::{HealthActorHandle, NamingServiceTrait, start_deregistration_monitor};
 use crate::model::{
     AgentService, CheckRegistration, CheckStatusUpdate, CheckUpdateParams, ConsulError,
     HealthCheck, HealthQueryParams, Node, ServiceHealth, ServiceQueryParams,
@@ -53,6 +53,41 @@ pub struct ConsulHealthService {
 
 impl ConsulHealthService {
     pub fn new(naming_service: Arc<NamingService>, health_actor: HealthActorHandle) -> Self {
+        Self {
+            naming_service,
+            health_actor,
+            node_name: "batata-node".to_string(),
+        }
+    }
+
+    /// Create a new ConsulHealthService with critical health check monitoring enabled
+    /// This will automatically deregister services that have been in critical state
+    /// for longer than the configured `deregister_critical_service_after` threshold.
+    ///
+    /// # Arguments
+    /// * `naming_service` - The naming service for instance management
+    /// * `health_actor` - The health actor for health check management
+    /// * `check_reap_interval_secs` - Interval in seconds to check for critical services (default: 30)
+    pub fn new_with_monitor(
+        naming_service: Arc<NamingService>,
+        health_actor: HealthActorHandle,
+        check_reap_interval_secs: u64,
+    ) -> Self {
+        let naming_service_clone = naming_service.clone();
+        let health_actor_clone = health_actor.clone();
+
+        // Create a wrapper that implements NamingServiceTrait
+        let naming_service_wrapper = Arc::new(NamingServiceWrapper::new(naming_service_clone));
+
+        // Start the background monitor task
+        tokio::spawn(async move {
+            start_deregistration_monitor(
+                health_actor_clone,
+                Some(naming_service_wrapper),
+                check_reap_interval_secs,
+            ).await;
+        });
+
         Self {
             naming_service,
             health_actor,
@@ -109,6 +144,8 @@ impl ConsulHealthService {
             service_name: config.service_name,
             service_tags: None,
             check_type: config.check_type,
+            interval: config.interval,
+            timeout: config.timeout,
             create_index: Some(1),
             modify_index: Some(1),
         })
@@ -138,6 +175,8 @@ impl ConsulHealthService {
                         service_name: config.service_name,
                         service_tags: None,
                         check_type: config.check_type,
+                        interval: config.interval.clone(),
+                        timeout: config.timeout.clone(),
                         create_index: Some(1),
                         modify_index: Some(1),
                     })
@@ -176,6 +215,8 @@ impl ConsulHealthService {
                 .get("consul_tags")
                 .and_then(|s| serde_json::from_str(s).ok()),
             check_type: "ttl".to_string(),
+            interval: None,
+            timeout: None,
             create_index: Some(1),
             modify_index: Some(1),
         }
@@ -265,6 +306,8 @@ impl ConsulHealthServicePersistent {
             service_name: String::new(),
             service_tags: None,
             check_type: check_type.to_string(),
+            interval: registration.interval.clone(),
+            timeout: registration.timeout.clone(),
             create_index: Some(1),
             modify_index: Some(1),
         };
@@ -636,6 +679,8 @@ impl ConsulHealthServicePersistent {
                 .get("consul_tags")
                 .and_then(|s| serde_json::from_str(s).ok()),
             check_type: "ttl".to_string(),
+            interval: None,
+            timeout: None,
             create_index: Some(1),
             modify_index: Some(1),
         }
@@ -722,14 +767,31 @@ pub async fn get_service_health(
             continue;
         }
 
+        let ip = instance.ip.clone();
+        let _port = instance.port as u16;
+
+        // Build node tagged addresses
+        let mut node_tagged_addresses = std::collections::HashMap::new();
+        node_tagged_addresses.insert("lan".to_string(), ip.clone());
+        node_tagged_addresses.insert("lan_ipv4".to_string(), ip.clone());
+        node_tagged_addresses.insert("wan".to_string(), ip.clone());
+        node_tagged_addresses.insert("wan_ipv4".to_string(), ip.clone());
+
+        let mut node_meta = std::collections::HashMap::new();
+        node_meta.insert("consul-network-segment".to_string(), "".to_string());
+        node_meta.insert(
+            "consul-version".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        );
+
         results.push(ServiceHealth {
             node: Node {
                 id: uuid::Uuid::new_v4().to_string(),
                 node: health_service.node_name.clone(),
-                address: instance.ip.clone(),
+                address: ip.clone(),
                 datacenter: query.dc.clone().unwrap_or_else(|| "dc1".to_string()),
-                tagged_addresses: None,
-                meta: None,
+                tagged_addresses: Some(node_tagged_addresses),
+                meta: Some(node_meta),
             },
             service: agent_service,
             checks,
@@ -1225,14 +1287,31 @@ pub async fn get_service_health_persistent(
             continue;
         }
 
+        let ip = instance.ip.clone();
+        let _port = instance.port as u16;
+
+        // Build node tagged addresses
+        let mut node_tagged_addresses = std::collections::HashMap::new();
+        node_tagged_addresses.insert("lan".to_string(), ip.clone());
+        node_tagged_addresses.insert("lan_ipv4".to_string(), ip.clone());
+        node_tagged_addresses.insert("wan".to_string(), ip.clone());
+        node_tagged_addresses.insert("wan_ipv4".to_string(), ip.clone());
+
+        let mut node_meta = std::collections::HashMap::new();
+        node_meta.insert("consul-network-segment".to_string(), "".to_string());
+        node_meta.insert(
+            "consul-version".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        );
+
         results.push(ServiceHealth {
             node: Node {
                 id: uuid::Uuid::new_v4().to_string(),
                 node: health_service.node_name.clone(),
-                address: instance.ip.clone(),
+                address: ip.clone(),
                 datacenter: query.dc.clone().unwrap_or_else(|| "dc1".to_string()),
-                tagged_addresses: None,
-                meta: None,
+                tagged_addresses: Some(node_tagged_addresses),
+                meta: Some(node_meta),
             },
             service: agent_service,
             checks,
@@ -2061,3 +2140,53 @@ mod tests {
         assert_eq!(check.status, "critical");
     }
 }
+
+// ============================================================================
+// NamingServiceTrait Implementation
+// ============================================================================
+
+/// Wrapper for NamingService to implement NamingServiceTrait
+#[derive(Clone)]
+pub struct NamingServiceWrapper {
+    naming_service: Arc<NamingService>,
+}
+
+impl NamingServiceWrapper {
+    pub fn new(naming_service: Arc<NamingService>) -> Self {
+        Self { naming_service }
+    }
+}
+
+#[async_trait::async_trait]
+impl NamingServiceTrait for NamingServiceWrapper {
+    async fn deregister_instance(
+        &self,
+        namespace: &str,
+        group: &str,
+        service_name: &str,
+        instance_id: &str,
+        _ephemeral: bool,
+    ) -> Result<(), String> {
+        use batata_api::naming::model::Instance;
+
+        // Build an instance with just the instance_id for deregistration
+        let instance = Instance {
+            instance_id: instance_id.to_string(),
+            ..Default::default()
+        };
+
+        let result = self.naming_service.deregister_instance(
+            namespace,
+            group,
+            service_name,
+            &instance,
+        );
+
+        if result {
+            Ok(())
+        } else {
+            Err(format!("Failed to deregister instance: {}", instance_id))
+        }
+    }
+}
+

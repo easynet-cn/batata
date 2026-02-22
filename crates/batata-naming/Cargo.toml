@@ -16,12 +16,16 @@ batata-consistency = { path = "../batata-consistency" }
 # Concurrency
 dashmap = "6.1"
 
+# Random
+fastrand = "2.3"
+
 # Database
 sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 
 # Async
 async-trait = "0.1"

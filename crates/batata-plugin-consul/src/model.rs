@@ -274,6 +274,7 @@ impl ValidatedCheck {
             name: self.name.clone(),
             check_id: Some(self.check_id.clone()),
             service_id: Some(self.service_id.clone()),
+            service_name: Some(self.service_name.clone()),
             notes: self.notes.clone(),
             ttl: self.ttl.clone(),
             http: self.http.clone(),
@@ -660,13 +661,24 @@ pub struct Node {
 
 impl Default for Node {
     fn default() -> Self {
+        let addr = "127.0.0.1".to_string();
+        let mut tagged_addresses = HashMap::new();
+        tagged_addresses.insert("lan".to_string(), addr.clone());
+        tagged_addresses.insert("lan_ipv4".to_string(), addr.clone());
+        tagged_addresses.insert("wan".to_string(), addr.clone());
+        tagged_addresses.insert("wan_ipv4".to_string(), addr);
+
+        let mut meta = HashMap::new();
+        meta.insert("consul-network-segment".to_string(), "".to_string());
+        meta.insert("consul-version".to_string(), env!("CARGO_PKG_VERSION").to_string());
+
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             node: "batata-node".to_string(),
             address: "127.0.0.1".to_string(),
             datacenter: "dc1".to_string(),
-            tagged_addresses: None,
-            meta: None,
+            tagged_addresses: Some(tagged_addresses),
+            meta: Some(meta),
         }
     }
 }
@@ -682,6 +694,9 @@ pub struct CheckRegistration {
 
     #[serde(rename = "ServiceID", default)]
     pub service_id: Option<String>,
+
+    #[serde(rename = "ServiceName", default)]
+    pub service_name: Option<String>,
 
     #[serde(rename = "Notes", default)]
     pub notes: Option<String>,
@@ -787,6 +802,12 @@ pub struct HealthCheck {
     #[serde(rename = "Type")]
     pub check_type: String,
 
+    #[serde(rename = "Interval", skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+
+    #[serde(rename = "Timeout", skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+
     #[serde(rename = "CreateIndex", skip_serializing_if = "Option::is_none")]
     pub create_index: Option<u64>,
 
@@ -807,6 +828,8 @@ impl Default for HealthCheck {
             service_name: String::new(),
             service_tags: None,
             check_type: "ttl".to_string(),
+            interval: None,
+            timeout: None,
             create_index: None,
             modify_index: None,
         }
@@ -952,7 +975,22 @@ impl From<&NacosInstance> for AgentService {
         let tagged_addresses = instance
             .metadata
             .get("consul_tagged_addresses")
-            .and_then(|s| serde_json::from_str(s).ok());
+            .and_then(|s| serde_json::from_str(s).ok())
+            .or_else(|| {
+                // Default tagged addresses if not provided
+                let ip = instance.ip.clone();
+                let port = instance.port as u16;
+                Some(serde_json::json!({
+                    "lan_ipv4": {
+                        "Address": ip,
+                        "Port": port
+                    },
+                    "wan_ipv4": {
+                        "Address": ip,
+                        "Port": port
+                    }
+                }))
+            });
 
         // Filter out Consul-specific metadata keys
         let meta: HashMap<String, String> = instance

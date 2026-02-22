@@ -55,7 +55,7 @@ pub struct ConsulServices {
 
 impl ConsulServices {
     /// Creates Consul service adapters from a naming service (in-memory only).
-    pub fn new(naming_service: Arc<NamingService>, acl_enabled: bool) -> Self {
+    pub fn new(naming_service: Arc<NamingService>, acl_enabled: bool, check_reap_interval_secs: u64) -> Self {
         let session = ConsulSessionService::new();
         let kv = ConsulKVService::new();
         let kv_arc = Arc::new(kv.clone());
@@ -68,7 +68,11 @@ impl ConsulServices {
 
         Self {
             agent: ConsulAgentService::new(naming_service.clone()),
-            health: ConsulHealthService::new(naming_service.clone(), health_actor),
+            health: ConsulHealthService::new_with_monitor(
+                naming_service.clone(),
+                health_actor,
+                check_reap_interval_secs,
+            ),
             kv,
             catalog: ConsulCatalogService::new(naming_service),
             acl: if acl_enabled {
@@ -91,6 +95,7 @@ impl ConsulServices {
         naming_service: Arc<NamingService>,
         acl_enabled: bool,
         db: Arc<DB>,
+        check_reap_interval_secs: u64,
     ) -> Self {
         let session = ConsulSessionService::with_rocks(db.clone());
         let kv = ConsulKVService::with_rocks(db.clone());
@@ -104,7 +109,11 @@ impl ConsulServices {
 
         Self {
             agent: ConsulAgentService::new(naming_service.clone()),
-            health: ConsulHealthService::new(naming_service.clone(), health_actor),
+            health: ConsulHealthService::new_with_monitor(
+                naming_service.clone(),
+                health_actor,
+                check_reap_interval_secs,
+            ),
             kv,
             catalog: ConsulCatalogService::new(naming_service),
             acl: if acl_enabled {

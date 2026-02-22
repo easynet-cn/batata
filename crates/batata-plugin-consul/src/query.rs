@@ -338,23 +338,61 @@ pub async fn execute_query(
                 .get("consul_tags")
                 .and_then(|s| serde_json::from_str(s).ok());
 
+            let node_id = uuid::Uuid::new_v4().to_string();
+            let node_name = hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "batata-node".to_string());
+            let ip = instance.ip.clone();
+            let port = instance.port as u16;
+
+            // Build node tagged addresses
+            let mut node_tagged_addresses = std::collections::HashMap::new();
+            node_tagged_addresses.insert("lan".to_string(), ip.clone());
+            node_tagged_addresses.insert("lan_ipv4".to_string(), ip.clone());
+            node_tagged_addresses.insert("wan".to_string(), ip.clone());
+            node_tagged_addresses.insert("wan_ipv4".to_string(), ip.clone());
+
+            let mut node_meta = std::collections::HashMap::new();
+            node_meta.insert("consul-network-segment".to_string(), "".to_string());
+            node_meta.insert(
+                "consul-version".to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            );
+
+            // Build service tagged addresses
+            let service_tagged_addresses = instance
+                .metadata
+                .get("consul_tagged_addresses")
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| {
+                    // Default tagged addresses if not provided
+                    serde_json::json!({
+                        "lan_ipv4": {
+                            "Address": ip,
+                            "Port": port
+                        },
+                        "wan_ipv4": {
+                            "Address": ip,
+                            "Port": port
+                        }
+                    })
+                });
+
             ServiceHealth {
                 node: Node {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    node: hostname::get()
-                        .map(|h| h.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| "batata-node".to_string()),
-                    address: instance.ip.clone(),
+                    id: node_id,
+                    node: node_name.clone(),
+                    address: ip.clone(),
                     datacenter: "dc1".to_string(),
-                    tagged_addresses: None,
-                    meta: None,
+                    tagged_addresses: Some(node_tagged_addresses),
+                    meta: Some(node_meta),
                 },
                 service: AgentService {
                     id: instance.instance_id.clone(),
                     service: instance.service_name.clone(),
                     tags: tags.clone(),
-                    port: instance.port as u16,
-                    address: instance.ip.clone(),
+                    port,
+                    address: ip.clone(),
                     meta: Some(instance.metadata.clone()),
                     enable_tag_override: false,
                     weights: Weights {
@@ -372,13 +410,10 @@ pub async fn execute_query(
                         .metadata
                         .get("consul_connect")
                         .and_then(|s| serde_json::from_str(s).ok()),
-                    tagged_addresses: instance
-                        .metadata
-                        .get("consul_tagged_addresses")
-                        .and_then(|s| serde_json::from_str(s).ok()),
+                    tagged_addresses: Some(service_tagged_addresses),
                 },
                 checks: vec![HealthCheck {
-                    node: "batata-node".to_string(),
+                    node: node_name,
                     check_id: format!("service:{}", instance.instance_id),
                     name: "Service health check".to_string(),
                     status: if instance.healthy {
@@ -393,6 +428,8 @@ pub async fn execute_query(
                     service_name: instance.service_name.clone(),
                     service_tags: tags,
                     check_type: "ttl".to_string(),
+                    interval: None,
+                    timeout: None,
                     create_index: None,
                     modify_index: None,
                 }],
