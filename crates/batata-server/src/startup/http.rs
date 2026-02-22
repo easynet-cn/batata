@@ -21,8 +21,9 @@ use crate::{
     api::consul::{
         AclService, ConsulEventService, ConsulLockService, ConsulQueryService,
         ConsulSemaphoreService, ConsulSessionService, agent::ConsulAgentService,
-        catalog::ConsulCatalogService, health::ConsulHealthService, kv::ConsulKVService,
-        route::consul_routes,
+        catalog::ConsulCatalogService, health::ConsulHealthService,
+        health_actor::create_health_actor,
+        kv::ConsulKVService, route::consul_routes,
     },
     api::openapi::ApiDoc,
     api::v2::route::{
@@ -61,9 +62,13 @@ impl ConsulServices {
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+
+        // Create health actor for lock-free operations
+        let health_actor = create_health_actor();
+
         Self {
             agent: ConsulAgentService::new(naming_service.clone()),
-            health: ConsulHealthService::new(naming_service.clone()),
+            health: ConsulHealthService::new(naming_service.clone(), health_actor),
             kv,
             catalog: ConsulCatalogService::new(naming_service),
             acl: if acl_enabled {
@@ -93,9 +98,13 @@ impl ConsulServices {
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+
+        // Create health actor for lock-free operations
+        let health_actor = create_health_actor();
+
         Self {
             agent: ConsulAgentService::new(naming_service.clone()),
-            health: ConsulHealthService::new(naming_service.clone()),
+            health: ConsulHealthService::new(naming_service.clone(), health_actor),
             kv,
             catalog: ConsulCatalogService::new(naming_service),
             acl: if acl_enabled {
@@ -204,6 +213,8 @@ pub fn consul_server(
             }))
             .service(consul_routes())
     })
+    .keep_alive(std::time::Duration::from_secs(75))
+    .client_request_timeout(std::time::Duration::from_secs(60))
     .bind((address, port))?
     .run())
 }

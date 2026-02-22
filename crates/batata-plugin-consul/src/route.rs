@@ -282,6 +282,12 @@ pub fn consul_catalog_routes() -> actix_web::Scope {
         )
 }
 
+/// Configure Consul UI API routes
+pub fn consul_ui_routes() -> actix_web::Scope {
+    web::scope("/v1/internal/ui")
+        .route("/services", web::get().to(catalog::ui_services))
+}
+
 /// Configure Consul ACL API routes (in-memory)
 pub fn consul_acl_routes() -> actix_web::Scope {
     web::scope("/v1/acl")
@@ -822,6 +828,7 @@ pub fn consul_routes() -> actix_web::Scope {
         .service(consul_peering_routes())
         .service(consul_connect_routes())
         .service(consul_connect_ca_routes())
+        .service(consul_ui_routes())
 }
 
 /// Configure all Consul API routes with database persistence
@@ -845,6 +852,7 @@ pub fn consul_routes_persistent() -> actix_web::Scope {
         .service(consul_peering_routes_persistent())
         .service(consul_connect_routes_persistent())
         .service(consul_connect_ca_routes_persistent())
+        .service(consul_ui_routes())
 }
 
 /// Configure a subset of Consul API routes for testing with the given data dependencies
@@ -892,6 +900,7 @@ pub fn consul_routes_full() -> actix_web::Scope {
         .service(consul_peering_routes_persistent())
         .service(consul_connect_routes_persistent())
         .service(consul_connect_ca_routes_persistent())
+        .service(consul_ui_routes())
 }
 
 #[cfg(test)]
@@ -906,6 +915,7 @@ mod tests {
     use crate::agent::ConsulAgentService;
     use crate::event::ConsulEventService;
     use crate::health::ConsulHealthService;
+    use crate::health_actor::create_health_actor;
     use crate::kv::ConsulKVService;
     use crate::lock::{ConsulLockService, ConsulSemaphoreService};
     use crate::query::ConsulQueryService;
@@ -923,7 +933,8 @@ mod tests {
         let naming_service = Arc::new(NamingService::new());
         let kv_service = ConsulKVService::new();
         let session_service = ConsulSessionService::new();
-        let health_service = ConsulHealthService::new(naming_service.clone());
+        let health_actor = create_health_actor();
+        let health_service = ConsulHealthService::new(naming_service.clone(), health_actor);
         let agent_service = ConsulAgentService::new(naming_service.clone());
         let acl_service = AclService::disabled();
         let event_service = ConsulEventService::new();

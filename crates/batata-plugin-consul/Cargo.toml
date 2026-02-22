@@ -58,5 +58,8 @@ sysinfo = "0.33"
 # Hostname
 hostname = "0.4"
 
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
 [dev-dependencies]
 actix-http = "3"

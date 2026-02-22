@@ -1,0 +1,5 @@
+[build]
+# 设置默认构建目标，不使用 release 模式
+# 这样执行 `cargo build` 时默认构建 debug 版本，速度更快
+# 如需构建 release 版本，显式使用 `cargo build --release`
+target-dir = "target"

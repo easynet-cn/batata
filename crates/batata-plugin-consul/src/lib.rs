@@ -32,6 +32,8 @@ pub mod connect_ca;
 pub mod coordinate;
 pub mod event;
 pub mod health;
+pub mod health_actor;
+pub mod health_executor;
 pub mod kv;
 pub mod lock;
 pub mod model;
@@ -71,6 +73,7 @@ pub use route::{
     consul_peering_routes,
     consul_peering_routes_persistent,
     consul_query_routes,
+    consul_ui_routes,
     // Combined route scopes
     consul_routes,            // In-memory (for development/testing)
     consul_routes_full,       // Persistent + real cluster (recommended for production)
@@ -89,6 +92,8 @@ pub use catalog::ConsulCatalogService;
 pub use config_entry::{ConsulConfigEntryService, ConsulConfigEntryServicePersistent};
 pub use event::{ConsulEventService, ConsulEventServicePersistent};
 pub use health::{ConsulHealthService, ConsulHealthServicePersistent};
+pub use health_actor::{HealthActorHandle, create_health_actor, CheckConfig, HealthStatus};
+pub use health_executor::HealthCheckExecutor;
 pub use kv::ConsulKVService;
 pub use lock::{ConsulLockService, ConsulSemaphoreService};
 pub use operator::{ConsulOperatorService, ConsulOperatorServiceReal};

@@ -31,3 +31,4 @@ target/
 Cargo.lock
 
 /data
+/logs

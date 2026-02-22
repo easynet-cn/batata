@@ -151,6 +151,81 @@ pub struct CatalogNode {
     pub modify_index: u64,
 }
 
+/// Service kind
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceKind {
+    Typical,
+    ConnectProxy,
+    ConnectGateway,
+    ConnectSidecar,
+    TerminatingGateway,
+    IngressGateway,
+    MeshGateway,
+    ApiGateway,
+    ConnectNative,
+}
+
+/// Gateway configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GatewayConfig {
+    #[serde(rename = "AssociatedServiceCount")]
+    pub associated_service_count: i32,
+}
+
+/// Service summary for UI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceSummary {
+    #[serde(rename = "Kind", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ServiceKind>,
+
+    #[serde(rename = "Name")]
+    pub name: String,
+
+    #[serde(rename = "Datacenter")]
+    pub datacenter: String,
+
+    #[serde(rename = "Tags")]
+    pub tags: Vec<String>,
+
+    #[serde(rename = "Nodes")]
+    pub nodes: Vec<String>,
+
+    #[serde(rename = "ExternalSources")]
+    pub external_sources: Vec<String>,
+
+    #[serde(rename = "InstanceCount")]
+    pub instance_count: i32,
+
+    #[serde(rename = "ChecksPassing")]
+    pub checks_passing: i32,
+
+    #[serde(rename = "ChecksWarning")]
+    pub checks_warning: i32,
+
+    #[serde(rename = "ChecksCritical")]
+    pub checks_critical: i32,
+
+    #[serde(rename = "GatewayConfig")]
+    pub gateway_config: GatewayConfig,
+
+    #[serde(rename = "TransparentProxy")]
+    pub transparent_proxy: bool,
+}
+
+/// Service listing summary for UI (extends ServiceSummary)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceListingSummary {
+    #[serde(flatten)]
+    pub service_summary: ServiceSummary,
+
+    #[serde(rename = "ConnectedWithProxy")]
+    pub connected_with_proxy: bool,
+
+    #[serde(rename = "ConnectedWithGateway")]
+    pub connected_with_gateway: bool,
+}
+
 /// Node detail with services
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeServices {
@@ -603,6 +678,96 @@ impl ConsulCatalogService {
             deregistered
         }
     }
+
+    /// Get service summary for UI
+    /// Returns a list of service summaries with health check information
+    pub fn get_service_summary(&self, namespace: &str) -> Vec<ServiceListingSummary> {
+        let (_, service_names) = self
+            .naming_service
+            .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+
+        let mut summaries: Vec<ServiceListingSummary> = Vec::new();
+
+        for service_name in service_names {
+            let instances = self.naming_service.get_instances(
+                namespace,
+                "DEFAULT_GROUP",
+                &service_name,
+                "",
+                false,
+            );
+
+            if instances.is_empty() {
+                continue;
+            }
+
+            // Collect all unique tags for this service
+            let mut all_tags: Vec<String> = Vec::new();
+            let mut all_nodes: Vec<String> = Vec::new();
+            let mut external_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+            let mut checks_passing = 0;
+            let checks_warning = 0;
+            let mut checks_critical = 0;
+
+            for instance in &instances {
+                // Collect tags
+                if let Some(tags_json) = instance.metadata.get("consul_tags")
+                    && let Ok(tags) = serde_json::from_str::<Vec<String>>(tags_json)
+                {
+                    for tag in tags {
+                        if !all_tags.contains(&tag) {
+                            all_tags.push(tag);
+                        }
+                    }
+                }
+
+                // Collect nodes (unique)
+                let node_name = format!("node-{}", instance.ip.replace('.', "-"));
+                if !all_nodes.contains(&node_name) {
+                    all_nodes.push(node_name);
+                }
+
+                // Collect external sources from metadata
+                if let Some(external_source) = instance.metadata.get("external_source") {
+                    external_sources.insert(external_source.clone());
+                }
+
+                // Count health checks based on instance status
+                if instance.healthy {
+                    checks_passing += 1;
+                } else {
+                    checks_critical += 1;
+                }
+            }
+
+            let summary = ServiceListingSummary {
+                service_summary: ServiceSummary {
+                    kind: None, // TODO: detect service kind from metadata
+                    name: service_name.clone(),
+                    datacenter: self.datacenter.clone(),
+                    tags: all_tags,
+                    nodes: all_nodes,
+                    external_sources: external_sources.into_iter().collect(),
+                    instance_count: instances.len() as i32,
+                    checks_passing,
+                    checks_warning,
+                    checks_critical,
+                    gateway_config: GatewayConfig::default(),
+                    transparent_proxy: false, // TODO: detect from metadata
+                },
+                connected_with_proxy: false,  // Connect proxy not supported yet
+                connected_with_gateway: false, // Gateway not supported yet
+            };
+
+            summaries.push(summary);
+        }
+
+        // Sort by name for consistent output
+        summaries.sort_by(|a, b| a.service_summary.name.cmp(&b.service_summary.name));
+
+        summaries
+    }
 }
 
 // ============================================================================
@@ -777,6 +942,28 @@ pub async fn deregister(
 pub async fn list_datacenters() -> HttpResponse {
     // For now, return a single datacenter
     HttpResponse::Ok().json(vec!["dc1"])
+}
+
+/// GET /v1/internal/ui/services
+/// Returns service summary for UI
+pub async fn ui_services(
+    req: HttpRequest,
+    catalog: web::Data<ConsulCatalogService>,
+    acl_service: web::Data<AclService>,
+    query: web::Query<CatalogQueryParams>,
+) -> HttpResponse {
+    // Check ACL authorization for service read
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let summaries = catalog.get_service_summary(&namespace);
+
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(summaries)
 }
 
 /// GET /v1/catalog/connect/:service
@@ -1002,5 +1189,86 @@ mod tests {
         // Get nodes
         let nodes = catalog.get_nodes("public");
         assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn test_service_summary() {
+        let naming_service = Arc::new(NamingService::new());
+        let catalog = ConsulCatalogService::new(naming_service.clone());
+
+        // Register a healthy service
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "consul_tags".to_string(),
+            r#"["http", "api"]"#.to_string(),
+        );
+        let instance1 = NacosInstance {
+            instance_id: "web-1".to_string(),
+            ip: "192.168.1.100".to_string(),
+            port: 8080,
+            weight: 1.0,
+            healthy: true,
+            enabled: true,
+            ephemeral: true,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "web".to_string(),
+            metadata: metadata.clone(),
+            instance_heart_beat_interval: 5000,
+            instance_heart_beat_time_out: 15000,
+            ip_delete_timeout: 30000,
+            instance_id_generator: "simple".to_string(),
+        };
+
+        // Register an unhealthy service
+        metadata.insert("consul_tags".to_string(), r#"["db"]"#.to_string());
+        let instance2 = NacosInstance {
+            instance_id: "db-1".to_string(),
+            ip: "192.168.1.101".to_string(),
+            port: 3306,
+            weight: 1.0,
+            healthy: false, // unhealthy
+            enabled: true,
+            ephemeral: true,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "db".to_string(),
+            metadata: metadata,
+            instance_heart_beat_interval: 5000,
+            instance_heart_beat_time_out: 15000,
+            ip_delete_timeout: 30000,
+            instance_id_generator: "simple".to_string(),
+        };
+
+        naming_service.register_instance("public", "DEFAULT_GROUP", "web", instance1);
+        naming_service.register_instance("public", "DEFAULT_GROUP", "db", instance2);
+
+        // Get service summary
+        let summaries = catalog.get_service_summary("public");
+        assert_eq!(summaries.len(), 2);
+
+        // Find the web service summary
+        let web_summary = summaries
+            .iter()
+            .find(|s| s.service_summary.name == "web")
+            .unwrap();
+        assert_eq!(web_summary.service_summary.datacenter, "dc1");
+        assert_eq!(web_summary.service_summary.nodes, vec!["node-192-168-1-100"]);
+        assert_eq!(web_summary.service_summary.instance_count, 1);
+        assert_eq!(web_summary.service_summary.checks_passing, 1);
+        assert_eq!(web_summary.service_summary.checks_critical, 0);
+        assert_eq!(
+            web_summary.service_summary.tags,
+            vec!["http".to_string(), "api".to_string()]
+        );
+        assert!(!web_summary.connected_with_proxy);
+        assert!(!web_summary.connected_with_gateway);
+
+        // Find the db service summary
+        let db_summary = summaries
+            .iter()
+            .find(|s| s.service_summary.name == "db")
+            .unwrap();
+        assert_eq!(db_summary.service_summary.instance_count, 1);
+        assert_eq!(db_summary.service_summary.checks_passing, 0);
+        assert_eq!(db_summary.service_summary.checks_critical, 1);
     }
 }

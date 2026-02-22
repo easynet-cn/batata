@@ -132,8 +132,13 @@ tonic-prost-build = "0.14.2"
 incremental = true
 
 [profile.release]
-codegen-units = 1
-lto = true
-opt-level = "s"
-panic = "abort"
+# 加速编译：使用 16 个代码生成单元（默认是 256，1 是最慢但最优）
+codegen-units = 16
+# 启用 LTO "thin" 模式（比 "fat" 快，仍能获得大部分优化效果）
+lto = "thin"
+# 优化级别 3（比 "s" 更注重性能，比 "z" 稍大的二进制）
+opt-level = 3
+# 允许 panic 展开（"abort" 会稍微减小体积但可能影响错误信息）
+panic = "unwind"
+# 去除调试信息
 strip = true

@@ -57,8 +57,8 @@ db.url: mysql://nacos:nacos@localhost:3306/batata
 db.pool.config.maximumPoolSize: 100
 db.pool.config.minimumPoolSize: 10
 db.pool.config.connectionTimeout: 30
-db.pool.config.initializationFailTimeout: 8
-db.pool.config.idleTimeout: 300
+db.pool.config.initializationFailTimeout: 30
+db.pool.config.idleTimeout: 600
 db.pool.config.maxLifetime: 1800
 ### Enable SQL logging (true in dev, false in production)
 db.pool.config.sqlxLogging: false
@@ -398,12 +398,14 @@ nacos.plugin.consul.enabled: false
 nacos.plugin.consul.port: 8500
 ### Consul data directory for RocksDB persistence (default: data/consul_rocksdb)
 nacos.plugin.consul.data_dir: data/consul_rocksdb
+### Register Consul as a service (default: true, only effective when consul.enabled=true)
+nacos.plugin.consul.register_self: true
 ### Enable Consul ACL (default: false, Consul can work without ACL)
 nacos.plugin.consul.acl.enabled: false
 
 #*************** Apollo Compatibility Plugin Configurations ***************#
 ### Enable Apollo Config API compatibility server on its own port
-nacos.plugin.apollo.enabled: true
+nacos.plugin.apollo.enabled: false
 ### Apollo compatibility server port (default: 8080)
 nacos.plugin.apollo.port: 8080
 
@@ -463,7 +465,7 @@ nacos.standalone: true
 
 #*************** Logging Configurations ***************#
 ### Log directory path (default: ~/batata/logs)
-#nacos.logs.path: /var/log/batata
+nacos.logs.path: logs
 
 ### Enable console output (default: true)
 nacos.logs.console.enabled: true

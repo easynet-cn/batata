@@ -12,6 +12,7 @@ use batata_plugin_consul::lock;
 pub use batata_plugin_consul::route::{
     consul_acl_routes, consul_agent_routes, consul_catalog_routes, consul_event_routes,
     consul_health_routes, consul_query_routes, consul_session_routes, consul_status_routes,
+    consul_ui_routes,
 };
 
 /// Configure Consul KV, Lock, and Semaphore API routes under /v1 scope.
@@ -65,6 +66,8 @@ pub fn consul_routes() -> actix_web::Scope {
         .service(consul_status_routes())
         .service(consul_event_routes())
         .service(consul_query_routes())
+        // UI routes
+        .service(consul_ui_routes())
         // Broad /v1 scope LAST (KV + lock + semaphore merged to avoid conflicts)
         .service(consul_kv_and_lock_routes())
 }

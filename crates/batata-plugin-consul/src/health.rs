@@ -14,6 +14,7 @@ use batata_api::naming::model::Instance as NacosInstance;
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
+use crate::health_actor::HealthActorHandle;
 use crate::model::{
     AgentService, CheckRegistration, CheckStatusUpdate, CheckUpdateParams, ConsulError,
     HealthCheck, HealthQueryParams, Node, ServiceHealth, ServiceQueryParams,
@@ -30,147 +31,123 @@ pub struct StoredCheck {
     pub ttl_seconds: Option<u64>,
     pub last_updated: i64,
     pub deregister_after_secs: Option<u64>,
+    /// Check configuration parameters
+    pub http: Option<String>,
+    pub tcp: Option<String>,
+    pub grpc: Option<String>,
+    pub interval: Option<String>,
+    pub timeout: Option<String>,
 }
 
-/// Consul Health Check service
-/// Manages health checks and their states
+/// Consul Health Check service (Actor-based implementation)
+/// Manages health checks using the HealthStatusActor for lock-free operations
 #[derive(Clone)]
 pub struct ConsulHealthService {
     #[allow(dead_code)] // Reserved for future health check integration with naming service
     naming_service: Arc<NamingService>,
-    /// Health checks storage: check_id -> StoredCheck
-    checks: Arc<DashMap<String, StoredCheck>>,
-    /// Service to checks mapping: service_id -> Vec<check_id>
-    service_checks: Arc<DashMap<String, Vec<String>>>,
+    /// Health status actor handle
+    pub health_actor: HealthActorHandle,
     /// Node name for this agent
     node_name: String,
 }
 
 impl ConsulHealthService {
-    pub fn new(naming_service: Arc<NamingService>) -> Self {
+    pub fn new(naming_service: Arc<NamingService>, health_actor: HealthActorHandle) -> Self {
         Self {
             naming_service,
-            checks: Arc::new(DashMap::new()),
-            service_checks: Arc::new(DashMap::new()),
+            health_actor,
             node_name: "batata-node".to_string(),
         }
     }
 
-    /// Register a health check
-    pub fn register_check(&self, registration: CheckRegistration) -> Result<(), String> {
-        let check_id = registration.effective_check_id();
-        let check_type = registration.check_type();
-
-        // Parse TTL if present
-        let ttl_seconds = registration.ttl.as_ref().and_then(|s| parse_duration(s));
-
-        // Parse deregister timeout
-        let deregister_after_secs = registration
-            .deregister_critical_service_after
-            .as_ref()
-            .and_then(|s| parse_duration(s));
-
-        let check = HealthCheck {
-            node: self.node_name.clone(),
-            check_id: check_id.clone(),
-            name: registration.name.clone(),
-            status: registration
-                .status
-                .clone()
-                .unwrap_or_else(|| "critical".to_string()),
-            notes: registration.notes.clone().unwrap_or_default(),
-            output: String::new(),
-            service_id: registration.service_id.clone().unwrap_or_default(),
-            service_name: String::new(), // Will be filled when we look up the service
-            service_tags: None,
-            check_type: check_type.to_string(),
-            create_index: Some(1),
-            modify_index: Some(1),
-        };
-
-        let stored = StoredCheck {
-            check,
-            ttl_seconds,
-            last_updated: current_timestamp(),
-            deregister_after_secs,
-        };
-
-        self.checks.insert(check_id.clone(), stored);
-
-        // Update service_checks mapping
-        if let Some(service_id) = &registration.service_id {
-            self.service_checks
-                .entry(service_id.clone())
-                .or_default()
-                .push(check_id);
-        }
-
-        Ok(())
+    /// Get the health actor handle
+    pub fn health_actor_handle(&self) -> HealthActorHandle {
+        self.health_actor.clone()
     }
 
-    /// Deregister a health check
-    pub fn deregister_check(&self, check_id: &str) -> Result<(), String> {
-        if let Some((_, stored)) = self.checks.remove(check_id) {
-            // Remove from service_checks mapping
-            if !stored.check.service_id.is_empty()
-                && let Some(mut checks) = self.service_checks.get_mut(&stored.check.service_id)
-            {
-                checks.retain(|id| id != check_id);
-            }
-            Ok(())
-        } else {
-            Err(format!("Check not found: {}", check_id))
-        }
-    }
-
-    /// Update check status
-    pub fn update_check_status(
+    /// Update check status asynchronously (via actor)
+    pub async fn update_check_status_async(
         &self,
         check_id: &str,
         status: &str,
         output: Option<String>,
     ) -> Result<(), String> {
-        if let Some(mut stored) = self.checks.get_mut(check_id) {
-            stored.check.status = status.to_string();
-            if let Some(out) = output {
-                stored.check.output = out;
-            }
-            stored.last_updated = current_timestamp();
-            Ok(())
-        } else {
-            Err(format!("Check not found: {}", check_id))
-        }
+        self.health_actor
+            .update_status(check_id.to_string(), status.to_string(), output)
+            .await
     }
 
-    /// Get all checks for a service
-    pub fn get_service_checks(&self, service_id: &str) -> Vec<HealthCheck> {
-        if let Some(check_ids) = self.service_checks.get(service_id) {
-            check_ids
-                .iter()
-                .filter_map(|id| self.checks.get(id).map(|s| s.check.clone()))
-                .collect()
-        } else {
-            Vec::new()
-        }
+    /// Register a health check (via actor)
+    pub async fn register_check(&self, registration: CheckRegistration) -> Result<(), String> {
+        let check_config = crate::health_actor::HealthActorHandle::registration_to_config(&registration);
+        self.health_actor.register_check(check_config).await
     }
 
-    /// Get a check by ID
-    pub fn get_check(&self, check_id: &str) -> Option<HealthCheck> {
-        self.checks.get(check_id).map(|s| s.check.clone())
+    /// Deregister a health check (via actor)
+    pub async fn deregister_check(&self, check_id: &str) -> Result<(), String> {
+        self.health_actor.deregister_check(check_id.to_string()).await
     }
 
-    /// Get all checks
-    pub fn get_all_checks(&self) -> Vec<HealthCheck> {
-        self.checks.iter().map(|s| s.check.clone()).collect()
+    /// Get all checks for a service (via actor)
+    pub async fn get_service_checks(&self, service_id: &str) -> Vec<HealthCheck> {
+        self.health_actor.get_service_checks(service_id.to_string()).await
     }
 
-    /// Get checks by status
-    pub fn get_checks_by_status(&self, status: &str) -> Vec<HealthCheck> {
-        self.checks
-            .iter()
-            .filter(|s| s.check.status == status)
-            .map(|s| s.check.clone())
+    /// Get a check by ID (via actor)
+    pub async fn get_check(&self, check_id: &str) -> Option<HealthCheck> {
+        let config = self.health_actor.get_config(check_id.to_string()).await?;
+        let status = self.health_actor.get_status(check_id.to_string()).await?;
+
+        Some(HealthCheck {
+            node: self.node_name.clone(),
+            check_id: config.check_id,
+            name: config.name,
+            status: status.status,
+            notes: String::new(),
+            output: status.output,
+            service_id: config.service_id,
+            service_name: config.service_name,
+            service_tags: None,
+            check_type: config.check_type,
+            create_index: Some(1),
+            modify_index: Some(1),
+        })
+    }
+
+    /// Get all checks (via actor)
+    pub async fn get_all_checks(&self) -> Vec<HealthCheck> {
+        let configs: Vec<(String, crate::health_actor::CheckConfig)> =
+            self.health_actor.get_all_configs().await;
+        let statuses: Vec<(String, crate::health_actor::HealthStatus)> =
+            self.health_actor.get_all_status().await;
+
+        configs
+            .into_iter()
+            .filter_map(|(check_id, config)| {
+                statuses
+                    .iter()
+                    .find(|(id, _)| id == &check_id)
+                    .map(|(_, status)| HealthCheck {
+                        node: self.node_name.clone(),
+                        check_id: config.check_id,
+                        name: config.name,
+                        status: status.status.clone(),
+                        notes: String::new(),
+                        output: status.output.clone(),
+                        service_id: config.service_id,
+                        service_name: config.service_name,
+                        service_tags: None,
+                        check_type: config.check_type,
+                        create_index: Some(1),
+                        modify_index: Some(1),
+                    })
+            })
             .collect()
+    }
+
+    /// Get checks by status (via actor)
+    pub async fn get_checks_by_status(&self, status: &str) -> Vec<HealthCheck> {
+        self.health_actor.get_checks_by_status(status.to_string()).await
     }
 
     /// Create a default health check for a service instance
@@ -332,6 +309,11 @@ impl ConsulHealthServicePersistent {
             ttl_seconds,
             last_updated: current_timestamp(),
             deregister_after_secs,
+            http: registration.http.clone(),
+            tcp: registration.tcp.clone(),
+            grpc: registration.grpc.clone(),
+            interval: registration.interval.clone(),
+            timeout: registration.timeout.clone(),
         };
         self.cache.insert(check_id.clone(), stored);
 
@@ -439,6 +421,11 @@ impl ConsulHealthServicePersistent {
                 ttl_seconds: stored.ttl_seconds,
                 last_updated: current_timestamp(),
                 deregister_after_secs: stored.deregister_after_secs,
+                http: stored.http.clone(),
+                tcp: stored.tcp.clone(),
+                grpc: stored.grpc.clone(),
+                interval: stored.interval.clone(),
+                timeout: stored.timeout.clone(),
             },
         );
 
@@ -540,6 +527,11 @@ impl ConsulHealthServicePersistent {
                     ttl_seconds: metadata.ttl_seconds,
                     last_updated: metadata.last_updated,
                     deregister_after_secs: metadata.deregister_after_secs,
+                    http: None,
+                    tcp: None,
+                    grpc: None,
+                    interval: None,
+                    timeout: None,
                 };
 
                 // Update cache
@@ -705,7 +697,7 @@ pub async fn get_service_health(
         let agent_service = AgentService::from(&instance);
 
         // Get checks for this instance - first try stored checks, then create default
-        let mut checks = health_service.get_service_checks(&instance.instance_id);
+        let mut checks = health_service.get_service_checks(&instance.instance_id).await;
         if checks.is_empty() {
             // Create a default check based on instance health
             checks.push(health_service.create_instance_check(&instance));
@@ -713,7 +705,7 @@ pub async fn get_service_health(
 
         // Also include maintenance checks if they exist
         let maintenance_check_id = format!("_service_maintenance:{}", instance.instance_id);
-        if let Some(maint_check) = health_service.get_check(&maintenance_check_id) {
+        if let Some(maint_check) = health_service.get_check(&maintenance_check_id).await {
             checks.push(maint_check);
         }
 
@@ -861,7 +853,7 @@ pub async fn get_service_checks(
     let mut all_checks: Vec<HealthCheck> = Vec::new();
 
     for instance in instances {
-        let mut checks = health_service.get_service_checks(&instance.instance_id);
+        let mut checks = health_service.get_service_checks(&instance.instance_id).await;
         if checks.is_empty() {
             checks.push(health_service.create_instance_check(&instance));
         }
@@ -907,9 +899,9 @@ pub async fn get_checks_by_state(
     }
 
     let checks = if state == "any" {
-        health_service.get_all_checks()
+        health_service.get_all_checks().await
     } else {
-        health_service.get_checks_by_status(&state)
+        health_service.get_checks_by_status(&state).await
     };
 
     HttpResponse::Ok().json(checks)
@@ -935,6 +927,7 @@ pub async fn get_node_checks(
     // Filter checks by node
     let checks: Vec<HealthCheck> = health_service
         .get_all_checks()
+        .await
         .into_iter()
         .filter(|c| c.node == node)
         .collect();
@@ -964,7 +957,7 @@ pub async fn register_check(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match health_service.register_check(registration) {
+    match health_service.register_check(registration).await {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
     }
@@ -991,7 +984,7 @@ pub async fn deregister_check(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match health_service.deregister_check(&check_id) {
+    match health_service.deregister_check(&check_id).await {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -1015,7 +1008,7 @@ pub async fn pass_check(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match health_service.update_check_status(&check_id, "passing", output) {
+    match health_service.update_check_status_async(&check_id, "passing", output).await {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -1039,7 +1032,7 @@ pub async fn warn_check(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match health_service.update_check_status(&check_id, "warning", output) {
+    match health_service.update_check_status_async(&check_id, "warning", output).await {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -1063,7 +1056,7 @@ pub async fn fail_check(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match health_service.update_check_status(&check_id, "critical", output) {
+    match health_service.update_check_status_async(&check_id, "critical", output).await {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -1089,7 +1082,7 @@ pub async fn update_check(
 
     let status = update.status.unwrap_or_else(|| "passing".to_string());
 
-    match health_service.update_check_status(&check_id, &status, update.output) {
+    match health_service.update_check_status_async(&check_id, &status, update.output).await {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -1109,7 +1102,7 @@ pub async fn list_agent_checks(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let checks = health_service.get_all_checks();
+    let checks = health_service.get_all_checks().await;
 
     // Return as a map keyed by check ID
     let checks_map: std::collections::HashMap<String, HealthCheck> = checks

@@ -55,66 +55,66 @@ pub mod consul_u64 {
 
 /// Service registration request
 /// PUT /v1/agent/service/register
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentServiceRegistration {
     /// Service ID (optional, defaults to Name if not provided)
-    #[serde(rename = "ID", default)]
+    #[serde(rename = "ID", alias = "Id", default)]
     pub id: Option<String>,
 
     /// Service name (required)
-    #[serde(rename = "Name")]
+    #[serde(rename = "Name", alias = "name")]
     pub name: String,
 
     /// Service tags for filtering and metadata
-    #[serde(rename = "Tags", default)]
+    #[serde(rename = "Tags", alias = "tags", default)]
     pub tags: Option<Vec<String>>,
 
     /// Service address (optional, uses agent address if not provided)
-    #[serde(rename = "Address", default)]
+    #[serde(rename = "Address", alias = "address", default)]
     pub address: Option<String>,
 
     /// Service port
-    #[serde(rename = "Port", default)]
+    #[serde(rename = "Port", alias = "port", default)]
     pub port: Option<u16>,
 
     /// Service metadata key-value pairs
-    #[serde(rename = "Meta", default)]
+    #[serde(rename = "Meta", alias = "meta", default)]
     pub meta: Option<HashMap<String, String>>,
 
     /// Enable tag override from external sources
-    #[serde(rename = "EnableTagOverride", default)]
+    #[serde(rename = "EnableTagOverride", alias = "enableTagOverride", default)]
     pub enable_tag_override: Option<bool>,
 
     /// Service weights for load balancing
-    #[serde(rename = "Weights", default)]
+    #[serde(rename = "Weights", alias = "weights", default)]
     pub weights: Option<Weights>,
 
     /// Service kind (e.g., "connect-proxy", "mesh-gateway")
-    #[serde(rename = "Kind", default)]
+    #[serde(rename = "Kind", alias = "kind", default)]
     pub kind: Option<String>,
 
     /// Proxy configuration for connect-proxy services
-    #[serde(rename = "Proxy", default)]
+    #[serde(rename = "Proxy", alias = "proxy", default)]
     pub proxy: Option<serde_json::Value>,
 
     /// Connect configuration for mesh-enabled services
-    #[serde(rename = "Connect", default)]
+    #[serde(rename = "Connect", alias = "connect", default)]
     pub connect: Option<serde_json::Value>,
 
     /// Tagged addresses for the service
-    #[serde(rename = "TaggedAddresses", default)]
+    #[serde(rename = "TaggedAddresses", alias = "taggedAddresses", default)]
     pub tagged_addresses: Option<serde_json::Value>,
 
     /// Single health check definition
-    #[serde(rename = "Check", default)]
+    #[serde(rename = "Check", alias = "check", default)]
     pub check: Option<AgentServiceCheck>,
 
     /// Multiple health check definitions
-    #[serde(rename = "Checks", default)]
+    #[serde(rename = "Checks", alias = "checks", default)]
     pub checks: Option<Vec<AgentServiceCheck>>,
 
     /// Namespace (Consul Enterprise, maps to Nacos namespace)
-    #[serde(rename = "Namespace", default)]
+    #[serde(rename = "Namespace", alias = "namespace", default)]
     pub namespace: Option<String>,
 }
 
@@ -143,6 +143,158 @@ impl AgentServiceRegistration {
             .map(|w| w.passing as f64)
             .unwrap_or(1.0)
     }
+
+    /// Extract and validate all health checks
+    /// Matches Consul's ServiceDefinition.CheckTypes() behavior
+    /// Returns a vector of validated checks with proper check IDs
+    pub fn check_types(&self) -> Result<Vec<ValidatedCheck>, String> {
+        let mut checks = Vec::new();
+        let service_id = self.service_id();
+        let service_name = &self.name;
+
+        // Process single Check field
+        if let Some(ref check) = self.check {
+            check.validate().map_err(|e| format!("Single check validation failed: {}", e))?;
+
+            let check_id = check.generate_check_id(&service_id, 0, 1);
+            let check_name = check.default_name(service_name);
+
+            checks.push(ValidatedCheck {
+                check_id,
+                name: check_name,
+                service_id: service_id.clone(),
+                service_name: service_name.clone(),
+                ttl: check.ttl.clone(),
+                http: check.http.clone(),
+                method: check.method.clone(),
+                header: check.header.clone(),
+                tcp: check.tcp.clone(),
+                grpc: check.grpc.clone(),
+                interval: check.interval.clone(),
+                timeout: check.timeout.clone(),
+                deregister_critical_service_after: check.deregister_critical_service_after.clone(),
+                notes: check.notes.clone(),
+                status: check.status.clone(),
+                check_type: check.check_type().to_string(),
+            });
+        }
+
+        // Process Checks array
+        if let Some(ref check_array) = self.checks {
+            for (index, check) in check_array.iter().enumerate() {
+                check.validate().map_err(|e| {
+                    format!("Check array validation failed at index {}: {}", index, e)
+                })?;
+
+                let check_id = check.generate_check_id(&service_id, index, check_array.len());
+                let check_name = check.default_name(service_name);
+
+                checks.push(ValidatedCheck {
+                    check_id,
+                    name: check_name,
+                    service_id: service_id.clone(),
+                    service_name: service_name.clone(),
+                    ttl: check.ttl.clone(),
+                    http: check.http.clone(),
+                    method: check.method.clone(),
+                    header: check.header.clone(),
+                    tcp: check.tcp.clone(),
+                    grpc: check.grpc.clone(),
+                    interval: check.interval.clone(),
+                    timeout: check.timeout.clone(),
+                    deregister_critical_service_after: check.deregister_critical_service_after.clone(),
+                    notes: check.notes.clone(),
+                    status: check.status.clone(),
+                    check_type: check.check_type().to_string(),
+                });
+            }
+        }
+
+        Ok(checks)
+    }
+}
+
+/// Validated health check with generated ID and normalized values
+/// Represents a check that has been validated and prepared for registration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidatedCheck {
+    /// Generated or provided check ID
+    pub check_id: String,
+
+    /// Check name (with default if not provided)
+    pub name: String,
+
+    /// Associated service ID
+    pub service_id: String,
+
+    /// Associated service name
+    pub service_name: String,
+
+    /// TTL duration
+    pub ttl: Option<String>,
+
+    /// HTTP endpoint
+    pub http: Option<String>,
+
+    /// HTTP method
+    pub method: Option<String>,
+
+    /// HTTP headers
+    pub header: Option<HashMap<String, Vec<String>>>,
+
+    /// TCP address
+    pub tcp: Option<String>,
+
+    /// gRPC endpoint
+    pub grpc: Option<String>,
+
+    /// Check interval
+    pub interval: Option<String>,
+
+    /// Check timeout
+    pub timeout: Option<String>,
+
+    /// Deregister after critical duration
+    pub deregister_critical_service_after: Option<String>,
+
+    /// Notes
+    pub notes: Option<String>,
+
+    /// Initial status
+    pub status: Option<String>,
+
+    /// Check type (ttl, http, tcp, grpc)
+    pub check_type: String,
+}
+
+impl ValidatedCheck {
+    /// Convert to CheckRegistration
+    pub fn to_check_registration(&self) -> CheckRegistration {
+        CheckRegistration {
+            name: self.name.clone(),
+            check_id: Some(self.check_id.clone()),
+            service_id: Some(self.service_id.clone()),
+            notes: self.notes.clone(),
+            ttl: self.ttl.clone(),
+            http: self.http.clone(),
+            method: self.method.clone(),
+            header: self.header.clone(),
+            tcp: self.tcp.clone(),
+            grpc: self.grpc.clone(),
+            interval: self.interval.clone(),
+            timeout: self.timeout.clone(),
+            deregister_critical_service_after: self.deregister_critical_service_after.clone(),
+            status: self.status.clone(),
+        }
+    }
+
+    /// Get the initial status (defaults to "critical" if not specified)
+    /// Matches Consul's default behavior: api.HealthCritical
+    pub fn initial_status(&self) -> String {
+        self.status
+            .clone()
+            .unwrap_or_else(|| "critical".to_string())
+    }
 }
 
 /// Service weights for load balancing
@@ -169,56 +321,169 @@ fn default_warning_weight() -> i32 {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentServiceCheck {
     /// Check ID (optional, auto-generated if not provided)
-    #[serde(rename = "CheckID", default)]
+    #[serde(rename = "CheckID", alias = "checkid", default)]
     pub check_id: Option<String>,
 
     /// Check name
-    #[serde(rename = "Name", default)]
+    #[serde(rename = "Name", alias = "name", default)]
     pub name: Option<String>,
 
     /// TTL-based check duration (e.g., "30s")
-    #[serde(rename = "TTL", default)]
+    #[serde(rename = "TTL", alias = "ttl", default)]
     pub ttl: Option<String>,
 
     /// HTTP endpoint for HTTP checks
-    #[serde(rename = "HTTP", default)]
+    #[serde(rename = "HTTP", alias = "Http", default)]
     pub http: Option<String>,
 
     /// HTTP method (GET, POST, etc.)
-    #[serde(rename = "Method", default)]
+    #[serde(rename = "Method", alias = "method", default)]
     pub method: Option<String>,
 
     /// HTTP headers
-    #[serde(rename = "Header", default)]
+    #[serde(rename = "Header", alias = "header", default)]
     pub header: Option<HashMap<String, Vec<String>>>,
 
     /// TCP address for TCP checks
-    #[serde(rename = "TCP", default)]
+    #[serde(rename = "TCP", alias = "tcp", default)]
     pub tcp: Option<String>,
 
     /// gRPC endpoint for gRPC checks
-    #[serde(rename = "GRPC", default)]
+    #[serde(rename = "GRPC", alias = "grpc", default)]
     pub grpc: Option<String>,
 
     /// Check interval (e.g., "10s")
-    #[serde(rename = "Interval", default)]
+    #[serde(rename = "Interval", alias = "interval", default)]
     pub interval: Option<String>,
 
     /// Check timeout (e.g., "5s")
-    #[serde(rename = "Timeout", default)]
+    #[serde(rename = "Timeout", alias = "timeout", default)]
     pub timeout: Option<String>,
 
     /// Deregister after critical for duration
-    #[serde(rename = "DeregisterCriticalServiceAfter", default)]
+    #[serde(rename = "DeregisterCriticalServiceAfter", alias = "deregister_critical_service_after", default)]
     pub deregister_critical_service_after: Option<String>,
 
     /// Notes for the check
-    #[serde(rename = "Notes", default)]
+    #[serde(rename = "Notes", alias = "notes", default)]
     pub notes: Option<String>,
 
     /// Initial status
-    #[serde(rename = "Status", default)]
+    #[serde(rename = "Status", alias = "status", default)]
     pub status: Option<String>,
+}
+
+impl AgentServiceCheck {
+    /// Validate the health check definition
+    /// Matches Consul's CheckType.Validate() behavior
+    /// Empty strings for HTTP/TCP/GRPC are treated as "not set" (consistent with Consul's c.HTTP != "" check)
+    pub fn validate(&self) -> Result<(), String> {
+        // Determine check type
+        // Consul uses simple existence check (not empty string), matching c.HTTP != "" etc.
+        let check_types = [
+            (self.ttl.is_some(), "TTL"),
+            (self.http.is_some(), "HTTP"),
+            (self.tcp.is_some(), "TCP"),
+            (self.grpc.is_some(), "GRPC"),
+        ];
+
+        let active_types: Vec<&str> = check_types
+            .iter()
+            .filter(|(active, _)| *active)
+            .map(|(_, name)| *name)
+            .collect();
+
+        // At least one check type must be specified
+        if active_types.is_empty() {
+            return Err("Check must specify one of: TTL, HTTP, TCP, or GRPC".to_string());
+        }
+
+        // Only one check type can be specified
+        if active_types.len() > 1 {
+            return Err(format!(
+                "Check can only specify one type, but multiple were specified: {}",
+                active_types.join(", ")
+            ));
+        }
+
+        // Validate status if provided
+        if let Some(ref status) = self.status {
+            if !["passing", "warning", "critical"].contains(&status.as_str()) {
+                return Err(format!(
+                    "Invalid status '{}': must be 'passing', 'warning', or 'critical'",
+                    status
+                ));
+            }
+        }
+
+        // Interval is required for all check types except TTL
+        // Matches Consul's logic: if intervalCheck && c.Interval <= 0
+        if !self.ttl.is_some() && self.interval.is_none() {
+            return Err("Interval is required for HTTP, TCP, and GRPC checks".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Generate check ID following Consul's logic
+    /// If check_id is not provided, generate as: "service:{service_id}" or "service:{service_id}:{index}"
+    pub fn generate_check_id(&self, service_id: &str, index: usize, total_checks: usize) -> String {
+        if let Some(ref id) = self.check_id {
+            if !id.is_empty() {
+                return id.clone();
+            }
+        }
+
+        // Consul's auto-generation logic
+        let base_id = format!("service:{}", service_id);
+        if total_checks > 1 {
+            format!("{}:{}", base_id, index + 1)
+        } else {
+            base_id
+        }
+    }
+
+    /// Get the default check name if not provided
+    pub fn default_name(&self, service_name: &str) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("Service '{}' check", service_name))
+    }
+
+    /// Check if this is a TTL-based check
+    pub fn is_ttl(&self) -> bool {
+        self.ttl.is_some()
+    }
+
+    /// Check if this is an HTTP-based check
+    pub fn is_http(&self) -> bool {
+        self.http.is_some()
+    }
+
+    /// Check if this is a TCP-based check
+    pub fn is_tcp(&self) -> bool {
+        self.tcp.is_some()
+    }
+
+    /// Check if this is a gRPC-based check
+    pub fn is_grpc(&self) -> bool {
+        self.grpc.is_some()
+    }
+
+    /// Get the check type as a string
+    pub fn check_type(&self) -> &'static str {
+        if self.is_ttl() {
+            "ttl"
+        } else if self.is_http() {
+            "http"
+        } else if self.is_tcp() {
+            "tcp"
+        } else if self.is_grpc() {
+            "grpc"
+        } else {
+            "ttl" // default fallback
+        }
+    }
 }
 
 /// Agent service representation (response format)
@@ -1449,5 +1714,312 @@ mod tests {
         assert_eq!(nacos.weight, 5.0);
         assert!(nacos.metadata.contains_key("consul_tags"));
         assert!(nacos.metadata.contains_key("env"));
+    }
+
+    #[test]
+    fn test_check_validate_ttl() {
+        let check = AgentServiceCheck {
+            ttl: Some("30s".to_string()),
+            ..Default::default()
+        };
+        assert!(check.validate().is_ok());
+    }
+
+    #[test]
+    fn test_check_validate_http() {
+        let check = AgentServiceCheck {
+            http: Some("http://localhost:8080/health".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        assert!(check.validate().is_ok());
+    }
+
+    #[test]
+    fn test_check_validate_tcp() {
+        let check = AgentServiceCheck {
+            tcp: Some("localhost:8080".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        assert!(check.validate().is_ok());
+    }
+
+    #[test]
+    fn test_check_validate_grpc() {
+        let check = AgentServiceCheck {
+            grpc: Some("localhost:9090".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        assert!(check.validate().is_ok());
+    }
+
+    #[test]
+    fn test_check_validate_no_type() {
+        let check = AgentServiceCheck {
+            ..Default::default()
+        };
+        let result = check.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must specify one of"));
+    }
+
+    #[test]
+    fn test_check_validate_multiple_types() {
+        let check = AgentServiceCheck {
+            http: Some("http://localhost:8080/health".to_string()),
+            tcp: Some("localhost:8080".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        let result = check.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("only specify one type"));
+    }
+
+    #[test]
+    fn test_check_validate_invalid_status() {
+        let check = AgentServiceCheck {
+            ttl: Some("30s".to_string()),
+            status: Some("invalid".to_string()),
+            ..Default::default()
+        };
+        let result = check.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must be 'passing', 'warning', or 'critical'"));
+    }
+
+    #[test]
+    fn test_check_validate_http_without_interval() {
+        let check = AgentServiceCheck {
+            http: Some("http://localhost:8080/health".to_string()),
+            ..Default::default()
+        };
+        let result = check.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Interval is required"));
+    }
+
+    #[test]
+    fn test_check_generate_id_single() {
+        let check = AgentServiceCheck {
+            ..Default::default()
+        };
+        // For single check, no index is added
+        let id = check.generate_check_id("my-service", 0, 1);
+        assert_eq!(id, "service:my-service");
+    }
+
+    #[test]
+    fn test_check_generate_id_multiple() {
+        let check = AgentServiceCheck {
+            ..Default::default()
+        };
+        // For multiple checks, index is added
+        let id = check.generate_check_id("my-service", 0, 2);
+        assert_eq!(id, "service:my-service:1");
+
+        let id2 = check.generate_check_id("my-service", 1, 2);
+        assert_eq!(id2, "service:my-service:2");
+    }
+
+    #[test]
+    fn test_check_generate_id_custom() {
+        let check = AgentServiceCheck {
+            check_id: Some("custom-check-id".to_string()),
+            ..Default::default()
+        };
+        let id = check.generate_check_id("my-service", 0, 1);
+        assert_eq!(id, "custom-check-id");
+    }
+
+    #[test]
+    fn test_check_default_name() {
+        let check = AgentServiceCheck {
+            name: None,
+            ..Default::default()
+        };
+        let name = check.default_name("my-service");
+        assert_eq!(name, "Service 'my-service' check");
+
+        let check_with_name = AgentServiceCheck {
+            name: Some("Custom Name".to_string()),
+            ..Default::default()
+        };
+        let name = check_with_name.default_name("my-service");
+        assert_eq!(name, "Custom Name");
+    }
+
+    #[test]
+    fn test_check_type_detection() {
+        let ttl_check = AgentServiceCheck {
+            ttl: Some("30s".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(ttl_check.check_type(), "ttl");
+        assert!(ttl_check.is_ttl());
+
+        let http_check = AgentServiceCheck {
+            http: Some("http://localhost:8080".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(http_check.check_type(), "http");
+        assert!(http_check.is_http());
+
+        let tcp_check = AgentServiceCheck {
+            tcp: Some("localhost:8080".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(tcp_check.check_type(), "tcp");
+        assert!(tcp_check.is_tcp());
+
+        let grpc_check = AgentServiceCheck {
+            grpc: Some("localhost:9090".to_string()),
+            interval: Some("10s".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(grpc_check.check_type(), "grpc");
+        assert!(grpc_check.is_grpc());
+    }
+
+    #[test]
+    fn test_registration_check_types_single() {
+        let reg = AgentServiceRegistration {
+            name: "my-service".to_string(),
+            check: Some(AgentServiceCheck {
+                http: Some("http://localhost:8080/health".to_string()),
+                interval: Some("10s".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let checks = reg.check_types().unwrap();
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].check_id, "service:my-service");
+        assert_eq!(checks[0].name, "Service 'my-service' check");
+        assert_eq!(checks[0].check_type, "http");
+    }
+
+    #[test]
+    fn test_registration_check_types_multiple() {
+        let reg = AgentServiceRegistration {
+            name: "my-service".to_string(),
+            checks: Some(vec![
+                AgentServiceCheck {
+                    ttl: Some("30s".to_string()),
+                    ..Default::default()
+                },
+                AgentServiceCheck {
+                    http: Some("http://localhost:8080/metrics".to_string()),
+                    interval: Some("15s".to_string()),
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        };
+
+        let checks = reg.check_types().unwrap();
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].check_id, "service:my-service:1");
+        assert_eq!(checks[0].check_type, "ttl");
+        assert_eq!(checks[1].check_id, "service:my-service:2");
+        assert_eq!(checks[1].check_type, "http");
+    }
+
+    #[test]
+    fn test_registration_check_types_validation_error() {
+        let reg = AgentServiceRegistration {
+            name: "my-service".to_string(),
+            check: Some(AgentServiceCheck {
+                // No check type specified - should fail validation
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let result = reg.check_types();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must specify one of"));
+    }
+
+    #[test]
+    fn test_validated_check_to_registration() {
+        let validated = ValidatedCheck {
+            check_id: "service:test".to_string(),
+            name: "Test Check".to_string(),
+            service_id: "test-service".to_string(),
+            service_name: "test".to_string(),
+            ttl: Some("30s".to_string()),
+            http: None,
+            method: None,
+            header: None,
+            tcp: None,
+            grpc: None,
+            interval: None,
+            timeout: None,
+            deregister_critical_service_after: None,
+            notes: Some("Test notes".to_string()),
+            status: Some("passing".to_string()),
+            check_type: "ttl".to_string(),
+        };
+
+        let reg = validated.to_check_registration();
+        assert_eq!(reg.check_id, Some("service:test".to_string()));
+        assert_eq!(reg.name, "Test Check");
+        assert_eq!(reg.service_id, Some("test-service".to_string()));
+        assert_eq!(reg.ttl, Some("30s".to_string()));
+        assert_eq!(reg.status, Some("passing".to_string()));
+    }
+
+    #[test]
+    fn test_validated_check_initial_status_default() {
+        let validated = ValidatedCheck {
+            check_id: "service:test".to_string(),
+            name: "Test Check".to_string(),
+            service_id: "test-service".to_string(),
+            service_name: "test".to_string(),
+            ttl: Some("30s".to_string()),
+            http: None,
+            method: None,
+            header: None,
+            tcp: None,
+            grpc: None,
+            interval: None,
+            timeout: None,
+            deregister_critical_service_after: None,
+            notes: None,
+            status: None, // No status specified
+            check_type: "ttl".to_string(),
+        };
+
+        assert_eq!(validated.initial_status(), "critical"); // Consul's default
+    }
+
+    #[test]
+    fn test_validated_check_initial_status_custom() {
+        let validated = ValidatedCheck {
+            check_id: "service:test".to_string(),
+            name: "Test Check".to_string(),
+            service_id: "test-service".to_string(),
+            service_name: "test".to_string(),
+            ttl: Some("30s".to_string()),
+            http: None,
+            method: None,
+            header: None,
+            tcp: None,
+            grpc: None,
+            interval: None,
+            timeout: None,
+            deregister_critical_service_after: None,
+            notes: None,
+            status: Some("passing".to_string()),
+            check_type: "ttl".to_string(),
+        };
+
+        assert_eq!(validated.initial_status(), "passing");
     }
 }

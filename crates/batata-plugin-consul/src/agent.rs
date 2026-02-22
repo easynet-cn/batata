@@ -8,7 +8,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use sysinfo::System;
 
 use batata_api::model::NodeState;
-use batata_api::naming::model::Instance as NacosInstance;
+use batata_api::naming::model::Instance;
 use batata_core::service::cluster::ServerMemberManager;
 use batata_naming::service::NamingService;
 
@@ -31,6 +31,73 @@ pub struct ConsulAgentService {
 impl ConsulAgentService {
     pub fn new(naming_service: Arc<NamingService>) -> Self {
         Self { naming_service }
+    }
+
+    /// Register Consul itself as a service
+    /// This is called on startup when register_self is enabled
+    pub async fn register_consul_service(&self, port: u16) -> Result<(), String> {
+        use batata_common::local_ip;
+
+        let ip = local_ip();
+        let node_name = format!("consul-{}", ip);
+
+        // Register Consul service using naming service
+        let service_name = "consul";
+
+        let instance = Instance {
+            instance_id: "consul".to_string(),
+            ip: ip.clone(),
+            port: port as i32,
+            weight: 1.0,
+            healthy: true,
+            enabled: true,
+            ephemeral: true,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: service_name.to_string(),
+            metadata: {
+                let mut meta = std::collections::HashMap::new();
+                meta.insert("consul_service".to_string(), "true".to_string());
+                meta.insert("node_name".to_string(), node_name);
+                meta
+            },
+            ..Instance::default()
+        };
+
+        let success = self.naming_service.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            service_name,
+            instance,
+        );
+
+        if success {
+            tracing::info!("Consul service registered: {}:{} in namespace public", ip, port);
+            Ok(())
+        } else {
+            Err(format!("Failed to register Consul service: {}:{}", ip, port))
+        }
+    }
+
+    /// Deregister Consul service
+    pub async fn deregister_consul_service(&self) {
+        let namespace = "public";
+        let group = "DEFAULT_GROUP";
+        let service_name = "consul";
+
+        // Get the Consul instance
+        let instances = self.naming_service.get_instances(namespace, group, service_name, "", false);
+
+        for instance in instances {
+            if instance.instance_id == "consul" {
+                let success = self.naming_service.deregister_instance(namespace, group, service_name, &instance);
+                if success {
+                    tracing::info!("Consul service deregistered");
+                } else {
+                    tracing::warn!("Failed to deregister Consul service");
+                }
+                break;
+            }
+        }
     }
 }
 
@@ -58,61 +125,42 @@ pub async fn register_service(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Validate service name
+    if registration.name.is_empty() {
+        return HttpResponse::BadRequest().json(ConsulError::new("Missing service name"));
+    }
+
+    // Extract and validate checks using Consul's CheckTypes() logic
+    let validated_checks = match registration.check_types() {
+        Ok(checks) => checks,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(ConsulError::new(&format!(
+                "Validation failed: {}",
+                e
+            )));
+        }
+    };
+
+    // Get service ID
     let service_id = registration.service_id();
 
-    // Extract embedded checks before converting to NacosInstance
-    let mut embedded_checks: Vec<CheckRegistration> = Vec::new();
-
-    // Single check
-    if let Some(ref check) = registration.check {
-        embedded_checks.push(CheckRegistration {
-            name: check
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("Service '{}' check", registration.name)),
-            check_id: check.check_id.clone(),
-            service_id: Some(service_id.clone()),
-            notes: check.notes.clone(),
-            ttl: check.ttl.clone(),
-            http: check.http.clone(),
-            method: check.method.clone(),
-            header: check.header.clone(),
-            tcp: check.tcp.clone(),
-            grpc: check.grpc.clone(),
-            interval: check.interval.clone(),
-            timeout: check.timeout.clone(),
-            deregister_critical_service_after: check.deregister_critical_service_after.clone(),
-            status: check.status.clone(),
-        });
-    }
-
-    // Multiple checks
-    if let Some(ref checks) = registration.checks {
-        for check in checks {
-            embedded_checks.push(CheckRegistration {
-                name: check
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| format!("Service '{}' check", registration.name)),
-                check_id: check.check_id.clone(),
-                service_id: Some(service_id.clone()),
-                notes: check.notes.clone(),
-                ttl: check.ttl.clone(),
-                http: check.http.clone(),
-                method: check.method.clone(),
-                header: check.header.clone(),
-                tcp: check.tcp.clone(),
-                grpc: check.grpc.clone(),
-                interval: check.interval.clone(),
-                timeout: check.timeout.clone(),
-                deregister_critical_service_after: check.deregister_critical_service_after.clone(),
-                status: check.status.clone(),
-            });
-        }
-    }
+    // Convert validated checks to CheckRegistration
+    let embedded_checks: Vec<CheckRegistration> = validated_checks
+        .iter()
+        .map(|vc| vc.to_check_registration())
+        .collect();
 
     // Convert Consul registration to Nacos Instance
-    let nacos_instance: NacosInstance = (&registration).into();
+    let nacos_instance: Instance = (&registration).into();
+
+    tracing::info!(
+        "Registering service: name={}, id={}, address={}, port={}, checks={}",
+        registration.name,
+        service_id,
+        registration.address.as_ref().unwrap_or(&"N/A".to_string()),
+        registration.port.unwrap_or(0),
+        validated_checks.len()
+    );
 
     // Register with naming service
     // Consul doesn't have a concept of group, use DEFAULT_GROUP
@@ -123,11 +171,19 @@ pub async fn register_service(
         nacos_instance,
     );
 
+    tracing::info!("Service registration result: {}", success);
+
     if success {
-        // Register embedded checks with health service
+        // Register validated checks with health service
         for check_reg in embedded_checks {
-            if let Err(e) = health_service.register_check(check_reg) {
-                tracing::warn!("Failed to register embedded check: {}", e);
+            let check_id = check_reg.check_id.clone().unwrap_or_else(|| "?".to_string());
+            if let Err(e) = health_service.register_check(check_reg).await {
+                tracing::warn!(
+                    "Failed to register embedded check '{}' for service '{}': {}",
+                    check_id,
+                    service_id,
+                    e
+                );
             }
         }
         HttpResponse::Ok().finish()
@@ -200,9 +256,9 @@ pub async fn deregister_service(
 
     if deregistered {
         // Clean up any associated health checks
-        let service_checks = health_service.get_service_checks(&service_id);
+        let service_checks = health_service.get_service_checks(&service_id).await;
         for check in &service_checks {
-            let _ = health_service.deregister_check(&check.check_id);
+            let _ = health_service.deregister_check(&check.check_id).await;
         }
         HttpResponse::Ok().finish()
     } else {
@@ -327,7 +383,7 @@ pub async fn get_service(
 /// Create a health check for a service instance based on its status
 /// Integrates with Nacos naming service health status
 fn create_service_health_check(
-    instance: &NacosInstance,
+    instance: &Instance,
     service_name: &str,
 ) -> crate::model::AgentCheck {
     use crate::model::AgentCheck;
@@ -1266,7 +1322,7 @@ mod tests {
 
     #[test]
     fn test_create_health_check_healthy_instance() {
-        let mut instance = NacosInstance::new("10.0.0.1".to_string(), 8080);
+        let mut instance = Instance::new("10.0.0.1".to_string(), 8080);
         instance.instance_id = "healthy-001".to_string();
         instance.service_name = "web".to_string();
         instance.healthy = true;
@@ -1284,7 +1340,7 @@ mod tests {
 
     #[test]
     fn test_create_health_check_unhealthy_instance() {
-        let mut instance = NacosInstance::new("10.0.0.2".to_string(), 8080);
+        let mut instance = Instance::new("10.0.0.2".to_string(), 8080);
         instance.instance_id = "unhealthy-001".to_string();
         instance.service_name = "api".to_string();
         instance.healthy = false;
@@ -1297,7 +1353,7 @@ mod tests {
 
     #[test]
     fn test_create_health_check_disabled_instance() {
-        let mut instance = NacosInstance::new("10.0.0.3".to_string(), 8080);
+        let mut instance = Instance::new("10.0.0.3".to_string(), 8080);
         instance.instance_id = "disabled-001".to_string();
         instance.service_name = "worker".to_string();
         instance.healthy = true;
@@ -1310,7 +1366,7 @@ mod tests {
 
     #[test]
     fn test_create_health_check_disabled_and_unhealthy() {
-        let mut instance = NacosInstance::new("10.0.0.4".to_string(), 8080);
+        let mut instance = Instance::new("10.0.0.4".to_string(), 8080);
         instance.instance_id = "bad-001".to_string();
         instance.service_name = "cache".to_string();
         instance.healthy = false;
@@ -1324,7 +1380,7 @@ mod tests {
 
     #[test]
     fn test_create_health_check_id_format() {
-        let mut instance = NacosInstance::new("192.168.1.1".to_string(), 9090);
+        let mut instance = Instance::new("192.168.1.1".to_string(), 9090);
         instance.instance_id = "svc-abc-123".to_string();
         instance.service_name = "my-service".to_string();
         instance.healthy = true;

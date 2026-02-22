@@ -32,6 +32,7 @@ batata-maintainer-client = { path = "../batata-maintainer-client" }
 batata-mesh = { path = "../batata-mesh" }
 
 # Web framework
+actix = "0.13"
 actix-web = "4"
 actix-rt = "2"
 actix-multipart = "0.7"

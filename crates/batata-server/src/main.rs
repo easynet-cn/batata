@@ -11,6 +11,7 @@ use batata_consistency::raft::state_machine::{
 };
 use batata_core::cluster::ServerMemberManager;
 use batata_persistence::{PersistenceService, StorageMode};
+use batata_plugin_consul::HealthCheckExecutor;
 use batata_server::{
     console::datasource,
     middleware::rate_limit,
@@ -158,8 +159,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Get Consul data directory before moving configuration to app_state
+    // Get Consul data directory and register_self config before moving configuration to app_state
     let consul_data_dir_for_init = configuration.consul_data_dir();
+    let consul_register_self_for_init = configuration.consul_register_self();
 
     // Create application state
     let app_state = Arc::new(AppState {
@@ -315,20 +317,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // Always use persistent mode if RocksDB is available, otherwise in-memory
-        if let Some(db) = consul_rocks_db {
+        let services = if let Some(db) = consul_rocks_db {
             info!("Consul services using RocksDB persistence");
-            Some(ConsulServices::with_persistence(
+            ConsulServices::with_persistence(
                 grpc_servers.naming_service.clone(),
                 consul_acl_enabled,
                 db,
-            ))
+            )
         } else {
             info!("Consul services using in-memory storage (no persistence)");
-            Some(ConsulServices::new(
+            ConsulServices::new(
                 grpc_servers.naming_service.clone(),
                 consul_acl_enabled,
-            ))
+            )
+        };
+
+        // Auto-register Consul service if enabled (only in non-remote mode)
+        if consul_register_self_for_init && !is_console_remote {
+            info!("Auto-registering Consul service...");
+            let agent = services.agent.clone();
+            tokio::spawn(async move {
+                // Wait a bit to ensure naming service is ready
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                if let Err(e) = agent.register_consul_service(consul_server_port).await {
+                    error!("Failed to auto-register Consul service: {}", e);
+                }
+            });
         }
+
+        // Start health check executor
+        info!("Starting Consul health check executor...");
+        let health = Arc::new(services.health.clone());
+        let health_actor = services.health.health_actor_handle();
+        tokio::spawn(async move {
+            let executor = HealthCheckExecutor::new(health, health_actor);
+            executor.start().await;
+        });
+
+        Some(services)
     } else {
         info!("Consul compatibility server is disabled");
         None

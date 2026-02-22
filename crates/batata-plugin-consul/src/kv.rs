@@ -766,19 +766,27 @@ pub async fn get_kv(
     // Handle keys-only request
     if keys_only {
         let keys = kv_service.get_keys(&key, query.separator.as_deref());
+        let body = serde_json::to_vec(&keys).unwrap_or_default();
+        let len = body.len();
         // Return empty array instead of 404 for empty keys (Consul standard behavior)
         return HttpResponse::Ok()
             .insert_header(("X-Consul-Index", current_idx.to_string()))
-            .json(keys);
+            .content_type("application/json")
+            .insert_header(("Content-Length", len))
+            .body(body);
     }
 
     // Handle recursive get
     if recurse {
         let pairs = kv_service.get_prefix(&key);
+        let body = serde_json::to_vec(&pairs).unwrap_or_default();
+        let len = body.len();
         // Return empty array instead of 404 for empty results (Consul standard behavior)
         return HttpResponse::Ok()
             .insert_header(("X-Consul-Index", current_idx.to_string()))
-            .json(pairs);
+            .content_type("application/json")
+            .insert_header(("Content-Length", len))
+            .body(body);
     }
 
     // Single key get
@@ -787,16 +795,24 @@ pub async fn get_kv(
             if raw {
                 // Return raw value
                 match pair.raw_value() {
-                    Some(bytes) => HttpResponse::Ok()
-                        .insert_header(("X-Consul-Index", current_idx.to_string()))
-                        .content_type("application/octet-stream")
-                        .body(bytes),
+                    Some(bytes) => {
+                        let body = bytes.clone();
+                        HttpResponse::Ok()
+                            .insert_header(("X-Consul-Index", current_idx.to_string()))
+                            .content_type("application/octet-stream")
+                            .insert_header(("Content-Length", body.len()))
+                            .body(body)
+                    }
                     None => HttpResponse::NotFound().finish(),
                 }
             } else {
+                let body = serde_json::to_vec(&vec![pair]).unwrap_or_default();
+                let len = body.len();
                 HttpResponse::Ok()
                     .insert_header(("X-Consul-Index", current_idx.to_string()))
-                    .json(vec![pair])
+                    .content_type("application/json")
+                    .insert_header(("Content-Length", len))
+                    .body(body)
             }
         }
         None => HttpResponse::NotFound().finish(),

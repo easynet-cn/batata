@@ -886,6 +886,13 @@ impl Configuration {
             .unwrap_or_else(|_| "data/consul_rocksdb".to_string())
     }
 
+    /// Check if Consul should register itself as a service (default: true)
+    pub fn consul_register_self(&self) -> bool {
+        self.config
+            .get_bool("nacos.plugin.consul.register_self")
+            .unwrap_or(true)
+    }
+
     // ========================================================================
     // Apollo Compatibility Plugin Configuration
     // ========================================================================
@@ -1102,6 +1109,24 @@ mod tests {
     fn test_consul_data_dir_custom() {
         let cfg = build_config(vec![("nacos.plugin.consul.data_dir", "/custom/path/consul".into())]);
         assert_eq!(cfg.consul_data_dir(), "/custom/path/consul");
+    }
+
+    #[test]
+    fn test_consul_register_self_default() {
+        let cfg = build_config(vec![]);
+        assert!(cfg.consul_register_self());
+    }
+
+    #[test]
+    fn test_consul_register_self_true() {
+        let cfg = build_config(vec![("nacos.plugin.consul.register_self", true.into())]);
+        assert!(cfg.consul_register_self());
+    }
+
+    #[test]
+    fn test_consul_register_self_false() {
+        let cfg = build_config(vec![("nacos.plugin.consul.register_self", false.into())]);
+        assert!(!cfg.consul_register_self());
     }
 
     #[test]
