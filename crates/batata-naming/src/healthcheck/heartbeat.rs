@@ -332,6 +332,8 @@ impl ExpiredInstanceChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Instance;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn test_checker_creation() {
@@ -352,8 +354,8 @@ mod tests {
         );
 
         // Test that checkers can be created
-        assert!(!unhealthy_checker.running.load(std::sync::atomic::Ordering::SeqCst));
-        assert!(!expired_checker.running.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!unhealthy_checker.running.load(Ordering::SeqCst));
+        assert!(!expired_checker.running.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -398,5 +400,473 @@ mod tests {
             "DEFAULT",
         );
         assert_eq!(key, "public#DEFAULT_GROUP#test-service#127.0.0.1#8080#DEFAULT");
+    }
+
+    #[test]
+    fn test_heartbeat_entry_fields() {
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        checker.record_heartbeat(
+            "test-namespace",
+            "test-group",
+            "test-service-name",
+            "192.168.1.100",
+            9090,
+            "test-cluster",
+            20000,
+            40000,
+        );
+
+        let key = checker.heartbeat_map.iter().next().unwrap();
+        let entry = key.value();
+
+        assert_eq!(entry.namespace, "test-namespace");
+        assert_eq!(entry.group_name, "test-group");
+        assert_eq!(entry.service_name, "test-service-name");
+        assert_eq!(entry.ip, "192.168.1.100");
+        assert_eq!(entry.port, 9090);
+        assert_eq!(entry.cluster_name, "test-cluster");
+        assert_eq!(entry.heartbeat_timeout, 20000);
+        assert_eq!(entry.ip_delete_timeout, 40000);
+        assert!(entry.last_heartbeat > 0);
+    }
+
+    #[test]
+    fn test_multiple_heartbeats_same_instance() {
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        // Record initial heartbeat
+        checker.record_heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        let first_key = checker.heartbeat_map.iter().next().unwrap();
+        let first_time = first_key.value().last_heartbeat;
+
+        // Wait a bit and record another heartbeat (should update the entry)
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        checker.record_heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        // Should still have only one entry
+        assert_eq!(checker.get_tracked_count(), 1);
+
+        // Last heartbeat should be updated
+        let updated_key = checker.heartbeat_map.iter().next().unwrap();
+        assert!(updated_key.value().last_heartbeat > first_time);
+    }
+
+    #[test]
+    fn test_multiple_instances_different_keys() {
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        // Register multiple instances
+        checker.record_heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        checker.record_heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.2",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        checker.record_heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8081,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        // Should track 3 instances
+        assert_eq!(checker.get_tracked_count(), 3);
+    }
+
+    #[test]
+    fn test_expired_checker_without_expire_enabled() {
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let heartbeat_map = Arc::new(DashMap::new());
+
+        // Create checker with expire_enabled = false
+        let expired_checker = ExpiredInstanceChecker::new(
+            naming_service,
+            config,
+            false, // expire disabled
+            heartbeat_map,
+        );
+
+        assert!(!expired_checker.expire_enabled);
+    }
+
+    #[test]
+    fn test_expired_checker_with_expire_enabled() {
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let heartbeat_map = Arc::new(DashMap::new());
+
+        // Create checker with expire_enabled = true
+        let expired_checker = ExpiredInstanceChecker::new(
+            naming_service,
+            config,
+            true, // expire enabled
+            heartbeat_map,
+        );
+
+        assert!(expired_checker.expire_enabled);
+    }
+
+    #[test]
+    fn test_stop_checker() {
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let unhealthy_checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        // Initially not running
+        assert!(!unhealthy_checker.running.load(Ordering::SeqCst));
+
+        // Stop should be idempotent
+        unhealthy_checker.stop();
+        assert!(!unhealthy_checker.running.load(Ordering::SeqCst));
+
+        unhealthy_checker.stop();
+        assert!(!unhealthy_checker.running.load(Ordering::SeqCst));
+    }
+
+    // Test that simulates the behavior of Nacos's ClientBeatCheckTaskV2Test
+    // These tests verify the heartbeat tracking and timeout logic
+
+    #[test]
+    fn test_run_healthy_instance_with_recent_heartbeat() {
+        // This test simulates testRunHealthyInstanceWithHeartBeat from Nacos
+        // A healthy instance with recent heartbeat should remain tracked
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        // Simulate instance with recent heartbeat
+        let now = chrono::Utc::now().timestamp_millis();
+        checker.record_heartbeat(
+            "test-namespace",
+            "test-group",
+            "test-service",
+            "192.168.1.1",
+            8080,
+            "DEFAULT",
+            15000, // heartbeat_timeout
+            30000, // ip_delete_timeout
+        );
+
+        // Verify the entry is tracked
+        assert_eq!(checker.get_tracked_count(), 1);
+
+        // Verify last heartbeat is recent
+        let entry = checker.heartbeat_map.iter().next().unwrap();
+        let elapsed = now - entry.value().last_heartbeat;
+        // Should be very recent (within a few milliseconds)
+        assert!(elapsed.abs() < 1000);
+
+        // With a recent heartbeat, the instance should NOT be considered unhealthy
+        // (elapsed < heartbeat_timeout)
+        assert!(elapsed < 15000);
+    }
+
+    #[test]
+    fn test_run_unhealthy_instance_without_expire() {
+        // This test simulates testRunUnhealthyInstanceWithoutExpire from Nacos
+        // An unhealthy instance without expire enabled should remain tracked
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let heartbeat_map = Arc::new(DashMap::new());
+
+        // Create unhealthy checker
+        let unhealthy_checker = UnhealthyInstanceChecker::new(
+            naming_service.clone(),
+            config.clone(),
+        );
+
+        // Record a heartbeat that will time out
+        unhealthy_checker.record_heartbeat(
+            "test-namespace",
+            "test-group",
+            "test-service",
+            "192.168.1.2",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        // Create expired checker with expire disabled
+        let expired_checker = ExpiredInstanceChecker::new(
+            naming_service,
+            config,
+            false, // expire disabled
+            heartbeat_map,
+        );
+
+        // Verify instance is tracked
+        assert_eq!(unhealthy_checker.get_tracked_count(), 1);
+        assert_eq!(expired_checker.get_tracked_count(), 1);
+
+        // Since expire is disabled, instance should remain in the map
+        // (this is a basic structural test; the actual deletion behavior
+        // is tested in async integration tests)
+    }
+
+    #[test]
+    fn test_run_unhealthy_instance_with_expire() {
+        // This test simulates testRunUnHealthyInstanceWithExpire from Nacos
+        // An unhealthy instance with expire enabled would be deleted (in async context)
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let heartbeat_map = Arc::new(DashMap::new());
+
+        // Create unhealthy checker
+        let unhealthy_checker = UnhealthyInstanceChecker::new(
+            naming_service.clone(),
+            config.clone(),
+        );
+
+        // Record a heartbeat
+        unhealthy_checker.record_heartbeat(
+            "test-namespace",
+            "test-group",
+            "test-service",
+            "192.168.1.3",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        // Create expired checker with expire enabled
+        let expired_checker = ExpiredInstanceChecker::new(
+            naming_service,
+            config,
+            true, // expire enabled
+            heartbeat_map,
+        );
+
+        // Verify instance is tracked
+        assert_eq!(unhealthy_checker.get_tracked_count(), 1);
+        assert_eq!(expired_checker.get_tracked_count(), 1);
+
+        // Verify expire is enabled
+        assert!(expired_checker.expire_enabled);
+    }
+
+    #[test]
+    fn test_heartbeat_timeout_comparison() {
+        // Test comparing heartbeat timeout vs elapsed time
+        // This is the core logic of unhealthy instance detection
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        // Set a short timeout for testing
+        let short_timeout = 500; // 500ms
+
+        checker.record_heartbeat(
+            "test-namespace",
+            "test-group",
+            "test-service",
+            "192.168.1.4",
+            8080,
+            "DEFAULT",
+            short_timeout,
+            1000,
+        );
+
+        // Wait for timeout
+        std::thread::sleep(std::time::Duration::from_millis(600));
+
+        let entry = checker.heartbeat_map.iter().next().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let elapsed = now - entry.value().last_heartbeat;
+
+        // Verify elapsed time exceeds timeout
+        assert!(elapsed > short_timeout, "elapsed {} > timeout {}", elapsed, short_timeout);
+
+        // This instance should be marked as unhealthy by the checker
+        // (actual marking happens in the async start() method)
+    }
+
+    #[test]
+    fn test_ip_delete_timeout_greater_than_heartbeat_timeout() {
+        // Verify that delete timeout is always greater than heartbeat timeout
+        // This ensures instances are marked unhealthy before being deleted
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        let heartbeat_timeout = 15000;
+        let ip_delete_timeout = 30000;
+
+        checker.record_heartbeat(
+            "test-namespace",
+            "test-group",
+            "test-service",
+            "192.168.1.5",
+            8080,
+            "DEFAULT",
+            heartbeat_timeout,
+            ip_delete_timeout,
+        );
+
+        let entry = checker.heartbeat_map.iter().next().unwrap();
+
+        // Verify delete timeout > heartbeat timeout
+        assert!(entry.value().ip_delete_timeout > entry.value().heartbeat_timeout);
+        assert_eq!(entry.value().ip_delete_timeout, ip_delete_timeout);
+        assert_eq!(entry.value().heartbeat_timeout, heartbeat_timeout);
+    }
+
+    #[test]
+    fn test_different_namespaces_are_separate() {
+        // Verify that instances in different namespaces are tracked separately
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        // Register same instance in different namespaces
+        checker.record_heartbeat(
+            "namespace-1",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        checker.record_heartbeat(
+            "namespace-2",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        // Should have 2 separate entries
+        assert_eq!(checker.get_tracked_count(), 2);
+    }
+
+    #[test]
+    fn test_different_groups_are_separate() {
+        // Verify that instances in different groups are tracked separately
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        // Register same instance in different groups
+        checker.record_heartbeat(
+            "public",
+            "GROUP_A",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        checker.record_heartbeat(
+            "public",
+            "GROUP_B",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "DEFAULT",
+            15000,
+            30000,
+        );
+
+        // Should have 2 separate entries
+        assert_eq!(checker.get_tracked_count(), 2);
+    }
+
+    #[test]
+    fn test_different_clusters_are_separate() {
+        // Verify that instances in different clusters are tracked separately
+
+        let naming_service = Arc::new(NamingService::new());
+        let config = Arc::new(HealthCheckConfig::default());
+        let checker = UnhealthyInstanceChecker::new(naming_service, config);
+
+        // Register same instance in different clusters
+        checker.record_heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "cluster-A",
+            15000,
+            30000,
+        );
+
+        checker.record_heartbeat(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            "127.0.0.1",
+            8080,
+            "cluster-B",
+            15000,
+            30000,
+        );
+
+        // Should have 2 separate entries
+        assert_eq!(checker.get_tracked_count(), 2);
     }
 }

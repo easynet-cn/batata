@@ -8,6 +8,7 @@ use sea_orm::DatabaseConnection;
 
 use batata_auth::service::oauth::OAuthService;
 use batata_core::cluster::ServerMemberManager;
+use batata_naming::healthcheck::HealthCheckManager;
 use batata_persistence::PersistenceService;
 
 use crate::console::datasource::ConsoleDataSource;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub oauth_service: Option<Arc<OAuthService>>,
     /// Unified persistence service (SQL, embedded RocksDB, or distributed Raft)
     pub persistence: Option<Arc<dyn PersistenceService>>,
+    /// Health check manager for tracking instance heartbeats and expiration
+    pub health_check_manager: Option<Arc<HealthCheckManager>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -59,6 +62,7 @@ impl std::fmt::Debug for AppState {
             .field("console_datasource", &"<dyn ConsoleDataSource>")
             .field("oauth_service", &self.oauth_service.is_some())
             .field("persistence", &self.persistence.is_some())
+            .field("health_check_manager", &self.health_check_manager.is_some())
             .finish()
     }
 }
@@ -73,6 +77,7 @@ impl Clone for AppState {
             console_datasource: self.console_datasource.clone(),
             oauth_service: self.oauth_service.clone(),
             persistence: self.persistence.clone(),
+            health_check_manager: self.health_check_manager.clone(),
         }
     }
 }

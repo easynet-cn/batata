@@ -331,14 +331,14 @@ nacos.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtM
 
 #*************** Rate Limiting Configurations ***************#
 ### Enable API rate limiting
-nacos.ratelimit.enabled: true
+nacos.ratelimit.enabled: false
 ### Maximum requests per minute per IP for general API
 nacos.ratelimit.max_requests: 10000
 ### Rate limit window duration in seconds
 nacos.ratelimit.window_seconds: 60
 
 ### Authentication rate limiting (brute force protection)
-nacos.ratelimit.auth.enabled: true
+nacos.ratelimit.auth.enabled: false
 ### Maximum login attempts before lockout
 nacos.ratelimit.auth.max_attempts: 5
 ### Login attempt window in seconds

@@ -10,6 +10,7 @@ use batata_consistency::raft::state_machine::{
     CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
 };
 use batata_core::cluster::ServerMemberManager;
+use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
 use batata_persistence::{PersistenceService, StorageMode};
 use batata_plugin_consul::HealthCheckExecutor;
 use batata_server::{
@@ -163,6 +164,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consul_data_dir_for_init = configuration.consul_data_dir();
     let consul_register_self_for_init = configuration.consul_register_self();
 
+    // Create health check manager (only for server mode, not console-remote)
+    let health_check_manager: Option<Arc<HealthCheckManager>> = if let Some(ref ns) = naming_service {
+        let health_check_config = Arc::new(HealthCheckConfig::default());
+        let expire_enabled = configuration.expire_instance_enabled();
+        let health_check_enabled = health_check_config.is_enabled();
+        let manager = Arc::new(HealthCheckManager::new(
+            ns.clone(),
+            health_check_config,
+            expire_enabled,
+        ));
+        info!(
+            "Health check manager created (expire_enabled={}, health_check_enabled={})",
+            expire_enabled, health_check_enabled
+        );
+        Some(manager)
+    } else {
+        info!("No naming service available - skipping health check manager");
+        None
+    };
+
     // Create application state
     let app_state = Arc::new(AppState {
         configuration,
@@ -172,6 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         console_datasource,
         oauth_service,
         persistence,
+        health_check_manager,
     });
 
     // Initialize graceful shutdown handler
@@ -218,6 +240,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sdk_server_port,
         cluster_server_port,
     )?;
+
+    // Start health check manager (unhealthy and expired instance checkers)
+    if let Some(hc_manager) = app_state.health_check_manager.as_ref() {
+        // Spawn in separate tasks - they will keep running in background
+        let hc_manager_clone = hc_manager.clone();
+        tokio::spawn(async move {
+            let unhealthy = hc_manager_clone.unhealthy_checker();
+            unhealthy.start().await;
+        });
+
+        let hc_manager_clone2 = hc_manager.clone();
+        tokio::spawn(async move {
+            let expired = hc_manager_clone2.expired_checker();
+            expired.start().await;
+        });
+
+        info!("Health check manager started (unhealthy/expired instance checkers)");
+    }
 
     // Start cluster manager if in cluster mode
     if let Some(ref smm) = app_state.server_member_manager {

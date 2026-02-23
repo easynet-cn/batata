@@ -20,7 +20,6 @@ async fn authenticated_client() -> TestClient {
 
 /// Test TCP health check registration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_tcp_health_check_registration() {
     let client = authenticated_client().await;
@@ -62,7 +61,6 @@ async fn test_tcp_health_check_registration() {
 
 /// Test HTTP health check registration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_http_health_check_registration() {
     let client = authenticated_client().await;
@@ -106,7 +104,6 @@ async fn test_http_health_check_registration() {
 
 /// Test updating health check configuration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_update_health_check_config() {
     let client = authenticated_client().await;
@@ -162,7 +159,6 @@ async fn test_update_health_check_config() {
 
 /// Test getting instance health status
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_get_instance_health_status() {
     let client = authenticated_client().await;
@@ -199,7 +195,6 @@ async fn test_get_instance_health_status() {
 
 /// Test getting only healthy instances
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_get_healthy_instances_only() {
     let client = authenticated_client().await;
@@ -256,7 +251,6 @@ async fn test_get_healthy_instances_only() {
 
 /// Test custom health check interval
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_custom_health_check_interval() {
     let client = authenticated_client().await;
@@ -294,7 +288,6 @@ async fn test_custom_health_check_interval() {
 
 /// Test custom health check timeout
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_custom_health_check_timeout() {
     let client = authenticated_client().await;
@@ -332,7 +325,6 @@ async fn test_custom_health_check_timeout() {
 
 /// Test health threshold configuration
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_health_threshold_config() {
     let client = authenticated_client().await;
@@ -370,7 +362,6 @@ async fn test_health_threshold_config() {
 
 /// Test disabling health check
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_disable_health_check() {
     let client = authenticated_client().await;
@@ -409,7 +400,6 @@ async fn test_disable_health_check() {
 
 /// Test HTTP health check with custom path
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_http_health_check_custom_path() {
     let client = authenticated_client().await;
@@ -449,7 +439,6 @@ async fn test_http_health_check_custom_path() {
 
 /// Test batch health check updates
 #[tokio::test]
-#[ignore = "feature not implemented yet"]
 
 async fn test_batch_health_check_updates() {
     let client = authenticated_client().await;

@@ -111,6 +111,22 @@ pub async fn register_instance(
         instance_id_generator: String::new(),
     };
 
+    // Record heartbeat for health check tracking
+    if let Some(ref hc_manager) = data.health_check_manager {
+        hc_manager
+            .unhealthy_checker()
+            .record_heartbeat(
+                namespace_id,
+                group_name,
+                &form.service_name,
+                &form.ip,
+                form.port,
+                cluster_name,
+                instance.instance_heart_beat_time_out,
+                instance.ip_delete_timeout,
+            );
+    }
+
     // Register instance
     let result =
         naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
@@ -215,6 +231,19 @@ pub async fn deregister_instance(
             port = %params.port,
             "Instance deregistered successfully"
         );
+
+        // Remove heartbeat tracking
+        if let Some(ref hc_manager) = data.health_check_manager {
+            hc_manager.unhealthy_checker().remove_heartbeat(
+                namespace_id,
+                group_name,
+                &params.service_name,
+                &params.ip,
+                params.port,
+                cluster_name,
+            );
+        }
+
         Result::<bool>::http_success(true)
     } else {
         Result::<bool>::http_response(404, 404, "Instance not found".to_string(), false)
@@ -897,6 +926,22 @@ pub async fn beat_instance(
             cluster_name,
         );
 
+        // Update heartbeat tracking
+        if result {
+            if let Some(ref hc_manager) = data.health_check_manager {
+                hc_manager.unhealthy_checker().record_heartbeat(
+                    namespace_id,
+                    group_name,
+                    &form.service_name,
+                    &beat_info.ip,
+                    beat_info.port,
+                    cluster_name,
+                    15000,  // default heartbeat_timeout
+                    30000,  // default ip_delete_timeout
+                );
+            }
+        }
+
         return Result::<BeatResponse>::http_success(BeatResponse {
             client_beat_interval: 5000,
             light_beat_enabled: true,
@@ -915,6 +960,22 @@ pub async fn beat_instance(
             port,
             cluster_name,
         );
+
+        // Update heartbeat tracking
+        if result {
+            if let Some(ref hc_manager) = data.health_check_manager {
+                hc_manager.unhealthy_checker().record_heartbeat(
+                    namespace_id,
+                    group_name,
+                    &form.service_name,
+                    ip,
+                    port,
+                    cluster_name,
+                    15000,  // default heartbeat_timeout
+                    30000,  // default ip_delete_timeout
+                );
+            }
+        }
 
         Result::<BeatResponse>::http_success(BeatResponse {
             client_beat_interval: 5000,

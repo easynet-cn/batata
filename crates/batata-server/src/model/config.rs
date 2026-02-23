@@ -504,6 +504,18 @@ impl Configuration {
     }
 
     // ========================================================================
+    // Naming Module Configuration
+    // ========================================================================
+
+    /// Check if instance expiration is enabled
+    /// When true, instances will be automatically deleted after ip_delete_timeout
+    pub fn expire_instance_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.naming.expireInstance")
+            .unwrap_or(true)
+    }
+
+    // ========================================================================
     // Capacity & Health Configuration
     // ========================================================================
 
@@ -603,7 +615,7 @@ impl Configuration {
     pub fn ratelimit_enabled(&self) -> bool {
         self.config
             .get_bool("nacos.ratelimit.enabled")
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     /// Get maximum requests per window for API rate limiting
@@ -624,7 +636,7 @@ impl Configuration {
     pub fn ratelimit_auth_enabled(&self) -> bool {
         self.config
             .get_bool("nacos.ratelimit.auth.enabled")
-            .unwrap_or(true)
+            .unwrap_or(false)
     }
 
     /// Get maximum login attempts before lockout

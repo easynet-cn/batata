@@ -12,6 +12,7 @@ pub mod config_longpoll_test;
 pub mod naming_api_test;
 pub mod naming_cluster_test;
 pub mod naming_healthcheck_test;
+pub mod naming_heartbeat_test;
 pub mod namespace_api_test;
 pub mod v2_additional_api_test;
 pub mod v3_admin_ai_api_test;
