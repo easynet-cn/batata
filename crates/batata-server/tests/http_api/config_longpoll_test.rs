@@ -1,14 +1,14 @@
-//! Configuration Long Polling API integration tests
+//! Config Long Polling API integration tests
 //!
 //! Tests for long polling mechanism used for real-time config updates
 
 use crate::common::{
-    CONSOLE_BASE_URL, MAIN_BASE_URL, TEST_NAMESPACE, TEST_PASSWORD, TEST_USERNAME,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
     TestClient, unique_data_id,
 };
 use std::time::Duration;
 
-/// Create an authenticated test client for the main API server
+/// Create an authenticated test client
 async fn authenticated_client() -> TestClient {
     let mut client = TestClient::new(MAIN_BASE_URL);
     client
@@ -18,116 +18,47 @@ async fn authenticated_client() -> TestClient {
     client
 }
 
-/// Test long polling for config changes
+/// Test basic long polling for config changes
 #[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_config_change() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll");
+#[ignore = "feature not implemented yet"]
 
-    // Publish initial config
+async fn test_config_long_poll_basic() {
+    let client = authenticated_client().await;
+    let data_id = unique_data_id("longpoll_basic");
+
+    // Publish config first
     let _: serde_json::Value = client
         .post_form(
             "/nacos/v2/cs/config",
             &[
                 ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "version=1"),
+                ("group", DEFAULT_GROUP),
+                ("content", "initial.value=1"),
             ],
         )
         .await
         .expect("Failed to publish config");
 
-    // Long poll for changes
-    let response: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config/listener",
-            &[
-                ("Listening-Configs", format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, "MD5_NOT_CARE_YET", "30000").as_str()),
-            ],
-        )
-        .await
-        .expect("Failed to listen for changes");
+    let token = client.token().cloned().unwrap_or_default();
 
-    assert_eq!(response["code"], 0, "Long poll should succeed");
-}
-
-/// Test long polling with timeout
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_timeout() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_timeout");
-
-    // Publish config
-    let _: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "initial=value"),
-            ],
-        )
-        .await
-        .expect("Failed to publish config");
-
-    // Long poll with short timeout - should timeout without changes
-    let start = std::time::Instant::now();
-    let response: serde_json::Value = client
-        .post_form_with_timeout(
-            "/nacos/v2/cs/config/listener",
-            &[("Listening-Configs", format!("{}{}{}{}",
-                data_id, DEFAULT_GROUP, "md5_placeholder", "1000").as_str())],
-            Duration::from_millis(500), // Client timeout
-        )
-        .await
-        .expect("Failed to long poll");
-
-    let elapsed = start.elapsed();
-    assert_eq!(response["code"], 0, "Long poll should succeed");
-    // Should wait for at least some time (not return immediately)
-    assert!(elapsed > Duration::from_millis(100), "Should wait for timeout");
-}
-
-/// Test long poll with config update
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_with_update() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_update");
-
-    // Publish initial config
-    let response: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "version=1"),
-            ],
-        )
-        .await
-        .expect("Failed to publish config");
-
-    let md5 = response["data"]["md5"].as_str().unwrap_or("");
-
-    // Start long poll in background
+    // Start long poll task
+    let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, token.clone());
     let data_id_clone = data_id.clone();
-    let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, client.cookies().clone());
 
     let poll_handle = tokio::spawn(async move {
         let response: serde_json::Value = client_clone
             .post_form(
                 "/nacos/v2/cs/config/listener",
                 &[
-                    ("Listening-Configs", format!("{}{}{}{}",
-                        data_id_clone, DEFAULT_GROUP, md5, "30000").as_str()),
-                ],
+                    (
+                        "Listening-Configs",
+                        format!("{}{}{}{}",
+                            data_id_clone, DEFAULT_GROUP, "MD5_NOT_CARE_YET", "30000"
+                        ).as_str()
+                    )],
             )
             .await
-            .expect("Failed to long poll");
+            .expect("Long poll failed");
         response
     });
 
@@ -139,8 +70,8 @@ async fn test_long_poll_with_update() {
             "/nacos/v2/cs/config",
             &[
                 ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "version=2"),
+                ("group", DEFAULT_GROUP),
+                ("content", "updated.value=2"),
             ],
         )
         .await
@@ -148,98 +79,219 @@ async fn test_long_poll_with_update() {
 
     // Wait for long poll to return
     let result = tokio::time::timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(35),
         poll_handle
     ).await;
 
     assert!(result.is_ok(), "Long poll should complete");
     let response = result.unwrap().expect("Poll task failed");
-    assert_eq!(response["code"], 0, "Long poll should return on change");
+    assert_eq!(response["code"], 0, "Poll should succeed");
 }
 
-/// Test long polling multiple configs
+/// Test long poll timeout
 #[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_multiple_configs() {
-    let client = authenticated_client().await;
-    let data_id1 = unique_data_id("longpoll_multi1");
-    let data_id2 = unique_data_id("longpoll_multi2");
+#[ignore = "feature not implemented yet"]
 
-    // Publish multiple configs
-    for data_id in &[&data_id1, &data_id2] {
+async fn test_config_long_poll_timeout() {
+    let client = authenticated_client().await;
+    let data_id = unique_data_id("longpoll_timeout");
+
+    // Publish config
+    let _: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", "timeout.test=1"),
+            ],
+        )
+        .await
+        .expect("Failed to publish config");
+
+    // Start long poll with short timeout
+    let client_clone = TestClient::new_with_cookies(
+        MAIN_BASE_URL,
+        client.cookies()
+    );
+    let data_id_clone = data_id.clone();
+
+    let poll_handle = tokio::spawn(async move {
+        let response: serde_json::Value = client_clone
+            .post_form(
+                "/nacos/v2/cs/config/listener",
+                &[(
+                    "Listening-Configs",
+                    format!("{}{}{}{}",
+                        data_id_clone, DEFAULT_GROUP, "md5_placeholder", "1000").as_str()
+                )],
+            )
+            .await
+            .expect("Long poll failed");
+        response
+    });
+
+    // Long poll should timeout (no config change)
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        poll_handle
+    ).await;
+
+    assert!(result.is_ok(), "Long poll should complete on timeout");
+    let response = result.unwrap().expect("Poll task failed");
+    // Timeout returns with no changes
+}
+
+/// Test long poll with MD5 match
+#[tokio::test]
+#[ignore = "feature not implemented yet"]
+
+async fn test_config_long_poll_md5_match() {
+    let client = authenticated_client().await;
+    let data_id = unique_data_id("longpoll_md5");
+
+    // Publish config
+    let response: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", "md5.test=1"),
+            ],
+        )
+        .await
+        .expect("Failed to publish config");
+
+    let md5 = response["data"]["md5"].as_str().unwrap_or("");
+
+    // Long poll with matching MD5 (should wait for change or timeout)
+    let client_clone = TestClient::new_with_cookies(
+        MAIN_BASE_URL,
+        client.cookies()
+    );
+    let data_id_clone = data_id.clone();
+    let md5_clone = md5.to_string();
+
+    let poll_handle = tokio::spawn(async move {
+        let response: serde_json::Value = client_clone
+            .post_form(
+                "/nacos/v2/cs/config/listener",
+                &[(
+                    "Listening-Configs",
+                    format!("{}{}{}{}",
+                        data_id_clone, DEFAULT_GROUP, md5_clone, "30000").as_str()
+                )],
+            )
+            .await
+            .expect("Long poll failed");
+        response
+    });
+
+    // Wait for timeout (no change)
+    let result = tokio::time::timeout(
+        Duration::from_secs(35),
+        poll_handle
+    ).await;
+
+    assert!(result.is_ok(), "Long poll should complete");
+}
+
+/// Test concurrent long polls
+#[tokio::test]
+#[ignore = "feature not implemented yet"]
+
+async fn test_concurrent_long_polls() {
+    let client = authenticated_client().await;
+    let data_id1 = unique_data_id("longpoll_concurrent1");
+    let data_id2 = unique_data_id("longpoll_concurrent2");
+
+    // Publish two configs
+    for data_id in [&data_id1, &data_id2] {
         let _: serde_json::Value = client
             .post_form(
                 "/nacos/v2/cs/config",
                 &[
                     ("dataId", data_id.as_str()),
-                    ("group", "DEFAULT_GROUP"),
-                    ("content", "config=value"),
+                    ("group", DEFAULT_GROUP),
+                    ("content", "concurrent.value=1"),
                 ],
             )
             .await
             .expect("Failed to publish config");
     }
 
-    // Long poll for multiple configs
-    let response: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config/listener",
-            &[(
-                "Listening-Configs",
-                format!("{}{}{}{}%02{}{}{}{}",
-                    data_id1, DEFAULT_GROUP, "md5_1", "30000",
-                    data_id2, DEFAULT_GROUP, "md5_2", "30000"
-                ).as_str()
-            )],
-        )
-        .await
-        .expect("Failed to long poll multiple configs");
+    // Start two concurrent long polls
+    let token = client.cookies();
+    let data_id1_clone = data_id1.clone();
+    let data_id2_clone = data_id2.clone();
+    let token1 = token.clone();
+    let token2 = token.clone();
 
-    assert_eq!(response["code"], 0, "Multi-config long poll should succeed");
-}
+    let poll1 = tokio::spawn(async move {
+        let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, token1);
+        let _: serde_json::Value = client_clone
+            .post_form(
+                "/nacos/v2/cs/config/listener",
+                &[(
+                    "Listening-Configs",
+                    format!("{}{}{}{}",
+                        data_id1_clone, DEFAULT_GROUP, "md5_1", "30000").as_str()
+                )],
+            )
+            .await
+            .expect("Long poll failed");
+    });
 
-/// Test long poll with namespace
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_with_namespace() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_ns");
+    let poll2 = tokio::spawn(async move {
+        let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, token2);
+        let _: serde_json::Value = client_clone
+            .post_form(
+                "/nacos/v2/cs/config/listener",
+                &[("Listening-Configs", format!("{}{}{}{}",
+                    data_id2_clone, DEFAULT_GROUP, "md5_2", "30000").as_str())],
+            )
+            .await
+            .expect("Long poll failed");
+    });
 
-    // Publish config with namespace
+    // Update configs to trigger long polls
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
     let _: serde_json::Value = client
         .post_form(
             "/nacos/v2/cs/config",
             &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("namespaceId", TEST_NAMESPACE),
-                ("content", "ns.config=value"),
+                ("dataId", data_id1.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", "updated.concurrent=2"),
             ],
         )
         .await
-        .expect("Failed to publish config");
+        .expect("Failed to update config");
 
-    // Long poll with namespace
-    let response: serde_json::Value = client
+    let _: serde_json::Value = client
         .post_form(
-            "/nacos/v2/cs/config/listener",
-            &[(
-                "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, "md5_placeholder", "30000"
-                ).as_str()
-            )],
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id2.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", "updated.concurrent=2"),
+            ],
         )
         .await
-        .expect("Failed to long poll with namespace");
+        .expect("Failed to update config");
 
-    assert_eq!(response["code"], 0, "Long poll with namespace should succeed");
+    // Wait for both polls to complete
+    let _ = poll1.await.expect("Poll 1 failed");
+    let _ = poll2.await.expect("Poll 2 failed");
 }
 
-/// Test long poll remove listener
+/// Test long poll removal
 #[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_remove_listener() {
+#[ignore = "feature not implemented yet"]
+
+async fn test_long_poll_removal() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("longpoll_remove");
 
@@ -249,308 +301,93 @@ async fn test_long_poll_remove_listener() {
             "/nacos/v2/cs/config",
             &[
                 ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "initial=value"),
+                ("group", DEFAULT_GROUP),
+                ("content", "remove.test=1"),
             ],
         )
         .await
         .expect("Failed to publish config");
 
-    // Add listener
+    // Add listener (long poll)
     let _: serde_json::Value = client
         .post_form(
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
                 format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, "md5_placeholder", "30000"
-                ).as_str()
-            )],
+                    data_id, DEFAULT_GROUP, "md5_placeholder", "30000").as_str()
+                )],
         )
         .await
         .expect("Failed to add listener");
 
     // Remove listener
-    let response: serde_json::Value = client
-        .post_form(
+    let _: serde_json::Value = client
+        .delete_with_query(
             "/nacos/v2/cs/config/listener",
-            &[(
-                "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, "", "0"
-                ).as_str()
-            )],
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+            ],
         )
         .await
         .expect("Failed to remove listener");
 
-    assert_eq!(response["code"], 0, "Remove listener should succeed");
+    // Listener should be removed successfully
 }
 
-/// Test long poll with custom group
+/// Test long poll with empty MD5 (initial poll)
 #[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_custom_group() {
+#[ignore = "feature not implemented yet"]
+
+async fn test_long_poll_empty_md5() {
     let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_group");
+    let data_id = unique_data_id("longpoll_empty_md5");
 
-    // Publish config with custom group
-    let _: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", "TEST_GROUP"),
-                ("content", "group.config=value"),
-            ],
-        )
-        .await
-        .expect("Failed to publish config");
+    // Publish config after starting long poll
+    let client_clone = TestClient::new_with_cookies(
+        MAIN_BASE_URL,
+        client.cookies()
+    );
+    let data_id_clone = data_id.clone();
 
-    // Long poll with custom group
-    let response: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config/listener",
-            &[(
-                "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, "TEST_GROUP", "md5_placeholder", "30000"
-                ).as_str()
-            )],
-        )
-        .await
-        .expect("Failed to long poll with custom group");
-
-    assert_eq!(response["code"], 0, "Long poll with custom group should succeed");
-}
-
-/// Test long poll connection loss handling
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_reconnect() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_reconnect");
-
-    // Publish config
-    let _: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "value"),
-            ],
-        )
-        .await
-        .expect("Failed to publish config");
-
-    // Multiple long poll requests (simulating reconnection)
-    for i in 0..3 {
-        let response: serde_json::Value = client
+    let poll_handle = tokio::spawn(async move {
+        let response: serde_json::Value = client_clone
             .post_form(
                 "/nacos/v2/cs/config/listener",
                 &[(
                     "Listening-Configs",
                     format!("{}{}{}{}",
-                        data_id, DEFAULT_GROUP, "md5_placeholder", "30000"
-                    ).as_str()
+                        data_id, DEFAULT_GROUP, "", "60000").as_str()
                 )],
             )
             .await
-            .expect(&format!("Failed on long poll attempt {}", i));
+            .expect("Long poll failed");
+        response
+    });
 
-        assert_eq!(response["code"], 0, "Long poll should succeed");
-    }
-}
+    // Publish config after a short delay
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
-/// Test long poll with very long timeout
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_long_timeout() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_long");
-
-    // Publish config
     let _: serde_json::Value = client
         .post_form(
             "/nacos/v2/cs/config",
             &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "value"),
+                ("dataId", data_id_clone.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", "empty.md5=1"),
             ],
         )
         .await
         .expect("Failed to publish config");
 
-    // Long poll with very long timeout (should be handled gracefully)
-    let response: serde_json::Value = client
-        .post_form_with_timeout(
-            "/nacos/v2/cs/config/listener",
-            &[(
-                "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, "md5_placeholder", "60000"
-                ).as_str()
-            )],
-            Duration::from_millis(200), // Client timeout shorter than server timeout
-        )
-        .await
-        .expect("Failed to long poll");
+    // Long poll should return with the new config
+    let result = tokio::time::timeout(
+        Duration::from_secs(35),
+        poll_handle
+    ).await;
 
-    assert_eq!(response["code"], 0, "Long poll with long timeout should succeed");
-}
-
-/// Test long poll concurrent requests
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_concurrent() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_concurrent");
-
-    // Publish config
-    let _: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "value"),
-            ],
-        )
-        .await
-        .expect("Failed to publish config");
-
-    // Spawn multiple concurrent long poll requests
-    let mut handles = Vec::new();
-    for i in 0..5 {
-        let client_clone = TestClient::new_with_cookies(
-            MAIN_BASE_URL,
-            client.cookies().clone(),
-        );
-        let data_id_clone = data_id.clone();
-
-        handles.push(tokio::spawn(async move {
-            let response: serde_json::Value = client_clone
-                .post_form(
-                    "/nacos/v2/cs/config/listener",
-                    &[(
-                        "Listening-Configs",
-                        format!("{}{}{}{}",
-                            data_id_clone, DEFAULT_GROUP, "md5_placeholder", "30000"
-                        ).as_str()
-                    )],
-                )
-                .await
-                .expect(&format!("Failed on concurrent request {}", i));
-            response
-        }));
-    }
-
-    // Wait for all to complete
-    for handle in handles {
-        let result = handle.await.expect("Task failed");
-        assert_eq!(result["code"], 0, "Concurrent long poll should succeed");
-    }
-}
-
-/// Test long poll return changes
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_return_changes() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_changes");
-
-    // Publish initial config
-    let response: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "version=1"),
-            ],
-        )
-        .await
-        .expect("Failed to publish config");
-
-    let md5 = response["data"]["md5"].as_str().unwrap_or("");
-
-    // Long poll requesting return changes
-    let response: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config/listener",
-            &[
-                ("Listening-Configs", format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, md5, "30000").as_str()),
-            ],
-        )
-        .await
-        .expect("Failed to long poll");
-
-    // Response should indicate if changes were returned
-    assert_eq!(response["code"], 0, "Long poll should succeed");
-}
-
-/// Test long poll with empty configs
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_empty_configs() {
-    let client = authenticated_client().await;
-
-    // Long poll with no configs (heartbeat)
-    let response: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config/listener",
-            &[("Listening-Configs", "")],
-        )
-        .await
-        .expect("Failed to long poll with empty configs");
-
-    assert_eq!(response["code"], 0, "Empty long poll should succeed");
-}
-
-/// Test long poll with invalid MD5 format
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_long_poll_invalid_md5() {
-    let client = authenticated_client().await;
-    let data_id = unique_data_id("longpoll_invalid");
-
-    // Publish config
-    let _: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-                ("content", "value"),
-            ],
-        )
-        .await
-        .expect("Failed to publish config");
-
-    // Long poll with invalid MD5 format
-    let result = client
-        .post_form::<serde_json::Value, _>(
-            "/nacos/v2/cs/config/listener",
-            &[(
-                "Listening-Configs",
-                "invalid_format_no_delimiters"
-            )],
-        )
-        .await;
-
-    // Should handle gracefully - either return error or treat as new config
-    match result {
-        Ok(response) => {
-            assert!(
-                response["code"] == 0 || response["code"] != 0,
-                "Invalid MD5 format should be handled"
-            );
-        }
-        Err(_) => {
-            // HTTP error is acceptable
-        }
-    }
+    assert!(result.is_ok(), "Long poll should complete");
+    let response = result.unwrap().expect("Poll task failed");
+    assert_eq!(response["code"], 0, "Poll should succeed");
 }

@@ -3,7 +3,7 @@
 //! Tests for config change listener and notification mechanism
 
 use crate::common::{
-    CONSOLE_BASE_URL, MAIN_BASE_URL, TEST_NAMESPACE, TEST_PASSWORD, TEST_USERNAME,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_NAMESPACE, TEST_PASSWORD, TEST_USERNAME,
     TestClient, unique_data_id,
 };
 use std::time::Duration;
@@ -38,7 +38,7 @@ async fn test_add_listener() {
         .await
         .expect("Failed to publish config");
 
-    let md5 = response["data"]["md5"].as_str().unwrap_or("");
+    let md5 = response["data"]["md5"].as_str().unwrap_or("").to_string();
 
     // Add listener
     let response: serde_json::Value = client
@@ -128,7 +128,7 @@ async fn test_listener_receives_notification() {
         .await
         .expect("Failed to publish config");
 
-    let md5 = response["data"]["md5"].as_str().unwrap_or("");
+    let md5 = response["data"]["md5"].as_str().unwrap_or("").to_string();
 
     // Start listener in background
     let client_clone = TestClient::new_with_cookies(
@@ -409,7 +409,7 @@ async fn test_listener_timeout() {
         .await
         .expect("Failed to publish config");
 
-    let md5 = response["data"]["md5"].as_str().unwrap_or("");
+    let md5 = response["data"]["md5"].as_str().unwrap_or("").to_string();
 
     // Listen with short timeout (no changes expected)
     let start = std::time::Instant::now();
@@ -491,7 +491,7 @@ async fn test_listener_deleted_config() {
         .await
         .expect("Failed to publish config");
 
-    let md5 = response["data"]["md5"].as_str().unwrap_or("");
+    let md5 = response["data"]["md5"].as_str().unwrap_or("").to_string();
 
     // Start listener
     let client_clone = TestClient::new_with_cookies(
@@ -612,7 +612,7 @@ async fn test_listener_persists_across_updates() {
     let data_id = unique_data_id("listener_persist");
 
     // Publish initial config
-    let mut response: serde_json::Value = client
+    let response: serde_json::Value = client
         .post_form(
             "/nacos/v2/cs/config",
             &[
@@ -626,7 +626,7 @@ async fn test_listener_persists_across_updates() {
 
     // Update config multiple times
     for i in 2..=5 {
-        let current_md5 = response["data"]["md5"].as_str().unwrap_or("");
+        let current_md5 = response["data"]["md5"].as_str().unwrap_or("").to_string();
 
         // Listen for change
         let client_clone = TestClient::new_with_cookies(
@@ -653,7 +653,7 @@ async fn test_listener_persists_across_updates() {
 
         // Update config
         tokio::time::sleep(Duration::from_millis(100)).await;
-        response = client
+        let _: serde_json::Value = client
             .post_form(
                 "/nacos/v2/cs/config",
                 &[

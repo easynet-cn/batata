@@ -10,6 +10,7 @@ pub mod config;
 pub mod health;
 pub mod history;
 pub mod instance;
+pub mod listener;
 pub mod model;
 pub mod namespace;
 pub mod naming_catalog;

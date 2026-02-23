@@ -5,8 +5,8 @@
 use actix_web::{Scope, web};
 
 use super::{
-    capacity, client, cluster, config, health, history, instance, namespace, naming_catalog,
-    operator, service,
+    capacity, client, cluster, config, health, history, instance, listener, namespace,
+    naming_catalog, operator, service,
 };
 
 /// Create the V2 Config Service routes
@@ -15,6 +15,8 @@ use super::{
 /// - GET /nacos/v2/cs/config - Get config
 /// - POST /nacos/v2/cs/config - Publish config
 /// - DELETE /nacos/v2/cs/config - Delete config
+/// - GET /nacos/v2/cs/config/searchDetail - Search config detail
+/// - POST /nacos/v2/cs/config/listener - Listen for config changes
 /// - GET /nacos/v2/cs/history/list - Get history list
 /// - GET /nacos/v2/cs/history - Get specific history entry
 /// - GET /nacos/v2/cs/history/previous - Get previous history entry
@@ -29,7 +31,8 @@ pub fn config_routes() -> Scope {
                 .service(config::get_config)
                 .service(config::publish_config)
                 .service(config::delete_config)
-                .service(config::search_config_detail),
+                .service(config::search_config_detail)
+                .service(listener::config_listener),
         )
         .service(
             web::scope("/history")

@@ -114,7 +114,7 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # OpenAPI documentation
 utoipa = { version = "5", features = ["actix_extras"] }
-utoipa-swagger-ui = { version = "8", features = ["actix-web"] }
+utoipa-swagger-ui = { version = "8", features = ["actix-web"], optional = true }
 
 # Caching
 moka = { version = "0.12", features = ["future", "sync"] }
@@ -130,6 +130,10 @@ rocksdb = "0.24"
 # Kubernetes
 kube = { version = "0.98", features = ["runtime", "client", "derive", "rustls-tls"], default-features = false }
 k8s-openapi = { version = "0.24", features = ["v1_31"] }
+
+[features]
+default = ["swagger"]
+swagger = ["utoipa-swagger-ui"]
 
 [dev-dependencies]
 batata-client = { path = "../batata-client" }

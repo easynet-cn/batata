@@ -16,7 +16,7 @@ async fn console_client() -> TestClient {
 
 /// Test create namespace
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_create_namespace() {
     let client = console_client().await;
     let ns_id = format!("test-ns-{}", unique_test_id());
@@ -45,7 +45,7 @@ async fn test_create_namespace() {
 
 /// Test namespace list
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_namespace_list() {
     let client = console_client().await;
 
@@ -63,7 +63,7 @@ async fn test_namespace_list() {
 
 /// Test get namespace
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_get_namespace() {
     let client = console_client().await;
     let ns_id = format!("get-ns-{}", unique_test_id());
@@ -98,7 +98,7 @@ async fn test_get_namespace() {
 
 /// Test update namespace
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_update_namespace() {
     let client = console_client().await;
     let ns_id = format!("update-ns-{}", unique_test_id());
@@ -140,7 +140,7 @@ async fn test_update_namespace() {
 
 /// Test delete namespace
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_delete_namespace() {
     let client = console_client().await;
     let ns_id = format!("delete-ns-{}", unique_test_id());

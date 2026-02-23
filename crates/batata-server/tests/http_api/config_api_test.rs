@@ -19,7 +19,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test configuration publish and get
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_publish_and_get_config() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("config");
@@ -55,7 +55,7 @@ async fn test_publish_and_get_config() {
 
 /// Test configuration not found
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_get_config_not_found() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("nonexistent");
@@ -83,7 +83,7 @@ async fn test_get_config_not_found() {
 
 /// Test configuration delete
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_delete_config() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("to_delete");
@@ -136,7 +136,7 @@ async fn test_delete_config() {
 
 /// Test configuration with namespace
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_config_with_namespace() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("namespaced");
@@ -177,7 +177,7 @@ async fn test_config_with_namespace() {
 
 /// Test configuration update (overwrite)
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_config_update() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("updatable");
@@ -229,7 +229,7 @@ async fn test_config_update() {
 
 /// Test configuration parameter validation
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_config_parameter_validation() {
     let client = authenticated_client().await;
 
@@ -253,7 +253,7 @@ async fn test_config_parameter_validation() {
 
 /// Test MD5 in config response
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_config_md5() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("md5test");
@@ -283,4 +283,154 @@ async fn test_config_md5() {
 
     assert_eq!(response["code"], 0, "Get should succeed");
     // MD5 might be in headers or response metadata depending on API version
+}
+
+/// Test namespace isolation - configs in different namespaces should not interfere
+#[tokio::test]
+
+async fn test_namespace_isolation() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
+    let client = authenticated_client().await;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    
+    // Create two test namespaces via console API
+    let ns_a = format!("test-ns-a-{}", timestamp);
+    let ns_b = format!("test-ns-b-{}", timestamp);
+    let data_id = "shared-data-id";
+    let content_a = "content-from-namespace-a";
+    let content_b = "content-from-namespace-b";
+    
+    // Create namespace A
+    let console_client = || async {
+        let mut client = TestClient::new(CONSOLE_BASE_URL);
+        client
+            .login(TEST_USERNAME, TEST_PASSWORD)
+            .await
+            .expect("Login failed");
+        client
+    };
+    
+    let console = console_client().await;
+    let _: serde_json::Value = console
+        .post_form(
+            "/v2/console/namespace",
+            &[
+                ("namespaceId", ns_a.as_str()),
+                ("namespaceName", "Test NS A"),
+            ],
+        )
+        .await
+        .expect("Failed to create namespace A");
+    
+    let _: serde_json::Value = console
+        .post_form(
+            "/v2/console/namespace",
+            &[
+                ("namespaceId", ns_b.as_str()),
+                ("namespaceName", "Test NS B"),
+            ],
+        )
+        .await
+        .expect("Failed to create namespace B");
+    
+    // Publish same dataId in namespace A with content A
+    let _: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id),
+                ("group", DEFAULT_GROUP),
+                ("namespaceId", ns_a.as_str()),
+                ("content", content_a),
+            ],
+        )
+        .await
+        .expect("Failed to publish in namespace A");
+    
+    // Publish same dataId in namespace B with content B
+    let _: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id),
+                ("group", DEFAULT_GROUP),
+                ("namespaceId", ns_b.as_str()),
+                ("content", content_b),
+            ],
+        )
+        .await
+        .expect("Failed to publish in namespace B");
+    
+    // Get from namespace A should return content A
+    let response_a: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id),
+                ("group", DEFAULT_GROUP),
+                ("namespaceId", ns_a.as_str()),
+            ],
+        )
+        .await
+        .expect("Failed to get from namespace A");
+    
+    assert_eq!(response_a["code"], 0);
+    assert_eq!(response_a["data"]["content"], content_a, "Namespace A should have content A");
+    
+    // Get from namespace B should return content B
+    let response_b: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id),
+                ("group", DEFAULT_GROUP),
+                ("namespaceId", ns_b.as_str()),
+            ],
+        )
+        .await
+        .expect("Failed to get from namespace B");
+    
+    assert_eq!(response_b["code"], 0);
+    assert_eq!(response_b["data"]["content"], content_b, "Namespace B should have content B");
+    
+    // Get from default namespace should not find this dataId
+    let result_default = client
+        .get_with_query::<serde_json::Value, _>(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id),
+                ("group", DEFAULT_GROUP),
+            ],
+        )
+        .await;
+    
+    // Should not find config in default namespace
+    match result_default {
+        Ok(response) => {
+            assert!(
+                response["data"].is_null() || response["code"] != 0,
+                "Should not find config in default namespace"
+            );
+        }
+        Err(_) => {
+            // HTTP 404 is acceptable
+        }
+    }
+    
+    // Cleanup namespaces
+    let _: serde_json::Value = console
+        .delete_with_query("/v2/console/namespace", &[("namespaceId", ns_a.as_str())])
+        .await
+        .ok()
+        .unwrap_or_default();
+    
+    let _: serde_json::Value = console
+        .delete_with_query("/v2/console/namespace", &[("namespaceId", ns_b.as_str())])
+        .await
+        .ok()
+        .unwrap_or_default();
 }

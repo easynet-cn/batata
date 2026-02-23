@@ -402,10 +402,17 @@ pub mod health {
 }
 
 /// Configure Swagger UI for the actix-web app
+#[cfg(feature = "swagger")]
 pub fn configure_swagger(cfg: &mut actix_web::web::ServiceConfig) {
     use utoipa_swagger_ui::SwaggerUi;
 
     cfg.service(
         SwaggerUi::new("/swagger-ui/{_:.*}").url("/api-docs/openapi.json", ApiDoc::openapi()),
     );
+}
+
+/// Configure Swagger UI for the actix-web app (no-op when swagger feature is disabled)
+#[cfg(not(feature = "swagger"))]
+pub fn configure_swagger(_cfg: &mut actix_web::web::ServiceConfig) {
+    // No-op - Swagger UI is disabled
 }

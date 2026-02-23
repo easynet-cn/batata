@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 use utoipa::OpenApi;
+
+#[cfg(feature = "swagger")]
 use utoipa_swagger_ui::SwaggerUi;
 
 use batata_core::service::remote::ConnectionManager;
@@ -348,7 +350,7 @@ pub fn main_server(
     let rate_limit_config = app_state.configuration.rate_limit_config();
 
     Ok(HttpServer::new(move || {
-        App::new()
+        let mut app = App::new()
             .wrap(Logger::default())
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
@@ -360,13 +362,18 @@ pub fn main_server(
             .app_data(web::Data::new(ai_services.agent_registry.clone()))
             // Cloud services (Prometheus SD, Kubernetes Sync)
             .app_data(web::Data::new(cloud_services.prometheus_sd.clone()))
-            .app_data(web::Data::new(cloud_services.k8s_sync.clone()))
-            // Swagger UI for API documentation
-            .service(
+            .app_data(web::Data::new(cloud_services.k8s_sync.clone()));
+
+        // Swagger UI for API documentation (optional feature)
+        #[cfg(feature = "swagger")]
+        {
+            app = app.service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
                     .url("/api-docs/openapi.json", ApiDoc::openapi()),
-            )
-            .service(
+            );
+        }
+
+        app.service(
                 web::scope(&context_path)
                     // Auth routes (needed for SDK authentication)
                     .service(auth::v3::route::routes())

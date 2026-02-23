@@ -9,7 +9,8 @@ use crate::common::{TestClient, unique_service_name, unique_test_id};
 #[ignore = "requires running server with Consul plugin"]
 async fn test_consul_service_register() {
     let client = TestClient::new("http://127.0.0.1:8848");
-    let service_id = format!("consul-svc-{}", unique_test_id());
+    let test_id: String = unique_test_id();
+    let service_id = format!("consul-svc-{}", test_id);
 
     let service = serde_json::json!({
         "ID": service_id,

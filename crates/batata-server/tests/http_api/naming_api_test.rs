@@ -17,7 +17,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test instance registration
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_register_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("register");
@@ -43,7 +43,7 @@ async fn test_register_instance() {
 
 /// Test instance deregistration
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_deregister_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("deregister");
@@ -79,7 +79,7 @@ async fn test_deregister_instance() {
 
 /// Test update instance
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_update_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("update");
@@ -119,7 +119,7 @@ async fn test_update_instance() {
 
 /// Test get instance detail
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_get_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("getdetail");
@@ -156,7 +156,7 @@ async fn test_get_instance() {
 
 /// Test get instance list
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_get_instance_list() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("list");
@@ -190,7 +190,7 @@ async fn test_get_instance_list() {
 
 /// Test healthy only filter
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_instance_list_healthy_only() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("healthy");
@@ -226,7 +226,7 @@ async fn test_instance_list_healthy_only() {
 
 /// Test batch update metadata
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_batch_update_metadata() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("batchmeta");
@@ -263,7 +263,7 @@ async fn test_batch_update_metadata() {
 
 /// Test instance with weight
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_instance_with_weight() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("weighted");
@@ -290,7 +290,7 @@ async fn test_instance_with_weight() {
 
 /// Test create service
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_create_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("create");
@@ -311,7 +311,7 @@ async fn test_create_service() {
 
 /// Test delete service
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_delete_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("delete");
@@ -339,7 +339,7 @@ async fn test_delete_service() {
 
 /// Test update service
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_update_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("update_svc");
@@ -373,7 +373,7 @@ async fn test_update_service() {
 
 /// Test get service detail
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_get_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("getservice");
@@ -401,7 +401,7 @@ async fn test_get_service() {
 
 /// Test service list
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_service_list() {
     let client = authenticated_client().await;
 
@@ -418,7 +418,7 @@ async fn test_service_list() {
 
 /// Test service not found
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_service_not_found() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("nonexistent");
@@ -442,4 +442,183 @@ async fn test_service_not_found() {
             // HTTP 404 is expected for service not found
         }
     }
+}
+
+/// Test namespace isolation for naming - instances in different namespaces should not interfere
+#[tokio::test]
+
+async fn test_namespace_isolation_naming() {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
+    let client = authenticated_client().await;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    
+    // Create two test namespaces via console API
+    let ns_a = format!("test-ns-a-{}", timestamp);
+    let ns_b = format!("test-ns-b-{}", timestamp);
+    let service_name = "shared-service-name";
+    let ip_a = "192.168.1.200";
+    let ip_b = "192.168.1.201";
+    
+    // Create namespace A and B
+    let console_client = || async {
+        let mut client = TestClient::new(CONSOLE_BASE_URL);
+        client
+            .login(TEST_USERNAME, TEST_PASSWORD)
+            .await
+            .expect("Login failed");
+        client
+    };
+    
+    let console = console_client().await;
+    let _: serde_json::Value = console
+        .post_form(
+            "/v2/console/namespace",
+            &[
+                ("namespaceId", ns_a.as_str()),
+                ("namespaceName", "Test NS A for Naming"),
+            ],
+        )
+        .await
+        .expect("Failed to create namespace A");
+    
+    let _: serde_json::Value = console
+        .post_form(
+            "/v2/console/namespace",
+            &[
+                ("namespaceId", ns_b.as_str()),
+                ("namespaceName", "Test NS B for Naming"),
+            ],
+        )
+        .await
+        .expect("Failed to create namespace B");
+    
+    // Register instance in namespace A
+    let _: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/ns/instance",
+            &[
+                ("serviceName", service_name),
+                ("ip", ip_a),
+                ("port", "8080"),
+                ("namespaceId", ns_a.as_str()),
+            ],
+        )
+        .await
+        .expect("Failed to register instance in namespace A");
+    
+    // Register instance in namespace B with same service name
+    let _: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/ns/instance",
+            &[
+                ("serviceName", service_name),
+                ("ip", ip_b),
+                ("port", "8080"),
+                ("namespaceId", ns_b.as_str()),
+            ],
+        )
+        .await
+        .expect("Failed to register instance in namespace B");
+    
+    // Get instances from namespace A - should only return instance A
+    let response_a: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/ns/instance/list",
+            &[
+                ("serviceName", service_name),
+                ("namespaceId", ns_a.as_str()),
+            ],
+        )
+        .await
+        .expect("Failed to get instances from namespace A");
+    
+    assert_eq!(response_a["code"], 0);
+    let hosts_a = response_a["data"]["hosts"].as_array().unwrap();
+    assert_eq!(hosts_a.len(), 1, "Namespace A should have 1 instance");
+    assert_eq!(hosts_a[0]["ip"], ip_a, "Namespace A should have instance A");
+    
+    // Get instances from namespace B - should only return instance B
+    let response_b: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/ns/instance/list",
+            &[
+                ("serviceName", service_name),
+                ("namespaceId", ns_b.as_str()),
+            ],
+        )
+        .await
+        .expect("Failed to get instances from namespace B");
+    
+    assert_eq!(response_b["code"], 0);
+    let hosts_b = response_b["data"]["hosts"].as_array().unwrap();
+    assert_eq!(hosts_b.len(), 1, "Namespace B should have 1 instance");
+    assert_eq!(hosts_b[0]["ip"], ip_b, "Namespace B should have instance B");
+    
+    // Get instances from default namespace - should not find this service
+    let result_default = client
+        .get_with_query::<serde_json::Value, _>(
+            "/nacos/v2/ns/instance/list",
+            &[("serviceName", service_name)],
+        )
+        .await;
+    
+    match result_default {
+        Ok(response) => {
+            // Service might not exist in default namespace
+            let empty_hosts: Vec<serde_json::Value> = vec![];
+            let hosts = response["data"]["hosts"].as_array().unwrap_or(&empty_hosts);
+            assert!(
+                hosts.is_empty() || response["code"] != 0,
+                "Should not find service in default namespace"
+            );
+        }
+        Err(_) => {
+            // Service not found is acceptable
+        }
+    }
+    
+    // Cleanup: deregister instances and delete namespaces
+    let _: serde_json::Value = client
+        .delete_with_query(
+            "/nacos/v2/ns/instance",
+            &[
+                ("serviceName", service_name),
+                ("ip", ip_a),
+                ("port", "8080"),
+                ("namespaceId", ns_a.as_str()),
+            ],
+        )
+        .await
+        .ok()
+        .unwrap_or_default();
+    
+    let _: serde_json::Value = client
+        .delete_with_query(
+            "/nacos/v2/ns/instance",
+            &[
+                ("serviceName", service_name),
+                ("ip", ip_b),
+                ("port", "8080"),
+                ("namespaceId", ns_b.as_str()),
+            ],
+        )
+        .await
+        .ok()
+        .unwrap_or_default();
+    
+    let _: serde_json::Value = console
+        .delete_with_query("/v2/console/namespace", &[("namespaceId", ns_a.as_str())])
+        .await
+        .ok()
+        .unwrap_or_default();
+    
+    let _: serde_json::Value = console
+        .delete_with_query("/v2/console/namespace", &[("namespaceId", ns_b.as_str())])
+        .await
+        .ok()
+        .unwrap_or_default();
 }

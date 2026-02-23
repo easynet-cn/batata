@@ -20,7 +20,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test create config via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_create_config() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_config");
@@ -43,7 +43,7 @@ async fn test_v3_admin_create_config() {
 
 /// Test get config via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_config() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_get");
@@ -76,7 +76,7 @@ async fn test_v3_admin_get_config() {
 
 /// Test update config via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_update_config() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_upd");
@@ -114,7 +114,7 @@ async fn test_v3_admin_update_config() {
 
 /// Test delete config via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_delete_config() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_del");
@@ -161,7 +161,7 @@ async fn test_v3_admin_delete_config() {
 
 /// Test config parameter validation
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_config_validation() {
     let client = authenticated_client().await;
 
@@ -183,7 +183,7 @@ async fn test_v3_admin_config_validation() {
 
 /// Test list config history via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_config_history_list() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_hist");
@@ -222,7 +222,7 @@ async fn test_v3_admin_config_history_list() {
 
 /// Test get listener state via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_config_listener() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v3admin_listen");
@@ -242,7 +242,7 @@ async fn test_v3_admin_config_listener() {
 
 /// Test get cluster metrics via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_config_cluster_metrics() {
     let client = authenticated_client().await;
 
@@ -257,7 +257,7 @@ async fn test_v3_admin_config_cluster_metrics() {
 
 /// Test get IP metrics via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_config_ip_metrics() {
     let client = authenticated_client().await;
 

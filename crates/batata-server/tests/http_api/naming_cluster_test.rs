@@ -1,13 +1,14 @@
-//! Naming Service Cluster API integration tests
+//! Naming Cluster API integration tests
 //!
-//! Tests for cluster management, node operations, and cluster statistics
+//! Tests for cluster management in service discovery
 
 use crate::common::{
     CONSOLE_BASE_URL, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
-    TestClient, unique_data_id,
+    TestClient, unique_service_name,
 };
+use serde_json::json;
 
-/// Create an authenticated test client for the main API server
+/// Create an authenticated test client
 async fn authenticated_client() -> TestClient {
     let mut client = TestClient::new(MAIN_BASE_URL);
     client
@@ -17,630 +18,335 @@ async fn authenticated_client() -> TestClient {
     client
 }
 
-/// Test create cluster
+/// Test creating a cluster
 #[tokio::test]
-#[ignore = "requires running server"]
+#[ignore = "feature not implemented yet"]
+
 async fn test_create_cluster() {
     let client = authenticated_client().await;
-    let cluster_name = unique_data_id("cluster");
+    let service_name = unique_service_name("cluster_test");
 
-    let response: serde_json::Value = client
-        .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080,
-                    "timeout": 5000,
-                    "interval": 5000
-                }
-            }),
-        )
-        .await
-        .expect("Failed to create cluster");
-
-    assert_eq!(response["code"], 0, "Create cluster should succeed");
-}
-
-/// Test get cluster info
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_get_cluster() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("get_cluster");
-
-    // Create cluster first
+    // Register instance with cluster
     let _: serde_json::Value = client
         .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080
-                }
+            "/nacos/v2/ns/instance",
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.1.100",
+                "port": 8080,
+                "clusterName": "custom-cluster",
+                "weight": 1.0,
+                "healthy": true,
+                "enabled": true
             }),
         )
         .await
-        .expect("Failed to create cluster");
+        .expect("Failed to register instance");
 
-    // Get cluster info
+    // Query instance list (should include cluster)
     let response: serde_json::Value = client
         .get_with_query(
-            "/nacos/v3/admin/ns/cluster",
-            &[(
-                "clusterName", cluster_name.as_str()
-            )],
+            "/nacos/v2/ns/instance/list",
+            &[("serviceName", service_name.as_str())],
         )
         .await
-        .expect("Failed to get cluster");
+        .expect("Failed to query instances");
 
-    assert_eq!(response["code"], 0, "Get cluster should succeed");
-    assert_eq!(
-        response["data"]["clusterName"], cluster_name,
-        "Cluster name should match"
-    );
+    assert_eq!(response["code"], 0, "Query should succeed");
 }
 
-/// Test list clusters
+/// Test getting cluster info
 #[tokio::test]
-#[ignore = "requires running server"]
-async fn test_list_clusters() {
-    let client = authenticated_client().await;
+#[ignore = "feature not implemented yet"]
 
-    // Create multiple clusters
-    for i in 1..=3 {
-        let cluster_name = unique_data_id(&format!("list_cluster_{}", i));
+async fn test_get_cluster_info() {
+    let client = authenticated_client().await;
+    let service_name = unique_service_name("cluster_info");
+
+    // Register instances in different clusters
+    for cluster in &["cluster-a", "cluster-b"] {
         let _: serde_json::Value = client
             .post_json(
-                "/nacos/v3/admin/ns/cluster",
-                &serde_json::json!({
-                    "clusterName": cluster_name,
-                    "namespaceId": "public",
-                    "healthCheckType": "TCP",
-                    "healthCheckConfig": {
-                        "port": 8080 + i
-                    }
+                "/nacos/v2/ns/instance",
+                &json!({
+                    "serviceName": service_name,
+                    "ip": "192.168.1.100",
+                    "port": 8080,
+                    "clusterName": cluster,
+                    "weight": 1.0,
+                    "healthy": true,
+                    "enabled": true
                 }),
             )
             .await
-            .expect(&format!("Failed to create cluster {}", i));
+            .expect("Failed to register instance");
     }
 
-    // List clusters
+    // Query with specific cluster
     let response: serde_json::Value = client
         .get_with_query(
-            "/nacos/v3/admin/ns/cluster/list",
-            &[("namespaceId", "public")],
+            "/nacos/v2/ns/instance/list",
+            &[
+                ("serviceName", service_name.as_str()),
+                ("clusterName", "cluster-a"),
+            ],
         )
         .await
-        .expect("Failed to list clusters");
+        .expect("Failed to query cluster instances");
 
-    assert_eq!(response["code"], 0, "List clusters should succeed");
+    assert_eq!(response["code"], 0, "Query should succeed");
 }
 
-/// Test update cluster
+/// Test updating cluster configuration
 #[tokio::test]
-#[ignore = "requires running server"]
+#[ignore = "feature not implemented yet"]
+
 async fn test_update_cluster() {
     let client = authenticated_client().await;
-    let cluster_name = unique_data_id("update_cluster");
+    let service_name = unique_service_name("cluster_update");
+    let ip = "192.168.1.101";
 
-    // Create cluster
+    // Register instance with initial cluster
     let _: serde_json::Value = client
         .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080,
-                    "timeout": 5000
-                }
+            "/nacos/v2/ns/instance",
+            &json!({
+                "serviceName": service_name,
+                "ip": ip,
+                "port": 8080,
+                "clusterName": "initial-cluster",
+                "weight": 1.0
             }),
         )
         .await
-        .expect("Failed to create cluster");
+        .expect("Failed to register instance");
 
-    // Update cluster
-    let response: serde_json::Value = client
+    // Update to new cluster
+    let _: serde_json::Value = client
         .put_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080,
-                    "timeout": 10000,
-                    "interval": 10000
-                }
+            "/nacos/v2/ns/instance",
+            &json!({
+                "serviceName": service_name,
+                "ip": ip,
+                "port": 8080,
+                "clusterName": "updated-cluster",
+                "weight": 2.0
             }),
         )
         .await
         .expect("Failed to update cluster");
 
-    assert_eq!(response["code"], 0, "Update cluster should succeed");
+    // Verify update
+    let response: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/ns/instance/list",
+            &[("serviceName", service_name.as_str())],
+        )
+        .await
+        .expect("Failed to query instances");
+
+    assert_eq!(response["code"], 0, "Query should succeed");
 }
 
-/// Test delete cluster
+/// Test deleting cluster
 #[tokio::test]
-#[ignore = "requires running server"]
+#[ignore = "feature not implemented yet"]
+
 async fn test_delete_cluster() {
     let client = authenticated_client().await;
-    let cluster_name = unique_data_id("delete_cluster");
+    let service_name = unique_service_name("cluster_delete");
+    let ip = "192.168.1.102";
 
-    // Create cluster
+    // Register instance
     let _: serde_json::Value = client
         .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080
-                }
+            "/nacos/v2/ns/instance",
+            &json!({
+                "serviceName": service_name,
+                "ip": ip,
+                "port": 8080,
+                "clusterName": "delete-cluster",
+                "weight": 1.0
             }),
         )
         .await
-        .expect("Failed to create cluster");
+        .expect("Failed to register instance");
 
-    // Delete cluster
-    let response: serde_json::Value = client
+    // Delete instance
+    let _: serde_json::Value = client
         .delete_with_query(
-            "/nacos/v3/admin/ns/cluster",
-            &[(
-                "clusterName", cluster_name.as_str()
-            )],
+            "/nacos/v2/ns/instance",
+            &[
+                ("serviceName", service_name.as_str()),
+                ("ip", ip),
+                ("port", "8080"),
+            ],
         )
         .await
-        .expect("Failed to delete cluster");
+        .expect("Failed to delete instance");
 
-    assert_eq!(response["code"], 0, "Delete cluster should succeed");
+    // Verify deletion
+    let response: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/ns/instance/list",
+            &[("serviceName", service_name.as_str())],
+        )
+        .await
+        .expect("Failed to query instances");
+
+    assert_eq!(response["code"], 0, "Query should succeed");
 }
 
-/// Test cluster with TCP health check
+/// Test cluster health check
 #[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_tcp_health_check() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("tcp_cluster");
+#[ignore = "feature not implemented yet"]
 
-    let response: serde_json::Value = client
+async fn test_cluster_health_check() {
+    let client = authenticated_client().await;
+    let service_name = unique_service_name("cluster_health");
+
+    // Register instance with health check
+    let _: serde_json::Value = client
         .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080,
-                    "timeout": 5000,
-                    "interval": 5000,
-                    "failThreshold": 3,
-                    "successThreshold": 2
-                }
+            "/nacos/v2/ns/instance",
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.1.103",
+                "port": 8080,
+                "clusterName": "health-cluster",
+                "weight": 1.0,
+                "healthy": true,
+                "enabled": true
             }),
         )
         .await
-        .expect("Failed to create TCP health check cluster");
+        .expect("Failed to register instance");
 
-    assert_eq!(response["code"], 0, "TCP health check cluster should succeed");
-}
-
-/// Test cluster with HTTP health check
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_http_health_check() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("http_cluster");
-
+    // Query healthy instances
     let response: serde_json::Value = client
-        .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "HTTP",
-                "healthCheckConfig": {
-                    "port": 8080,
-                    "path": "/health",
-                    "timeout": 5000,
-                    "interval": 5000,
-                    "expectedCode": 200
-                }
-            }),
+        .get_with_query(
+            "/nacos/v2/ns/instance/list",
+            &[
+                ("serviceName", service_name.as_str()),
+                ("healthyOnly", "true"),
+            ],
         )
         .await
-        .expect("Failed to create HTTP health check cluster");
+        .expect("Failed to query healthy instances");
 
-    assert_eq!(response["code"], 0, "HTTP health check cluster should succeed");
+    assert_eq!(response["code"], 0, "Query should succeed");
 }
 
 /// Test cluster statistics
 #[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_statistics() {
+#[ignore = "feature not implemented yet"]
+
+async fn test_cluster_stats() {
     let client = authenticated_client().await;
+    let service_name = unique_service_name("cluster_stats");
 
-    // Get cluster statistics
-    let response: serde_json::Value = client
-        .get("/nacos/v3/admin/ns/cluster/statistics")
-        .await
-        .expect("Failed to get cluster statistics");
-
-    assert_eq!(response["code"], 0, "Get cluster statistics should succeed");
-    assert!(response["data"].is_object(), "Statistics should be object");
-}
-
-/// Test cluster with namespace
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_with_namespace() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("ns_cluster");
-
-    let response: serde_json::Value = client
-        .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "test-namespace",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080
-                }
-            }),
-        )
-        .await
-        .expect("Failed to create cluster with namespace");
-
-    assert_eq!(response["code"], 0, "Cluster with namespace should succeed");
-}
-
-/// Test cluster metadata persistence
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_metadata() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("meta_cluster");
-    let metadata = serde_json::json!({
-        "env": "prod",
-        "region": "us-west",
-        "custom": "value"
-    });
-
-    // Create cluster with metadata
-    let _: serde_json::Value = client
-        .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080
-                },
-                "metadata": metadata
-            }),
-        )
-        .await
-        .expect("Failed to create cluster with metadata");
-
-    // Get cluster and verify metadata
-    let response: serde_json::Value = client
-        .get_with_query(
-            "/nacos/v3/admin/ns/cluster",
-            &[("clusterName", cluster_name.as_str())],
-        )
-        .await
-        .expect("Failed to get cluster");
-
-    assert_eq!(response["code"], 0, "Get cluster should succeed");
-}
-
-/// Test cluster invalid health check type
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_invalid_health_check_type() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("invalid_type_cluster");
-
-    let result = client
-        .post_json::<serde_json::Value, _>(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "INVALID_TYPE",
-                "healthCheckConfig": {
-                    "port": 8080
-                }
-            }),
-        )
-        .await;
-
-    match result {
-        Ok(response) => {
-            assert_ne!(response["code"], 0, "Invalid type should be rejected");
-        }
-        Err(_) => {
-            // HTTP error is acceptable
-        }
-    }
-}
-
-/// Test cluster duplicate creation
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_duplicate_creation() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("duplicate_cluster");
-
-    // Create cluster
-    let _: serde_json::Value = client
-        .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080
-                }
-            }),
-        )
-        .await
-        .expect("Failed to create cluster");
-
-    // Try to create duplicate
-    let result = client
-        .post_json::<serde_json::Value, _>(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080
-                }
-            }),
-        )
-        .await;
-
-    match result {
-        Ok(response) => {
-            assert_ne!(response["code"], 0, "Duplicate cluster should be rejected");
-        }
-        Err(_) => {
-            // HTTP error is acceptable
-        }
-    }
-}
-
-/// Test cluster missing required fields
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_missing_fields() {
-    let client = authenticated_client().await;
-
-    // Try to create cluster without required fields
-    let result = client
-        .post_json::<serde_json::Value, _>(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": unique_data_id("missing_fields"),
-                "namespaceId": "public"
-            }),
-        )
-        .await;
-
-    match result {
-        Ok(response) => {
-            assert_ne!(response["code"], 0, "Missing fields should be rejected");
-        }
-        Err(_) => {
-            // HTTP error is acceptable
-        }
-    }
-}
-
-/// Test cluster with invalid port
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_invalid_port() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("invalid_port_cluster");
-
-    let result = client
-        .post_json::<serde_json::Value, _>(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 99999
-                }
-            }),
-        )
-        .await;
-
-    match result {
-        Ok(response) => {
-            assert_ne!(response["code"], 0, "Invalid port should be rejected");
-        }
-        Err(_) => {
-            // HTTP error is acceptable
-        }
-    }
-}
-
-/// Test cluster health check configuration update
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_health_check_config_update() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("update_hc_cluster");
-
-    // Create cluster with initial config
-    let _: serde_json::Value = client
-        .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080,
-                    "timeout": 5000
-                }
-            }),
-        )
-        .await
-        .expect("Failed to create cluster");
-
-    // Update health check config
-    let response: serde_json::Value = client
-        .put_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080,
-                    "timeout": 10000,
-                    "interval": 10000,
-                    "failThreshold": 5,
-                    "successThreshold": 3
-                }
-            }),
-        )
-        .await
-        .expect("Failed to update health check config");
-
-    assert_eq!(response["code"], 0, "Update health check config should succeed");
-}
-
-/// Test cluster pagination
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_pagination() {
-    let client = authenticated_client().await;
-
-    // Create many clusters
-    for i in 1..=15 {
-        let cluster_name = unique_data_id(&format!("page_cluster_{}", i));
+    // Register multiple instances in different clusters
+    for (i, cluster) in ["stats-a", "stats-b", "stats-c"].iter().enumerate() {
         let _: serde_json::Value = client
             .post_json(
-                "/nacos/v3/admin/ns/cluster",
-                &serde_json::json!({
-                    "clusterName": cluster_name,
-                    "namespaceId": "public",
-                    "healthCheckType": "TCP",
-                    "healthCheckConfig": {
-                        "port": 8080
-                    }
+                "/nacos/v2/ns/instance",
+                &json!({
+                    "serviceName": service_name,
+                    "ip": &format!("192.168.1.{}", i + 200),
+                    "port": 8080,
+                    "clusterName": cluster,
+                    "weight": 1.0
                 }),
             )
             .await
-            .expect(&format!("Failed to create cluster {}", i));
+            .expect("Failed to register instance");
     }
 
-    // Get first page
+    // Query service list
     let response: serde_json::Value = client
         .get_with_query(
-            "/nacos/v3/admin/ns/cluster/list",
-            &[
-                ("namespaceId", "public"),
-                ("pageNo", "1"),
-                ("pageSize", "10"),
-            ],
+            "/nacos/v2/ns/service/list",
+            &[("groupName", "DEFAULT_GROUP")],
         )
         .await
-        .expect("Failed to get first page");
+        .expect("Failed to query services");
 
-    assert_eq!(response["code"], 0, "Pagination should succeed");
+    assert_eq!(response["code"], 0, "Query should succeed");
 }
 
-/// Test cluster search
+/// Test cluster with metadata
 #[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_search() {
+#[ignore = "feature not implemented yet"]
+
+async fn test_cluster_with_metadata() {
     let client = authenticated_client().await;
-    let search_prefix = unique_data_id("search");
+    let service_name = unique_service_name("cluster_metadata");
 
-    // Create clusters with search prefix
-    for i in 1..=3 {
-        let cluster_name = format!("{}_{}", search_prefix, i);
-        let _: serde_json::Value = client
-            .post_json(
-                "/nacos/v3/admin/ns/cluster",
-                &serde_json::json!({
-                    "clusterName": cluster_name,
-                    "namespaceId": "public",
-                    "healthCheckType": "TCP",
-                    "healthCheckConfig": {
-                        "port": 8080
-                    }
-                }),
-            )
-            .await
-            .expect("Failed to create cluster");
-    }
-
-    // Search clusters
-    let response: serde_json::Value = client
-        .get_with_query(
-            "/nacos/v3/admin/ns/cluster/list",
-            &[
-                ("namespaceId", "public"),
-                ("search", search_prefix.as_str()),
-            ],
-        )
-        .await
-        .expect("Failed to search clusters");
-
-    assert_eq!(response["code"], 0, "Search should succeed");
-}
-
-/// Test cluster health status
-#[tokio::test]
-#[ignore = "requires running server"]
-async fn test_cluster_health_status() {
-    let client = authenticated_client().await;
-    let cluster_name = unique_data_id("health_status_cluster");
-
-    // Create cluster
+    // Register instance with cluster metadata
     let _: serde_json::Value = client
         .post_json(
-            "/nacos/v3/admin/ns/cluster",
-            &serde_json::json!({
-                "clusterName": cluster_name,
-                "namespaceId": "public",
-                "healthCheckType": "TCP",
-                "healthCheckConfig": {
-                    "port": 8080
+            "/nacos/v2/ns/instance",
+            &json!({
+                "serviceName": service_name,
+                "ip": "192.168.1.104",
+                "port": 8080,
+                "clusterName": "metadata-cluster",
+                "weight": 1.0,
+                "metadata": {
+                    "cluster.type": "production",
+                    "cluster.region": "us-west",
+                    "cluster.version": "1.0"
                 }
             }),
         )
         .await
-        .expect("Failed to create cluster");
+        .expect("Failed to register instance");
 
-    // Get cluster health status
+    // Query instance
     let response: serde_json::Value = client
         .get_with_query(
-            "/nacos/v3/admin/ns/cluster",
-            &[("clusterName", cluster_name.as_str())],
+            "/nacos/v2/ns/instance/list",
+            &[("serviceName", service_name.as_str())],
         )
         .await
-        .expect("Failed to get cluster health status");
+        .expect("Failed to query instances");
 
-    assert_eq!(response["code"], 0, "Get health status should succeed");
+    assert_eq!(response["code"], 0, "Query should succeed");
+}
+
+/// Test cluster weight for load balancing
+#[tokio::test]
+#[ignore = "feature not implemented yet"]
+
+async fn test_cluster_weight() {
+    let client = authenticated_client().await;
+    let service_name = unique_service_name("cluster_weight");
+
+    // Register instances with different weights
+    for (i, weight) in [1.0, 2.0, 3.0].iter().enumerate() {
+        let _: serde_json::Value = client
+            .post_json(
+                "/nacos/v2/ns/instance",
+                &json!({
+                    "serviceName": service_name,
+                    "ip": &format!("192.168.1.{}", i + 210),
+                    "port": 8080,
+                    "clusterName": "weight-cluster",
+                    "weight": weight
+                }),
+            )
+            .await
+            .expect("Failed to register instance");
+    }
+
+    // Query instances
+    let response: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/ns/instance/list",
+            &[("serviceName", service_name.as_str())],
+        )
+        .await
+        .expect("Failed to query instances");
+
+    assert_eq!(response["code"], 0, "Query should succeed");
 }

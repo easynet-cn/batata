@@ -6,7 +6,7 @@ use crate::common::{CONSOLE_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient, 
 
 /// Test login success
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_login_success() {
     let client = TestClient::new(CONSOLE_BASE_URL);
 
@@ -28,7 +28,7 @@ async fn test_login_success() {
 
 /// Test login failure with wrong password
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_login_failure_wrong_password() {
     let client = TestClient::new(CONSOLE_BASE_URL);
 
@@ -56,7 +56,7 @@ async fn test_login_failure_wrong_password() {
 
 /// Test login failure with wrong username
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_login_failure_wrong_username() {
     let client = TestClient::new(CONSOLE_BASE_URL);
 
@@ -87,7 +87,7 @@ async fn test_login_failure_wrong_username() {
 
 /// Test token validation on protected endpoint
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_token_validation() {
     let mut client = TestClient::new(CONSOLE_BASE_URL);
 
@@ -108,7 +108,7 @@ async fn test_token_validation() {
 
 /// Test access without token
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_access_without_token() {
     let client = TestClient::new(CONSOLE_BASE_URL);
 
@@ -130,7 +130,7 @@ async fn test_access_without_token() {
 
 /// Test create user
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_create_user() {
     let mut client = TestClient::new(CONSOLE_BASE_URL);
     client
@@ -160,7 +160,7 @@ async fn test_create_user() {
 
 /// Test user list
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_user_list() {
     let mut client = TestClient::new(CONSOLE_BASE_URL);
     client
@@ -181,7 +181,7 @@ async fn test_user_list() {
 
 /// Test create role
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_create_role() {
     let mut client = TestClient::new(CONSOLE_BASE_URL);
     client
@@ -211,7 +211,7 @@ async fn test_create_role() {
 
 /// Test assign permission
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_assign_permission() {
     let mut client = TestClient::new(CONSOLE_BASE_URL);
     client

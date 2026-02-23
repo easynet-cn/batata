@@ -20,7 +20,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test register instance via V3 Client API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_register_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_reg");
@@ -46,7 +46,7 @@ async fn test_v3_client_register_instance() {
 
 /// Test deregister instance via V3 Client API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_deregister_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_dereg");
@@ -82,7 +82,7 @@ async fn test_v3_client_deregister_instance() {
 
 /// Test list instances via V3 Client API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_list_instances() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_list");
@@ -117,7 +117,7 @@ async fn test_v3_client_list_instances() {
 
 /// Test list instances with cluster filter via V3 Client API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_list_instances_with_cluster() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_cluster");
@@ -153,7 +153,7 @@ async fn test_v3_client_list_instances_with_cluster() {
 
 /// Test list instances with healthy only filter via V3 Client API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_list_instances_healthy_only() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_healthy");
@@ -189,7 +189,7 @@ async fn test_v3_client_list_instances_healthy_only() {
 
 /// Test register instance with metadata via V3 Client API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_register_with_metadata() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3client_meta");
@@ -212,7 +212,7 @@ async fn test_v3_client_register_with_metadata() {
 
 /// Test register instance parameter validation
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_register_validation() {
     let client = authenticated_client().await;
 
@@ -234,7 +234,7 @@ async fn test_v3_client_register_validation() {
 
 /// Test get config via V3 Client API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_get_config() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v3client_cfg");
@@ -267,7 +267,7 @@ async fn test_v3_client_get_config() {
 
 /// Test get config not found via V3 Client API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_client_get_config_not_found() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v3client_notfound");

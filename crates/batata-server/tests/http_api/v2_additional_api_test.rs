@@ -27,7 +27,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test patch instance via V2 API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_patch_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v2_patch");
@@ -65,7 +65,7 @@ async fn test_v2_patch_instance() {
 
 /// Test patch instance that does not exist
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_patch_nonexistent_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v2_patch_noexist");
@@ -98,7 +98,7 @@ async fn test_v2_patch_nonexistent_instance() {
 
 /// Test instance heartbeat via V2 API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_instance_beat() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v2_beat");
@@ -135,7 +135,7 @@ async fn test_v2_instance_beat() {
 
 /// Test instance beat with JSON body
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_instance_beat_with_json() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v2_beat_json");
@@ -177,7 +177,7 @@ async fn test_v2_instance_beat_with_json() {
 
 /// Test get instance statuses via V2 API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_get_instance_statuses() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v2_statuses");
@@ -207,7 +207,7 @@ async fn test_v2_get_instance_statuses() {
 
 /// Test search config detail via V2 API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_search_config_detail() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("v2_search");
@@ -245,7 +245,7 @@ async fn test_v2_search_config_detail() {
 
 /// Test search config with wildcard filter
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_search_config_with_filter() {
     let client = authenticated_client().await;
 
@@ -269,7 +269,7 @@ async fn test_v2_search_config_with_filter() {
 
 /// Test list catalog instances via V2 API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_catalog_instances() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v2_catalog");
@@ -307,7 +307,7 @@ async fn test_v2_catalog_instances() {
 
 /// Test update cluster node list
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_update_cluster_node_list() {
     let client = authenticated_client().await;
 
@@ -324,7 +324,7 @@ async fn test_v2_update_cluster_node_list() {
 
 /// Test remove cluster nodes
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v2_remove_cluster_nodes() {
     let client = authenticated_client().await;
 

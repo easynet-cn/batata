@@ -20,7 +20,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test list MCP servers via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_list_mcp_servers() {
     let client = authenticated_client().await;
 
@@ -37,7 +37,7 @@ async fn test_v3_admin_list_mcp_servers() {
 
 /// Test create MCP server via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_create_mcp_server() {
     let client = authenticated_client().await;
     let server_name = format!("test-mcp-{}", unique_test_id());
@@ -66,7 +66,7 @@ async fn test_v3_admin_create_mcp_server() {
 
 /// Test get MCP server via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_mcp_server() {
     let client = authenticated_client().await;
     let server_name = format!("get-mcp-{}", unique_test_id());
@@ -101,7 +101,7 @@ async fn test_v3_admin_get_mcp_server() {
 
 /// Test delete MCP server via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_delete_mcp_server() {
     let client = authenticated_client().await;
     let server_name = format!("del-mcp-{}", unique_test_id());
@@ -131,7 +131,7 @@ async fn test_v3_admin_delete_mcp_server() {
 
 /// Test list A2A agents via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_list_a2a_agents() {
     let client = authenticated_client().await;
 
@@ -148,7 +148,7 @@ async fn test_v3_admin_list_a2a_agents() {
 
 /// Test register A2A agent via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_register_a2a_agent() {
     let client = authenticated_client().await;
     let agent_name = format!("test-agent-{}", unique_test_id());
@@ -179,7 +179,7 @@ async fn test_v3_admin_register_a2a_agent() {
 
 /// Test get A2A agent via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_a2a_agent() {
     let client = authenticated_client().await;
     let agent_name = format!("get-agent-{}", unique_test_id());
@@ -216,7 +216,7 @@ async fn test_v3_admin_get_a2a_agent() {
 
 /// Test delete A2A agent via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_delete_a2a_agent() {
     let client = authenticated_client().await;
     let agent_name = format!("del-agent-{}", unique_test_id());

@@ -20,7 +20,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test create service via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_create_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_create");
@@ -41,7 +41,7 @@ async fn test_v3_admin_create_service() {
 
 /// Test get service via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_get");
@@ -70,7 +70,7 @@ async fn test_v3_admin_get_service() {
 
 /// Test update service via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_update_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_update");
@@ -105,7 +105,7 @@ async fn test_v3_admin_update_service() {
 
 /// Test delete service via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_delete_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_delete");
@@ -133,7 +133,7 @@ async fn test_v3_admin_delete_service() {
 
 /// Test list services via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_list_services() {
     let client = authenticated_client().await;
 
@@ -151,7 +151,7 @@ async fn test_v3_admin_list_services() {
 
 /// Test create service with duplicate name returns error
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_create_duplicate_service() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_dup");
@@ -184,7 +184,7 @@ async fn test_v3_admin_create_duplicate_service() {
 
 /// Test register instance via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_register_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_reg");
@@ -210,7 +210,7 @@ async fn test_v3_admin_register_instance() {
 
 /// Test deregister instance via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_deregister_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_dereg");
@@ -246,7 +246,7 @@ async fn test_v3_admin_deregister_instance() {
 
 /// Test update instance via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_update_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_upd");
@@ -285,7 +285,7 @@ async fn test_v3_admin_update_instance() {
 
 /// Test list instances via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_list_instances() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_list");
@@ -319,7 +319,7 @@ async fn test_v3_admin_list_instances() {
 
 /// Test get single instance via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_instance() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_get");
@@ -355,7 +355,7 @@ async fn test_v3_admin_get_instance() {
 
 /// Test update instance metadata via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_update_instance_metadata() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_inst_meta");
@@ -393,7 +393,7 @@ async fn test_v3_admin_update_instance_metadata() {
 
 /// Test get naming switches via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_naming_switches() {
     let client = authenticated_client().await;
 
@@ -408,7 +408,7 @@ async fn test_v3_admin_get_naming_switches() {
 
 /// Test get naming metrics via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_naming_metrics() {
     let client = authenticated_client().await;
 
@@ -425,7 +425,7 @@ async fn test_v3_admin_get_naming_metrics() {
 
 /// Test get health checkers via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_health_checkers() {
     let client = authenticated_client().await;
 
@@ -439,7 +439,7 @@ async fn test_v3_admin_get_health_checkers() {
 
 /// Test update instance health via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_update_health() {
     let client = authenticated_client().await;
     let service_name = unique_service_name("v3admin_health");
@@ -479,7 +479,7 @@ async fn test_v3_admin_update_health() {
 
 /// Test list clients via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_list_clients() {
     let client = authenticated_client().await;
 

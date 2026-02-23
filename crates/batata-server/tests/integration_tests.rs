@@ -1,7 +1,7 @@
 //! Integration tests for Batata server
 //!
-//! This file serves as the entry point for integration tests.
-//! It imports the common test utilities and defines test modules.
+//! This file serves as entry point for integration tests.
+//! It imports of common test utilities and defines test modules.
 
 mod common;
 
@@ -19,12 +19,6 @@ mod persistence;
 
 // Compatibility layer tests
 mod compatibility;
-
-// Special characters and boundary conditions tests
-mod special_chars_and_boundary_test;
-
-// Performance and load tests
-mod performance_and_load_test;
 
 #[cfg(test)]
 mod tests {

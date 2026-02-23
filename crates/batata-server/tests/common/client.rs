@@ -94,9 +94,33 @@ impl TestClient {
         Ok(client)
     }
 
+    /// Create a new test client with existing access token
+    pub fn new_with_token(base_url: &str, token: &str) -> Self {
+        let mut client = Self::new(base_url);
+        client.access_token = Some(token.to_string());
+        client
+    }
+
+    /// Create a new test client with existing cookies (as token)
+    pub fn new_with_cookies(base_url: &str, cookies: String) -> Self {
+        let mut client = Self::new(base_url);
+        client.access_token = Some(cookies);
+        client
+    }
+
     /// Get the base URL
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Get the access token (for sharing between clients)
+    pub fn token(&self) -> Option<&String> {
+        self.access_token.as_ref()
+    }
+
+    /// Get the cookies (as token string, for compatibility)
+    pub fn cookies(&self) -> String {
+        self.access_token.clone().unwrap_or_default()
     }
 
     /// Initialize the `BatataHttpClient` with credentials for typed requests.
@@ -260,6 +284,24 @@ impl TestClient {
         let response = builder
             .send()
             .await
+            .map_err(|e| TestClientError::RequestFailed(e.to_string()))?;
+
+        self.handle_response(response).await
+    }
+
+    /// Make a POST request with form data and timeout
+    pub async fn post_form_with_timeout<T: DeserializeOwned, F: Serialize>(
+        &self,
+        path: &str,
+        form: &F,
+        timeout: Duration,
+    ) -> Result<T, TestClientError> {
+        let url = self.build_url(path);
+        let builder = self.add_auth(self.client.post(&url)).form(form);
+
+        let response = tokio::time::timeout(timeout, builder.send())
+            .await
+            .map_err(|_| TestClientError::RequestFailed("Timeout".to_string()))?
             .map_err(|e| TestClientError::RequestFailed(e.to_string()))?;
 
         self.handle_response(response).await

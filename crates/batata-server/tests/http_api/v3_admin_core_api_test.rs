@@ -19,7 +19,7 @@ async fn authenticated_client() -> TestClient {
 
 /// Test get self node info via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_cluster_get_self() {
     let client = authenticated_client().await;
 
@@ -35,7 +35,7 @@ async fn test_v3_admin_cluster_get_self() {
 
 /// Test get self node health via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_cluster_self_health() {
     let client = authenticated_client().await;
 
@@ -53,7 +53,7 @@ async fn test_v3_admin_cluster_self_health() {
 
 /// Test list cluster nodes via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_cluster_list_nodes() {
     let client = authenticated_client().await;
 
@@ -68,7 +68,7 @@ async fn test_v3_admin_cluster_list_nodes() {
 
 /// Test list cluster nodes with keyword filter
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_cluster_list_nodes_with_keyword() {
     let client = authenticated_client().await;
 
@@ -87,7 +87,7 @@ async fn test_v3_admin_cluster_list_nodes_with_keyword() {
 
 /// Test list namespaces via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_list_namespaces() {
     let client = authenticated_client().await;
 
@@ -105,7 +105,7 @@ async fn test_v3_admin_list_namespaces() {
 
 /// Test create namespace via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_create_namespace() {
     let client = authenticated_client().await;
     let ns_id = format!("v3admin-ns-{}", unique_test_id());
@@ -137,7 +137,7 @@ async fn test_v3_admin_create_namespace() {
 
 /// Test get namespace via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_get_namespace() {
     let client = authenticated_client().await;
     let ns_id = format!("v3admin-get-ns-{}", unique_test_id());
@@ -178,7 +178,7 @@ async fn test_v3_admin_get_namespace() {
 
 /// Test update namespace via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_update_namespace() {
     let client = authenticated_client().await;
     let ns_id = format!("v3admin-upd-ns-{}", unique_test_id());
@@ -223,7 +223,7 @@ async fn test_v3_admin_update_namespace() {
 
 /// Test delete namespace via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_delete_namespace() {
     let client = authenticated_client().await;
     let ns_id = format!("v3admin-del-ns-{}", unique_test_id());
@@ -256,7 +256,7 @@ async fn test_v3_admin_delete_namespace() {
 
 /// Test get ID generator state via V3 Admin API
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_core_get_ids() {
     let client = authenticated_client().await;
 
@@ -272,7 +272,7 @@ async fn test_v3_admin_core_get_ids() {
 
 /// Test get current server loader info
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_loader_current() {
     let client = authenticated_client().await;
 
@@ -286,7 +286,7 @@ async fn test_v3_admin_loader_current() {
 
 /// Test get cluster loader info
 #[tokio::test]
-#[ignore = "requires running server"]
+
 async fn test_v3_admin_loader_cluster() {
     let client = authenticated_client().await;
 
