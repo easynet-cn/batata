@@ -6,10 +6,12 @@
 //! - Nacos-compatible health checking (TCP/HTTP with heartbeat monitoring)
 //! - Load balancing
 //! - Service selector evaluation
+//! - Metadata persistence
 
 pub mod health_checker;
 pub mod healthcheck;
 pub mod model;
+pub mod persistence;
 pub mod selector;
 pub mod service;
 
@@ -23,5 +25,5 @@ pub use healthcheck::{
 pub use model::{Instance, Service, ServiceInfo, ServiceQuery};
 pub use selector::{LabelOperator, LabelRequirement, SelectorBuilder, ServiceSelector};
 pub use service::{
-    ClusterConfig, FuzzyWatchPattern, NamingService, ProtectionInfo, ServiceMetadata,
+    ClusterConfig, ClusterStatistics, FuzzyWatchPattern, NamingService, ProtectionInfo, ServiceMetadata,
 };

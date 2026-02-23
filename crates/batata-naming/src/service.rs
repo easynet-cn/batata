@@ -53,6 +53,53 @@ impl ProtectionInfo {
     }
 }
 
+/// Cluster statistics information
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClusterStatistics {
+    /// Cluster name
+    pub cluster_name: String,
+    /// Total number of instances
+    pub total_instances: usize,
+    /// Number of healthy instances
+    pub healthy_instances: usize,
+    /// Number of unhealthy instances
+    pub unhealthy_instances: usize,
+    /// Number of disabled instances
+    pub disabled_instances: usize,
+    /// Healthy ratio (healthy_instances / enabled_instances)
+    pub healthy_ratio: f32,
+    /// Number of enabled instances
+    pub enabled_instances: usize,
+}
+
+impl ClusterStatistics {
+    /// Calculate cluster statistics from instances
+    pub fn from_instances(cluster_name: &str, instances: &[Instance]) -> Self {
+        let total = instances.len();
+        let healthy = instances.iter().filter(|i| i.healthy && i.enabled).count();
+        let unhealthy = instances.iter().filter(|i| !i.healthy && i.enabled).count();
+        let disabled = instances.iter().filter(|i| !i.enabled).count();
+        let enabled = instances.iter().filter(|i| i.enabled).count();
+
+        let healthy_ratio = if enabled > 0 {
+            healthy as f32 / enabled as f32
+        } else {
+            0.0
+        };
+
+        Self {
+            cluster_name: cluster_name.to_string(),
+            total_instances: total,
+            healthy_instances: healthy,
+            unhealthy_instances: unhealthy,
+            disabled_instances: disabled,
+            healthy_ratio,
+            enabled_instances: enabled,
+        }
+    }
+}
+
+
 /// Cluster-level configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterConfig {
@@ -973,6 +1020,93 @@ impl NamingService {
         let cluster_key = build_cluster_key(&service_key, cluster_name);
         self.cluster_configs.remove(&cluster_key);
     }
+
+    /// Create cluster configuration
+    pub fn create_cluster_config(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+        health_check_type: &str,
+        check_port: i32,
+        use_instance_port: bool,
+        metadata: HashMap<String, String>,
+    ) -> Result<(), String> {
+        let service_key = build_service_key(namespace, group_name, service_name);
+
+        // Check if service exists
+        if !self.services.contains_key(&service_key) {
+            return Err(format!("Service {} not found", service_name));
+        }
+
+        // Check if cluster already exists
+        let cluster_key = build_cluster_key(&service_key, cluster_name);
+        if self.cluster_configs.contains_key(&cluster_key) {
+            return Err(format!("Cluster {} already exists", cluster_name));
+        }
+
+        // Create cluster configuration
+        let cluster_config = ClusterConfig {
+            name: cluster_name.to_string(),
+            health_check_type: health_check_type.to_uppercase(),
+            check_port,
+            use_instance_port,
+            metadata,
+        };
+
+        self.cluster_configs.insert(cluster_key, cluster_config);
+        Ok(())
+    }
+
+    /// Get cluster statistics for a service
+    pub fn get_cluster_statistics(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Vec<ClusterStatistics> {
+        let service_key = build_service_key(namespace, group_name, service_name);
+
+        if let Some(instances_map) = self.services.get(&service_key) {
+            let instances: Vec<Instance> = instances_map
+                .iter()
+                .map(|entry| entry.value().clone())
+                .collect();
+
+            // Group by cluster
+            let mut cluster_map: HashMap<String, Vec<Instance>> = HashMap::new();
+            for instance in instances {
+                cluster_map
+                    .entry(instance.cluster_name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(instance);
+            }
+
+            cluster_map
+                .iter()
+                .map(|(cluster_name, cluster_instances)| 
+                    ClusterStatistics::from_instances(cluster_name, cluster_instances)
+                )
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get single cluster statistics
+    pub fn get_single_cluster_statistics(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster_name: &str,
+    ) -> Option<ClusterStatistics> {
+        let stats = self.get_cluster_statistics(namespace, group_name, service_name);
+        stats.into_iter().find(|s| s.cluster_name == cluster_name)
+    }
+
+
 
     /// Check if a service exists (has metadata or instances)
     pub fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool {

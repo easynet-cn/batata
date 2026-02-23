@@ -20,6 +20,12 @@ mod persistence;
 // Compatibility layer tests
 mod compatibility;
 
+// Special characters and boundary conditions tests
+mod special_chars_and_boundary_test;
+
+// Performance and load tests
+mod performance_and_load_test;
+
 #[cfg(test)]
 mod tests {
     use super::common::*;

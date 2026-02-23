@@ -1124,3 +1124,33 @@ pub struct HeartbeatForm {
     pub port: i32,
     pub beat: Option<String>,
 }
+
+/// Create cluster form
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CreateClusterForm {
+    pub namespace_id: Option<String>,
+    pub group_name: Option<String>,
+    pub service_name: String,
+    pub cluster_name: String,
+    pub health_checker: Option<HealthCheckerConfigForm>,
+    pub metadata: Option<HashMap<String, String>>,
+}
+
+/// Health checker configuration form
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HealthCheckerConfigForm {
+    #[serde(default = "default_health_check_type")]
+    pub r#type: String,
+    pub check_port: Option<i32>,
+    pub use_instance_port: Option<bool>,
+    pub path: Option<String>,
+    pub headers: Option<String>,
+    pub expected_code: Option<String>,
+}
+
+fn default_health_check_type() -> String {
+    "TCP".to_string()
+}
+

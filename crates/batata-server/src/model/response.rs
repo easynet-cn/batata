@@ -32,6 +32,14 @@ impl<T> Result<T> {
         }
     }
 
+    pub fn fail(message: String) -> Result<()> {
+        Result::<()> {
+            code: 500,
+            message,
+            data: (),
+        }
+    }
+
     pub fn http_success(data: impl Serialize) -> HttpResponse {
         HttpResponse::Ok().json(Result::success(data))
     }

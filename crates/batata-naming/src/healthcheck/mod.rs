@@ -4,7 +4,10 @@
 //! including TCP, HTTP health checks, heartbeat monitoring, and
 //! automatic instance expiration.
 
+pub mod checker;
 pub mod config;
+pub mod configurer;
+pub mod factory;
 pub mod heartbeat;
 pub mod processor;
 pub mod reactor;
@@ -13,10 +16,15 @@ pub mod task;
 use std::sync::Arc;
 
 // Re-export common types
+pub use checker::{HealthChecker, HealthCheckResult};
 pub use config::{HealthCheckConfig, HttpHealthParams, TcpHealthParams};
+pub use configurer::{
+    HealthCheckerConfig, HttpHealthCheckerConfig, TcpHealthCheckerConfig,
+};
+pub use factory::HealthCheckerFactory;
 pub use heartbeat::{ExpiredInstanceChecker, UnhealthyInstanceChecker};
 pub use processor::{
-    HealthCheckProcessor, HealthCheckResult, HealthCheckType,
+    HealthCheckProcessor, HealthCheckType,
     HttpHealthCheckProcessor, NoneHealthCheckProcessor, TcpHealthCheckProcessor,
 };
 pub use reactor::HealthCheckReactor;
