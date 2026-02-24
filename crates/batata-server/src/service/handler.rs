@@ -161,11 +161,16 @@ pub struct ServerReloadHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ServerReloadHandler {
-    async fn handle(&self, connection: &Connection, _payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+        let client_ip = payload
+            .metadata
+            .as_ref()
+            .map(|m| m.client_ip.as_str())
+            .unwrap_or("");
         info!(
             "Server reload requested from client: {} ({}:{})",
             connection.meta_info.connection_id,
-            connection.meta_info.client_ip,
+            client_ip,
             connection.meta_info.remote_port
         );
 
@@ -251,12 +256,17 @@ pub struct ConnectResetHandler {}
 
 #[tonic::async_trait]
 impl PayloadHandler for ConnectResetHandler {
-    async fn handle(&self, connection: &Connection, _payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+        let client_ip = payload
+            .metadata
+            .as_ref()
+            .map(|m| m.client_ip.as_str())
+            .unwrap_or("");
         // Log the connection reset request
         info!(
             "Connection reset requested: {} from {}:{}",
             connection.meta_info.connection_id,
-            connection.meta_info.client_ip,
+            client_ip,
             connection.meta_info.remote_port
         );
 

@@ -33,6 +33,27 @@ async fn login(
     form: Option<web::Form<LoginData>>,
     query: Option<web::Query<LoginData>>,
 ) -> impl Responder {
+    internal_login(data, form, query).await
+}
+
+/// V1 API endpoint for backward compatibility with Nacos SDK
+/// Route: POST /v1/auth/users/login
+/// Nacos SDK sends username as query param and password as form body
+#[post("/login")]
+async fn login_v1(
+    data: web::Data<AppState>,
+    form: Option<web::Form<LoginData>>,
+    query: Option<web::Query<LoginData>>,
+) -> impl Responder {
+    internal_login(data, form, query).await
+}
+
+/// Internal login handler shared by V1 and V3 APIs
+async fn internal_login(
+    data: web::Data<AppState>,
+    form: Option<web::Form<LoginData>>,
+    query: Option<web::Query<LoginData>>,
+) -> HttpResponse {
     let mut username: String = "".to_string();
     let mut password: String = "".to_string();
 

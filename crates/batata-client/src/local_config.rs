@@ -6,11 +6,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result};
-use md5::{Md5, Digest};
+use md5::{Digest, Md5};
 use tokio::sync::RwLock;
 
 use crate::error::{ClientError, Result as ClientResult};
@@ -105,9 +105,9 @@ impl LocalConfigInfoProcessor {
             return Ok(None);
         }
 
-        Self::read_file(&file).map(Some).map_err(|e| {
-            BatataClientError::Other(e.into())
-        })
+        Self::read_file(&file)
+            .map(Some)
+            .map_err(|e| BatataClientError::Other(e.into()))
     }
 
     /// Save snapshot for a config
@@ -129,21 +129,15 @@ impl LocalConfigInfoProcessor {
         if let Some(content) = config {
             // Create parent directories
             if let Some(parent) = file.parent() {
-                fs::create_dir_all(parent).map_err(|e| {
-                    BatataClientError::Other(e.into())
-                })?;
+                fs::create_dir_all(parent).map_err(|e| BatataClientError::Other(e.into()))?;
             }
 
             // Write content
-            fs::write(&file, content).map_err(|e| {
-                BatataClientError::Other(e.into())
-            })?;
+            fs::write(&file, content).map_err(|e| BatataClientError::Other(e.into()))?;
         } else {
             // Delete snapshot
             if file.exists() {
-                fs::remove_file(&file).map_err(|e| {
-                    BatataClientError::Other(e.into())
-                })?;
+                fs::remove_file(&file).map_err(|e| BatataClientError::Other(e.into()))?;
             }
         }
 
@@ -162,20 +156,20 @@ impl LocalConfigInfoProcessor {
             return Ok(None);
         }
 
-        Self::read_file(&file).map(Some).map_err(|e| {
-            BatataClientError::Other(e.into())
-        })
+        Self::read_file(&file)
+            .map(Some)
+            .map_err(|e| BatataClientError::Other(e.into()))
     }
 
     /// Clean all snapshots for the current environment
     pub fn clean_all_snapshots(&self) -> ClientResult<()> {
-        let env_path = self.base_path.join(format!("{}{}", self.env_name, "_batata"));
+        let env_path = self
+            .base_path
+            .join(format!("{}{}", self.env_name, "_batata"));
         let snapshot_path = env_path.join("snapshot");
 
         if snapshot_path.exists() {
-            fs::remove_dir_all(&snapshot_path).map_err(|e| {
-                BatataClientError::Other(e.into())
-            })?;
+            fs::remove_dir_all(&snapshot_path).map_err(|e| BatataClientError::Other(e.into()))?;
         }
 
         Ok(())
@@ -183,13 +177,13 @@ impl LocalConfigInfoProcessor {
 
     /// Clean environment-specific snapshots
     pub fn clean_env_snapshot(&self) -> ClientResult<()> {
-        let env_path = self.base_path.join(format!("{}{}", self.env_name, "_batata"));
+        let env_path = self
+            .base_path
+            .join(format!("{}{}", self.env_name, "_batata"));
         let snapshot_path = env_path.join("snapshot");
 
         if snapshot_path.exists() {
-            fs::remove_dir_all(&snapshot_path).map_err(|e| {
-                BatataClientError::Other(e.into())
-            })?;
+            fs::remove_dir_all(&snapshot_path).map_err(|e| BatataClientError::Other(e.into()))?;
         }
 
         Ok(())
@@ -200,7 +194,11 @@ impl LocalConfigInfoProcessor {
         let mut path = self.base_path.clone();
 
         // Format: base/{env_name}_batata/snapshot/{tenant?}/{group}/{data_id}
-        path.push(format!("{}{}", self.simplify_env_name(&self.env_name), "_batata"));
+        path.push(format!(
+            "{}{}",
+            self.simplify_env_name(&self.env_name),
+            "_batata"
+        ));
 
         if tenant.is_empty() {
             path.push("snapshot");
@@ -220,7 +218,11 @@ impl LocalConfigInfoProcessor {
         let mut path = self.base_path.clone();
 
         // Format: base/{server_name}_batata/data/config-data[-tenant]/{tenant?}/{group}/{data_id}
-        path.push(format!("{}{}", self.simplify_env_name(&self.server_name), "_batata"));
+        path.push(format!(
+            "{}{}",
+            self.simplify_env_name(&self.server_name),
+            "_batata"
+        ));
         path.push("data");
 
         if tenant.is_empty() {
@@ -256,8 +258,7 @@ impl LocalConfigInfoProcessor {
 
     /// Read file content
     fn read_file(path: &Path) -> Result<String> {
-        fs::read_to_string(path)
-            .with_context(|| format!("Failed to read file: {:?}", path))
+        fs::read_to_string(path).with_context(|| format!("Failed to read file: {:?}", path))
     }
 }
 
@@ -300,38 +301,37 @@ impl SnapshotManager {
         let mut snapshots = Vec::new();
 
         // Walk snapshot directory
-        let env_path = processor.base_path.join(format!("{}{}", processor.env_name, "_batata"));
+        let env_path = processor
+            .base_path
+            .join(format!("{}{}", processor.env_name, "_batata"));
         let snapshot_path = env_path.join("snapshot");
 
         if !snapshot_path.exists() {
             return Ok(snapshots);
         }
 
-        let entries = fs::read_dir(&snapshot_path).map_err(|e| {
-            BatataClientError::Other(e.into())
-        })?;
+        let entries =
+            fs::read_dir(&snapshot_path).map_err(|e| BatataClientError::Other(e.into()))?;
 
         for entry in entries {
-            let entry = entry.map_err(|e: std::io::Error| {
-                BatataClientError::Other(e.into())
-            })?;
+            let entry = entry.map_err(|e: std::io::Error| BatataClientError::Other(e.into()))?;
 
             let path = entry.path();
             if path.is_file() {
-                let metadata = fs::metadata(&path).map_err(|e| {
-                    BatataClientError::Other(e.into())
-                })?;
+                let metadata =
+                    fs::metadata(&path).map_err(|e| BatataClientError::Other(e.into()))?;
 
-                let content = fs::read_to_string(&path).map_err(|e| {
-                    BatataClientError::Other(e.into())
-                })?;
+                let content =
+                    fs::read_to_string(&path).map_err(|e| BatataClientError::Other(e.into()))?;
 
                 let md5 = format!("{:x}", Md5::digest(content.as_bytes()));
 
                 snapshots.push(SnapshotMetadata {
                     file_path: path,
                     size: metadata.len(),
-                    modified: metadata.modified().unwrap_or_else(|_| std::time::SystemTime::now()),
+                    modified: metadata
+                        .modified()
+                        .unwrap_or_else(|_| std::time::SystemTime::now()),
                     md5,
                 });
             }
@@ -372,9 +372,7 @@ mod tests {
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
 
         // Without tenant
-        let file = processor
-            .get_snapshot_file("dataId", "group", "")
-            .unwrap();
+        let file = processor.get_snapshot_file("dataId", "group", "").unwrap();
         assert!(file.to_str().unwrap().contains("snapshot"));
         assert!(file.to_str().unwrap().ends_with("group/dataId"));
 
@@ -391,9 +389,7 @@ mod tests {
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
 
         // Without tenant
-        let file = processor
-            .get_failover_file("dataId", "group", "")
-            .unwrap();
+        let file = processor.get_failover_file("dataId", "group", "").unwrap();
         assert!(file.to_str().unwrap().contains("config-data"));
 
         // With tenant
@@ -408,8 +404,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().to_path_buf();
 
-        // Use custom path via env var
-        std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        unsafe {
+            // Use custom path via env var
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
 
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
 
@@ -436,14 +434,14 @@ mod tests {
     fn test_failover_save_and_get() {
         let temp_dir = TempDir::new().unwrap();
 
-        std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
 
         let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
 
         // Write failover file manually
-        let file = processor
-            .get_failover_file("dataId", "group", "")
-            .unwrap();
+        let file = processor.get_failover_file("dataId", "group", "").unwrap();
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, "failover-content").unwrap();
 

@@ -376,7 +376,9 @@ pub fn main_server(
         app.service(
                 web::scope(&context_path)
                     // Auth routes (needed for SDK authentication)
+                    // Include both V1 and V3 auth routes for backward compatibility
                     .service(auth::v3::route::routes())
+                    .service(auth::v3::route::v1_routes())
                     // V2 Open API routes (config, naming, cluster only)
                     .service(config_routes())
                     .service(naming_routes())

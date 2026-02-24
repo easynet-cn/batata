@@ -85,7 +85,8 @@ impl ConsulHealthService {
                 health_actor_clone,
                 Some(naming_service_wrapper),
                 check_reap_interval_secs,
-            ).await;
+            )
+            .await;
         });
 
         Self {
@@ -114,18 +115,23 @@ impl ConsulHealthService {
 
     /// Register a health check (via actor)
     pub async fn register_check(&self, registration: CheckRegistration) -> Result<(), String> {
-        let check_config = crate::health_actor::HealthActorHandle::registration_to_config(&registration);
+        let check_config =
+            crate::health_actor::HealthActorHandle::registration_to_config(&registration);
         self.health_actor.register_check(check_config).await
     }
 
     /// Deregister a health check (via actor)
     pub async fn deregister_check(&self, check_id: &str) -> Result<(), String> {
-        self.health_actor.deregister_check(check_id.to_string()).await
+        self.health_actor
+            .deregister_check(check_id.to_string())
+            .await
     }
 
     /// Get all checks for a service (via actor)
     pub async fn get_service_checks(&self, service_id: &str) -> Vec<HealthCheck> {
-        self.health_actor.get_service_checks(service_id.to_string()).await
+        self.health_actor
+            .get_service_checks(service_id.to_string())
+            .await
     }
 
     /// Get a check by ID (via actor)
@@ -186,7 +192,9 @@ impl ConsulHealthService {
 
     /// Get checks by status (via actor)
     pub async fn get_checks_by_status(&self, status: &str) -> Vec<HealthCheck> {
-        self.health_actor.get_checks_by_status(status.to_string()).await
+        self.health_actor
+            .get_checks_by_status(status.to_string())
+            .await
     }
 
     /// Create a default health check for a service instance
@@ -742,7 +750,9 @@ pub async fn get_service_health(
         let agent_service = AgentService::from(&instance);
 
         // Get checks for this instance - first try stored checks, then create default
-        let mut checks = health_service.get_service_checks(&instance.instance_id).await;
+        let mut checks = health_service
+            .get_service_checks(&instance.instance_id)
+            .await;
         if checks.is_empty() {
             // Create a default check based on instance health
             checks.push(health_service.create_instance_check(&instance));
@@ -915,7 +925,9 @@ pub async fn get_service_checks(
     let mut all_checks: Vec<HealthCheck> = Vec::new();
 
     for instance in instances {
-        let mut checks = health_service.get_service_checks(&instance.instance_id).await;
+        let mut checks = health_service
+            .get_service_checks(&instance.instance_id)
+            .await;
         if checks.is_empty() {
             checks.push(health_service.create_instance_check(&instance));
         }
@@ -1070,7 +1082,10 @@ pub async fn pass_check(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match health_service.update_check_status_async(&check_id, "passing", output).await {
+    match health_service
+        .update_check_status_async(&check_id, "passing", output)
+        .await
+    {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -1094,7 +1109,10 @@ pub async fn warn_check(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match health_service.update_check_status_async(&check_id, "warning", output).await {
+    match health_service
+        .update_check_status_async(&check_id, "warning", output)
+        .await
+    {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -1118,7 +1136,10 @@ pub async fn fail_check(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match health_service.update_check_status_async(&check_id, "critical", output).await {
+    match health_service
+        .update_check_status_async(&check_id, "critical", output)
+        .await
+    {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -1144,7 +1165,10 @@ pub async fn update_check(
 
     let status = update.status.unwrap_or_else(|| "passing".to_string());
 
-    match health_service.update_check_status_async(&check_id, &status, update.output).await {
+    match health_service
+        .update_check_status_async(&check_id, &status, update.output)
+        .await
+    {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::NotFound().json(ConsulError::new(e)),
     }
@@ -2175,12 +2199,9 @@ impl NamingServiceTrait for NamingServiceWrapper {
             ..Default::default()
         };
 
-        let result = self.naming_service.deregister_instance(
-            namespace,
-            group,
-            service_name,
-            &instance,
-        );
+        let result =
+            self.naming_service
+                .deregister_instance(namespace, group, service_name, &instance);
 
         if result {
             Ok(())
@@ -2189,4 +2210,3 @@ impl NamingServiceTrait for NamingServiceWrapper {
         }
     }
 }
-

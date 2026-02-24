@@ -21,3 +21,10 @@ pub fn routes() -> Scope {
         .service(super::oauth::oauth_login)
         .service(super::oauth::oauth_callback)
 }
+
+/// V1 API routes for backward compatibility with Nacos SDK
+/// Nacos SDK tries /v3/auth/user/login first, then falls back to /v1/auth/users/login
+pub fn v1_routes() -> Scope {
+    web::scope("/v1/auth/users")
+        .service(super::auth::login_v1)
+}

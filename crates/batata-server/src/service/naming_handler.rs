@@ -54,7 +54,11 @@ impl PayloadHandler for InstanceRequestHandler {
         let instance = request.instance;
         let req_type = &request.r#type;
 
-        let src_ip = connection.meta_info.client_ip.as_str();
+        let src_ip = payload
+            .metadata
+            .as_ref()
+            .map(|m| m.client_ip.as_str())
+            .unwrap_or("");
 
         info!(
             req_type = %req_type,

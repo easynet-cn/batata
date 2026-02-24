@@ -117,50 +117,69 @@ impl PayloadHandler for ConfigPublishHandler {
         let tenant = &request.config_request.tenant;
         let content = &request.content;
 
-        // Extract additional params from addition_map
-        let app_name = request
-            .addition_map
-            .get("appName")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        let config_tags = request
-            .addition_map
-            .get("configTags")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        let desc = request
-            .addition_map
-            .get("desc")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        let r#use = request
-            .addition_map
-            .get("use")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        let effect = request
-            .addition_map
-            .get("effect")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        let r#type = request
-            .addition_map
-            .get("type")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        let schema = request
-            .addition_map
-            .get("schema")
-            .map(|s| s.as_str())
-            .unwrap_or("");
-        let encrypted_data_key = request
-            .addition_map
-            .get("encryptedDataKey")
-            .map(|s| s.as_str())
+        // Validate required fields
+        if data_id.is_empty() || group.is_empty() || content.is_empty() {
+            let client_ip = payload
+                .metadata
+                .as_ref()
+                .map(|m| m.client_ip.as_str())
+                .unwrap_or("");
+            warn!(
+                "Invalid config publish request: data_id={}, group={}, content_length={}, client_ip={}",
+                data_id,
+                group,
+                content.len(),
+                client_ip
+            );
+            let mut response = ConfigPublishResponse::new();
+            response.response.request_id = request_id;
+            response.response.result_code = ResponseCode::Fail.code();
+            response.response.error_code = ResponseCode::Fail.code();
+            response.response.success = false;
+            response.response.message = "data_id, group, and content are required".to_string();
+            return Ok(response.build_payload());
+        }
+
+        // Extract additional params from addition_map - optimized single iteration
+        let mut app_name = "";
+        let mut config_tags = "";
+        let mut desc = "";
+        let mut r#use = "";
+        let mut effect = "";
+        let mut r#type = "";
+        let mut schema = "";
+        let mut encrypted_data_key = "";
+        let mut src_user = "";
+
+        for (key, value) in &request.addition_map {
+            match key.as_str() {
+                "appName" => app_name = value.as_str(),
+                "configTags" => config_tags = value.as_str(),
+                "desc" => desc = value.as_str(),
+                "use" => r#use = value.as_str(),
+                "effect" => effect = value.as_str(),
+                "type" => r#type = value.as_str(),
+                "schema" => schema = value.as_str(),
+                "encryptedDataKey" => encrypted_data_key = value.as_str(),
+                "src_user" => src_user = value.as_str(),
+                _ => {}
+            }
+        }
+
+        if r#type.is_empty() {
+            r#type = "text";
+        }
+
+        let src_ip = payload
+            .metadata
+            .as_ref()
+            .map(|m| m.client_ip.as_str())
             .unwrap_or("");
 
-        let src_user = connection.meta_info.app_name.as_str();
-        let src_ip = connection.meta_info.client_ip.as_str();
+        debug!(
+            "ConfigPublish: data_id={}, group={}, tenant={}, src_user={}, src_ip={}",
+            data_id, group, tenant, src_user, src_ip
+        );
 
         let db = self.app_state.db();
 
@@ -172,7 +191,7 @@ impl PayloadHandler for ConfigPublishHandler {
             content,
             app_name,
             src_user,
-            src_ip,
+            &src_ip,
             config_tags,
             desc,
             r#use,
@@ -186,7 +205,7 @@ impl PayloadHandler for ConfigPublishHandler {
             Ok(_) => {
                 // Notify fuzzy watchers about config change
                 if let Err(e) = self
-                    .notify_fuzzy_watchers(data_id, group, tenant, src_ip)
+                    .notify_fuzzy_watchers(data_id, group, tenant, &src_ip)
                     .await
                 {
                     warn!("Failed to notify fuzzy watchers: {}", e);
@@ -372,8 +391,12 @@ impl PayloadHandler for ConfigRemoveHandler {
         let tenant = &request.config_request.tenant;
         let _tag = &request.tag;
 
-        let src_user = connection.meta_info.app_name.as_str();
-        let src_ip = connection.meta_info.client_ip.as_str();
+        let src_user = "";
+        let src_ip = payload
+            .metadata
+            .as_ref()
+            .map(|m| m.client_ip.as_str())
+            .unwrap_or("");
 
         let db = self.app_state.db();
 
