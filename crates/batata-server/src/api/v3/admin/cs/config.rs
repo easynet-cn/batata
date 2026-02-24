@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
-    api::config::model::ConfigDetailInfo,
+    api::config::model::{ConfigBasicInfo, ConfigDetailInfo},
     auth::model::AuthContext,
     config::{
         export_model::{ExportRequest, ImportRequest, ImportResult},
@@ -35,6 +35,33 @@ struct SearchPageParam {
     config_form: ConfigForm,
     pub page_no: u64,
     pub page_size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListConfigParam {
+    #[serde(flatten)]
+    config_form: ConfigForm,
+    #[serde(default = "default_page_no")]
+    pub page_no: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+    #[serde(default = "default_search")]
+    pub search: String,
+    #[serde(default)]
+    pub config_detail: String,
+}
+
+fn default_page_no() -> u64 {
+    1
+}
+
+fn default_page_size() -> u64 {
+    20
+}
+
+fn default_search() -> String {
+    "blur".to_string()
 }
 
 /// GET /v3/admin/cs/config
@@ -65,6 +92,86 @@ async fn get_config(
     };
 
     model::common::Result::<Option<ConfigAllInfo>>::http_success(result)
+}
+
+/// GET /v3/admin/cs/config/list
+#[get("list")]
+async fn list_configs(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ListConfigParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let mut namespace_id = params.config_form.namespace_id.clone();
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let tags: Vec<String> = if !params.config_form.config_tags.is_empty() {
+        params
+            .config_form
+            .config_tags
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let types: Vec<String> = if !params.config_form.r#type.is_empty() {
+        params
+            .config_form
+            .r#type
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    match batata_config::service::config::search_page(
+        data.db(),
+        params.page_no,
+        params.page_size,
+        &namespace_id,
+        &params.config_form.data_id,
+        &params.config_form.group_name,
+        &params.config_form.app_name,
+        tags,
+        types,
+        &params.config_detail,
+    )
+    .await
+    {
+        Ok(page) => {
+            let api_page = batata_api::Page::<ConfigBasicInfo>::new(
+                page.total_count,
+                page.page_number,
+                params.page_size,
+                page
+                    .page_items
+                    .into_iter()
+                    .map(ConfigBasicInfo::from)
+                    .collect(),
+            );
+            model::common::Result::<batata_api::Page<ConfigBasicInfo>>::http_success(
+                api_page,
+            )
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list configs");
+            HttpResponse::InternalServerError().body(e.to_string())
+        }
+    }
 }
 
 /// POST /v3/admin/cs/config
@@ -464,6 +571,7 @@ async fn export_config(
 pub fn routes() -> actix_web::Scope {
     web::scope("/config")
         .service(get_config)
+        .service(list_configs)
         .service(create_config)
         .service(update_config)
         .service(delete_config)

@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use clap::Parser;
-use config::{Config, Environment};
+use config::Config;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 
 use crate::auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
@@ -48,14 +48,10 @@ impl Configuration {
     pub fn new() -> Self {
         let args = Cli::parse();
         let mut config_builder = Config::builder()
-            .add_source(
-                Environment::with_prefix("nacos")
-                    .separator(".")
-                    .try_parsing(true),
-            )
             .add_source(config::File::with_name("conf/application.yml"));
 
-        config_builder = config_builder.add_source(config::File::with_name("conf/application.yml"));
+        // clap already handles command line args and environment variables
+        // We don't need Environment::with_prefix here as clap does that
 
         if let Some(v) = args.mode {
             config_builder = config_builder
@@ -1172,5 +1168,94 @@ mod tests {
     fn test_apollo_server_port_custom() {
         let cfg = build_config(vec![("nacos.plugin.apollo.port", 9080_i64.into())]);
         assert_eq!(cfg.apollo_server_port(), 9080);
+    }
+
+    // Rate Limit Configuration Tests
+    #[test]
+    fn test_ratelimit_enabled_default_false() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.ratelimit_enabled());
+    }
+
+    #[test]
+    fn test_ratelimit_enabled_true() {
+        let cfg = build_config(vec![("nacos.ratelimit.enabled", true.into())]);
+        assert!(cfg.ratelimit_enabled());
+    }
+
+    #[test]
+    fn test_ratelimit_max_requests_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.ratelimit_max_requests(), 100);
+    }
+
+    #[test]
+    fn test_ratelimit_max_requests_custom() {
+        let cfg = build_config(vec![("nacos.ratelimit.max_requests", 5000_i64.into())]);
+        assert_eq!(cfg.ratelimit_max_requests(), 5000);
+    }
+
+    #[test]
+    fn test_ratelimit_window_seconds_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.ratelimit_window_seconds(), 60);
+    }
+
+    #[test]
+    fn test_ratelimit_window_seconds_custom() {
+        let cfg = build_config(vec![("nacos.ratelimit.window_seconds", 120_i64.into())]);
+        assert_eq!(cfg.ratelimit_window_seconds(), 120);
+    }
+
+    #[test]
+    fn test_ratelimit_auth_enabled_default_false() {
+        let cfg = build_config(vec![]);
+        assert!(!cfg.ratelimit_auth_enabled());
+    }
+
+    #[test]
+    fn test_ratelimit_auth_enabled_true() {
+        let cfg = build_config(vec![("nacos.ratelimit.auth.enabled", true.into())]);
+        assert!(cfg.ratelimit_auth_enabled());
+    }
+
+    #[test]
+    fn test_ratelimit_auth_max_attempts_default() {
+        let cfg = build_config(vec![]);
+        assert_eq!(cfg.ratelimit_auth_max_attempts(), 5);
+    }
+
+    #[test]
+    fn test_ratelimit_auth_max_attempts_custom() {
+        let cfg = build_config(vec![("nacos.ratelimit.auth.max_attempts", 10_i64.into())]);
+        assert_eq!(cfg.ratelimit_auth_max_attempts(), 10);
+    }
+
+    #[test]
+    fn test_rate_limit_config() {
+        let cfg = build_config(vec![
+            ("nacos.ratelimit.enabled", true.into()),
+            ("nacos.ratelimit.max_requests", 1000_i64.into()),
+            ("nacos.ratelimit.window_seconds", 30_i64.into()),
+        ]);
+        let rate_limit_cfg = cfg.rate_limit_config();
+        assert!(rate_limit_cfg.enabled);
+        assert_eq!(rate_limit_cfg.max_requests, 1000);
+        assert_eq!(rate_limit_cfg.window_duration.as_secs(), 30);
+    }
+
+    #[test]
+    fn test_auth_rate_limit_config() {
+        let cfg = build_config(vec![
+            ("nacos.ratelimit.auth.enabled", true.into()),
+            ("nacos.ratelimit.auth.max_attempts", 3_i64.into()),
+            ("nacos.ratelimit.auth.window_seconds", 120_i64.into()),
+            ("nacos.ratelimit.auth.lockout_seconds", 600_i64.into()),
+        ]);
+        let auth_rate_limit_cfg = cfg.auth_rate_limit_config();
+        assert!(auth_rate_limit_cfg.enabled);
+        assert_eq!(auth_rate_limit_cfg.max_attempts, 3);
+        assert_eq!(auth_rate_limit_cfg.window_duration.as_secs(), 120);
+        assert_eq!(auth_rate_limit_cfg.lockout_duration.as_secs(), 600);
     }
 }

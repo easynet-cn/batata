@@ -213,6 +213,7 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 |--------|------|-------------|
 | POST | `/nacos/v3/admin/cs/config` | Create configuration |
 | GET | `/nacos/v3/admin/cs/config` | Get configuration |
+| GET | `/nacos/v3/admin/cs/config/list` | List configurations with pagination |
 | PUT | `/nacos/v3/admin/cs/config` | Update configuration |
 | DELETE | `/nacos/v3/admin/cs/config` | Delete configuration |
 | POST | `/nacos/v3/admin/cs/config/import` | Import configurations |

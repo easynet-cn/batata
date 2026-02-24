@@ -79,7 +79,7 @@ async fn bench_config_get_throughput() {
     let start = Instant::now();
 
     for _ in 0..num_gets {
-        let _: String = client
+        let _: serde_json::Value = client
             .get_with_query(
                 "/nacos/v2/cs/config",
                 &[
@@ -166,19 +166,15 @@ async fn bench_config_list_throughput() {
             .expect("Failed to publish config");
     }
 
-    // Benchmark lists
+    // Benchmark lists - use history/configs endpoint to list all configs in namespace
     let num_lists = 100;
     let start = Instant::now();
 
     for _ in 0..num_lists {
         let _: serde_json::Value = client
             .get_with_query(
-                "/nacos/v2/cs/config/list",
-                &[
-                    ("group", DEFAULT_GROUP),
-                    ("pageNo", "1"),
-                    ("pageSize", "50"),
-                ],
+                "/nacos/v2/cs/history/configs",
+                &[("namespaceId", "public")],
             )
             .await
             .expect("Failed to list configs");
@@ -207,14 +203,14 @@ async fn bench_instance_register_throughput() {
         let port = 8080 + (i % 10);
 
         let _: serde_json::Value = client
-            .post_json(
+            .post_form(
                 "/nacos/v2/ns/instance",
-                &serde_json::json!({
-                    "serviceName": service_name,
-                    "ip": ip,
-                    "port": port,
-                    "weight": 1.0
-                }),
+                &[
+                    ("serviceName", service_name.as_str()),
+                    ("ip", ip.as_str()),
+                    ("port", &port.to_string()),
+                    ("weight", "1.0"),
+                ],
             )
             .await
             .expect("Failed to register instance");
@@ -239,14 +235,14 @@ async fn bench_instance_query_throughput() {
     for i in 0..10 {
         let ip = format!("192.168.1.{}", 250 + i);
         let _: serde_json::Value = client
-            .post_json(
+            .post_form(
                 "/nacos/v2/ns/instance",
-                &serde_json::json!({
-                    "serviceName": service_name,
-                    "ip": ip,
-                    "port": 8080,
-                    "weight": 1.0
-                }),
+                &[
+                    ("serviceName", service_name.as_str()),
+                    ("ip", ip.as_str()),
+                    ("port", "8080"),
+                    ("weight", "1.0"),
+                ],
             )
             .await
             .expect("Failed to register instance");
@@ -284,14 +280,14 @@ async fn bench_service_list_throughput() {
     for i in 0..50 {
         let service_name = unique_service_name(&format!("bench_list_{}", i));
         let _: serde_json::Value = client
-            .post_json(
+            .post_form(
                 "/nacos/v2/ns/instance",
-                &serde_json::json!({
-                    "serviceName": service_name,
-                    "ip": "192.168.1.250",
-                    "port": 8080,
-                    "weight": 1.0
-                }),
+                &[
+                    ("serviceName", service_name.as_str()),
+                    ("ip", "192.168.1.250"),
+                    ("port", "8080"),
+                    ("weight", "1.0"),
+                ],
             )
             .await
             .expect("Failed to register instance");
@@ -324,21 +320,18 @@ async fn bench_service_list_throughput() {
 #[ignore = "performance tests require specialized setup"]
 
 async fn test_concurrent_config_operations() {
+    let client = authenticated_client().await;
+    let token = client.cookies();
     let num_tasks = 30;
     let start = Instant::now();
     let mut handles = Vec::new();
 
     for i in 0..num_tasks {
         let data_id = format!("concurrent_config_{}_{}", i, unique_test_id());
+        let token_clone = token.clone();
 
         handles.push(tokio::spawn(async move {
-            let mut client = TestClient::new_with_login(
-                MAIN_BASE_URL,
-                TEST_USERNAME,
-                TEST_PASSWORD,
-            )
-            .await
-            .expect("Login failed");
+            let client = TestClient::new_with_cookies(MAIN_BASE_URL, token_clone);
 
             let response: serde_json::Value = client
                 .post_form(
@@ -369,7 +362,9 @@ async fn test_concurrent_config_operations() {
 #[ignore = "performance tests require specialized setup"]
 
 async fn test_concurrent_instance_operations() {
+    let client = authenticated_client().await;
     let service_name = unique_service_name("concurrent_instance");
+    let token = client.cookies();
     let num_tasks = 30;
     let start = Instant::now();
 
@@ -377,25 +372,20 @@ async fn test_concurrent_instance_operations() {
     for i in 0..num_tasks {
         let service_name_clone = service_name.clone();
         let ip = format!("192.168.1.{}", i % 250);
+        let token_clone = token.clone();
 
         handles.push(tokio::spawn(async move {
-            let client = TestClient::new_with_login(
-                MAIN_BASE_URL,
-                TEST_USERNAME,
-                TEST_PASSWORD,
-            )
-            .await
-            .expect("Login failed");
+            let client = TestClient::new_with_cookies(MAIN_BASE_URL, token_clone);
 
             let response: serde_json::Value = client
-                .post_json(
+                .post_form(
                     "/nacos/v2/ns/instance",
-                    &serde_json::json!({
-                        "serviceName": service_name_clone,
-                        "ip": ip,
-                        "port": 8080,
-                        "weight": 1.0
-                    }),
+                    &[
+                        ("serviceName", service_name_clone.as_str()),
+                        ("ip", ip.as_str()),
+                        ("port", "8080"),
+                        ("weight", "1.0"),
+                    ],
                 )
                 .await
                 .expect("Failed to register instance");
@@ -420,6 +410,7 @@ async fn test_mixed_concurrent_operations() {
     let client = authenticated_client().await;
     let data_id = unique_data_id("mixed_concurrent");
     let service_name = unique_service_name("mixed_concurrent");
+    let token = client.cookies();
 
     // Publish config
     let _: serde_json::Value = client
@@ -436,13 +427,13 @@ async fn test_mixed_concurrent_operations() {
 
     // Register instance
     let _: serde_json::Value = client
-        .post_json(
+        .post_form(
             "/nacos/v2/ns/instance",
-            &serde_json::json!({
-                "serviceName": service_name,
-                "ip": "192.168.1.100",
-                "port": 8080
-            }),
+            &[
+                ("serviceName", service_name.as_str()),
+                ("ip", "192.168.1.100"),
+                ("port", "8080"),
+            ],
         )
         .await
         .expect("Failed to register instance");
@@ -455,15 +446,10 @@ async fn test_mixed_concurrent_operations() {
     for i in 0..num_tasks {
         let data_id_clone = data_id.clone();
         let service_name_clone = service_name.clone();
+        let token_clone = token.clone();
 
         handles.push(tokio::spawn(async move {
-            let client = TestClient::new_with_login(
-                MAIN_BASE_URL,
-                TEST_USERNAME,
-                TEST_PASSWORD,
-            )
-            .await
-            .expect("Login failed");
+            let client = TestClient::new_with_cookies(MAIN_BASE_URL, token_clone);
 
             // Alternate between config and naming operations
             if i % 2 == 0 {
@@ -524,7 +510,7 @@ async fn test_sustained_load() {
             .await
             .expect("Failed to update config");
 
-        let _: String = client
+        let _: serde_json::Value = client
             .get_with_query(
                 "/nacos/v2/cs/config",
                 &[

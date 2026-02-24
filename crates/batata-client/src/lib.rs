@@ -13,6 +13,9 @@ pub mod config;
 pub mod error;
 pub mod grpc;
 pub mod http;
+pub mod limiter;
+pub mod local_config;
+pub mod metrics;
 pub mod model;
 pub mod naming;
 pub mod redo;
@@ -28,3 +31,7 @@ pub use error::ClientError;
 pub use grpc::{GrpcClient, GrpcClientConfig};
 pub use naming::BatataNamingService;
 pub use redo::RedoService;
+
+// Additional re-exports
+pub use limiter::{RateLimiter, SlidingWindowLimiter};
+pub use metrics::{MetricsMonitor, SimpleCounter, Timer};
