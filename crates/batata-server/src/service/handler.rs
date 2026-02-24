@@ -204,7 +204,15 @@ impl PayloadHandler for ServerReloadHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Authenticated
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "internal"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Internal
     }
 }
 
@@ -282,7 +290,15 @@ impl PayloadHandler for ConnectResetHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Authenticated
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "internal"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Internal
     }
 }
 

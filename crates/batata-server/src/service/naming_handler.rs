@@ -44,7 +44,7 @@ pub struct InstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for InstanceRequestHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = InstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -134,7 +134,15 @@ impl PayloadHandler for InstanceRequestHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Authenticated
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "naming"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Naming
     }
 }
 
@@ -287,7 +295,7 @@ pub struct BatchInstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for BatchInstanceRequestHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = BatchInstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -360,7 +368,15 @@ impl PayloadHandler for BatchInstanceRequestHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Authenticated
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "naming"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Naming
     }
 }
 
@@ -414,7 +430,7 @@ pub struct ServiceListRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ServiceListRequestHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ServiceListRequest::from(payload);
         let request_id = request.request_id();
 
@@ -438,6 +454,18 @@ impl PayloadHandler for ServiceListRequestHandler {
     fn can_handle(&self) -> &'static str {
         "ServiceListRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "naming"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Naming
+    }
 }
 
 // Handler for ServiceQueryRequest - queries service details and instances
@@ -448,7 +476,7 @@ pub struct ServiceQueryRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ServiceQueryRequestHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ServiceQueryRequest::from(payload);
         let request_id = request.request_id();
 
@@ -488,6 +516,18 @@ impl PayloadHandler for ServiceQueryRequestHandler {
     fn can_handle(&self) -> &'static str {
         "ServiceQueryRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "naming"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Naming
+    }
 }
 
 // Handler for SubscribeServiceRequest - subscribes to service changes
@@ -498,7 +538,7 @@ pub struct SubscribeServiceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for SubscribeServiceRequestHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = SubscribeServiceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -508,7 +548,7 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
         let clusters = &request.clusters;
         let subscribe = request.subscribe;
 
-        let connection_id = &connection.meta_info.connection_id;
+        let connection_id = &_connection.meta_info.connection_id;
 
         info!(
             "SubscribeServiceRequest: subscribe={}, connection_id={}, namespace='{}', group='{}', service='{}', clusters='{}'",
@@ -545,6 +585,18 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
     fn can_handle(&self) -> &'static str {
         "SubscribeServiceRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "naming"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Naming
+    }
 }
 
 // Handler for PersistentInstanceRequest - handles persistent (non-ephemeral) instances
@@ -556,7 +608,7 @@ pub struct PersistentInstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for PersistentInstanceRequestHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = PersistentInstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -604,7 +656,15 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Authenticated
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "naming"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Naming
     }
 }
 
@@ -659,7 +719,7 @@ pub struct NotifySubscriberHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NotifySubscriberHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NotifySubscriberRequest::from(payload);
         let request_id = request.request_id();
 
@@ -685,11 +745,11 @@ pub struct NamingFuzzyWatchHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchRequest::from(payload);
         let request_id = request.request_id();
 
-        let connection_id = &connection.meta_info.connection_id;
+        let connection_id = &_connection.meta_info.connection_id;
         let namespace = &request.namespace;
         let group_pattern = &request.group_name_pattern;
         let service_pattern = &request.service_name_pattern;
@@ -722,6 +782,18 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
     fn can_handle(&self) -> &'static str {
         "NamingFuzzyWatchRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "naming"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Naming
+    }
 }
 
 // Handler for NamingFuzzyWatchChangeNotifyRequest - notifies fuzzy watch changes
@@ -733,11 +805,11 @@ pub struct NamingFuzzyWatchChangeNotifyHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchChangeNotifyHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchChangeNotifyRequest::from(payload);
         let request_id = request.request_id();
 
-        let connection_id = &connection.meta_info.connection_id;
+        let connection_id = &_connection.meta_info.connection_id;
         // service_key is the group_key (format: namespace+group+service_name)
         let group_key = &request.service_key;
 
@@ -765,11 +837,11 @@ pub struct NamingFuzzyWatchSyncHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NamingFuzzyWatchSyncHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = NamingFuzzyWatchSyncRequest::from(payload);
         let request_id = request.request_id();
 
-        let connection_id = &connection.meta_info.connection_id;
+        let connection_id = &_connection.meta_info.connection_id;
         let namespace = &request.pattern_namespace;
         let group_pattern = &request.pattern_group_name;
         let service_pattern = &request.pattern_service_name;

@@ -16,7 +16,7 @@ use crate::{
     service::{
         lock::LockService,
         rpc::{
-            AuthRequirement, PayloadHandler, check_permission, extract_auth_context_from_payload,
+            AuthRequirement, PayloadHandler, check_authority, extract_auth_context_from_payload,
         },
     },
 };
@@ -50,7 +50,7 @@ impl PayloadHandler for LockOperationHandler {
         // Check permission for lock resource
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
         let resource = GrpcResource::lock(&lock_instance.key);
-        check_permission(
+        check_authority(
             &self.auth_service,
             &auth_context,
             &resource,
@@ -106,7 +106,15 @@ impl PayloadHandler for LockOperationHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Permission
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "lock"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Lock
     }
 }
 
@@ -131,6 +139,6 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "LockOperationRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Permission);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
     }
 }

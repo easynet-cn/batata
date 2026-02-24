@@ -45,13 +45,22 @@ pub struct ConfigQueryHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigQueryHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = ConfigQueryRequest::from(payload);
         let request_id = request.request_id();
 
         let data_id = &request.config_request.data_id;
         let group = &request.config_request.group;
         let tenant = &request.config_request.tenant;
+
+        debug!(
+            "ConfigQuery: data_id={}, group={}, tenant={}",
+            data_id, group, tenant
+        );
 
         let db = self.app_state.db();
 
@@ -71,10 +80,8 @@ impl PayloadHandler for ConfigQueryHandler {
             Ok(None) => {
                 let mut response = ConfigQueryResponse::new();
                 response.response.request_id = request_id;
-                response.response.result_code = ConfigQueryResponse::CONFIG_NOT_FOUND;
                 response.response.error_code = ConfigQueryResponse::CONFIG_NOT_FOUND;
-                response.response.success = false;
-                response.response.message = "config not found".to_string();
+                response.response.message = "config data not exist".to_string();
 
                 Ok(response.build_payload())
             }
@@ -94,6 +101,18 @@ impl PayloadHandler for ConfigQueryHandler {
     fn can_handle(&self) -> &'static str {
         "ConfigQueryRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "config"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Config
+    }
 }
 
 // Handler for ConfigPublishRequest - publishes/updates configuration
@@ -108,7 +127,7 @@ pub struct ConfigPublishHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigPublishHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigPublishRequest::from(payload);
         let request_id = request.request_id();
 
@@ -164,10 +183,6 @@ impl PayloadHandler for ConfigPublishHandler {
                 "src_user" => src_user = value.as_str(),
                 _ => {}
             }
-        }
-
-        if r#type.is_empty() {
-            r#type = "text";
         }
 
         let src_ip = payload
@@ -259,7 +274,15 @@ impl PayloadHandler for ConfigPublishHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Authenticated
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "config"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Config
     }
 }
 
@@ -382,7 +405,7 @@ pub struct ConfigRemoveHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigRemoveHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigRemoveRequest::from(payload);
         let request_id = request.request_id();
 
@@ -458,7 +481,15 @@ impl PayloadHandler for ConfigRemoveHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Authenticated
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "config"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Config
     }
 }
 
@@ -577,14 +608,14 @@ pub struct ConfigBatchListenHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigBatchListenHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigBatchListenRequest::from(payload);
         let request_id = request.request_id();
 
         let db = self.app_state.db();
         let subscriber_manager = &self.app_state.config_subscriber_manager;
-        let connection_id = &connection.meta_info.connection_id;
-        let client_ip = &connection.meta_info.remote_ip;
+        let connection_id = &_connection.meta_info.connection_id;
+        let client_ip = &_connection.meta_info.remote_ip;
 
         let mut changed_configs = Vec::new();
 
@@ -637,6 +668,18 @@ impl PayloadHandler for ConfigBatchListenHandler {
     fn can_handle(&self) -> &'static str {
         "ConfigBatchListenRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "config"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Config
+    }
 }
 
 // Handler for ConfigChangeNotifyRequest - notifies clients of config changes
@@ -648,7 +691,11 @@ pub struct ConfigChangeNotifyHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigChangeNotifyHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = ConfigChangeNotifyRequest::from(payload);
         let request_id = request.request_id();
 
@@ -677,7 +724,7 @@ pub struct ConfigChangeClusterSyncHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigChangeClusterSyncHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigChangeClusterSyncRequest::from(payload);
         let request_id = request.request_id();
 
@@ -690,7 +737,7 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
         // Log the cluster sync event for observability
         info!(
             "Config cluster sync from {}: dataId={}, group={}, tenant={}, lastModified={}, grayName={}",
-            connection.meta_info.remote_ip, data_id, group, tenant, last_modified, gray_name
+            _connection.meta_info.remote_ip, data_id, group, tenant, last_modified, gray_name
         );
 
         // In a distributed cluster, this notification indicates another node has
@@ -707,7 +754,7 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
                 group,
                 tenant,
                 gray_name.as_str(),
-                connection.meta_info.remote_ip.as_str(),
+                _connection.meta_info.remote_ip.as_str(),
             )
             .await
         {
@@ -725,7 +772,15 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Internal
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "config"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Config
     }
 }
 
@@ -830,11 +885,11 @@ pub struct ConfigFuzzyWatchHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigFuzzyWatchHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigFuzzyWatchRequest::from(payload);
         let request_id = request.request_id();
 
-        let connection_id = &connection.meta_info.connection_id;
+        let connection_id = &_connection.meta_info.connection_id;
         let group_key_pattern = &request.group_key_pattern;
         let watch_type = &request.watch_type;
 
@@ -863,6 +918,18 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
     fn can_handle(&self) -> &'static str {
         "ConfigFuzzyWatchRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "config"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Config
+    }
 }
 
 // Handler for ConfigFuzzyWatchChangeNotifyRequest - notifies fuzzy watch changes
@@ -873,7 +940,11 @@ pub struct ConfigFuzzyWatchChangeNotifyHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigFuzzyWatchChangeNotifyHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = ConfigFuzzyWatchChangeNotifyRequest::from(payload);
         let request_id = request.request_id();
 
@@ -897,11 +968,11 @@ pub struct ConfigFuzzyWatchSyncHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
-    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ConfigFuzzyWatchSyncRequest::from(payload);
         let request_id = request.request_id();
 
-        let connection_id = &connection.meta_info.connection_id;
+        let connection_id = &_connection.meta_info.connection_id;
         let group_key_pattern = &request.group_key_pattern;
         let sync_type = &request.sync_type;
 
@@ -925,7 +996,15 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Internal
+        AuthRequirement::Write
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "config"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Config
     }
 }
 
@@ -938,7 +1017,11 @@ pub struct ClientConfigMetricHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ClientConfigMetricHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = ClientConfigMetricRequest::from(payload);
         let request_id = request.request_id();
 

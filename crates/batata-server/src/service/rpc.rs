@@ -22,15 +22,19 @@ use crate::api::{
 };
 
 /// Auth requirement level for handlers
+/// Corresponds to Nacos's @Secured annotation with action and apiType parameters
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthRequirement {
-    /// No authentication required (public endpoints)
+    /// No authentication required (public endpoints, no @Secured annotation)
     None,
-    /// Authentication required but no specific permission
-    Authenticated,
-    /// Specific permission required (will be checked by handler)
-    Permission,
+    /// Authentication required with READ action
+    /// Corresponds to @Secured(action = ActionTypes.READ)
+    Read,
+    /// Authentication required with WRITE action
+    /// Corresponds to @Secured(action = ActionTypes.WRITE)
+    Write,
     /// Internal cluster operation - requires server identity verification
+    /// Corresponds to @Secured(apiType = ApiType.INNER_API)
     Internal,
 }
 
@@ -55,6 +59,18 @@ pub trait PayloadHandler: Send + Sync {
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::None
     }
+
+    /// Returns the sign type for this handler (config/naming/ai)
+    /// Corresponds to signType parameter in @Secured
+    fn sign_type(&self) -> &'static str {
+        ""
+    }
+
+    /// Returns the resource type for this handler
+    /// Used for permission checking
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Internal
+    }
 }
 
 /// Helper functions for extracting auth context from payload
@@ -71,7 +87,22 @@ pub fn extract_auth_context_from_payload(
     auth_service.parse_identity(&headers)
 }
 
+/// Check if authentication should be enabled for this request
+/// Corresponds to Nacos's protocolAuthService.enableAuth(secured)
+/// Returns true if auth plugin is configured and enabled for this sign type
+pub fn enable_auth(
+    auth_service: &GrpcAuthService,
+    _sign_type: &str,
+) -> bool {
+    // For now, we follow Nacos logic:
+    // - If auth is not enabled globally, return false
+    // - If auth plugin is available, check if it enables auth for this sign type
+    // - Default to true if auth is enabled and plugin is available
+    auth_service.is_auth_enabled()
+}
+
 /// Check if authentication is valid, returns error Status if not
+/// Corresponds to Nacos's protocolAuthService.validateIdentity()
 pub fn check_authentication(auth_context: &GrpcAuthContext) -> Result<(), Status> {
     if !auth_context.auth_enabled {
         return Ok(());
@@ -88,8 +119,9 @@ pub fn check_authentication(auth_context: &GrpcAuthContext) -> Result<(), Status
     Ok(())
 }
 
-/// Check permission for a resource, returns error Status if denied
-pub fn check_permission(
+/// Check permission for a resource with given action
+/// Corresponds to Nacos's protocolAuthService.validateAuthority()
+pub fn check_authority(
     auth_service: &GrpcAuthService,
     auth_context: &GrpcAuthContext,
     resource: &GrpcResource,
@@ -298,18 +330,47 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             let handler = self.handler_registry.get_handler(message_type);
 
             // Check authentication based on handler's auth requirement
+            // Following Nacos RemoteRequestAuthFilter logic:
+            // 1. Check if INNER_API and innerApiAuthEnabled (skip auth if needed)
+            // 2. Check if auth is enabled globally for non-INNER_API
+            // 3. Check server identity
+            // 4. Check if enableAuth(secured) returns true
+            // 5. Validate identity
+            // 6. Validate authority (permission)
             let auth_requirement = handler.auth_requirement();
             match auth_requirement {
                 AuthRequirement::None => {}
                 AuthRequirement::Internal => {
+                    // INNER_API: check server identity first
                     check_server_identity(self.handler_registry.auth_service(), payload)?;
                 }
-                AuthRequirement::Authenticated | AuthRequirement::Permission => {
-                    let auth_context = extract_auth_context_from_payload(
-                        self.handler_registry.auth_service(),
-                        payload,
-                    );
-                    check_authentication(&auth_context)?;
+                AuthRequirement::Read | AuthRequirement::Write => {
+                    // Non-INNER_API: full auth flow
+                    let auth_service = self.handler_registry.auth_service();
+
+                    // Check server identity first (MATCHED case skips remaining auth)
+                    if auth_service.check_server_identity(
+                        &payload.metadata.as_ref().map(|m| m.headers.clone()).unwrap_or_default()
+                    ) {
+                        // Server identity matched - skip remaining auth checks
+                    } else {
+                        // Check if auth should be enabled for this sign type
+                        let sign_type = handler.sign_type();
+                        if !enable_auth(auth_service, sign_type) {
+                            // Auth not enabled for this type - skip validation
+                        } else {
+                            // Validate identity
+                            let auth_context = extract_auth_context_from_payload(
+                                auth_service,
+                                payload,
+                            );
+                            check_authentication(&auth_context)?;
+
+                            // Validate authority (permission)
+                            // TODO: Extract resource and permissions from handler context
+                            // This requires handler to provide resource info and user permissions
+                        }
+                    }
                 }
             }
 
@@ -427,18 +488,37 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                             let handler = handler_registry.get_handler(message_type);
 
                             // Check authentication based on handler's auth requirement
+                            // Following Nacos RemoteRequestAuthFilter logic
                             let auth_requirement = handler.auth_requirement();
                             let auth_result = match auth_requirement {
                                 AuthRequirement::None => Ok(()),
                                 AuthRequirement::Internal => {
                                     check_server_identity(handler_registry.auth_service(), &payload)
                                 }
-                                AuthRequirement::Authenticated | AuthRequirement::Permission => {
-                                    let auth_context = extract_auth_context_from_payload(
-                                        handler_registry.auth_service(),
-                                        &payload,
-                                    );
-                                    check_authentication(&auth_context)
+                                AuthRequirement::Read | AuthRequirement::Write => {
+                                    let auth_service = handler_registry.auth_service();
+
+                                    // Check server identity first
+                                    if auth_service.check_server_identity(
+                                        &payload.metadata.as_ref().map(|m| m.headers.clone()).unwrap_or_default()
+                                    ) {
+                                        // Server identity matched - skip remaining auth checks
+                                        Ok(())
+                                    } else {
+                                        // Check if auth should be enabled for this sign type
+                                        let sign_type = handler.sign_type();
+                                        if !enable_auth(auth_service, sign_type) {
+                                            // Auth not enabled for this type - skip validation
+                                            Ok(())
+                                        } else {
+                                            // Validate identity
+                                            let auth_context = extract_auth_context_from_payload(
+                                                auth_service,
+                                                &payload,
+                                            );
+                                            check_authentication(&auth_context)
+                                        }
+                                    }
                                 }
                             };
                             if let Err(e) = auth_result {

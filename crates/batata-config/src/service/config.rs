@@ -13,12 +13,15 @@ use std::collections::HashMap;
 use chrono::Local;
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
-use batata_api::Page;
+use batata_api::{DEFAULT_GROUP, Page};
 use batata_persistence::entity::{
     config_info, config_info_gray, config_tags_relation, his_config_info,
 };
 
-use crate::model::{ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper};
+use crate::{
+    DEFAULT_NAMESPACE_ID,
+    model::{ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper},
+};
 
 /// Escape SQL wildcard characters and convert user wildcards to SQL LIKE pattern.
 /// Escapes % and _ to prevent SQL wildcard injection, then converts * to %.
@@ -54,18 +57,30 @@ pub async fn find_one(
     group: &str,
     namespace_id: &str,
 ) -> anyhow::Result<Option<ConfigAllInfo>> {
+    let mut group_name = group;
+
+    if group_name.is_empty() {
+        group_name = DEFAULT_GROUP;
+    }
+
+    let mut tenant = namespace_id;
+
+    if tenant.is_empty() {
+        tenant = DEFAULT_NAMESPACE_ID;
+    }
+
     let (config_result, tags_result) = tokio::join!(
         config_info::Entity::find()
             .filter(config_info::Column::DataId.eq(data_id))
-            .filter(config_info::Column::GroupId.eq(group))
-            .filter(config_info::Column::TenantId.eq(namespace_id))
+            .filter(config_info::Column::GroupId.eq(group_name))
+            .filter(config_info::Column::TenantId.eq(tenant))
             .one(db),
         config_tags_relation::Entity::find()
             .select_only()
             .column(config_tags_relation::Column::TagName)
             .filter(config_tags_relation::Column::DataId.eq(data_id))
-            .filter(config_tags_relation::Column::GroupId.eq(group))
-            .filter(config_tags_relation::Column::TenantId.eq(namespace_id))
+            .filter(config_tags_relation::Column::GroupId.eq(group_name))
+            .filter(config_tags_relation::Column::TenantId.eq(tenant))
             .order_by_asc(config_tags_relation::Column::Nid)
             .into_tuple::<String>()
             .all(db)
@@ -227,10 +242,28 @@ pub async fn create_or_update(
     schema: &str,
     encrypted_data_key: &str,
 ) -> anyhow::Result<bool> {
+    let mut group = group_id;
+
+    if group.is_empty() {
+        group = DEFAULT_GROUP;
+    }
+
+    let mut tenant = tenant_id;
+
+    if tenant.is_empty() {
+        tenant = DEFAULT_NAMESPACE_ID;
+    }
+
+    let mut t = r#type;
+
+    if t.is_empty() {
+        t = "text";
+    }
+
     let entity_option = config_info::Entity::find()
         .filter(config_info::Column::DataId.eq(data_id))
-        .filter(config_info::Column::GroupId.eq(group_id))
-        .filter(config_info::Column::TenantId.eq(tenant_id))
+        .filter(config_info::Column::GroupId.eq(group))
+        .filter(config_info::Column::TenantId.eq(tenant))
         .one(db)
         .await?;
 
@@ -251,7 +284,7 @@ pub async fn create_or_update(
                 desc,
                 r#use,
                 effect,
-                r#type,
+                t,
                 schema,
                 encrypted_data_key,
                 now,
@@ -262,8 +295,8 @@ pub async fn create_or_update(
             create_new_config(
                 &tx,
                 data_id,
-                group_id,
-                tenant_id,
+                group,
+                tenant,
                 content,
                 app_name,
                 src_user,
@@ -272,7 +305,7 @@ pub async fn create_or_update(
                 desc,
                 r#use,
                 effect,
-                r#type,
+                t,
                 schema,
                 encrypted_data_key,
                 now,
@@ -295,10 +328,22 @@ pub async fn delete(
     client_ip: &str,
     src_user: &str,
 ) -> anyhow::Result<bool> {
+    let mut group_name = group;
+
+    if group_name.is_empty() {
+        group_name = DEFAULT_GROUP;
+    }
+
+    let mut tenant = namespace_id;
+
+    if tenant.is_empty() {
+        tenant = DEFAULT_NAMESPACE_ID;
+    }
+
     if let Some(entity) = config_info::Entity::find()
         .filter(config_info::Column::DataId.eq(data_id))
-        .filter(config_info::Column::GroupId.eq(group))
-        .filter(config_info::Column::TenantId.eq(namespace_id))
+        .filter(config_info::Column::GroupId.eq(group_name))
+        .filter(config_info::Column::TenantId.eq(tenant))
         .one(db)
         .await?
     {
@@ -337,7 +382,7 @@ pub async fn delete(
             src_user: Set(Some(src_user.to_string())),
             src_ip: Set(Some(client_ip.to_string())),
             op_type: Set(Some("D".to_string())),
-            tenant_id: Set(Some(namespace_id.to_string())),
+            tenant_id: Set(Some(tenant.to_string())),
             encrypted_data_key: Set(entity.encrypted_data_key.unwrap_or_default()),
             publish_type: Set(Some("formal".to_string())),
             gray_name: Set(Some(gray_name.to_string())),

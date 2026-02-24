@@ -757,7 +757,7 @@ pub struct ConfigQueryResponse {
     pub md5: String,
     pub last_modified: i64,
     pub is_beta: bool,
-    pub tag: String,
+    pub tag: Option<String>,
 }
 
 impl ConfigQueryResponse {

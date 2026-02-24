@@ -22,7 +22,7 @@ use crate::{
         },
     },
     service::rpc::{
-        AuthRequirement, PayloadHandler, check_permission, extract_auth_context_from_payload,
+        AuthRequirement, PayloadHandler, check_authority, extract_auth_context_from_payload,
     },
 };
 
@@ -39,7 +39,7 @@ pub struct McpServerEndpointHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for McpServerEndpointHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = McpServerEndpointRequest::from(payload);
         let request_id = request.request_id();
         let operation = request.operation_type.to_lowercase();
@@ -47,7 +47,7 @@ impl PayloadHandler for McpServerEndpointHandler {
         // Check permission for AI resource (write)
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
         let resource = GrpcResource::ai(&request.namespace_id, &request.mcp_name);
-        check_permission(
+        check_authority(
             &self.auth_service,
             &auth_context,
             &resource,
@@ -122,7 +122,7 @@ impl PayloadHandler for McpServerEndpointHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Permission
+        AuthRequirement::Write
     }
 }
 
@@ -135,14 +135,14 @@ pub struct QueryMcpServerHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for QueryMcpServerHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = QueryMcpServerRequest::from(payload);
         let request_id = request.request_id();
 
         // Check permission for AI resource (read)
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
         let resource = GrpcResource::ai(&request.namespace_id, &request.mcp_name);
-        check_permission(
+        check_authority(
             &self.auth_service,
             &auth_context,
             &resource,
@@ -186,7 +186,7 @@ impl PayloadHandler for QueryMcpServerHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Permission
+        AuthRequirement::Write
     }
 }
 
@@ -199,14 +199,14 @@ pub struct ReleaseMcpServerHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ReleaseMcpServerHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ReleaseMcpServerRequest::from(payload);
         let request_id = request.request_id();
 
         // Check permission for AI resource (write)
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
         let resource = GrpcResource::ai(&request.namespace_id, &request.mcp_name);
-        check_permission(
+        check_authority(
             &self.auth_service,
             &auth_context,
             &resource,
@@ -281,7 +281,7 @@ impl PayloadHandler for ReleaseMcpServerHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Permission
+        AuthRequirement::Write
     }
 }
 
@@ -298,7 +298,7 @@ pub struct AgentEndpointHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for AgentEndpointHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = AgentEndpointRequest::from(payload);
         let request_id = request.request_id();
         let operation = request.operation_type.to_lowercase();
@@ -306,7 +306,7 @@ impl PayloadHandler for AgentEndpointHandler {
         // Check permission for AI resource (write)
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
         let resource = GrpcResource::ai(&request.namespace_id, &request.agent_name);
-        check_permission(
+        check_authority(
             &self.auth_service,
             &auth_context,
             &resource,
@@ -398,7 +398,7 @@ impl PayloadHandler for AgentEndpointHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Permission
+        AuthRequirement::Write
     }
 }
 
@@ -411,14 +411,14 @@ pub struct QueryAgentCardHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for QueryAgentCardHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = QueryAgentCardRequest::from(payload);
         let request_id = request.request_id();
 
         // Check permission for AI resource (read)
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
         let resource = GrpcResource::ai(&request.namespace_id, &request.agent_name);
-        check_permission(
+        check_authority(
             &self.auth_service,
             &auth_context,
             &resource,
@@ -462,7 +462,7 @@ impl PayloadHandler for QueryAgentCardHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Permission
+        AuthRequirement::Write
     }
 }
 
@@ -475,14 +475,14 @@ pub struct ReleaseAgentCardHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ReleaseAgentCardHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = ReleaseAgentCardRequest::from(payload);
         let request_id = request.request_id();
 
         // Check permission for AI resource (write)
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
         let resource = GrpcResource::ai(&request.namespace_id, &request.agent_name);
-        check_permission(
+        check_authority(
             &self.auth_service,
             &auth_context,
             &resource,
@@ -545,7 +545,7 @@ impl PayloadHandler for ReleaseAgentCardHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Permission
+        AuthRequirement::Write
     }
 }
 
@@ -616,7 +616,7 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "McpServerEndpointRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Permission);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
     }
 
     #[test]
@@ -626,7 +626,7 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "QueryMcpServerRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Permission);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
     }
 
     #[test]
@@ -636,7 +636,7 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "ReleaseMcpServerRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Permission);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
     }
 
     #[test]
@@ -646,7 +646,7 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "AgentEndpointRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Permission);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
     }
 
     #[test]
@@ -656,7 +656,7 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "QueryAgentCardRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Permission);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
     }
 
     #[test]
@@ -666,6 +666,6 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "ReleaseAgentCardRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Permission);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
     }
 }
