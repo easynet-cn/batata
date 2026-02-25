@@ -27,20 +27,18 @@ nacos.server.main.port: 8848
 ### Specify local server's IP:
 # nacos.inetutils.ip-address=
 
-#*************** Persistence Mode Related Configurations ***************#
-### Storage mode: "external_db" (default), "standalone_embedded", "distributed_embedded"
-### external_db: Uses MySQL/PostgreSQL via SeaORM (requires db.url)
-### standalone_embedded: Uses RocksDB locally (no external DB needed, single node)
-### distributed_embedded: Uses Raft + RocksDB (no external DB needed, multi-node cluster)
-nacos.persistence.mode: external_db
+#*************** Datasource Related Configurations ***************#
+### Storage mode is auto-derived from spring.sql.init.platform + nacos.standalone:
+###   spring.sql.init.platform = "mysql"/"postgresql" → External DB (requires db.url)
+###   spring.sql.init.platform = empty + standalone   → Embedded RocksDB (single node)
+###   spring.sql.init.platform = empty + cluster      → Distributed Raft + RocksDB (multi-node)
+### Database platform: mysql, postgresql, or empty (embedded RocksDB)
+spring.sql.init.platform: mysql
 
-### RocksDB data directory for embedded modes (standalone_embedded / distributed_embedded)
+### RocksDB data directory for embedded modes (when spring.sql.init.platform is empty)
 #nacos.persistence.embedded.data_dir: data/rocksdb
 
-#*************** Datasource Related Configurations ***************#
 ### nacos.plugin.datasource.log.enabled=true
-### Database platform: mysql or postgresql
-spring.sql.init.platform: mysql
 ### Count of DB:
 # db.num=1
 
@@ -51,7 +49,7 @@ spring.sql.init.platform: mysql
 ### For PostgreSQL:
 # db.url: postgres://user:password@localhost:5432/batata
 ### Default: use DATABASE_URL environment variable
-db.url: mysql://nacos:nacos@localhost:3306/batata
+db.url:
 
 ### Database connection pool configuration
 db.pool.config.maximumPoolSize: 100
@@ -254,14 +252,16 @@ nacos.console.port: 8081
 ### Nacos Server Web context path:
 nacos.console.contextPath:
 
+### Console mode is auto-derived from nacos.deployment.type (-d flag):
+###   merged (default)  → Local console (in-process data access)
+###   server            → No console
+###   console           → Remote console (HTTP calls to Server)
+###   serverWithMcp     → Local console + MCP
+
 ### Nacos Server context path, which link to nacos server `nacos.server.contextPath`, works when deployment type is `console`
 nacos.console.remote.server.context-path: /nacos
 
-### Console mode: "local" (direct database access) or "remote" (HTTP calls to Server)
-### Default is "local". Use "remote" when console is deployed separately without database access.
-nacos.console.mode: local
-
-### Remote Server configurations (used when nacos.console.mode=remote)
+### Remote Server configurations (used when deployment type is `console`)
 ### Server address for remote console mode
 #nacos.console.remote.server_addr: http://127.0.0.1:8848
 ### Authentication credentials for remote server

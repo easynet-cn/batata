@@ -171,9 +171,6 @@ pub const NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP: &str = "serverWithMcp";
 // Console Mode Constants
 // ============================================================================
 
-pub const NACOS_CONSOLE_MODE: &str = "nacos.console.mode";
-pub const NACOS_CONSOLE_MODE_LOCAL: &str = "local";
-pub const NACOS_CONSOLE_MODE_REMOTE: &str = "remote";
 pub const NACOS_CONSOLE_REMOTE_SERVER_ADDR: &str = "nacos.console.remote.server_addr";
 pub const NACOS_CONSOLE_REMOTE_USERNAME: &str = "nacos.console.remote.username";
 pub const NACOS_CONSOLE_REMOTE_PASSWORD: &str = "nacos.console.remote.password";

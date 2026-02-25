@@ -14,10 +14,10 @@ use super::constants::{
     CONFIG_RENTENTION_DAYS, DATASOURCE_PLATFORM_PROPERTY, DEFAULT_CLUSTER_QUOTA,
     DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE,
     DEFAULT_SERVER_PORT, FUNCTION_MODE_PROPERTY_NAME, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK,
-    IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT, NACOS_CONSOLE_MODE,
-    NACOS_CONSOLE_MODE_LOCAL, NACOS_CONSOLE_MODE_REMOTE, NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS,
-    NACOS_CONSOLE_REMOTE_PASSWORD, NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS,
-    NACOS_CONSOLE_REMOTE_SERVER_ADDR, NACOS_CONSOLE_REMOTE_USERNAME, NACOS_DEPLOYMENT_TYPE,
+    IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT,
+    NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS, NACOS_CONSOLE_REMOTE_PASSWORD,
+    NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS, NACOS_CONSOLE_REMOTE_SERVER_ADDR,
+    NACOS_CONSOLE_REMOTE_USERNAME, NACOS_DEPLOYMENT_TYPE, NACOS_DEPLOYMENT_TYPE_CONSOLE,
     NACOS_DEPLOYMENT_TYPE_MERGED, NACOS_PLUGIN_DATASOURCE_LOG, NOTIFY_CONNECT_TIMEOUT,
     NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_PROPERTY, STANDALONE_MODE_PROPERTY_NAME,
 };
@@ -165,14 +165,10 @@ impl Configuration {
             .unwrap_or(true)
     }
 
-    pub fn console_mode(&self) -> String {
-        self.config
-            .get_string(NACOS_CONSOLE_MODE)
-            .unwrap_or(NACOS_CONSOLE_MODE_LOCAL.to_string())
-    }
-
+    /// Check if console is in remote mode.
+    /// Derived from deployment type: `console` deployment → remote mode.
     pub fn is_console_remote_mode(&self) -> bool {
-        self.console_mode() == NACOS_CONSOLE_MODE_REMOTE
+        self.deployment_type() == NACOS_DEPLOYMENT_TYPE_CONSOLE
     }
 
     pub fn console_remote_server_addr(&self) -> String {
@@ -407,13 +403,21 @@ impl Configuration {
     // Persistence Mode Configuration
     // ========================================================================
 
-    /// Get the persistence storage mode
+    /// Derive the persistence storage mode from `spring.sql.init.platform` and `nacos.standalone`.
+    ///
+    /// Logic (aligned with Nacos 3.x):
+    /// - `spring.sql.init.platform` = "mysql" or "postgresql" → ExternalDb
+    /// - `spring.sql.init.platform` = empty + standalone=true → StandaloneEmbedded (RocksDB)
+    /// - `spring.sql.init.platform` = empty + standalone=false → DistributedEmbedded (Raft + RocksDB)
     pub fn persistence_mode(&self) -> batata_persistence::StorageMode {
-        self.config
-            .get_string("nacos.persistence.mode")
-            .unwrap_or_else(|_| "external_db".to_string())
-            .parse()
-            .unwrap_or(batata_persistence::StorageMode::ExternalDb)
+        let platform = self.datasource_platform();
+        if platform.eq_ignore_ascii_case("mysql") || platform.eq_ignore_ascii_case("postgresql") {
+            batata_persistence::StorageMode::ExternalDb
+        } else if self.is_standalone() {
+            batata_persistence::StorageMode::StandaloneEmbedded
+        } else {
+            batata_persistence::StorageMode::DistributedEmbedded
+        }
     }
 
     /// Get the RocksDB data directory for embedded modes
@@ -430,7 +434,7 @@ impl Configuration {
     pub fn datasource_platform(&self) -> String {
         self.config
             .get_string(DATASOURCE_PLATFORM_PROPERTY)
-            .unwrap_or("false".to_string())
+            .unwrap_or_default()
     }
 
     pub fn plugin_datasource_log(&self) -> bool {

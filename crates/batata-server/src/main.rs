@@ -56,8 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Extract configuration parameters
     let deployment_type = configuration.deployment_type();
-    let is_console_remote = deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE
-        && configuration.is_console_remote_mode();
+    let is_console_remote = deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE;
 
     let server_address = configuration.server_address();
     let console_server_address = server_address.clone();
