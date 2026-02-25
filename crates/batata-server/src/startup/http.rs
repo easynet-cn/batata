@@ -3,10 +3,6 @@
 use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
-use utoipa::OpenApi;
-
-#[cfg(feature = "swagger")]
-use utoipa_swagger_ui::SwaggerUi;
 
 use batata_core::service::remote::ConnectionManager;
 use rocksdb::DB;
@@ -27,7 +23,6 @@ use crate::{
         health_actor::create_health_actor,
         kv::ConsulKVService, route::consul_routes,
     },
-    api::openapi::ApiDoc,
     api::v2::route::{
         cluster_routes, config_routes, console_routes as v2_console_routes, naming_routes,
     },
@@ -332,9 +327,9 @@ impl ApolloServices {
 
 /// Creates and binds the main HTTP server.
 ///
-/// The main server provides the core Nacos-compatible API endpoints
+/// The main server provides core Nacos-compatible API endpoints
 /// including config management, service discovery, AI capabilities,
-/// cloud native integrations, metrics, and Swagger UI documentation.
+/// cloud native integrations, and metrics.
 /// Consul and Apollo compatibility are served on dedicated ports.
 pub fn main_server(
     app_state: Arc<AppState>,
@@ -363,15 +358,6 @@ pub fn main_server(
             // Cloud services (Prometheus SD, Kubernetes Sync)
             .app_data(web::Data::new(cloud_services.prometheus_sd.clone()))
             .app_data(web::Data::new(cloud_services.k8s_sync.clone()));
-
-        // Swagger UI for API documentation (optional feature)
-        #[cfg(feature = "swagger")]
-        {
-            app = app.service(
-                SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-docs/openapi.json", ApiDoc::openapi()),
-            );
-        }
 
         app.service(
                 web::scope(&context_path)
