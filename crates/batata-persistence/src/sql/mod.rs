@@ -792,6 +792,71 @@ impl ConfigPersistence for ExternalDbPersistService {
         Ok(result.map(history_entity_to_storage))
     }
 
+    async fn config_history_search_with_filters(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        op_type: Option<&str>,
+        src_user: Option<&str>,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<ConfigHistoryStorageData>> {
+        let mut select = his_config_info::Entity::find()
+            .filter(his_config_info::Column::TenantId.eq(namespace_id));
+
+        if !data_id.is_empty() {
+            select = select.filter(his_config_info::Column::DataId.contains(data_id));
+        }
+        if !group.is_empty() {
+            select = select.filter(his_config_info::Column::GroupId.contains(group));
+        }
+        if let Some(op) = op_type {
+            select = select.filter(his_config_info::Column::OpType.eq(op));
+        }
+        if let Some(user) = src_user {
+            select = select.filter(his_config_info::Column::SrcUser.contains(user));
+        }
+        if let Some(start) = start_time {
+            if let Some(dt) = chrono::DateTime::from_timestamp_millis(start) {
+                select = select.filter(his_config_info::Column::GmtModified.gte(dt.naive_utc()));
+            }
+        }
+        if let Some(end) = end_time {
+            if let Some(dt) = chrono::DateTime::from_timestamp_millis(end) {
+                select = select.filter(his_config_info::Column::GmtModified.lte(dt.naive_utc()));
+            }
+        }
+
+        let count = select
+            .clone()
+            .select_only()
+            .column_as(Expr::col(Asterisk).count(), "count")
+            .into_tuple::<i64>()
+            .one(&self.db)
+            .await?
+            .unwrap_or_default() as u64;
+
+        if count == 0 {
+            return Ok(Page::empty());
+        }
+
+        let offset = (page_no - 1) * page_size;
+        let items = select
+            .order_by_desc(his_config_info::Column::Nid)
+            .offset(offset)
+            .limit(page_size)
+            .all(&self.db)
+            .await?
+            .into_iter()
+            .map(history_entity_to_storage)
+            .collect();
+
+        Ok(Page::new(count, page_no, page_size, items))
+    }
+
     async fn config_find_by_namespace(
         &self,
         namespace_id: &str,

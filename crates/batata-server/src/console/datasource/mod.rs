@@ -1,6 +1,7 @@
 // Console data source abstraction layer
 // Provides a unified interface for console operations in both local and remote modes
 
+pub mod embedded;
 pub mod local;
 pub mod remote;
 
@@ -366,6 +367,7 @@ pub async fn create_datasource(
     server_member_manager: Option<Arc<ServerMemberManager>>,
     config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     naming_service: Option<Arc<crate::service::naming::NamingService>>,
+    persistence: Option<Arc<dyn batata_persistence::PersistenceService>>,
 ) -> anyhow::Result<Arc<dyn ConsoleDataSource>> {
     if configuration.is_console_remote_mode() {
         // Remote mode: use HTTP client to connect to server
@@ -385,28 +387,20 @@ pub async fn create_datasource(
         );
         Ok(Arc::new(local_datasource))
     } else {
-        // Embedded mode (standalone/distributed): no external DB available.
-        // Console datasource uses remote HTTP client connecting to the main
-        // server's API, which is backed by the PersistenceService.
-        //
-        // Generate a JWT token locally to avoid self-connecting authentication
-        // issues (the server may not be ready yet, or no admin user may exist).
-        tracing::info!(
-            "No external database available; console will use self-connecting remote datasource with local token"
+        // Embedded mode (standalone/distributed): use direct PersistenceService access
+        let smm = server_member_manager.ok_or_else(|| {
+            anyhow::anyhow!("Server member manager required for embedded console mode")
+        })?;
+        let persist = persistence.ok_or_else(|| {
+            anyhow::anyhow!("Persistence service required for embedded console mode")
+        })?;
+        let embedded_ds = embedded::EmbeddedLocalDataSource::new(
+            persist,
+            smm,
+            config_subscriber_manager,
+            configuration.clone(),
+            naming_service,
         );
-        let token_secret = configuration.token_secret_key();
-        // Use a long-lived internal token (365 days) for self-connection.
-        // This token is only used for the server's internal console-to-main-server
-        // communication and never exposed externally.
-        let internal_token_ttl: i64 = 365 * 24 * 3600;
-        let internal_user = configuration.console_remote_username();
-        let token = crate::auth::service::auth::encode_jwt_token(
-            &internal_user,
-            &token_secret,
-            internal_token_ttl,
-        )?;
-        let remote_datasource =
-            remote::RemoteDataSource::new_with_token(configuration, token, internal_token_ttl)?;
-        Ok(Arc::new(remote_datasource))
+        Ok(Arc::new(embedded_ds))
     }
 }

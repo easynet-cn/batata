@@ -516,6 +516,81 @@ impl ConfigPersistence for EmbeddedPersistService {
         Ok(best.as_ref().map(Self::json_to_history))
     }
 
+    async fn config_history_search_with_filters(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        op_type: Option<&str>,
+        src_user: Option<&str>,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<ConfigHistoryStorageData>> {
+        // Build prefix for history entries matching data_id/group/namespace
+        let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
+        let cf = self.cf(CF_CONFIG_HISTORY)?;
+
+        let mut all_items = Vec::new();
+        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let key_str = String::from_utf8_lossy(&key);
+            if !key_str.starts_with(&prefix) {
+                break;
+            }
+            let json: serde_json::Value = serde_json::from_slice(&value)?;
+
+            // Apply filters
+            if let Some(op) = op_type {
+                let entry_op = json["op_type"].as_str().unwrap_or("");
+                if entry_op != op {
+                    continue;
+                }
+            }
+            if let Some(user) = src_user {
+                let entry_user = json["src_user"].as_str().unwrap_or("");
+                if !entry_user.contains(user) {
+                    continue;
+                }
+            }
+            if let Some(start) = start_time {
+                let entry_time = json["modified_time"].as_i64().unwrap_or(0);
+                if entry_time < start {
+                    continue;
+                }
+            }
+            if let Some(end) = end_time {
+                let entry_time = json["modified_time"].as_i64().unwrap_or(0);
+                if entry_time > end {
+                    continue;
+                }
+            }
+
+            all_items.push(json);
+        }
+
+        // Sort by id descending (newest first)
+        all_items.sort_by(|a, b| {
+            let id_a = a["id"].as_u64().unwrap_or(0);
+            let id_b = b["id"].as_u64().unwrap_or(0);
+            id_b.cmp(&id_a)
+        });
+
+        let total = all_items.len() as u64;
+        let offset = (page_no.saturating_sub(1)) * page_size;
+        let page_items: Vec<ConfigHistoryStorageData> = all_items
+            .iter()
+            .skip(offset as usize)
+            .take(page_size as usize)
+            .map(Self::json_to_history)
+            .collect();
+
+        Ok(Page::new(total, page_no, page_size, page_items))
+    }
+
     async fn config_find_by_namespace(
         &self,
         namespace_id: &str,

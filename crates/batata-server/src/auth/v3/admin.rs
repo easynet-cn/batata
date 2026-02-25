@@ -25,10 +25,7 @@ struct LoginResult {
 }
 
 #[post("/user/admin")]
-async fn init_admin(
-    data: web::Data<AppState>,
-    form: web::Form<InitAdminData>,
-) -> impl Responder {
+async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -> impl Responder {
     let username = form.username.clone().unwrap_or_default();
     let password = form.password.clone().unwrap_or_default();
 

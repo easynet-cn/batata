@@ -330,6 +330,32 @@ impl ConfigPersistence for DistributedPersistService {
         Ok(best.map(EmbeddedPersistService::json_to_history))
     }
 
+    async fn config_history_search_with_filters(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        op_type: Option<&str>,
+        src_user: Option<&str>,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<ConfigHistoryStorageData>> {
+        self.ensure_consistent_read().await?;
+
+        let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
+        let (items, total) = self.reader.search_config_history_with_filters(
+            &prefix, op_type, src_user, start_time, end_time, page_no, page_size,
+        )?;
+
+        let page_items = items
+            .iter()
+            .map(EmbeddedPersistService::json_to_history)
+            .collect();
+        Ok(Page::new(total, page_no, page_size, page_items))
+    }
+
     async fn config_find_by_namespace(
         &self,
         namespace_id: &str,

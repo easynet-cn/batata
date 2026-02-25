@@ -143,6 +143,21 @@ pub trait ConfigPersistence: Send + Sync {
         namespace_id: &str,
     ) -> anyhow::Result<Vec<ConfigStorageData>>;
 
+    /// Search config history with advanced filters (op_type, src_user, time range)
+    #[allow(clippy::too_many_arguments)]
+    async fn config_history_search_with_filters(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        op_type: Option<&str>,
+        src_user: Option<&str>,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<ConfigHistoryStorageData>>;
+
     /// Find configs for export with optional filters
     async fn config_find_for_export(
         &self,

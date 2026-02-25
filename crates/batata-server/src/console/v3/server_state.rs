@@ -16,23 +16,7 @@ struct LanguageParam {
 
 #[get("/state")]
 async fn state(data: web::Data<AppState>) -> web::Json<HashMap<String, Option<String>>> {
-    let mut state_map = data.console_datasource.server_state().await;
-
-    // When the remote datasource cannot authenticate (e.g. no admin user yet in
-    // standalone_embedded mode), it returns an empty map.  Fall back to building
-    // critical state fields from AppState so the frontend can still detect
-    // auth_admin_request and show the admin-init page.
-    if state_map.is_empty() {
-        let has_admin = match data.persistence.as_ref() {
-            Some(p) => p.role_has_global_admin().await.unwrap_or(false),
-            None => false,
-        };
-
-        let is_admin_request = data.configuration.auth_enabled() && !has_admin;
-        state_map.extend(data.auth_state(is_admin_request));
-        state_map.extend(data.env_state());
-    }
-
+    let state_map = data.console_datasource.server_state().await;
     web::Json(state_map)
 }
 
