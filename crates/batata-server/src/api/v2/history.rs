@@ -10,6 +10,7 @@ use actix_web::{HttpMessage, HttpRequest, Responder, get, web};
 use tracing::warn;
 
 use batata_api::Page;
+use batata_persistence::ConfigHistoryStorageData;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
@@ -20,6 +21,108 @@ use super::model::{
     ConfigInfoResponse, HistoryDetailParam, HistoryItemResponse, HistoryListParam,
     HistoryPreviousParam, NamespaceConfigsParam,
 };
+
+/// Helper to convert ConfigHistoryStorageData to HistoryItemResponse (list view, no content)
+fn history_storage_to_list_response(item: ConfigHistoryStorageData) -> HistoryItemResponse {
+    HistoryItemResponse {
+        id: item.id.to_string(),
+        last_id: Some(-1),
+        data_id: item.data_id,
+        group: item.group,
+        tenant: item.tenant,
+        app_name: if item.app_name.is_empty() {
+            None
+        } else {
+            Some(item.app_name)
+        },
+        md5: Some(item.md5),
+        content: None, // Not included in list view
+        src_ip: if item.src_ip.is_empty() {
+            None
+        } else {
+            Some(item.src_ip)
+        },
+        src_user: if item.src_user.is_empty() {
+            None
+        } else {
+            Some(item.src_user)
+        },
+        op_type: if item.op_type.is_empty() {
+            None
+        } else {
+            Some(item.op_type)
+        },
+        publish_type: if item.publish_type.is_empty() {
+            None
+        } else {
+            Some(item.publish_type)
+        },
+        ext_info: if item.ext_info.is_empty() {
+            None
+        } else {
+            Some(item.ext_info)
+        },
+        r#type: None,
+        created_time: Some(item.created_time.to_string()),
+        last_modified_time: Some(item.modified_time.to_string()),
+        encrypted_data_key: if item.encrypted_data_key.is_empty() {
+            None
+        } else {
+            Some(item.encrypted_data_key)
+        },
+    }
+}
+
+/// Helper to convert ConfigHistoryStorageData to HistoryItemResponse (detail view, with content)
+fn history_storage_to_detail_response(item: ConfigHistoryStorageData) -> HistoryItemResponse {
+    HistoryItemResponse {
+        id: item.id.to_string(),
+        last_id: Some(-1),
+        data_id: item.data_id,
+        group: item.group,
+        tenant: item.tenant,
+        app_name: if item.app_name.is_empty() {
+            None
+        } else {
+            Some(item.app_name)
+        },
+        md5: Some(item.md5),
+        content: Some(item.content),
+        src_ip: if item.src_ip.is_empty() {
+            None
+        } else {
+            Some(item.src_ip)
+        },
+        src_user: if item.src_user.is_empty() {
+            None
+        } else {
+            Some(item.src_user)
+        },
+        op_type: if item.op_type.is_empty() {
+            None
+        } else {
+            Some(item.op_type)
+        },
+        publish_type: if item.publish_type.is_empty() {
+            None
+        } else {
+            Some(item.publish_type)
+        },
+        ext_info: if item.ext_info.is_empty() {
+            None
+        } else {
+            Some(item.ext_info)
+        },
+        r#type: None,
+        created_time: Some(item.created_time.to_string()),
+        last_modified_time: Some(item.modified_time.to_string()),
+        encrypted_data_key: if item.encrypted_data_key.is_empty() {
+            None
+        } else {
+            Some(item.encrypted_data_key)
+        },
+    }
+}
 
 /// Get config history list
 ///
@@ -66,77 +169,29 @@ pub async fn get_history_list(
             .build()
     );
 
-    // Get history from service
-    let db = data.db();
-    match batata_config::service::history::search_page(
-        db,
-        &params.data_id,
-        &params.group,
-        namespace_id,
-        params.page_no,
-        params.page_size,
-    )
-    .await
+    // Get history from persistence service
+    let persistence = data.persistence();
+    match persistence
+        .config_history_search_page(
+            &params.data_id,
+            &params.group,
+            namespace_id,
+            params.page_no,
+            params.page_size,
+        )
+        .await
     {
         Ok(page) => {
             // Transform to response format
-            let page_items: Vec<HistoryItemResponse> = page
-                .page_items
-                .into_iter()
-                .map(|item| HistoryItemResponse {
-                    id: item.id.to_string(),
-                    last_id: Some(item.last_id),
-                    data_id: item.data_id,
-                    group: item.group,
-                    tenant: item.tenant,
-                    app_name: if item.app_name.is_empty() {
-                        None
-                    } else {
-                        Some(item.app_name)
-                    },
-                    md5: Some(item.md5),
-                    content: None, // Not included in list view
-                    src_ip: if item.src_ip.is_empty() {
-                        None
-                    } else {
-                        Some(item.src_ip)
-                    },
-                    src_user: if item.src_user.is_empty() {
-                        None
-                    } else {
-                        Some(item.src_user)
-                    },
-                    op_type: if item.op_type.is_empty() {
-                        None
-                    } else {
-                        Some(item.op_type)
-                    },
-                    publish_type: if item.publish_type.is_empty() {
-                        None
-                    } else {
-                        Some(item.publish_type)
-                    },
-                    ext_info: if item.ext_info.is_empty() {
-                        None
-                    } else {
-                        Some(item.ext_info)
-                    },
-                    r#type: None, // Not available in ConfigHistoryInfo
-                    created_time: Some(item.created_time.to_string()),
-                    last_modified_time: Some(item.last_modified_time.to_string()),
-                    encrypted_data_key: if item.encrypted_data_key.is_empty() {
-                        None
-                    } else {
-                        Some(item.encrypted_data_key)
-                    },
-                })
-                .collect();
-
             let response_page = Page {
                 total_count: page.total_count,
                 page_number: page.page_number,
                 pages_available: page.pages_available,
-                page_items,
+                page_items: page
+                    .page_items
+                    .into_iter()
+                    .map(history_storage_to_list_response)
+                    .collect(),
             };
 
             Result::<Page<HistoryItemResponse>>::http_success(response_page)
@@ -193,9 +248,9 @@ pub async fn get_history(
             .build()
     );
 
-    // Get history entry by ID
-    let db = data.db();
-    match batata_config::service::history::find_by_id(db, params.nid).await {
+    // Get history entry by ID from persistence service
+    let persistence = data.persistence();
+    match persistence.config_history_find_by_id(params.nid).await {
         Ok(Some(item)) => {
             // Verify the history entry matches the requested config
             if item.data_id != params.data_id
@@ -210,54 +265,7 @@ pub async fn get_history(
                 );
             }
 
-            let response = HistoryItemResponse {
-                id: item.id.to_string(),
-                last_id: Some(item.last_id),
-                data_id: item.data_id,
-                group: item.group,
-                tenant: item.tenant,
-                app_name: if item.app_name.is_empty() {
-                    None
-                } else {
-                    Some(item.app_name)
-                },
-                md5: Some(item.md5),
-                content: Some(item.content), // Include content in detail view
-                src_ip: if item.src_ip.is_empty() {
-                    None
-                } else {
-                    Some(item.src_ip)
-                },
-                src_user: if item.src_user.is_empty() {
-                    None
-                } else {
-                    Some(item.src_user)
-                },
-                op_type: if item.op_type.is_empty() {
-                    None
-                } else {
-                    Some(item.op_type)
-                },
-                publish_type: if item.publish_type.is_empty() {
-                    None
-                } else {
-                    Some(item.publish_type)
-                },
-                ext_info: if item.ext_info.is_empty() {
-                    None
-                } else {
-                    Some(item.ext_info)
-                },
-                r#type: None,
-                created_time: Some(item.created_time.to_string()),
-                last_modified_time: Some(item.last_modified_time.to_string()),
-                encrypted_data_key: if item.encrypted_data_key.is_empty() {
-                    None
-                } else {
-                    Some(item.encrypted_data_key)
-                },
-            };
-
+            let response = history_storage_to_detail_response(item);
             Result::<HistoryItemResponse>::http_success(response)
         }
         Ok(None) => Result::<Option<HistoryItemResponse>>::http_response(
@@ -318,66 +326,14 @@ pub async fn get_previous_history(
             .build()
     );
 
-    // Get the previous history entry
-    let db = data.db();
-    match batata_config::service::history::get_previous_version(
-        db,
-        &params.data_id,
-        &params.group,
-        namespace_id,
-        params.id as i64,
-    )
-    .await
+    // Get the previous history entry from persistence service
+    let persistence = data.persistence();
+    match persistence
+        .config_history_get_previous(&params.data_id, &params.group, namespace_id, params.id)
+        .await
     {
         Ok(Some(item)) => {
-            let response = HistoryItemResponse {
-                id: item.id.to_string(),
-                last_id: Some(item.last_id),
-                data_id: item.data_id,
-                group: item.group,
-                tenant: item.tenant,
-                app_name: if item.app_name.is_empty() {
-                    None
-                } else {
-                    Some(item.app_name)
-                },
-                md5: Some(item.md5),
-                content: Some(item.content),
-                src_ip: if item.src_ip.is_empty() {
-                    None
-                } else {
-                    Some(item.src_ip)
-                },
-                src_user: if item.src_user.is_empty() {
-                    None
-                } else {
-                    Some(item.src_user)
-                },
-                op_type: if item.op_type.is_empty() {
-                    None
-                } else {
-                    Some(item.op_type)
-                },
-                publish_type: if item.publish_type.is_empty() {
-                    None
-                } else {
-                    Some(item.publish_type)
-                },
-                ext_info: if item.ext_info.is_empty() {
-                    None
-                } else {
-                    Some(item.ext_info)
-                },
-                r#type: None,
-                created_time: Some(item.created_time.to_string()),
-                last_modified_time: Some(item.last_modified_time.to_string()),
-                encrypted_data_key: if item.encrypted_data_key.is_empty() {
-                    None
-                } else {
-                    Some(item.encrypted_data_key)
-                },
-            };
-
+            let response = history_storage_to_detail_response(item);
             Result::<HistoryItemResponse>::http_success(response)
         }
         Ok(None) => Result::<Option<HistoryItemResponse>>::http_response(
@@ -416,26 +372,26 @@ pub async fn get_namespace_configs(
             .build()
     );
 
-    // Get configs from service
-    let db = data.db();
-    match batata_config::service::history::find_configs_by_namespace_id(db, namespace_id).await {
+    // Get configs from persistence service
+    let persistence = data.persistence();
+    match persistence.config_find_by_namespace(namespace_id).await {
         Ok(configs) => {
             let response: Vec<ConfigInfoResponse> = configs
                 .into_iter()
                 .map(|config| ConfigInfoResponse {
-                    id: config.id.map(|id| id.to_string()).unwrap_or_default(),
+                    id: "0".to_string(),
                     data_id: config.data_id,
-                    group: config.group_name,
-                    tenant: config.namespace_id,
+                    group: config.group,
+                    tenant: config.tenant,
                     app_name: if config.app_name.is_empty() {
                         None
                     } else {
                         Some(config.app_name)
                     },
-                    r#type: if config.r#type.is_empty() {
+                    r#type: if config.config_type.is_empty() {
                         None
                     } else {
-                        Some(config.r#type)
+                        Some(config.config_type)
                     },
                 })
                 .collect();

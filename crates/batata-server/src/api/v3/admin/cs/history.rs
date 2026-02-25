@@ -13,7 +13,7 @@ use crate::{
         self,
         common::{AppState, DEFAULT_NAMESPACE_ID},
     },
-    secured, service,
+    secured,
 };
 
 #[derive(Debug, Deserialize)]
@@ -73,15 +73,16 @@ async fn list_history(
             .unwrap_or(DEFAULT_NAMESPACE_ID.to_string());
     }
 
-    match service::history::search_page(
-        data.db(),
-        &params.data_id,
-        &params.group_name,
-        &namespace_id,
-        params.page_no,
-        params.page_size,
-    )
-    .await
+    match data
+        .persistence()
+        .config_history_search_page(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            params.page_no,
+            params.page_size,
+        )
+        .await
     {
         Ok(result) => {
             let page_result = Page::<ConfigHistoryBasicInfo>::new(
@@ -123,7 +124,11 @@ async fn get_detail(
             .build()
     );
 
-    match service::history::find_by_id(data.db(), params.nid).await {
+    match data
+        .persistence()
+        .config_history_find_by_id(params.nid)
+        .await
+    {
         Ok(result) => {
             let config_info = result.map(ConfigHistoryDetailInfo::from);
             model::common::Result::<Option<ConfigHistoryDetailInfo>>::http_success(config_info)

@@ -51,7 +51,8 @@ pub struct HealthCheckResult {
 /// Health check processor trait
 pub trait HealthCheckProcessor: Send + Sync {
     /// Check the health of an instance
-    async fn check(&self, instance: &Instance, cluster_config: &ClusterConfig) -> HealthCheckResult;
+    async fn check(&self, instance: &Instance, cluster_config: &ClusterConfig)
+    -> HealthCheckResult;
 
     /// Get the processor type
     fn get_type(&self) -> HealthCheckType;
@@ -65,7 +66,12 @@ impl TcpHealthCheckProcessor {
         Self
     }
 
-    async fn tcp_check(&self, ip: &str, port: i32, timeout_duration: Duration) -> HealthCheckResult {
+    async fn tcp_check(
+        &self,
+        ip: &str,
+        port: i32,
+        timeout_duration: Duration,
+    ) -> HealthCheckResult {
         let start = std::time::Instant::now();
 
         let addr_str = format!("{}:{}", ip, port);
@@ -83,7 +89,12 @@ impl TcpHealthCheckProcessor {
         // Use 500ms timeout as per Nacos implementation
         let timeout_ms = timeout_duration.as_millis().min(500);
 
-        match timeout(Duration::from_millis(timeout_ms as u64), TcpStream::connect(&addr)).await {
+        match timeout(
+            Duration::from_millis(timeout_ms as u64),
+            TcpStream::connect(&addr),
+        )
+        .await
+        {
             Ok(Ok(_stream)) => {
                 debug!("TCP health check passed for {}:{}", ip, port);
                 HealthCheckResult {
@@ -119,7 +130,11 @@ impl Default for TcpHealthCheckProcessor {
 }
 
 impl HealthCheckProcessor for TcpHealthCheckProcessor {
-    async fn check(&self, instance: &Instance, cluster_config: &ClusterConfig) -> HealthCheckResult {
+    async fn check(
+        &self,
+        instance: &Instance,
+        cluster_config: &ClusterConfig,
+    ) -> HealthCheckResult {
         // Determine check port
         let check_port = if cluster_config.use_instance_port || cluster_config.check_port <= 0 {
             instance.port
@@ -145,7 +160,13 @@ impl HttpHealthCheckProcessor {
         Self
     }
 
-    async fn http_check(&self, ip: &str, port: i32, path: &str, timeout_duration: Duration) -> HealthCheckResult {
+    async fn http_check(
+        &self,
+        ip: &str,
+        port: i32,
+        path: &str,
+        timeout_duration: Duration,
+    ) -> HealthCheckResult {
         let start = std::time::Instant::now();
 
         let addr_str = format!("{}:{}", ip, port);
@@ -260,7 +281,11 @@ impl Default for HttpHealthCheckProcessor {
 }
 
 impl HealthCheckProcessor for HttpHealthCheckProcessor {
-    async fn check(&self, instance: &Instance, cluster_config: &ClusterConfig) -> HealthCheckResult {
+    async fn check(
+        &self,
+        instance: &Instance,
+        cluster_config: &ClusterConfig,
+    ) -> HealthCheckResult {
         // Determine check port
         let check_port = if cluster_config.use_instance_port || cluster_config.check_port <= 0 {
             instance.port
@@ -301,7 +326,11 @@ impl Default for NoneHealthCheckProcessor {
 }
 
 impl HealthCheckProcessor for NoneHealthCheckProcessor {
-    async fn check(&self, _instance: &Instance, _cluster_config: &ClusterConfig) -> HealthCheckResult {
+    async fn check(
+        &self,
+        _instance: &Instance,
+        _cluster_config: &ClusterConfig,
+    ) -> HealthCheckResult {
         // No health check, always return success
         HealthCheckResult {
             success: true,

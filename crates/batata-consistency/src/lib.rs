@@ -19,6 +19,10 @@ pub use raft::types::*;
 pub use raft::reader::RocksDbReader;
 pub use raft::state_machine::RocksStateMachine;
 
+// Re-export Raft node and config
+pub use raft::config::RaftConfig;
+pub use raft::node::{RaftNode, RaftNodeBuilder};
+
 // Re-export lock types
 pub use lock::{
     DistributedLock, DistributedLockService, LockAcquireRequest, LockAcquireResult, LockCommand,

@@ -284,8 +284,7 @@ pub fn consul_catalog_routes() -> actix_web::Scope {
 
 /// Configure Consul UI API routes
 pub fn consul_ui_routes() -> actix_web::Scope {
-    web::scope("/v1/internal/ui")
-        .route("/services", web::get().to(catalog::ui_services))
+    web::scope("/v1/internal/ui").route("/services", web::get().to(catalog::ui_services))
 }
 
 /// Configure Consul ACL API routes (in-memory)

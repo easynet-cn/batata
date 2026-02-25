@@ -4,6 +4,7 @@
 //! - POST /nacos/v2/cs/config/listener - Listen for configuration changes
 
 use actix_web::{HttpMessage, HttpRequest, Responder, post, web};
+use batata_persistence::PersistenceService;
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -51,17 +52,20 @@ fn parse_listening_configs(listening_configs: &str) -> Vec<(String, String, Stri
 ///
 /// Returns a map of changed configs with their group key as key
 async fn check_config_changes(
-    db: &sea_orm::DatabaseConnection,
+    persistence: &dyn PersistenceService,
     configs: &[(String, String, String, u64)],
     namespace_id: &str,
 ) -> HashMap<String, String> {
     let mut changed_configs = HashMap::new();
 
     for (data_id, group, client_md5, _timeout) in configs {
-        // Get current config from database
-        match batata_config::service::config::find_one(db, data_id, group, namespace_id).await {
+        // Get current config from persistence service
+        match persistence
+            .config_find_one(data_id, group, namespace_id)
+            .await
+        {
             Ok(Some(config)) => {
-                let server_md5 = &config.config_info.config_info_base.md5;
+                let server_md5 = &config.md5;
                 // MD5 mismatch means config has changed or doesn't exist
                 if server_md5 != client_md5 {
                     let group_key = format!("{}+{}+{}", data_id, group, namespace_id);
@@ -136,8 +140,8 @@ pub async fn config_listener(
     );
 
     // Check for config changes
-    let db = data.db();
-    let changed_configs = check_config_changes(db, &configs, &namespace_id).await;
+    let persistence = data.persistence();
+    let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
 
     if !changed_configs.is_empty() {
         // Configs have changed, return immediately
@@ -168,7 +172,7 @@ pub async fn config_listener(
         }
 
         // Check for changes again
-        let changed_configs = check_config_changes(db, &configs, &namespace_id).await;
+        let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
         if !changed_configs.is_empty() {
             info!(
                 count = changed_configs.len(),

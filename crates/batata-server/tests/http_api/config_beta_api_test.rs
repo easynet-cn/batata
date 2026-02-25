@@ -3,8 +3,8 @@
 //! Tests for Beta configuration feature used for canary releases
 
 use crate::common::{
-    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
-    TestClient, unique_data_id,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id,
 };
 
 /// Create an authenticated test client
@@ -95,10 +95,7 @@ async fn test_delete_beta_config() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");

@@ -295,7 +295,11 @@ pub struct BatchInstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for BatchInstanceRequestHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = BatchInstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -430,7 +434,11 @@ pub struct ServiceListRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ServiceListRequestHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = ServiceListRequest::from(payload);
         let request_id = request.request_id();
 
@@ -476,7 +484,11 @@ pub struct ServiceQueryRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ServiceQueryRequestHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = ServiceQueryRequest::from(payload);
         let request_id = request.request_id();
 
@@ -608,7 +620,11 @@ pub struct PersistentInstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for PersistentInstanceRequestHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = PersistentInstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -719,7 +735,11 @@ pub struct NotifySubscriberHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for NotifySubscriberHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = NotifySubscriberRequest::from(payload);
         let request_id = request.request_id();
 

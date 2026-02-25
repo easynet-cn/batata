@@ -5,8 +5,8 @@
 //! - ConfigFilterChainManager: Manages filter chain
 //! - ConfigRequest/ConfigResponse: Filter context
 
-use std::sync::Arc;
 use dashmap::DashMap;
+use std::sync::Arc;
 
 /// Config request for filtering before publishing
 #[derive(Debug, Clone)]
@@ -266,7 +266,11 @@ mod tests {
             prefix: "pref:".to_string(),
         }));
 
-        let mut request = ConfigRequest::new("test".to_string(), "group".to_string(), "tenant".to_string());
+        let mut request = ConfigRequest::new(
+            "test".to_string(),
+            "group".to_string(),
+            "tenant".to_string(),
+        );
         request.content = "hello".to_string();
 
         manager.do_filter_publish(&mut request).await.unwrap();

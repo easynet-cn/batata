@@ -135,7 +135,8 @@ impl HealthChecker for HttpHealthChecker {
             &checker_config.path,
             &headers,
             &expected_codes,
-        ).await
+        )
+        .await
     }
 }
 
@@ -182,10 +183,7 @@ impl HttpHealthChecker {
         };
 
         // Build HTTP request with custom headers
-        let mut request = format!(
-            "GET {} HTTP/1.1\r\nHost: {}:{}\r\n",
-            path, ip, port
-        );
+        let mut request = format!("GET {} HTTP/1.1\r\nHost: {}:{}\r\n", path, ip, port);
 
         // Add custom headers
         for (key, value) in headers {
@@ -271,7 +269,11 @@ impl HealthChecker for NoneHealthChecker {
         "NONE"
     }
 
-    async fn check(&self, _instance: &Instance, _config: &HealthCheckerConfig) -> HealthCheckResult {
+    async fn check(
+        &self,
+        _instance: &Instance,
+        _config: &HealthCheckerConfig,
+    ) -> HealthCheckResult {
         HealthCheckResult {
             success: true,
             message: None,

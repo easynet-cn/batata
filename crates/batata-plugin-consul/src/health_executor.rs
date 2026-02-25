@@ -81,8 +81,12 @@ impl HealthCheckExecutor {
                 };
 
                 if should_execute {
-                    tracing::debug!("Executing check: id={}, type={}, interval={}s",
-                        check_id, config.check_type, interval_secs);
+                    tracing::debug!(
+                        "Executing check: id={}, type={}, interval={}s",
+                        check_id,
+                        config.check_type,
+                        interval_secs
+                    );
 
                     last_executed.insert(check_id.clone(), now);
 
@@ -124,9 +128,21 @@ impl HealthCheckExecutor {
                 } else {
                     "DEFAULT".to_string()
                 };
-                (parts[0].to_string(), parts[1].to_string(), parts[3].to_string(), port, cluster)
+                (
+                    parts[0].to_string(),
+                    parts[1].to_string(),
+                    parts[3].to_string(),
+                    port,
+                    cluster,
+                )
             } else {
-                ("public".to_string(), "DEFAULT_GROUP".to_string(), "".to_string(), 0, "DEFAULT".to_string())
+                (
+                    "public".to_string(),
+                    "DEFAULT_GROUP".to_string(),
+                    "".to_string(),
+                    0,
+                    "DEFAULT".to_string(),
+                )
             }
         } else if service_id.contains("-") {
             // Try to parse as service-ip-port format
@@ -144,9 +160,21 @@ impl HealthCheckExecutor {
             if let Some(idx) = last_dash2 {
                 let ip = prefix[idx + 1..].to_string();
                 // service_name is passed as a parameter, use it directly
-                ("public".to_string(), "DEFAULT_GROUP".to_string(), ip, port, "DEFAULT".to_string())
+                (
+                    "public".to_string(),
+                    "DEFAULT_GROUP".to_string(),
+                    ip,
+                    port,
+                    "DEFAULT".to_string(),
+                )
             } else {
-                ("public".to_string(), "DEFAULT_GROUP".to_string(), "".to_string(), 0, "DEFAULT".to_string())
+                (
+                    "public".to_string(),
+                    "DEFAULT_GROUP".to_string(),
+                    "".to_string(),
+                    0,
+                    "DEFAULT".to_string(),
+                )
             }
         } else {
             // Can't parse, skip update
@@ -166,7 +194,10 @@ impl HealthCheckExecutor {
 
             tracing::debug!(
                 "Synced instance health: service={}, ip={}, port={}, healthy={}",
-                service_name, ip, port, healthy
+                service_name,
+                ip,
+                port,
+                healthy
             );
         }
     }
@@ -187,7 +218,12 @@ impl HealthCheckExecutor {
             .and_then(|t| parse_duration(t))
             .unwrap_or(10);
 
-        tracing::info!("HTTP check {} starting: url={}, timeout={}s", check_id, url, timeout_secs);
+        tracing::info!(
+            "HTTP check {} starting: url={}, timeout={}s",
+            check_id,
+            url,
+            timeout_secs
+        );
 
         // Execute HTTP request with timeout using client
         let result = tokio::time::timeout(
@@ -200,7 +236,11 @@ impl HealthCheckExecutor {
 
         match result {
             Ok(Ok(response)) => {
-                tracing::info!("HTTP check {} inside Ok(Ok), status code: {:?}", check_id, response.status());
+                tracing::info!(
+                    "HTTP check {} inside Ok(Ok), status code: {:?}",
+                    check_id,
+                    response.status()
+                );
                 let status_code = response.status();
                 let status = if status_code.is_success() {
                     "passing"
@@ -214,18 +254,34 @@ impl HealthCheckExecutor {
                     format!("HTTP check failed: {} returned {}", url, status_code)
                 };
 
-                tracing::info!("HTTP check {} updating status: status={}, output={}", check_id, status, output);
+                tracing::info!(
+                    "HTTP check {} updating status: status={}, output={}",
+                    check_id,
+                    status,
+                    output
+                );
 
                 // Use actor message passing to update status (lock-free)
-                let result = self.health_actor.update_status(
-                    check_id.to_string(),
-                    status.to_string(),
-                    Some(output.clone()),
-                ).await;
+                let result = self
+                    .health_actor
+                    .update_status(
+                        check_id.to_string(),
+                        status.to_string(),
+                        Some(output.clone()),
+                    )
+                    .await;
 
                 match result {
-                    Ok(()) => tracing::info!("HTTP check {}: status={}, http_status={}, output={}", check_id, status, status_code, output),
-                    Err(e) => tracing::error!("HTTP check {} failed to update status: {}", check_id, e),
+                    Ok(()) => tracing::info!(
+                        "HTTP check {}: status={}, http_status={}, output={}",
+                        check_id,
+                        status,
+                        status_code,
+                        output
+                    ),
+                    Err(e) => {
+                        tracing::error!("HTTP check {} failed to update status: {}", check_id, e)
+                    }
                 }
 
                 // Sync instance health status to NamingService
@@ -235,15 +291,22 @@ impl HealthCheckExecutor {
                 tracing::info!("HTTP check {} inside Ok(Err), error: {:?}", check_id, e);
                 let output = format!("HTTP check error: {} - {}", url, e);
 
-                let result = self.health_actor.update_status(
-                    check_id.to_string(),
-                    "critical".to_string(),
-                    Some(output.clone()),
-                ).await;
+                let result = self
+                    .health_actor
+                    .update_status(
+                        check_id.to_string(),
+                        "critical".to_string(),
+                        Some(output.clone()),
+                    )
+                    .await;
 
                 match result {
-                    Ok(()) => tracing::warn!("HTTP check {} failed: {}, output={}", check_id, e, output),
-                    Err(e) => tracing::error!("HTTP check {} failed to update status: {}", check_id, e),
+                    Ok(()) => {
+                        tracing::warn!("HTTP check {} failed: {}, output={}", check_id, e, output)
+                    }
+                    Err(e) => {
+                        tracing::error!("HTTP check {} failed to update status: {}", check_id, e)
+                    }
                 }
 
                 // Sync instance health status to NamingService
@@ -253,15 +316,20 @@ impl HealthCheckExecutor {
                 tracing::info!("HTTP check {} inside Err(timeout)", check_id);
                 let output = format!("HTTP check timeout: {}", url);
 
-                let result = self.health_actor.update_status(
-                    check_id.to_string(),
-                    "critical".to_string(),
-                    Some(output.clone()),
-                ).await;
+                let result = self
+                    .health_actor
+                    .update_status(
+                        check_id.to_string(),
+                        "critical".to_string(),
+                        Some(output.clone()),
+                    )
+                    .await;
 
                 match result {
                     Ok(()) => tracing::warn!("HTTP check {} timeout, output={}", check_id, output),
-                    Err(e) => tracing::error!("HTTP check {} failed to update status: {}", check_id, e),
+                    Err(e) => {
+                        tracing::error!("HTTP check {} failed to update status: {}", check_id, e)
+                    }
                 }
 
                 // Sync instance health status to NamingService
@@ -295,11 +363,10 @@ impl HealthCheckExecutor {
             Ok(Ok(_stream)) => {
                 let output = format!("TCP check passed: {}", addr);
 
-                let _ = self.health_actor.update_status(
-                    check_id.to_string(),
-                    "passing".to_string(),
-                    Some(output),
-                ).await;
+                let _ = self
+                    .health_actor
+                    .update_status(check_id.to_string(), "passing".to_string(), Some(output))
+                    .await;
 
                 tracing::debug!("TCP check {}: passed", check_id);
 
@@ -309,11 +376,10 @@ impl HealthCheckExecutor {
             Ok(Err(e)) => {
                 let output = format!("TCP check failed: {} - {}", addr, e);
 
-                let _ = self.health_actor.update_status(
-                    check_id.to_string(),
-                    "critical".to_string(),
-                    Some(output),
-                ).await;
+                let _ = self
+                    .health_actor
+                    .update_status(check_id.to_string(), "critical".to_string(), Some(output))
+                    .await;
 
                 tracing::warn!("TCP check {} failed: {}", check_id, e);
 
@@ -323,11 +389,10 @@ impl HealthCheckExecutor {
             Err(_) => {
                 let output = format!("TCP check timeout: {}", addr);
 
-                let _ = self.health_actor.update_status(
-                    check_id.to_string(),
-                    "critical".to_string(),
-                    Some(output),
-                ).await;
+                let _ = self
+                    .health_actor
+                    .update_status(check_id.to_string(), "critical".to_string(), Some(output))
+                    .await;
 
                 tracing::warn!("TCP check {} timeout", check_id);
 
@@ -342,11 +407,10 @@ impl HealthCheckExecutor {
         // For now, mark as warning since GRPC checks are not fully implemented
         let output = "GRPC checks are not fully implemented yet".to_string();
 
-        let _ = self.health_actor.update_status(
-            check_id.to_string(),
-            "warning".to_string(),
-            Some(output),
-        ).await;
+        let _ = self
+            .health_actor
+            .update_status(check_id.to_string(), "warning".to_string(), Some(output))
+            .await;
 
         tracing::warn!("GRPC check {} not fully implemented", check_id);
     }

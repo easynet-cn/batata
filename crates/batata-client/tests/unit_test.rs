@@ -4,11 +4,11 @@
 //! These tests can run without a live server.
 
 use batata_client::{
-    http::HttpClientConfig,
     grpc::GrpcClientConfig,
-    model::*,
+    http::HttpClientConfig,
     limiter::SlidingWindowLimiter,
-    metrics::{SimpleCounter, MetricsMonitor},
+    metrics::{MetricsMonitor, SimpleCounter},
+    model::*,
 };
 use serde_json::json;
 
@@ -320,13 +320,12 @@ async fn test_rate_limiter_concurrent() {
     // Spawn 50 concurrent requests
     for _ in 0..50 {
         let limiter = limiter.clone();
-        let handle = tokio::spawn(async move {
-            limiter.try_allow().await
-        });
+        let handle = tokio::spawn(async move { limiter.try_allow().await });
         handles.push(handle);
     }
 
-    let results: Vec<bool> = futures::future::join_all(handles).await
+    let results: Vec<bool> = futures::future::join_all(handles)
+        .await
         .into_iter()
         .map(|r| r.unwrap())
         .collect();
@@ -439,8 +438,8 @@ fn test_error_display() {
 
 #[tokio::test]
 async fn test_concurrent_counter() {
-    use std::sync::Arc;
     use batata_client::SimpleCounter;
+    use std::sync::Arc;
 
     let counter = Arc::new(SimpleCounter::new());
     let mut handles = vec![];

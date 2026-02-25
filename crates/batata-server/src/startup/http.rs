@@ -20,8 +20,7 @@ use crate::{
         AclService, ConsulEventService, ConsulLockService, ConsulQueryService,
         ConsulSemaphoreService, ConsulSessionService, agent::ConsulAgentService,
         catalog::ConsulCatalogService, health::ConsulHealthService,
-        health_actor::create_health_actor,
-        kv::ConsulKVService, route::consul_routes,
+        health_actor::create_health_actor, kv::ConsulKVService, route::consul_routes,
     },
     api::v2::route::{
         cluster_routes, config_routes, console_routes as v2_console_routes, naming_routes,
@@ -52,7 +51,11 @@ pub struct ConsulServices {
 
 impl ConsulServices {
     /// Creates Consul service adapters from a naming service (in-memory only).
-    pub fn new(naming_service: Arc<NamingService>, acl_enabled: bool, check_reap_interval_secs: u64) -> Self {
+    pub fn new(
+        naming_service: Arc<NamingService>,
+        acl_enabled: bool,
+        check_reap_interval_secs: u64,
+    ) -> Self {
         let session = ConsulSessionService::new();
         let kv = ConsulKVService::new();
         let kv_arc = Arc::new(kv.clone());
@@ -360,32 +363,32 @@ pub fn main_server(
             .app_data(web::Data::new(cloud_services.k8s_sync.clone()));
 
         app.service(
-                web::scope(&context_path)
-                    // Auth routes (needed for SDK authentication)
-                    // Include both V1 and V3 auth routes for backward compatibility
-                    .service(auth::v3::route::routes())
-                    .service(auth::v3::route::v1_routes())
-                    // V2 Open API routes (config, naming, cluster only)
-                    .service(config_routes())
-                    .service(naming_routes())
-                    .service(cluster_routes())
-                    // V2 Console API routes
-                    .service(v2_console_routes())
-                    // V3 Console API routes
-                    .service(console::v3::route::routes())
-                    // V3 Admin API routes
-                    .service(v3_admin_routes())
-                    // V3 Client API routes
-                    .service(v3_client_routes()),
-            )
-            // AI Capabilities API routes (MCP, A2A)
-            .configure(configure_mcp)
-            .configure(configure_a2a)
-            // Cloud Native Integration API routes (Prometheus SD, Kubernetes Sync)
-            .configure(configure_prometheus)
-            .configure(configure_kubernetes)
-            // Prometheus metrics endpoint at /metrics (standard path)
-            .service(metrics_routes())
+            web::scope(&context_path)
+                // Auth routes (needed for SDK authentication)
+                // Include both V1 and V3 auth routes for backward compatibility
+                .service(auth::v3::route::routes())
+                .service(auth::v3::route::v1_routes())
+                // V2 Open API routes (config, naming, cluster only)
+                .service(config_routes())
+                .service(naming_routes())
+                .service(cluster_routes())
+                // V2 Console API routes
+                .service(v2_console_routes())
+                // V3 Console API routes
+                .service(console::v3::route::routes())
+                // V3 Admin API routes
+                .service(v3_admin_routes())
+                // V3 Client API routes
+                .service(v3_client_routes()),
+        )
+        // AI Capabilities API routes (MCP, A2A)
+        .configure(configure_mcp)
+        .configure(configure_a2a)
+        // Cloud Native Integration API routes (Prometheus SD, Kubernetes Sync)
+        .configure(configure_prometheus)
+        .configure(configure_kubernetes)
+        // Prometheus metrics endpoint at /metrics (standard path)
+        .service(metrics_routes())
     })
     .bind((address, port))?
     .run())

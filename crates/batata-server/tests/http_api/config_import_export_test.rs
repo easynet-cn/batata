@@ -3,8 +3,8 @@
 //! Tests for batch configuration import and export
 
 use crate::common::{
-    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
-    TestClient, unique_data_id,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id,
 };
 
 /// Create an authenticated test client
@@ -42,10 +42,7 @@ async fn test_export_single_config() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/cs/config/export",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to export config");
@@ -82,10 +79,7 @@ async fn test_export_multiple_configs() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/cs/config/export",
-            &[
-                ("dataId", data_id1.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id1.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to export configs");
@@ -118,16 +112,18 @@ async fn test_import_config() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");
 
     assert_eq!(response["code"], 0, "Get should succeed");
-    assert!(response["data"].as_str().unwrap().contains("imported.value=1"));
+    assert!(
+        response["data"]
+            .as_str()
+            .unwrap()
+            .contains("imported.value=1")
+    );
 }
 
 /// Test import with namespace
@@ -167,7 +163,12 @@ async fn test_import_config_with_namespace() {
         .expect("Failed to get config");
 
     assert_eq!(response["code"], 0, "Get should succeed");
-    assert!(response["data"].as_str().unwrap().contains("namespace.import=1"));
+    assert!(
+        response["data"]
+            .as_str()
+            .unwrap()
+            .contains("namespace.import=1")
+    );
 }
 
 /// Test export with namespace
@@ -265,10 +266,7 @@ async fn test_export_import_roundtrip() {
     let export_response: serde_json::Value = client
         .get_with_query(
             "/nacos/v3/admin/cs/config/export",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to export config");
@@ -279,10 +277,7 @@ async fn test_export_import_roundtrip() {
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to delete config");
@@ -304,16 +299,18 @@ async fn test_export_import_roundtrip() {
     let get_response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");
 
     assert_eq!(get_response["code"], 0, "Get should succeed");
-    assert!(get_response["data"].as_str().unwrap().contains(original_content));
+    assert!(
+        get_response["data"]
+            .as_str()
+            .unwrap()
+            .contains(original_content)
+    );
 }
 
 /// Helper function to generate unique timestamp

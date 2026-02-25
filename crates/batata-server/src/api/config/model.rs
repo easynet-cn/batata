@@ -68,6 +68,22 @@ impl From<batata_config::ConfigBasicInfo> for ConfigBasicInfo {
     }
 }
 
+impl From<batata_persistence::ConfigStorageData> for ConfigBasicInfo {
+    fn from(value: batata_persistence::ConfigStorageData) -> Self {
+        Self {
+            id: 0,
+            namespace_id: value.tenant,
+            group_name: value.group,
+            data_id: value.data_id,
+            md5: value.md5,
+            r#type: value.config_type,
+            app_name: value.app_name,
+            create_time: value.created_time,
+            modify_time: value.modified_time,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigDetailInfo {
@@ -100,6 +116,30 @@ impl From<ConfigAllInfo> for ConfigDetailInfo {
             encrypted_data_key: value.config_info.config_info_base.encrypted_data_key,
             create_user: value.create_user,
             create_ip: value.create_ip,
+            config_tags: value.config_tags,
+        }
+    }
+}
+
+impl From<batata_persistence::ConfigStorageData> for ConfigDetailInfo {
+    fn from(value: batata_persistence::ConfigStorageData) -> Self {
+        Self {
+            config_basic_info: ConfigBasicInfo {
+                id: 0,
+                namespace_id: value.tenant,
+                group_name: value.group,
+                data_id: value.data_id,
+                md5: value.md5,
+                r#type: value.config_type,
+                app_name: value.app_name,
+                create_time: value.created_time,
+                modify_time: value.modified_time,
+            },
+            content: value.content,
+            desc: value.desc,
+            encrypted_data_key: value.encrypted_data_key,
+            create_user: value.src_user,
+            create_ip: value.src_ip,
             config_tags: value.config_tags,
         }
     }
@@ -174,6 +214,28 @@ impl From<ConfigHistoryInfo> for ConfigHistoryBasicInfo {
     }
 }
 
+impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryBasicInfo {
+    fn from(value: batata_persistence::ConfigHistoryStorageData) -> Self {
+        Self {
+            config_basic_info: ConfigBasicInfo {
+                id: value.id as i64,
+                namespace_id: value.tenant,
+                group_name: value.group,
+                data_id: value.data_id,
+                md5: value.md5,
+                r#type: String::default(),
+                app_name: value.app_name,
+                create_time: value.created_time,
+                modify_time: value.modified_time,
+            },
+            src_ip: value.src_ip,
+            src_user: value.src_user,
+            op_type: value.op_type,
+            publish_type: value.publish_type,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryDetailInfo {
@@ -199,6 +261,34 @@ impl From<ConfigHistoryInfo> for ConfigHistoryDetailInfo {
                     app_name: value.app_name,
                     create_time: value.created_time,
                     modify_time: value.last_modified_time,
+                },
+                src_ip: value.src_ip,
+                src_user: value.src_user,
+                op_type: value.op_type,
+                publish_type: value.publish_type,
+            },
+            content: value.content,
+            encrypted_data_key: value.encrypted_data_key,
+            gray_name: value.gray_name,
+            ext_info: value.ext_info,
+        }
+    }
+}
+
+impl From<batata_persistence::ConfigHistoryStorageData> for ConfigHistoryDetailInfo {
+    fn from(value: batata_persistence::ConfigHistoryStorageData) -> Self {
+        Self {
+            config_history_basic_info: ConfigHistoryBasicInfo {
+                config_basic_info: ConfigBasicInfo {
+                    id: value.id as i64,
+                    namespace_id: value.tenant,
+                    group_name: value.group,
+                    data_id: value.data_id,
+                    md5: value.md5,
+                    r#type: String::default(),
+                    app_name: value.app_name,
+                    create_time: value.created_time,
+                    modify_time: value.modified_time,
                 },
                 src_ip: value.src_ip,
                 src_user: value.src_user,

@@ -11,10 +11,9 @@ use serde::Deserialize;
 use batata_config::Namespace;
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType,
-    error::{self, BatataError},
+    ActionTypes, ApiType, Secured, SignType, error,
     model::common::{self, AppState},
-    secured, service,
+    secured,
 };
 
 static NAMESPACE_ID_REGEX: LazyLock<regex::Regex> =
@@ -57,7 +56,13 @@ async fn list_namespaces(req: HttpRequest, data: web::Data<AppState>) -> impl Re
             .build()
     );
 
-    let namespaces: Vec<Namespace> = service::namespace::find_all(data.db()).await;
+    let namespaces: Vec<Namespace> = match data.persistence().namespace_find_all().await {
+        Ok(ns_list) => ns_list.into_iter().map(Namespace::from).collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to list namespaces");
+            return HttpResponse::InternalServerError().body(e.to_string());
+        }
+    };
 
     common::Result::<Vec<Namespace>>::http_success(namespaces)
 }
@@ -77,20 +82,19 @@ async fn get_namespace(
             .build()
     );
 
-    match service::namespace::get_by_namespace_id(data.db(), &params.namespace_id, "1").await {
-        Ok(namespace) => common::Result::<Namespace>::http_success(namespace),
-        Err(err) => {
-            if let Some(BatataError::ApiError(status, code, message, data)) = err.downcast_ref() {
-                common::Result::<String>::http_response(
-                    *status as u16,
-                    *code,
-                    message.to_string(),
-                    data.to_string(),
-                )
-            } else {
-                HttpResponse::InternalServerError().body(err.to_string())
-            }
-        }
+    match data
+        .persistence()
+        .namespace_get_by_id(&params.namespace_id)
+        .await
+    {
+        Ok(Some(ns_info)) => common::Result::<Namespace>::http_success(Namespace::from(ns_info)),
+        Ok(None) => common::Result::<String>::http_response(
+            StatusCode::NOT_FOUND.as_u16(),
+            error::NAMESPACE_NOT_EXIST.code,
+            error::NAMESPACE_NOT_EXIST.message.to_string(),
+            format!("namespace [{}] not exist", params.namespace_id),
+        ),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
@@ -149,9 +153,10 @@ async fn create_namespace(
         );
     }
 
-    let res =
-        service::namespace::create(data.db(), &namespace_id, &namespace_name, &namespace_desc)
-            .await;
+    let res = data
+        .persistence()
+        .namespace_create(&namespace_id, &namespace_name, &namespace_desc)
+        .await;
 
     common::Result::<bool>::http_success(res.is_ok())
 }
@@ -203,13 +208,10 @@ async fn update_namespace(
 
     let namespace_desc = form.namespace_desc.clone().unwrap_or_default();
 
-    match service::namespace::update(
-        data.db(),
-        &form.namespace_id,
-        &form.namespace_name,
-        &namespace_desc,
-    )
-    .await
+    match data
+        .persistence()
+        .namespace_update(&form.namespace_id, &form.namespace_name, &namespace_desc)
+        .await
     {
         Ok(res) => common::Result::<bool>::http_success(res),
         Err(e) => {
@@ -234,7 +236,10 @@ async fn delete_namespace(
             .build()
     );
 
-    let res = service::namespace::delete(data.db(), &form.namespace_id).await;
+    let res = data
+        .persistence()
+        .namespace_delete(&form.namespace_id)
+        .await;
 
     common::Result::<bool>::http_success(res.unwrap_or_default())
 }

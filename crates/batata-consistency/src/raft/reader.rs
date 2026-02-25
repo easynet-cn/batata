@@ -30,6 +30,14 @@ impl RocksDbReader {
         Self::new(sm.db())
     }
 
+    /// Get a reference to the underlying RocksDB instance.
+    ///
+    /// This is useful for operations that need direct DB access,
+    /// such as capacity metadata stored in the default column family.
+    pub fn db(&self) -> &Arc<DB> {
+        &self.db
+    }
+
     // ==================== Config Operations ====================
 
     /// Get a single config by data_id, group, and tenant
@@ -431,6 +439,17 @@ impl RocksDbReader {
     }
 
     // ==================== Permission Operations ====================
+
+    /// Get a single permission by role, resource, and action
+    pub fn get_permission(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        let key = RocksStateMachine::permission_key(role, resource, action);
+        self.get_json(CF_PERMISSIONS, &key)
+    }
 
     /// Get permissions by role
     pub fn get_permissions_by_role(&self, role: &str) -> anyhow::Result<Vec<serde_json::Value>> {

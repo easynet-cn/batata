@@ -152,6 +152,27 @@ pub struct ConfigHistoryStorageData {
     pub modified_time: i64,
 }
 
+/// Capacity information for tenant or group quotas
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CapacityInfo {
+    /// Unique identifier
+    pub id: Option<u64>,
+    /// Tenant ID or Group ID
+    pub identifier: String,
+    /// Maximum number of configs allowed
+    pub quota: u32,
+    /// Current usage count
+    pub usage: u32,
+    /// Maximum config size in bytes
+    pub max_size: u32,
+    /// Maximum aggregate config count
+    pub max_aggr_count: u32,
+    /// Maximum aggregate config size
+    pub max_aggr_size: u32,
+    /// Maximum history count
+    pub max_history_count: u32,
+}
+
 /// Gray config data stored in embedded backends
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConfigGrayStorageData {

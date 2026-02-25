@@ -115,8 +115,12 @@ impl BatataHttpClient {
             token: RwLock::new(None),
         };
 
-        // Authenticate on startup
-        instance.authenticate().await?;
+        // Try to authenticate on startup, but don't fail if it doesn't work.
+        // The server may not be ready yet (e.g. self-connecting console datasource)
+        // or no admin user may exist yet. ensure_token() will retry on each request.
+        if let Err(e) = instance.authenticate().await {
+            warn!("Initial authentication failed (will retry on demand): {}", e);
+        }
 
         Ok(instance)
     }
@@ -134,6 +138,31 @@ impl BatataHttpClient {
             current_server_index: RwLock::new(0),
             token: RwLock::new(None),
         })
+    }
+
+    /// Create a client with a pre-generated token, bypassing HTTP login.
+    /// Used for embedded mode where the server connects to itself locally.
+    /// Disables proxy to avoid system proxy intercepting localhost requests.
+    pub fn new_with_token(
+        config: HttpClientConfig,
+        token: String,
+        ttl_seconds: i64,
+    ) -> anyhow::Result<Self> {
+        let client = Client::builder()
+            .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
+            .timeout(Duration::from_millis(config.read_timeout_ms))
+            .no_proxy()
+            .build()?;
+
+        let instance = Self {
+            client,
+            config,
+            current_server_index: RwLock::new(0),
+            token: RwLock::new(None),
+        };
+
+        instance.set_token(token, ttl_seconds);
+        Ok(instance)
     }
 
     /// Get the current server URL

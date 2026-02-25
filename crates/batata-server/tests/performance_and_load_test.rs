@@ -5,8 +5,8 @@
 mod common;
 
 use common::{
-    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
-    TestClient, unique_data_id, unique_service_name, unique_test_id,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id, unique_service_name, unique_test_id,
 };
 use std::time::{Duration, Instant};
 
@@ -82,10 +82,7 @@ async fn bench_config_get_throughput() {
         let _: serde_json::Value = client
             .get_with_query(
                 "/nacos/v2/cs/config",
-                &[
-                    ("dataId", data_id.as_str()),
-                    ("group", DEFAULT_GROUP),
-                ],
+                &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
             )
             .await
             .expect("Failed to get config");
@@ -172,10 +169,7 @@ async fn bench_config_list_throughput() {
 
     for _ in 0..num_lists {
         let _: serde_json::Value = client
-            .get_with_query(
-                "/nacos/v2/cs/history/configs",
-                &[("namespaceId", "public")],
-            )
+            .get_with_query("/nacos/v2/cs/history/configs", &[("namespaceId", "public")])
             .await
             .expect("Failed to list configs");
     }
@@ -219,8 +213,14 @@ async fn bench_instance_register_throughput() {
     let elapsed = start.elapsed();
     let throughput = num_instances as f64 / elapsed.as_secs_f64();
 
-    println!("Instance register throughput: {:.2} instances/sec", throughput);
-    assert!(throughput > 10.0, "Should register at least 10 instances/sec");
+    println!(
+        "Instance register throughput: {:.2} instances/sec",
+        throughput
+    );
+    assert!(
+        throughput > 10.0,
+        "Should register at least 10 instances/sec"
+    );
 }
 
 /// Benchmark instance query throughput
@@ -299,10 +299,7 @@ async fn bench_service_list_throughput() {
 
     for _ in 0..num_lists {
         let _: serde_json::Value = client
-            .get_with_query(
-                "/nacos/v2/ns/service/list",
-                &[("groupName", DEFAULT_GROUP)],
-            )
+            .get_with_query("/nacos/v2/ns/service/list", &[("groupName", DEFAULT_GROUP)])
             .await
             .expect("Failed to list services");
     }
@@ -456,10 +453,7 @@ async fn test_mixed_concurrent_operations() {
                 let response: serde_json::Value = client
                     .get_with_query(
                         "/nacos/v2/cs/config",
-                        &[
-                            ("dataId", data_id_clone.as_str()),
-                            ("group", DEFAULT_GROUP),
-                        ],
+                        &[("dataId", data_id_clone.as_str()), ("group", DEFAULT_GROUP)],
                     )
                     .await
                     .expect("Failed to get config");
@@ -513,10 +507,7 @@ async fn test_sustained_load() {
         let _: serde_json::Value = client
             .get_with_query(
                 "/nacos/v2/cs/config",
-                &[
-                    ("dataId", data_id.as_str()),
-                    ("group", DEFAULT_GROUP),
-                ],
+                &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
             )
             .await
             .expect("Failed to get config");
@@ -527,6 +518,9 @@ async fn test_sustained_load() {
     let elapsed = start.elapsed();
     let ops_per_sec = ops as f64 / elapsed.as_secs_f64();
 
-    println!("Sustained load: {:.2} ops/sec over {:?}", ops_per_sec, elapsed);
+    println!(
+        "Sustained load: {:.2} ops/sec over {:?}",
+        ops_per_sec, elapsed
+    );
     assert!(ops_per_sec > 5.0, "Should handle at least 5 ops/sec");
 }

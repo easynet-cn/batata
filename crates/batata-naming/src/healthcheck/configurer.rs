@@ -74,12 +74,8 @@ impl TcpHealthCheckerConfig {
     /// Parse from HealthCheckerConfig extend_data
     pub fn from_checker_config(config: &HealthCheckerConfig) -> Self {
         Self {
-            check_port: config
-                .get_i32("checkPort")
-                .unwrap_or_default(),
-            use_instance_port: config
-                .get_bool("useInstancePort4Check")
-                .unwrap_or(true),
+            check_port: config.get_i32("checkPort").unwrap_or_default(),
+            use_instance_port: config.get_bool("useInstancePort4Check").unwrap_or(true),
         }
     }
 }
@@ -124,12 +120,8 @@ impl HttpHealthCheckerConfig {
                 .get_string("path")
                 .cloned()
                 .unwrap_or_else(|| "/health".to_string()),
-            check_port: config
-                .get_i32("checkPort")
-                .unwrap_or_default(),
-            use_instance_port: config
-                .get_bool("useInstancePort4Check")
-                .unwrap_or(true),
+            check_port: config.get_i32("checkPort").unwrap_or_default(),
+            use_instance_port: config.get_bool("useInstancePort4Check").unwrap_or(true),
             headers: config.get_string("headers").cloned(),
             expected_code: config.get_string("expectedCode").cloned(),
         }
@@ -213,7 +205,10 @@ mod tests {
         let mut data = HashMap::new();
         data.insert("path".to_string(), "/status".to_string());
         data.insert("expectedCode".to_string(), "200,201,204".to_string());
-        data.insert("headers".to_string(), r#"{"Authorization": "Bearer xxx"}"#.to_string());
+        data.insert(
+            "headers".to_string(),
+            r#"{"Authorization": "Bearer xxx"}"#.to_string(),
+        );
 
         let checker_config = HealthCheckerConfig::new("HTTP").with_extend_data(data);
         let http_config = HttpHealthCheckerConfig::from_checker_config(&checker_config);
@@ -255,7 +250,10 @@ mod tests {
     fn test_http_parse_headers() {
         let mut data = HashMap::new();
         data.insert("path".to_string(), "/health".to_string());
-        data.insert("headers".to_string(), r#"{"Authorization": "Bearer xyz","User-Agent": "Test"}"#.to_string());
+        data.insert(
+            "headers".to_string(),
+            r#"{"Authorization": "Bearer xyz","User-Agent": "Test"}"#.to_string(),
+        );
 
         let checker_config = HealthCheckerConfig::new("HTTP").with_extend_data(data);
         let http_config = HttpHealthCheckerConfig::from_checker_config(&checker_config);
@@ -263,7 +261,10 @@ mod tests {
         let headers = http_config.parse_headers();
         assert!(headers.is_some());
         let headers = headers.unwrap();
-        assert_eq!(headers.get("Authorization"), Some(&"Bearer xyz".to_string()));
+        assert_eq!(
+            headers.get("Authorization"),
+            Some(&"Bearer xyz".to_string())
+        );
         assert_eq!(headers.get("User-Agent"), Some(&"Test".to_string()));
     }
 }

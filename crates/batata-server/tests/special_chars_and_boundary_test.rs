@@ -5,8 +5,8 @@
 mod common;
 
 use common::{
-    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
-    TestClient, unique_data_id, unique_service_name,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id, unique_service_name,
 };
 use serde_json::json;
 
@@ -46,10 +46,7 @@ async fn test_config_special_characters_content() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");
@@ -92,10 +89,7 @@ async fn test_config_unicode_content() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");
@@ -125,10 +119,7 @@ async fn test_config_very_long_dataid() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", long_data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", long_data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");
@@ -160,10 +151,7 @@ async fn test_config_very_long_content() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");
@@ -192,8 +180,11 @@ async fn test_config_empty_content() {
 
     assert!(result.is_err(), "Empty content should be rejected");
     if let Err(e) = result {
-        assert!(e.to_string().contains("400") || e.to_string().contains("content"),
-                "Error should be about missing content: {}", e);
+        assert!(
+            e.to_string().contains("400") || e.to_string().contains("content"),
+            "Error should be about missing content: {}",
+            e
+        );
     }
 }
 
@@ -220,10 +211,7 @@ async fn test_config_whitespace_content() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get config");
@@ -464,10 +452,7 @@ async fn test_config_very_long_group() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", long_group.as_str()),
-            ],
+            &[("dataId", data_id.as_str()), ("group", long_group.as_str())],
         )
         .await
         .expect("Failed to get config");

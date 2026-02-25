@@ -3,7 +3,7 @@
 //! This module provides file-based persistence for cluster configurations
 //! and service metadata.
 
-use super::{MetadataPersistence};
+use super::MetadataPersistence;
 use crate::service::{ClusterConfig, ServiceMetadata};
 use async_trait::async_trait;
 use std::path::Path;
@@ -62,8 +62,8 @@ impl MetadataPersistence for FileMetadataPersistence {
         config: &ClusterConfig,
     ) -> Result<(), String> {
         let path = self.get_cluster_config_path(namespace, group_name, service_name, cluster_name);
-        let json = serde_json::to_string_pretty(config)
-            .map_err(|e| format!("Serialize error: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(config).map_err(|e| format!("Serialize error: {}", e))?;
 
         // Create directory if not exists
         fs::create_dir_all(format!("{}/clusters", self.base_dir))
@@ -111,7 +111,8 @@ impl MetadataPersistence for FileMetadataPersistence {
             .await
             .map_err(|e| format!("Read dir error: {}", e))?;
 
-        while let Some(entry) = entries.next_entry()
+        while let Some(entry) = entries
+            .next_entry()
             .await
             .map_err(|e| format!("Next entry error: {}", e))?
         {
@@ -124,11 +125,12 @@ impl MetadataPersistence for FileMetadataPersistence {
                 .await
                 .map_err(|e| format!("Read file error: {}", e))?;
 
-            let config: ClusterConfig = serde_json::from_str(&content)
-                .map_err(|e| format!("Parse error: {}", e))?;
+            let config: ClusterConfig =
+                serde_json::from_str(&content).map_err(|e| format!("Parse error: {}", e))?;
 
             // Parse filename: namespace@@group_name@@service_name@@cluster_name.json
-            let stem = path.file_stem()
+            let stem = path
+                .file_stem()
                 .and_then(|s| s.to_str())
                 .ok_or("Invalid filename")?;
 
@@ -189,7 +191,8 @@ impl MetadataPersistence for FileMetadataPersistence {
             .await
             .map_err(|e| format!("Read dir error: {}", e))?;
 
-        while let Some(entry) = entries.next_entry()
+        while let Some(entry) = entries
+            .next_entry()
             .await
             .map_err(|e| format!("Next entry error: {}", e))?
         {
@@ -202,11 +205,12 @@ impl MetadataPersistence for FileMetadataPersistence {
                 .await
                 .map_err(|e| format!("Read file error: {}", e))?;
 
-            let metadata: ServiceMetadata = serde_json::from_str(&content)
-                .map_err(|e| format!("Parse error: {}", e))?;
+            let metadata: ServiceMetadata =
+                serde_json::from_str(&content).map_err(|e| format!("Parse error: {}", e))?;
 
             // Parse filename: namespace@@group_name@@service_name.json
-            let stem = path.file_stem()
+            let stem = path
+                .file_stem()
                 .and_then(|s| s.to_str())
                 .ok_or("Invalid filename")?;
 

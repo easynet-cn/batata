@@ -17,7 +17,7 @@ use crate::{
     auth::model::AuthContext,
     config::{
         export_model::{ExportRequest, ImportRequest, ImportResult},
-        model::{ConfigAllInfo, ConfigForm, ConfigType},
+        model::{ConfigForm, ConfigType},
     },
     error, is_valid,
     model::{
@@ -79,19 +79,16 @@ async fn get_config(
             .build()
     );
 
-    let result = match service::config::find_one(
-        data.db(),
-        &params.data_id,
-        &params.group_name,
-        &params.namespace_id,
-    )
-    .await
+    let result = match data
+        .persistence()
+        .config_find_one(&params.data_id, &params.group_name, &params.namespace_id)
+        .await
     {
         Ok(config) => config.map(ConfigDetailInfo::from),
         Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
     };
 
-    model::common::Result::<Option<ConfigAllInfo>>::http_success(result)
+    model::common::Result::<Option<ConfigDetailInfo>>::http_success(result)
 }
 
 /// GET /v3/admin/cs/config/list
@@ -138,34 +135,32 @@ async fn list_configs(
         Vec::new()
     };
 
-    match batata_config::service::config::search_page(
-        data.db(),
-        params.page_no,
-        params.page_size,
-        &namespace_id,
-        &params.config_form.data_id,
-        &params.config_form.group_name,
-        &params.config_form.app_name,
-        tags,
-        types,
-        &params.config_detail,
-    )
-    .await
+    match data
+        .persistence()
+        .config_search_page(
+            params.page_no,
+            params.page_size,
+            &namespace_id,
+            &params.config_form.data_id,
+            &params.config_form.group_name,
+            &params.config_form.app_name,
+            tags,
+            types,
+            &params.config_detail,
+        )
+        .await
     {
         Ok(page) => {
             let api_page = batata_api::Page::<ConfigBasicInfo>::new(
                 page.total_count,
                 page.page_number,
                 params.page_size,
-                page
-                    .page_items
+                page.page_items
                     .into_iter()
                     .map(ConfigBasicInfo::from)
                     .collect(),
             );
-            model::common::Result::<batata_api::Page<ConfigBasicInfo>>::http_success(
-                api_page,
-            )
+            model::common::Result::<batata_api::Page<ConfigBasicInfo>>::http_success(api_page)
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list configs");
@@ -266,24 +261,25 @@ async fn create_config(
         .unwrap_or_default()
         .to_owned();
 
-    let _ = service::config::create_or_update(
-        data.db(),
-        &config_form.data_id,
-        &config_form.group_name,
-        &config_form.namespace_id,
-        &config_form.content,
-        &config_form.app_name,
-        &src_user,
-        &src_ip,
-        &config_form.config_tags,
-        &config_form.desc,
-        &config_form.r#use.unwrap_or_default(),
-        &config_form.effect.unwrap_or_default(),
-        &config_form.r#type,
-        &config_form.schema.unwrap_or_default(),
-        &config_form.encrypted_data_key.unwrap_or_default(),
-    )
-    .await;
+    let _ = data
+        .persistence()
+        .config_create_or_update(
+            &config_form.data_id,
+            &config_form.group_name,
+            &config_form.namespace_id,
+            &config_form.content,
+            &config_form.app_name,
+            &src_user,
+            &src_ip,
+            &config_form.config_tags,
+            &config_form.desc,
+            &config_form.r#use.unwrap_or_default(),
+            &config_form.effect.unwrap_or_default(),
+            &config_form.r#type,
+            &config_form.schema.unwrap_or_default(),
+            &config_form.encrypted_data_key.unwrap_or_default(),
+        )
+        .await;
 
     model::common::Result::<bool>::http_success(true)
 }
@@ -335,24 +331,25 @@ async fn update_config(
         .unwrap_or_default()
         .to_owned();
 
-    let _ = service::config::create_or_update(
-        data.db(),
-        &config_form.data_id,
-        &config_form.group_name,
-        &config_form.namespace_id,
-        &config_form.content,
-        &config_form.app_name,
-        &src_user,
-        &src_ip,
-        &config_form.config_tags,
-        &config_form.desc,
-        &config_form.r#use.unwrap_or_default(),
-        &config_form.effect.unwrap_or_default(),
-        &config_form.r#type,
-        &config_form.schema.unwrap_or_default(),
-        &config_form.encrypted_data_key.unwrap_or_default(),
-    )
-    .await;
+    let _ = data
+        .persistence()
+        .config_create_or_update(
+            &config_form.data_id,
+            &config_form.group_name,
+            &config_form.namespace_id,
+            &config_form.content,
+            &config_form.app_name,
+            &src_user,
+            &src_ip,
+            &config_form.config_tags,
+            &config_form.desc,
+            &config_form.r#use.unwrap_or_default(),
+            &config_form.effect.unwrap_or_default(),
+            &config_form.r#type,
+            &config_form.schema.unwrap_or_default(),
+            &config_form.encrypted_data_key.unwrap_or_default(),
+        )
+        .await;
 
     model::common::Result::<bool>::http_success(true)
 }
@@ -390,16 +387,17 @@ async fn delete_config(
         .map(|ctx| ctx.username.clone())
         .unwrap_or_default();
 
-    if let Err(e) = service::config::delete(
-        data.db(),
-        &params.data_id,
-        &params.group_name,
-        &namespace_id,
-        "",
-        &client_ip,
-        &src_user,
-    )
-    .await
+    if let Err(e) = data
+        .persistence()
+        .config_delete(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            "",
+            &client_ip,
+            &src_user,
+        )
+        .await
     {
         return HttpResponse::InternalServerError().body(e.to_string());
     }
@@ -487,9 +485,11 @@ async fn import_config(
         );
     }
 
-    let result = match service::config_import::import_nacos_items(
-        data.db(),
-        items,
+    let persistence = data.persistence();
+    let config_items: Vec<_> = items.into_iter().map(|i| i.into()).collect();
+    let result = match import_with_persistence(
+        persistence,
+        config_items,
         &namespace_id,
         policy,
         &src_user,
@@ -532,22 +532,27 @@ async fn export_config(
             .collect::<Vec<String>>()
     });
 
-    let configs = match service::config_export::find_configs_for_export(
-        data.db(),
-        &namespace_id,
-        params.group.as_deref(),
-        data_ids,
-        params.app_name.as_deref(),
-    )
-    .await
+    let persistence = data.persistence();
+    let storage_configs = match persistence
+        .config_find_for_export(
+            &namespace_id,
+            params.group.as_deref(),
+            data_ids,
+            params.app_name.as_deref(),
+        )
+        .await
     {
         Ok(c) => c,
         Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
     };
 
-    if configs.is_empty() {
+    if storage_configs.is_empty() {
         return HttpResponse::NotFound().body("No configurations found to export");
     }
+
+    // Convert to ConfigAllInfo for the existing export function
+    let configs: Vec<batata_config::model::ConfigAllInfo> =
+        storage_configs.into_iter().map(Into::into).collect();
 
     let zip_data = match service::config_export::create_nacos_export_zip(configs) {
         Ok(z) => z,
@@ -566,6 +571,90 @@ async fn export_config(
             format!("attachment; filename=\"{}\"", filename),
         ))
         .body(zip_data)
+}
+
+/// Import configs using the persistence service instead of direct DB access
+async fn import_with_persistence(
+    persistence: &dyn batata_persistence::PersistenceService,
+    items: Vec<crate::config::export_model::ConfigImportItem>,
+    target_namespace_id: &str,
+    policy: crate::config::export_model::SameConfigPolicy,
+    src_user: &str,
+    src_ip: &str,
+) -> anyhow::Result<ImportResult> {
+    use crate::config::export_model::{ImportFailItem, SameConfigPolicy};
+
+    let mut result = ImportResult::default();
+
+    for item in items {
+        let namespace_id = if item.namespace_id.is_empty() {
+            target_namespace_id.to_string()
+        } else {
+            item.namespace_id.clone()
+        };
+
+        // Check if config already exists
+        let exists = persistence
+            .config_find_one(&item.data_id, &item.group, &namespace_id)
+            .await?
+            .is_some();
+
+        if exists {
+            match policy {
+                SameConfigPolicy::Abort => {
+                    result.fail_count += 1;
+                    result.fail_data.push(ImportFailItem {
+                        data_id: item.data_id.clone(),
+                        group: item.group.clone(),
+                        reason: "Configuration already exists".to_string(),
+                    });
+                    return Ok(result);
+                }
+                SameConfigPolicy::Skip => {
+                    result.skip_count += 1;
+                    continue;
+                }
+                SameConfigPolicy::Overwrite => {
+                    // Continue to update
+                }
+            }
+        }
+
+        // Create or update the configuration
+        match persistence
+            .config_create_or_update(
+                &item.data_id,
+                &item.group,
+                &namespace_id,
+                &item.content,
+                &item.app_name,
+                src_user,
+                src_ip,
+                &item.config_tags,
+                &item.desc,
+                "",
+                "",
+                &item.config_type,
+                "",
+                &item.encrypted_data_key,
+            )
+            .await
+        {
+            Ok(_) => {
+                result.success_count += 1;
+            }
+            Err(e) => {
+                result.fail_count += 1;
+                result.fail_data.push(ImportFailItem {
+                    data_id: item.data_id.clone(),
+                    group: item.group.clone(),
+                    reason: e.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 pub fn routes() -> actix_web::Scope {

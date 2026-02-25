@@ -71,10 +71,17 @@ impl ConsulAgentService {
         );
 
         if success {
-            tracing::info!("Consul service registered: {}:{} in namespace public", ip, port);
+            tracing::info!(
+                "Consul service registered: {}:{} in namespace public",
+                ip,
+                port
+            );
             Ok(())
         } else {
-            Err(format!("Failed to register Consul service: {}:{}", ip, port))
+            Err(format!(
+                "Failed to register Consul service: {}:{}",
+                ip, port
+            ))
         }
     }
 
@@ -85,11 +92,18 @@ impl ConsulAgentService {
         let service_name = "consul";
 
         // Get the Consul instance
-        let instances = self.naming_service.get_instances(namespace, group, service_name, "", false);
+        let instances =
+            self.naming_service
+                .get_instances(namespace, group, service_name, "", false);
 
         for instance in instances {
             if instance.instance_id == "consul" {
-                let success = self.naming_service.deregister_instance(namespace, group, service_name, &instance);
+                let success = self.naming_service.deregister_instance(
+                    namespace,
+                    group,
+                    service_name,
+                    &instance,
+                );
                 if success {
                     tracing::info!("Consul service deregistered");
                 } else {
@@ -134,10 +148,8 @@ pub async fn register_service(
     let validated_checks = match registration.check_types() {
         Ok(checks) => checks,
         Err(e) => {
-            return HttpResponse::BadRequest().json(ConsulError::new(&format!(
-                "Validation failed: {}",
-                e
-            )));
+            return HttpResponse::BadRequest()
+                .json(ConsulError::new(&format!("Validation failed: {}", e)));
         }
     };
 
@@ -176,7 +188,10 @@ pub async fn register_service(
     if success {
         // Register validated checks with health service
         for check_reg in embedded_checks {
-            let check_id = check_reg.check_id.clone().unwrap_or_else(|| "?".to_string());
+            let check_id = check_reg
+                .check_id
+                .clone()
+                .unwrap_or_else(|| "?".to_string());
             if let Err(e) = health_service.register_check(check_reg).await {
                 tracing::warn!(
                     "Failed to register embedded check '{}' for service '{}': {}",

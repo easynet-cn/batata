@@ -5,10 +5,12 @@
 //! (RocksDB), and distributed embedded (Raft + RocksDB).
 
 pub mod auth;
+pub mod capacity;
 pub mod config;
 pub mod namespace;
 
 pub use auth::AuthPersistence;
+pub use capacity::CapacityPersistence;
 pub use config::ConfigPersistence;
 pub use namespace::NamespacePersistence;
 
@@ -22,7 +24,7 @@ use crate::model::StorageMode;
 /// dispatch to the appropriate storage backend based on the configured mode.
 #[async_trait]
 pub trait PersistenceService:
-    ConfigPersistence + NamespacePersistence + AuthPersistence + Send + Sync
+    ConfigPersistence + NamespacePersistence + AuthPersistence + CapacityPersistence + Send + Sync
 {
     /// Get the current storage mode
     fn storage_mode(&self) -> StorageMode;

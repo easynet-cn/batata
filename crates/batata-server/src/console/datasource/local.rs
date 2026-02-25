@@ -997,10 +997,6 @@ impl ConsoleDataSource for LocalDataSource {
         false
     }
 
-    fn get_database_connection(&self) -> Option<&DatabaseConnection> {
-        Some(&self.database_connection)
-    }
-
     fn get_server_member_manager(&self) -> Option<Arc<ServerMemberManager>> {
         Some(self.server_member_manager.clone())
     }

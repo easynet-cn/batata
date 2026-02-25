@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::api::model::Page;
 use crate::auth::model::{GLOBAL_ADMIN_ROLE, ONLY_IDENTITY, UPDATE_PASSWORD_ENTRY_POINT, User};
 use crate::error::BatataError;
-use crate::{ActionTypes, ApiType, Secured, SignType, auth, model};
+use crate::{ActionTypes, ApiType, Secured, SignType, model};
 use crate::{
     model::common::{self, AppState},
     secured,
@@ -56,16 +56,28 @@ async fn search_page(
         username = stripped.to_string();
     }
 
-    let result = match auth::service::user::search_page(
-        data.db(),
-        &username,
-        params.page_no,
-        params.page_size,
-        accurate,
-    )
-    .await
+    let result = match data
+        .persistence()
+        .user_find_page(&username, params.page_no, params.page_size, accurate)
+        .await
     {
-        Ok(page) => page,
+        Ok(page) => {
+            // Convert Page<UserInfo> to Page<User>
+            let page_items = page
+                .page_items
+                .into_iter()
+                .map(|u| User {
+                    username: u.username,
+                    password: u.password,
+                })
+                .collect();
+            Page {
+                total_count: page.total_count,
+                page_number: page.page_number,
+                pages_available: page.pages_available,
+                page_items,
+            }
+        }
         Err(e) => {
             tracing::error!("Failed to search users: {}", e);
             return HttpResponse::InternalServerError().json(serde_json::json!({
@@ -93,7 +105,7 @@ async fn search(
             .build()
     );
 
-    let result = match auth::service::user::search(data.db(), &params.username).await {
+    let result = match data.persistence().user_search(&params.username).await {
         Ok(users) => users,
         Err(e) => {
             tracing::error!("Failed to search users: {}", e);
@@ -128,7 +140,11 @@ async fn create(
         );
     }
 
-    let user = match auth::service::user::find_by_username(data.db(), &params.username).await {
+    let user = match data
+        .persistence()
+        .user_find_by_username(&params.username)
+        .await
+    {
         Ok(u) => u,
         Err(e) => {
             tracing::error!(
@@ -163,7 +179,10 @@ async fn create(
         }
     };
 
-    let result = auth::service::user::create(data.db(), &params.username, &password).await;
+    let result = data
+        .persistence()
+        .user_create(&params.username, &password, true)
+        .await;
 
     match result {
         Ok(()) => model::common::Result::<String>::http_success("create user ok!"),
@@ -192,8 +211,22 @@ async fn update(
             .build()
     );
 
-    let result =
-        auth::service::user::update(data.db(), &params.username, &params.new_password).await;
+    let hashed_password = match bcrypt::hash(&params.new_password, 10u32) {
+        Ok(hash) => hash,
+        Err(e) => {
+            tracing::error!("Failed to hash password: {}", e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "code": 500,
+                "message": "Failed to hash password",
+                "data": null
+            }));
+        }
+    };
+
+    let result = data
+        .persistence()
+        .user_update_password(&params.username, &hashed_password)
+        .await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("update user ok!"),
@@ -226,7 +259,9 @@ async fn delete(
             .build()
     );
 
-    let global_admin = auth::service::role::find_by_username(data.db(), &params.username)
+    let global_admin = data
+        .persistence()
+        .role_find_by_username(&params.username)
         .await
         .unwrap_or_default()
         .iter()
@@ -240,7 +275,7 @@ async fn delete(
         });
     }
 
-    let result = auth::service::user::delete(data.db(), &params.username).await;
+    let result = data.persistence().user_delete(&params.username).await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("delete user ok!"),

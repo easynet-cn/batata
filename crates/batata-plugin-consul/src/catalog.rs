@@ -682,9 +682,9 @@ impl ConsulCatalogService {
     /// Get service summary for UI
     /// Returns a list of service summaries with health check information
     pub fn get_service_summary(&self, namespace: &str) -> Vec<ServiceListingSummary> {
-        let (_, service_names) = self
-            .naming_service
-            .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+        let (_, service_names) =
+            self.naming_service
+                .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
 
         let mut summaries: Vec<ServiceListingSummary> = Vec::new();
 
@@ -704,7 +704,8 @@ impl ConsulCatalogService {
             // Collect all unique tags for this service
             let mut all_tags: Vec<String> = Vec::new();
             let mut all_nodes: Vec<String> = Vec::new();
-            let mut external_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut external_sources: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
 
             let mut checks_passing = 0;
             let checks_warning = 0;
@@ -756,7 +757,7 @@ impl ConsulCatalogService {
                     gateway_config: GatewayConfig::default(),
                     transparent_proxy: false, // TODO: detect from metadata
                 },
-                connected_with_proxy: false,  // Connect proxy not supported yet
+                connected_with_proxy: false, // Connect proxy not supported yet
                 connected_with_gateway: false, // Gateway not supported yet
             };
 
@@ -1198,10 +1199,7 @@ mod tests {
 
         // Register a healthy service
         let mut metadata = HashMap::new();
-        metadata.insert(
-            "consul_tags".to_string(),
-            r#"["http", "api"]"#.to_string(),
-        );
+        metadata.insert("consul_tags".to_string(), r#"["http", "api"]"#.to_string());
         let instance1 = NacosInstance {
             instance_id: "web-1".to_string(),
             ip: "192.168.1.100".to_string(),
@@ -1251,7 +1249,10 @@ mod tests {
             .find(|s| s.service_summary.name == "web")
             .unwrap();
         assert_eq!(web_summary.service_summary.datacenter, "dc1");
-        assert_eq!(web_summary.service_summary.nodes, vec!["node-192-168-1-100"]);
+        assert_eq!(
+            web_summary.service_summary.nodes,
+            vec!["node-192-168-1-100"]
+        );
         assert_eq!(web_summary.service_summary.instance_count, 1);
         assert_eq!(web_summary.service_summary.checks_passing, 1);
         assert_eq!(web_summary.service_summary.checks_critical, 0);

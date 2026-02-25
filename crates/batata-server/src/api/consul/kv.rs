@@ -14,7 +14,7 @@ use crate::{
         ConsulExportRequest, ConsulImportRequest, ConsulKVExportItem, ImportResult,
     },
     model::common::AppState,
-    service::{config_export, config_import},
+    service::config_import,
 };
 
 /// GET /v1/kv/export
@@ -36,26 +36,34 @@ pub async fn export_kv(
         .clone()
         .unwrap_or_else(|| "public".to_string());
 
-    // Find configs for export
-    let configs =
-        match config_export::find_configs_for_export(data.db(), &namespace_id, None, None, None)
-            .await
-        {
-            Ok(c) => c,
+    // Find configs for export using persistence
+    let persistence = data.persistence();
+    let storage_configs = match persistence
+        .config_find_for_export(&namespace_id, None, None, None)
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string()));
+        }
+    };
+
+    if storage_configs.is_empty() {
+        return HttpResponse::Ok().json(Vec::<ConsulKVExportItem>::new());
+    }
+
+    // Convert to ConfigAllInfo for the existing export function
+    let configs: Vec<batata_config::model::ConfigAllInfo> =
+        storage_configs.into_iter().map(Into::into).collect();
+
+    // Create Consul JSON
+    let json_data =
+        match batata_config::service::export::create_consul_export_json(configs, &namespace_id) {
+            Ok(j) => j,
             Err(e) => {
                 return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string()));
             }
         };
-
-    if configs.is_empty() {
-        return HttpResponse::Ok().json(Vec::<ConsulKVExportItem>::new());
-    }
-
-    // Create Consul JSON
-    let json_data = match config_export::create_consul_export_json(configs, &namespace_id) {
-        Ok(j) => j,
-        Err(e) => return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string())),
-    };
 
     HttpResponse::Ok()
         .content_type("application/json")
@@ -107,20 +115,72 @@ pub async fn import_kv(
         .unwrap_or("unknown")
         .to_string();
 
-    // Import configs with overwrite policy (Consul behavior)
-    let result = match config_import::import_configs(
-        data.db(),
-        config_items,
-        &namespace_id,
-        crate::config::export_model::SameConfigPolicy::Overwrite,
-        &src_user,
-        &src_ip,
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string())),
-    };
+    // Import configs using persistence
+    let persistence = data.persistence();
+    let result =
+        match import_with_persistence(persistence, config_items, &namespace_id, &src_user, &src_ip)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(ConsulError::new(e.to_string()));
+            }
+        };
 
     HttpResponse::Ok().json(result)
+}
+
+/// Import configs using the persistence service (Consul always uses Overwrite policy)
+async fn import_with_persistence(
+    persistence: &dyn batata_persistence::PersistenceService,
+    items: Vec<crate::config::export_model::ConfigImportItem>,
+    target_namespace_id: &str,
+    src_user: &str,
+    src_ip: &str,
+) -> anyhow::Result<ImportResult> {
+    use crate::config::export_model::ImportFailItem;
+
+    let mut result = ImportResult::default();
+
+    for item in items {
+        let namespace_id = if item.namespace_id.is_empty() {
+            target_namespace_id.to_string()
+        } else {
+            item.namespace_id.clone()
+        };
+
+        match persistence
+            .config_create_or_update(
+                &item.data_id,
+                &item.group,
+                &namespace_id,
+                &item.content,
+                &item.app_name,
+                src_user,
+                src_ip,
+                &item.config_tags,
+                &item.desc,
+                "",
+                "",
+                &item.config_type,
+                "",
+                &item.encrypted_data_key,
+            )
+            .await
+        {
+            Ok(_) => {
+                result.success_count += 1;
+            }
+            Err(e) => {
+                result.fail_count += 1;
+                result.fail_data.push(ImportFailItem {
+                    data_id: item.data_id.clone(),
+                    group: item.group.clone(),
+                    reason: e.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(result)
 }

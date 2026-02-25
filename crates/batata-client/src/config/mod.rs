@@ -37,7 +37,10 @@ fn make_config_request(data_id: &str, group: &str, tenant: &str) -> ConfigReques
 }
 
 use self::cache::{CacheData, build_cache_key};
-use self::filter::{ConfigFilterChainManager, ConfigRequest as FilterConfigRequest, ConfigResponse as FilterConfigResponse};
+use self::filter::{
+    ConfigFilterChainManager, ConfigRequest as FilterConfigRequest,
+    ConfigResponse as FilterConfigResponse,
+};
 use self::listener::{ConfigChangeListener, ConfigResponse};
 
 /// Nacos-compatible config service backed by gRPC.
@@ -117,10 +120,14 @@ impl BatataConfigService {
             Err(e) => {
                 // Try failover if available
                 if let Some(processor) = &self.local_processor {
-                    if let Ok(Some(failover_content)) = processor.get_failover(data_id, group, tenant) {
+                    if let Ok(Some(failover_content)) =
+                        processor.get_failover(data_id, group, tenant)
+                    {
                         tracing::warn!(
                             "Using failover config for dataId={}, group={}, tenant={}",
-                            data_id, group, tenant
+                            data_id,
+                            group,
+                            tenant
                         );
                         return Ok(failover_content);
                     }
@@ -190,7 +197,8 @@ impl BatataConfigService {
         tenant: &str,
         content: &str,
     ) -> Result<bool> {
-        self.publish_config_inner(data_id, group, tenant, content, "", None).await
+        self.publish_config_inner(data_id, group, tenant, content, "", None)
+            .await
     }
 
     /// Publish config with type
@@ -202,7 +210,8 @@ impl BatataConfigService {
         content: &str,
         config_type: &str,
     ) -> Result<bool> {
-        self.publish_config_inner(data_id, group, tenant, content, config_type, None).await
+        self.publish_config_inner(data_id, group, tenant, content, config_type, None)
+            .await
     }
 
     /// Publish config with CAS (Compare-And-Swap) to avoid concurrent overwrites
@@ -214,7 +223,8 @@ impl BatataConfigService {
         content: &str,
         cas_md5: &str,
     ) -> Result<bool> {
-        self.publish_config_inner(data_id, group, tenant, content, "", Some(cas_md5)).await
+        self.publish_config_inner(data_id, group, tenant, content, "", Some(cas_md5))
+            .await
     }
 
     /// Publish config with CAS and type
@@ -227,7 +237,8 @@ impl BatataConfigService {
         cas_md5: &str,
         config_type: &str,
     ) -> Result<bool> {
-        self.publish_config_inner(data_id, group, tenant, content, config_type, Some(cas_md5)).await
+        self.publish_config_inner(data_id, group, tenant, content, config_type, Some(cas_md5))
+            .await
     }
 
     /// Internal publish method
@@ -241,9 +252,14 @@ impl BatataConfigService {
         cas_md5: Option<&str>,
     ) -> Result<bool> {
         // Apply filter chain
-        let mut filter_req = FilterConfigRequest::new(data_id.to_string(), group.to_string(), tenant.to_string());
+        let mut filter_req =
+            FilterConfigRequest::new(data_id.to_string(), group.to_string(), tenant.to_string());
         filter_req.content = content.to_string();
-        filter_req.r#type = if config_type.is_empty() { "text".to_string() } else { config_type.to_string() };
+        filter_req.r#type = if config_type.is_empty() {
+            "text".to_string()
+        } else {
+            config_type.to_string()
+        };
 
         {
             let chain = self.filter_chain.read().await;
@@ -270,7 +286,9 @@ impl BatataConfigService {
             }
 
             if let Some(processor) = &self.local_processor {
-                if let Err(e) = processor.save_snapshot(data_id, group, tenant, Some(&filter_req.content)) {
+                if let Err(e) =
+                    processor.save_snapshot(data_id, group, tenant, Some(&filter_req.content))
+                {
                     tracing::warn!("Failed to save snapshot: {}", e);
                 }
             }

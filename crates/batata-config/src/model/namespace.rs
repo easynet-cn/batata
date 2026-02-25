@@ -54,6 +54,24 @@ impl From<tenant_info::Model> for Namespace {
     }
 }
 
+impl From<batata_persistence::NamespaceInfo> for Namespace {
+    fn from(value: batata_persistence::NamespaceInfo) -> Self {
+        let type_ = if value.namespace_id == DEFAULT_NAMESPACE_ID {
+            0
+        } else {
+            2
+        };
+        Self {
+            namespace: value.namespace_id,
+            namespace_show_name: value.namespace_name,
+            namespace_desc: value.namespace_desc,
+            quota: value.quota,
+            config_count: value.config_count,
+            type_,
+        }
+    }
+}
+
 /// Namespace creation form
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]

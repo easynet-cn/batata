@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
     api::model::Page,
-    auth::{self, model::PermissionInfo},
+    auth::model::PermissionInfo,
     model::common::{self, AppState},
     secured,
 };
@@ -32,13 +32,10 @@ async fn exist(
             .build()
     );
 
-    match auth::service::permission::find_by_id(
-        data.db(),
-        &params.role,
-        &params.resource,
-        &params.action,
-    )
-    .await
+    match data
+        .persistence()
+        .permission_find_by_id(&params.role, &params.resource, &params.action)
+        .await
     {
         Ok(result) => common::Result::<bool>::http_success(result.is_some()),
         Err(e) => {
@@ -76,16 +73,29 @@ async fn search_page(
         role = stripped.to_string();
     }
 
-    match auth::service::permission::search_page(
-        data.db(),
-        &role,
-        params.page_no,
-        params.page_size,
-        accurate,
-    )
-    .await
+    match data
+        .persistence()
+        .permission_find_page(&role, params.page_no, params.page_size, accurate)
+        .await
     {
-        Ok(result) => common::Result::<Page<PermissionInfo>>::http_success(result),
+        Ok(page) => {
+            // Convert persistence Page<PermissionInfo> to API Page<PermissionInfo>
+            let api_page = Page {
+                total_count: page.total_count,
+                page_number: page.page_number,
+                pages_available: page.pages_available,
+                page_items: page
+                    .page_items
+                    .into_iter()
+                    .map(|p| PermissionInfo {
+                        role: p.role,
+                        resource: p.resource,
+                        action: p.action,
+                    })
+                    .collect(),
+            };
+            common::Result::<Page<PermissionInfo>>::http_success(api_page)
+        }
         Err(e) => {
             tracing::error!("Failed to search permissions: {}", e);
             HttpResponse::InternalServerError().json(common::Result::<Page<PermissionInfo>> {
@@ -111,13 +121,10 @@ async fn create(
             .build()
     );
 
-    let result = auth::service::permission::create(
-        data.db(),
-        &params.role,
-        &params.resource,
-        &params.action,
-    )
-    .await;
+    let result = data
+        .persistence()
+        .permission_grant(&params.role, &params.resource, &params.action)
+        .await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("add permission ok!"),
@@ -143,13 +150,10 @@ async fn delete(
             .build()
     );
 
-    let result = auth::service::permission::delete(
-        data.db(),
-        &params.role,
-        &params.resource,
-        &params.action,
-    )
-    .await;
+    let result = data
+        .persistence()
+        .permission_revoke(&params.role, &params.resource, &params.action)
+        .await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("delete permission ok!"),

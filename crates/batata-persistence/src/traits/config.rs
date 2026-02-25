@@ -127,4 +127,28 @@ pub trait ConfigPersistence: Send + Sync {
 
     /// Find all group names in a namespace
     async fn config_find_all_group_names(&self, namespace_id: &str) -> anyhow::Result<Vec<String>>;
+
+    /// Get the previous version of a config history entry
+    async fn config_history_get_previous(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        current_nid: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryStorageData>>;
+
+    /// Find all configs in a namespace (lightweight, without content)
+    async fn config_find_by_namespace(
+        &self,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigStorageData>>;
+
+    /// Find configs for export with optional filters
+    async fn config_find_for_export(
+        &self,
+        namespace_id: &str,
+        group: Option<&str>,
+        data_ids: Option<Vec<String>>,
+        app_name: Option<&str>,
+    ) -> anyhow::Result<Vec<ConfigStorageData>>;
 }

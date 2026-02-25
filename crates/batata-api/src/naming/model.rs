@@ -1153,4 +1153,3 @@ pub struct HealthCheckerConfigForm {
 fn default_health_check_type() -> String {
     "TCP".to_string()
 }
-

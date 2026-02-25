@@ -39,6 +39,23 @@ impl MaintainerClient {
         Ok(Self { http_client })
     }
 
+    /// Create a new MaintainerClient with a pre-generated token, bypassing HTTP login.
+    /// Used for embedded mode where the server generates a JWT token locally.
+    pub fn new_with_token(
+        config: MaintainerClientConfig,
+        token: String,
+        ttl_seconds: i64,
+    ) -> anyhow::Result<Self> {
+        let http_config = HttpClientConfig::with_servers(config.server_addrs)
+            .with_auth(&config.username, &config.password)
+            .with_timeouts(config.connect_timeout_ms, config.read_timeout_ms)
+            .with_context_path(&config.context_path)
+            .with_auth_endpoint(admin_api_path::AUTH_LOGIN);
+
+        let http_client = BatataHttpClient::new_with_token(http_config, token, ttl_seconds)?;
+        Ok(Self { http_client })
+    }
+
     /// Create a new MaintainerClient from a single server address
     pub async fn from_server_addr(
         addr: &str,

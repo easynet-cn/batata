@@ -124,6 +124,35 @@ impl From<entity::config_info::Model> for ConfigAllInfo {
     }
 }
 
+impl From<batata_persistence::ConfigStorageData> for ConfigAllInfo {
+    fn from(value: batata_persistence::ConfigStorageData) -> Self {
+        Self {
+            config_info: ConfigInfo {
+                config_info_base: ConfigInfoBase {
+                    id: 0,
+                    data_id: value.data_id,
+                    group: value.group,
+                    content: value.content,
+                    md5: value.md5,
+                    encrypted_data_key: value.encrypted_data_key,
+                },
+                tenant: value.tenant,
+                app_name: value.app_name,
+                r#type: value.config_type,
+            },
+            create_time: value.created_time,
+            modify_time: value.modified_time,
+            create_user: value.src_user,
+            create_ip: value.src_ip,
+            desc: value.desc,
+            r#use: value.r#use,
+            effect: value.effect,
+            schema: value.schema,
+            config_tags: value.config_tags,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigInfoGrayWrapper {

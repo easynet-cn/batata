@@ -24,19 +24,10 @@ struct IpMetrics {
 }
 
 async fn get_config_count(data: &web::Data<AppState>) -> u64 {
-    match batata_config::service::config::search_page(
-        data.db(),
-        1,
-        1,
-        "",
-        "",
-        "",
-        "",
-        vec![],
-        vec![],
-        "",
-    )
-    .await
+    let persistence = data.persistence();
+    match persistence
+        .config_search_page(1, 1, "", "", "", "", vec![], vec![], "")
+        .await
     {
         Ok(page) => page.total_count,
         Err(_) => 0,

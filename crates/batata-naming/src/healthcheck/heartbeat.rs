@@ -108,15 +108,15 @@ impl UnhealthyInstanceChecker {
         port: i32,
         cluster_name: &str,
     ) -> String {
-        format!("{}#{}#{}#{}#{}#{}", namespace, group_name, service_name, ip, port, cluster_name)
+        format!(
+            "{}#{}#{}#{}#{}#{}",
+            namespace, group_name, service_name, ip, port, cluster_name
+        )
     }
 
     /// Start the checker
     pub async fn start(&self) {
-        if self
-            .running
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
+        if self.running.swap(true, std::sync::atomic::Ordering::SeqCst) {
             info!("Unhealthy instance checker already running");
             return;
         }
@@ -176,9 +176,15 @@ impl UnhealthyInstanceChecker {
                                 instance.port,
                                 &entry.cluster_name,
                             ) {
-                                debug!("Successfully marked {}:{} as unhealthy", instance.ip, instance.port);
+                                debug!(
+                                    "Successfully marked {}:{} as unhealthy",
+                                    instance.ip, instance.port
+                                );
                             } else {
-                                warn!("Failed to mark {}:{} as unhealthy", instance.ip, instance.port);
+                                warn!(
+                                    "Failed to mark {}:{} as unhealthy",
+                                    instance.ip, instance.port
+                                );
                             }
                             break;
                         }
@@ -199,7 +205,8 @@ impl UnhealthyInstanceChecker {
 
     /// Stop the checker
     pub fn stop(&self) {
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         info!("Stopped unhealthy instance checker");
     }
 
@@ -240,10 +247,7 @@ impl ExpiredInstanceChecker {
 
     /// Start the checker
     pub async fn start(&self) {
-        if self
-            .running
-            .swap(true, std::sync::atomic::Ordering::SeqCst)
-        {
+        if self.running.swap(true, std::sync::atomic::Ordering::SeqCst) {
             info!("Expired instance checker already running");
             return;
         }
@@ -298,19 +302,22 @@ impl ExpiredInstanceChecker {
                         &entry.service_name,
                         &instance,
                     ) {
-                        info!("Successfully deleted expired instance {}:{}", entry.ip, entry.port);
+                        info!(
+                            "Successfully deleted expired instance {}:{}",
+                            entry.ip, entry.port
+                        );
                         heartbeat_map.remove(key);
                     } else {
-                        warn!("Failed to delete expired instance {}:{}", entry.ip, entry.port);
+                        warn!(
+                            "Failed to delete expired instance {}:{}",
+                            entry.ip, entry.port
+                        );
                     }
                 }
             }
 
             if !expired_instances.is_empty() {
-                info!(
-                    "Deleted {} expired instances",
-                    expired_instances.len()
-                );
+                info!("Deleted {} expired instances", expired_instances.len());
             }
         }
 
@@ -319,7 +326,8 @@ impl ExpiredInstanceChecker {
 
     /// Stop the checker
     pub fn stop(&self) {
-        self.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        self.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         info!("Stopped expired instance checker");
     }
 
@@ -341,17 +349,11 @@ mod tests {
         let config = Arc::new(HealthCheckConfig::default());
         let heartbeat_map = Arc::new(DashMap::new());
 
-        let unhealthy_checker = UnhealthyInstanceChecker::new(
-            naming_service.clone(),
-            config.clone(),
-        );
+        let unhealthy_checker =
+            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone());
 
-        let expired_checker = ExpiredInstanceChecker::new(
-            naming_service,
-            config,
-            true,
-            heartbeat_map,
-        );
+        let expired_checker =
+            ExpiredInstanceChecker::new(naming_service, config, true, heartbeat_map);
 
         // Test that checkers can be created
         assert!(!unhealthy_checker.running.load(Ordering::SeqCst));
@@ -399,7 +401,10 @@ mod tests {
             8080,
             "DEFAULT",
         );
-        assert_eq!(key, "public#DEFAULT_GROUP#test-service#127.0.0.1#8080#DEFAULT");
+        assert_eq!(
+            key,
+            "public#DEFAULT_GROUP#test-service#127.0.0.1#8080#DEFAULT"
+        );
     }
 
     #[test]
@@ -620,10 +625,8 @@ mod tests {
         let heartbeat_map = Arc::new(DashMap::new());
 
         // Create unhealthy checker
-        let unhealthy_checker = UnhealthyInstanceChecker::new(
-            naming_service.clone(),
-            config.clone(),
-        );
+        let unhealthy_checker =
+            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone());
 
         // Record a heartbeat that will time out
         unhealthy_checker.record_heartbeat(
@@ -664,10 +667,8 @@ mod tests {
         let heartbeat_map = Arc::new(DashMap::new());
 
         // Create unhealthy checker
-        let unhealthy_checker = UnhealthyInstanceChecker::new(
-            naming_service.clone(),
-            config.clone(),
-        );
+        let unhealthy_checker =
+            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone());
 
         // Record a heartbeat
         unhealthy_checker.record_heartbeat(
@@ -728,7 +729,12 @@ mod tests {
         let elapsed = now - entry.value().last_heartbeat;
 
         // Verify elapsed time exceeds timeout
-        assert!(elapsed > short_timeout, "elapsed {} > timeout {}", elapsed, short_timeout);
+        assert!(
+            elapsed > short_timeout,
+            "elapsed {} > timeout {}",
+            elapsed,
+            short_timeout
+        );
 
         // This instance should be marked as unhealthy by the checker
         // (actual marking happens in the async start() method)

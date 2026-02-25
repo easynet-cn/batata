@@ -3,6 +3,7 @@
 
 // API version 3 (current) endpoints
 pub mod v3 {
+    mod admin;
     mod auth;
     pub mod oauth;
     mod permission;

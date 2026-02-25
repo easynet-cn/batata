@@ -90,10 +90,7 @@ pub fn extract_auth_context_from_payload(
 /// Check if authentication should be enabled for this request
 /// Corresponds to Nacos's protocolAuthService.enableAuth(secured)
 /// Returns true if auth plugin is configured and enabled for this sign type
-pub fn enable_auth(
-    auth_service: &GrpcAuthService,
-    _sign_type: &str,
-) -> bool {
+pub fn enable_auth(auth_service: &GrpcAuthService, _sign_type: &str) -> bool {
     // For now, we follow Nacos logic:
     // - If auth is not enabled globally, return false
     // - If auth plugin is available, check if it enables auth for this sign type
@@ -350,7 +347,11 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 
                     // Check server identity first (MATCHED case skips remaining auth)
                     if auth_service.check_server_identity(
-                        &payload.metadata.as_ref().map(|m| m.headers.clone()).unwrap_or_default()
+                        &payload
+                            .metadata
+                            .as_ref()
+                            .map(|m| m.headers.clone())
+                            .unwrap_or_default(),
                     ) {
                         // Server identity matched - skip remaining auth checks
                     } else {
@@ -360,10 +361,8 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                             // Auth not enabled for this type - skip validation
                         } else {
                             // Validate identity
-                            let auth_context = extract_auth_context_from_payload(
-                                auth_service,
-                                payload,
-                            );
+                            let auth_context =
+                                extract_auth_context_from_payload(auth_service, payload);
                             check_authentication(&auth_context)?;
 
                             // Validate authority (permission)
@@ -500,7 +499,11 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
                                     // Check server identity first
                                     if auth_service.check_server_identity(
-                                        &payload.metadata.as_ref().map(|m| m.headers.clone()).unwrap_or_default()
+                                        &payload
+                                            .metadata
+                                            .as_ref()
+                                            .map(|m| m.headers.clone())
+                                            .unwrap_or_default(),
                                     ) {
                                         // Server identity matched - skip remaining auth checks
                                         Ok(())

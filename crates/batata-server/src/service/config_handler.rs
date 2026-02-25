@@ -31,7 +31,6 @@ use crate::{
     },
     model::common::AppState,
     service::{
-        config,
         config_fuzzy_watch::{ConfigFuzzyWatchManager, ConfigFuzzyWatchPattern},
         rpc::{AuthRequirement, PayloadHandler},
     },
@@ -62,18 +61,17 @@ impl PayloadHandler for ConfigQueryHandler {
             data_id, group, tenant
         );
 
-        let db = self.app_state.db();
+        let persistence = self.app_state.persistence();
 
-        match config::find_one(db, data_id, group, tenant).await {
-            Ok(Some(config_info)) => {
+        match persistence.config_find_one(data_id, group, tenant).await {
+            Ok(Some(config)) => {
                 let mut response = ConfigQueryResponse::new();
                 response.response.request_id = request_id;
-                response.content = config_info.config_info.config_info_base.content;
-                response.md5 = config_info.config_info.config_info_base.md5;
-                response.content_type = config_info.config_info.r#type;
-                response.encrypted_data_key =
-                    config_info.config_info.config_info_base.encrypted_data_key;
-                response.last_modified = config_info.modify_time;
+                response.content = config.content;
+                response.md5 = config.md5;
+                response.content_type = config.config_type;
+                response.encrypted_data_key = config.encrypted_data_key;
+                response.last_modified = config.modified_time;
 
                 Ok(response.build_payload())
             }
@@ -196,26 +194,26 @@ impl PayloadHandler for ConfigPublishHandler {
             data_id, group, tenant, src_user, src_ip
         );
 
-        let db = self.app_state.db();
+        let persistence = self.app_state.persistence();
 
-        match config::create_or_update(
-            db,
-            data_id,
-            group,
-            tenant,
-            content,
-            app_name,
-            src_user,
-            &src_ip,
-            config_tags,
-            desc,
-            r#use,
-            effect,
-            r#type,
-            schema,
-            encrypted_data_key,
-        )
-        .await
+        match persistence
+            .config_create_or_update(
+                data_id,
+                group,
+                tenant,
+                content,
+                app_name,
+                src_user,
+                src_ip,
+                config_tags,
+                desc,
+                r#use,
+                effect,
+                r#type,
+                schema,
+                encrypted_data_key,
+            )
+            .await
         {
             Ok(_) => {
                 // Notify fuzzy watchers about config change
@@ -421,9 +419,12 @@ impl PayloadHandler for ConfigRemoveHandler {
             .map(|m| m.client_ip.as_str())
             .unwrap_or("");
 
-        let db = self.app_state.db();
+        let persistence = self.app_state.persistence();
 
-        match config::delete(db, data_id, group, tenant, "", src_ip, src_user).await {
+        match persistence
+            .config_delete(data_id, group, tenant, "", src_ip, src_user)
+            .await
+        {
             Ok(_) => {
                 // Notify fuzzy watchers about config removal
                 if let Err(e) = self
@@ -612,7 +613,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
         let request = ConfigBatchListenRequest::from(payload);
         let request_id = request.request_id();
 
-        let db = self.app_state.db();
+        let persistence = self.app_state.persistence();
         let subscriber_manager = &self.app_state.config_subscriber_manager;
         let connection_id = &_connection.meta_info.connection_id;
         let client_ip = &_connection.meta_info.remote_ip;
@@ -637,8 +638,8 @@ impl PayloadHandler for ConfigBatchListenHandler {
             }
 
             // Query current config and compare MD5
-            if let Ok(Some(config_info)) = config::find_one(db, data_id, group, tenant).await {
-                let server_md5 = &config_info.config_info.config_info_base.md5;
+            if let Ok(Some(config)) = persistence.config_find_one(data_id, group, tenant).await {
+                let server_md5 = &config.md5;
 
                 // If MD5 differs, config has changed
                 if client_md5 != server_md5 {

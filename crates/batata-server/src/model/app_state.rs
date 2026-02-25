@@ -4,8 +4,6 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use sea_orm::DatabaseConnection;
-
 use batata_auth::service::oauth::OAuthService;
 use batata_core::cluster::ServerMemberManager;
 use batata_naming::healthcheck::HealthCheckManager;
@@ -29,15 +27,14 @@ use super::{
 /// Application state shared across all handlers
 ///
 /// For merged/server deployment:
-/// - database_connection and server_member_manager are Some
+/// - server_member_manager and persistence are Some
 /// - console_datasource uses LocalDataSource (wraps the database)
 ///
 /// For console-only remote deployment:
-/// - database_connection and server_member_manager are None
+/// - server_member_manager and persistence are None
 /// - console_datasource uses RemoteDataSource (HTTP calls to server)
 pub struct AppState {
     pub configuration: Configuration,
-    pub database_connection: Option<DatabaseConnection>,
     pub server_member_manager: Option<Arc<ServerMemberManager>>,
     pub config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     pub console_datasource: Arc<dyn ConsoleDataSource>,
@@ -53,7 +50,6 @@ impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppState")
             .field("configuration", &self.configuration)
-            .field("database_connection", &self.database_connection.is_some())
             .field(
                 "server_member_manager",
                 &self.server_member_manager.is_some(),
@@ -71,7 +67,6 @@ impl Clone for AppState {
     fn clone(&self) -> Self {
         Self {
             configuration: self.configuration.clone(),
-            database_connection: self.database_connection.clone(),
             server_member_manager: self.server_member_manager.clone(),
             config_subscriber_manager: self.config_subscriber_manager.clone(),
             console_datasource: self.console_datasource.clone(),
@@ -98,29 +93,6 @@ impl AppState {
     /// Try to get the persistence service
     pub fn try_persistence(&self) -> Option<&dyn PersistenceService> {
         self.persistence.as_deref()
-    }
-
-    // ========================================================================
-    // Database Access
-    // ========================================================================
-
-    /// Check if this is a remote console deployment (no direct DB access)
-    pub fn is_remote_console(&self) -> bool {
-        self.database_connection.is_none()
-    }
-
-    /// Try to get database connection, returns None if not available
-    /// Use this in code that needs to handle remote console mode gracefully
-    pub fn try_db(&self) -> Option<&DatabaseConnection> {
-        self.database_connection.as_ref()
-    }
-
-    /// Get database connection (panics if not available)
-    /// Use this only in server endpoints that require database access
-    pub fn db(&self) -> &DatabaseConnection {
-        self.database_connection
-            .as_ref()
-            .expect("Database connection not available in remote console mode")
     }
 
     // ========================================================================

@@ -10,11 +10,12 @@ use batata_consistency::raft::reader::RocksDbReader;
 use batata_consistency::raft::request::RaftRequest;
 
 use crate::model::{
-    ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData, NamespaceInfo, Page,
-    PermissionInfo, RoleInfo, StorageMode, UserInfo,
+    CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
+    NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageMode, UserInfo,
 };
 use crate::traits::PersistenceService;
 use crate::traits::auth::AuthPersistence;
+use crate::traits::capacity::CapacityPersistence;
 use crate::traits::config::ConfigPersistence;
 use crate::traits::namespace::NamespacePersistence;
 
@@ -206,35 +207,48 @@ impl ConfigPersistence for DistributedPersistService {
 
     async fn config_create_or_update_gray(
         &self,
-        _data_id: &str,
-        _group_id: &str,
-        _tenant_id: &str,
-        _content: &str,
-        _gray_name: &str,
-        _gray_rule: &str,
-        _src_user: &str,
-        _src_ip: &str,
-        _app_name: &str,
-        _encrypted_data_key: &str,
+        data_id: &str,
+        group_id: &str,
+        tenant_id: &str,
+        content: &str,
+        gray_name: &str,
+        gray_rule: &str,
+        src_user: &str,
+        src_ip: &str,
+        app_name: &str,
+        encrypted_data_key: &str,
     ) -> anyhow::Result<bool> {
-        // Gray config operations through Raft would need additional RaftRequest variants.
-        // For now, return an error indicating this is not yet supported in distributed mode.
-        Err(anyhow::anyhow!(
-            "Gray config operations not yet supported in distributed mode"
-        ))
+        let request = RaftRequest::ConfigGrayPublish {
+            data_id: data_id.to_string(),
+            group: group_id.to_string(),
+            tenant: tenant_id.to_string(),
+            content: content.to_string(),
+            gray_name: gray_name.to_string(),
+            gray_rule: gray_rule.to_string(),
+            app_name: Some(app_name.to_string()),
+            encrypted_data_key: Some(encrypted_data_key.to_string()),
+            src_user: Some(src_user.to_string()),
+            src_ip: Some(src_ip.to_string()),
+        };
+        self.raft_write(request).await?;
+        Ok(true)
     }
 
     async fn config_delete_gray(
         &self,
-        _data_id: &str,
-        _group: &str,
-        _namespace_id: &str,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
         _client_ip: &str,
         _src_user: &str,
     ) -> anyhow::Result<bool> {
-        Err(anyhow::anyhow!(
-            "Gray config operations not yet supported in distributed mode"
-        ))
+        let request = RaftRequest::ConfigGrayRemove {
+            data_id: data_id.to_string(),
+            group: group.to_string(),
+            tenant: namespace_id.to_string(),
+        };
+        self.raft_write(request).await?;
+        Ok(true)
     }
 
     async fn config_batch_delete(
@@ -243,8 +257,11 @@ impl ConfigPersistence for DistributedPersistService {
         _client_ip: &str,
         _src_user: &str,
     ) -> anyhow::Result<usize> {
-        // Batch delete by ID is not supported in distributed mode
-        Ok(0)
+        // RocksDB configs are keyed by tenant@@group@@data_id, not by integer IDs.
+        // Batch delete by SQL integer ID is not applicable in embedded/distributed mode.
+        Err(anyhow::anyhow!(
+            "Batch delete by integer ID is not supported in distributed embedded mode"
+        ))
     }
 
     async fn config_history_find_by_id(
@@ -284,6 +301,84 @@ impl ConfigPersistence for DistributedPersistService {
     async fn config_find_all_group_names(&self, namespace_id: &str) -> anyhow::Result<Vec<String>> {
         self.ensure_consistent_read().await?;
         self.reader.find_all_group_names(namespace_id)
+    }
+
+    async fn config_history_get_previous(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        current_nid: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
+        self.ensure_consistent_read().await?;
+        let (entries, _) =
+            self.reader
+                .search_config_history(data_id, group, namespace_id, 1, u64::MAX)?;
+
+        // Find the entry with the highest id that is still less than current_nid
+        let mut best: Option<&serde_json::Value> = None;
+        let mut best_id: u64 = 0;
+
+        for entry in &entries {
+            let id = entry["id"].as_u64().unwrap_or(0);
+            if id < current_nid && id > best_id {
+                best_id = id;
+                best = Some(entry);
+            }
+        }
+
+        Ok(best.map(EmbeddedPersistService::json_to_history))
+    }
+
+    async fn config_find_by_namespace(
+        &self,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigStorageData>> {
+        self.ensure_consistent_read().await?;
+        let configs = self.reader.list_configs(namespace_id)?;
+        Ok(configs
+            .iter()
+            .map(EmbeddedPersistService::json_to_config)
+            .collect())
+    }
+
+    async fn config_find_for_export(
+        &self,
+        namespace_id: &str,
+        group: Option<&str>,
+        data_ids: Option<Vec<String>>,
+        app_name: Option<&str>,
+    ) -> anyhow::Result<Vec<ConfigStorageData>> {
+        self.ensure_consistent_read().await?;
+        let all_configs = self.reader.list_configs(namespace_id)?;
+
+        let filtered: Vec<ConfigStorageData> = all_configs
+            .iter()
+            .map(EmbeddedPersistService::json_to_config)
+            .filter(|cfg| {
+                // Filter by group if specified
+                if let Some(g) = group {
+                    if !g.is_empty() && cfg.group != g {
+                        return false;
+                    }
+                }
+                // Filter by data_ids if specified
+                if let Some(ref ids) = data_ids {
+                    if !ids.is_empty() && !ids.contains(&cfg.data_id) {
+                        return false;
+                    }
+                }
+                // Filter by app_name if specified
+                if let Some(app) = app_name {
+                    if !app.is_empty() && cfg.app_name != app {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
+
+        Ok(filtered)
     }
 }
 
@@ -424,6 +519,15 @@ impl AuthPersistence for DistributedPersistService {
         self.raft_write(request).await
     }
 
+    async fn user_search(&self, username: &str) -> anyhow::Result<Vec<String>> {
+        self.ensure_consistent_read().await?;
+        let (users, _) = self.reader.search_users(username, false, 1, u64::MAX)?;
+        Ok(users
+            .iter()
+            .map(|v| v["username"].as_str().unwrap_or("").to_string())
+            .collect())
+    }
+
     async fn role_find_by_username(&self, username: &str) -> anyhow::Result<Vec<RoleInfo>> {
         self.ensure_consistent_read().await?;
         let items = self.reader.get_roles_by_username(username)?;
@@ -478,6 +582,21 @@ impl AuthPersistence for DistributedPersistService {
         self.reader.has_global_admin_by_username(username)
     }
 
+    async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>> {
+        self.ensure_consistent_read().await?;
+        // Use search_roles with empty username pattern, non-accurate, and large page to get all matches
+        let (items, _total) = self.reader.search_roles("", role, false, 1, u64::MAX)?;
+        let role_names: Vec<String> = items
+            .iter()
+            .filter_map(|v| {
+                v.get("role")
+                    .and_then(|r| r.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        Ok(role_names)
+    }
+
     async fn permission_find_by_role(&self, role: &str) -> anyhow::Result<Vec<PermissionInfo>> {
         self.ensure_consistent_read().await?;
         let items = self.reader.get_permissions_by_role(role)?;
@@ -517,6 +636,19 @@ impl AuthPersistence for DistributedPersistService {
         Ok(Page::new(total, page_no, page_size, page_items))
     }
 
+    async fn permission_find_by_id(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<Option<PermissionInfo>> {
+        self.ensure_consistent_read().await?;
+        match self.reader.get_permission(role, resource, action)? {
+            Some(v) => Ok(Some(EmbeddedPersistService::json_to_permission(&v))),
+            None => Ok(None),
+        }
+    }
+
     async fn permission_grant(
         &self,
         role: &str,
@@ -543,6 +675,158 @@ impl AuthPersistence for DistributedPersistService {
             action: action.to_string(),
         };
         self.raft_write(request).await
+    }
+}
+
+#[async_trait]
+impl CapacityPersistence for DistributedPersistService {
+    async fn capacity_get_tenant(&self, tenant_id: &str) -> anyhow::Result<Option<CapacityInfo>> {
+        let key = format!("capacity:tenant:{}", tenant_id);
+        match self.reader.db().get(key.as_bytes())? {
+            Some(data) => {
+                let info: CapacityInfo = serde_json::from_slice(&data)?;
+                Ok(Some(info))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn capacity_upsert_tenant(
+        &self,
+        tenant_id: &str,
+        quota: Option<u32>,
+        max_size: Option<u32>,
+        max_aggr_count: Option<u32>,
+        max_aggr_size: Option<u32>,
+        max_history_count: Option<u32>,
+    ) -> anyhow::Result<CapacityInfo> {
+        let key = format!("capacity:tenant:{}", tenant_id);
+        let db = self.reader.db();
+
+        // Read existing or create defaults
+        let mut info = match db.get(key.as_bytes())? {
+            Some(data) => serde_json::from_slice::<CapacityInfo>(&data)?,
+            None => CapacityInfo {
+                id: None,
+                identifier: tenant_id.to_string(),
+                quota: 200,
+                usage: 0,
+                max_size: 102400,
+                max_aggr_count: 10000,
+                max_aggr_size: 2097152,
+                max_history_count: 24,
+            },
+        };
+
+        // Merge provided fields
+        if let Some(v) = quota {
+            info.quota = v;
+        }
+        if let Some(v) = max_size {
+            info.max_size = v;
+        }
+        if let Some(v) = max_aggr_count {
+            info.max_aggr_count = v;
+        }
+        if let Some(v) = max_aggr_size {
+            info.max_aggr_size = v;
+        }
+        if let Some(v) = max_history_count {
+            info.max_history_count = v;
+        }
+
+        // Compute usage by counting configs in this namespace
+        info.usage = self.reader.count_configs(tenant_id)? as u32;
+
+        // Write back
+        let json = serde_json::to_vec(&info)?;
+        db.put(key.as_bytes(), &json)?;
+
+        Ok(info)
+    }
+
+    async fn capacity_delete_tenant(&self, tenant_id: &str) -> anyhow::Result<bool> {
+        let key = format!("capacity:tenant:{}", tenant_id);
+        let db = self.reader.db();
+        let exists = db.get(key.as_bytes())?.is_some();
+        if exists {
+            db.delete(key.as_bytes())?;
+        }
+        Ok(exists)
+    }
+
+    async fn capacity_get_group(&self, group_id: &str) -> anyhow::Result<Option<CapacityInfo>> {
+        let key = format!("capacity:group:{}", group_id);
+        match self.reader.db().get(key.as_bytes())? {
+            Some(data) => {
+                let info: CapacityInfo = serde_json::from_slice(&data)?;
+                Ok(Some(info))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn capacity_upsert_group(
+        &self,
+        group_id: &str,
+        quota: Option<u32>,
+        max_size: Option<u32>,
+        max_aggr_count: Option<u32>,
+        max_aggr_size: Option<u32>,
+        max_history_count: Option<u32>,
+    ) -> anyhow::Result<CapacityInfo> {
+        let key = format!("capacity:group:{}", group_id);
+        let db = self.reader.db();
+
+        // Read existing or create defaults
+        let mut info = match db.get(key.as_bytes())? {
+            Some(data) => serde_json::from_slice::<CapacityInfo>(&data)?,
+            None => CapacityInfo {
+                id: None,
+                identifier: group_id.to_string(),
+                quota: 200,
+                usage: 0,
+                max_size: 102400,
+                max_aggr_count: 10000,
+                max_aggr_size: 2097152,
+                max_history_count: 24,
+            },
+        };
+
+        // Merge provided fields
+        if let Some(v) = quota {
+            info.quota = v;
+        }
+        if let Some(v) = max_size {
+            info.max_size = v;
+        }
+        if let Some(v) = max_aggr_count {
+            info.max_aggr_count = v;
+        }
+        if let Some(v) = max_aggr_size {
+            info.max_aggr_size = v;
+        }
+        if let Some(v) = max_history_count {
+            info.max_history_count = v;
+        }
+
+        // Write back
+        let json = serde_json::to_vec(&info)?;
+        db.put(key.as_bytes(), &json)?;
+
+        Ok(info)
+    }
+
+    async fn capacity_delete_group(&self, group_id: &str) -> anyhow::Result<bool> {
+        let key = format!("capacity:group:{}", group_id);
+        let db = self.reader.db();
+        let exists = db.get(key.as_bytes())?.is_some();
+        if exists {
+            db.delete(key.as_bytes())?;
+        }
+        Ok(exists)
     }
 }
 

@@ -4,11 +4,11 @@
 //! that matches Nacos behavior.
 
 use crate::common::{
-    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
-    TestClient, unique_service_name,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_service_name,
 };
 use serde_json::json;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 /// Create an authenticated test client
 async fn authenticated_client() -> TestClient {
@@ -80,7 +80,10 @@ async fn test_instance_marked_unhealthy_after_heartbeat_timeout() {
             if let Some(healthy) = instance["healthy"].as_bool() {
                 // Instance should be unhealthy after timeout
                 // (If health check is running)
-                assert!(!healthy, "Instance should be marked as unhealthy after heartbeat timeout");
+                assert!(
+                    !healthy,
+                    "Instance should be marked as unhealthy after heartbeat timeout"
+                );
             }
         }
     }
@@ -127,7 +130,10 @@ async fn test_expired_instance_deleted_when_expire_enabled() {
         .as_array()
         .map(|arr| arr.len())
         .unwrap_or(0);
-    assert!(initial_count >= 1, "Should have at least 1 instance initially");
+    assert!(
+        initial_count >= 1,
+        "Should have at least 1 instance initially"
+    );
 
     // Wait for delete timeout (default is 30 seconds)
     sleep(Duration::from_secs(31)).await;
@@ -276,9 +282,9 @@ async fn test_deregistered_instance_stops_being_tracked() {
 
     // Deregistered instance should not be in the list
     if let Some(hosts) = response["data"]["hosts"].as_array() {
-        let found = hosts.iter().any(|instance| {
-            instance["ip"] == ip && instance["port"] == port
-        });
+        let found = hosts
+            .iter()
+            .any(|instance| instance["ip"] == ip && instance["port"] == port);
         assert!(!found, "Deregistered instance should not be in the list");
     }
 }
@@ -346,7 +352,11 @@ async fn test_multiple_instances_different_heartbeat_timings() {
 
     // All instances should exist
     if let Some(hosts) = response["data"]["hosts"].as_array() {
-        assert_eq!(hosts.len(), instances.len(), "All instances should be present");
+        assert_eq!(
+            hosts.len(),
+            instances.len(),
+            "All instances should be present"
+        );
     }
 }
 
@@ -446,6 +456,9 @@ async fn test_non_ephemeral_instances_not_checked_for_heartbeat() {
 
     // Non-ephemeral instance should still be present
     if let Some(hosts) = response["data"]["hosts"].as_array() {
-        assert!(hosts.len() >= 1, "Non-ephemeral instance should still be present");
+        assert!(
+            hosts.len() >= 1,
+            "Non-ephemeral instance should still be present"
+        );
     }
 }

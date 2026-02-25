@@ -6,13 +6,13 @@
 //! - Config listener count (gauge)
 //! - Failed request count (counter)
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use prometheus::{
-    register_counter_vec, register_gauge_vec, register_histogram_vec,
-    CounterVec, Encoder, GaugeVec, HistogramVec, TextEncoder,
+    CounterVec, Encoder, GaugeVec, HistogramVec, TextEncoder, register_counter_vec,
+    register_gauge_vec, register_histogram_vec,
 };
 
 /// Prometheus metrics collector
@@ -150,15 +150,18 @@ impl<'a> Timer<'a> {
     /// Stop the timer and record success
     pub fn success(self) {
         let duration = self.start.elapsed();
-        self.metrics.record_latency(&self.operation, "success", duration);
+        self.metrics
+            .record_latency(&self.operation, "success", duration);
         self.metrics.increment_success_request(&self.operation);
     }
 
     /// Stop the timer and record failure
     pub fn failure(self, error_type: &str) {
         let duration = self.start.elapsed();
-        self.metrics.record_latency(&self.operation, "error", duration);
-        self.metrics.increment_failed_request(&self.operation, error_type);
+        self.metrics
+            .record_latency(&self.operation, "error", duration);
+        self.metrics
+            .increment_failed_request(&self.operation, error_type);
     }
 }
 

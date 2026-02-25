@@ -46,9 +46,7 @@ async fn test_add_listener() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, md5, "30000"
-                ).as_str()
+                format!("{}{}{}{}", data_id, DEFAULT_GROUP, md5, "30000").as_str(),
             )],
         )
         .await
@@ -83,9 +81,7 @@ async fn test_remove_listener() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, "placeholder", "30000"
-                ).as_str()
+                format!("{}{}{}{}", data_id, DEFAULT_GROUP, "placeholder", "30000").as_str(),
             )],
         )
         .await
@@ -97,9 +93,7 @@ async fn test_remove_listener() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, "", "0"
-                ).as_str()
+                format!("{}{}{}{}", data_id, DEFAULT_GROUP, "", "0").as_str(),
             )],
         )
         .await
@@ -131,10 +125,7 @@ async fn test_listener_receives_notification() {
     let md5 = response["data"]["md5"].as_str().unwrap_or("").to_string();
 
     // Start listener in background
-    let client_clone = TestClient::new_with_cookies(
-        MAIN_BASE_URL,
-        client.cookies().clone()
-    );
+    let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, client.cookies().clone());
     let data_id_clone = data_id.clone();
 
     let listener_handle = tokio::spawn(async move {
@@ -143,9 +134,7 @@ async fn test_listener_receives_notification() {
                 "/nacos/v2/cs/config/listener",
                 &[(
                     "Listening-Configs",
-                    format!("{}{}{}{}",
-                        data_id_clone, DEFAULT_GROUP, md5, "30000"
-                    ).as_str()
+                    format!("{}{}{}{}", data_id_clone, DEFAULT_GROUP, md5, "30000").as_str(),
                 )],
             )
             .await
@@ -169,10 +158,7 @@ async fn test_listener_receives_notification() {
         .expect("Failed to update config");
 
     // Wait for listener to receive notification
-    let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        listener_handle
-    ).await;
+    let result = tokio::time::timeout(Duration::from_secs(10), listener_handle).await;
 
     assert!(result.is_ok(), "Listener should receive notification");
     let response = result.unwrap().expect("Listener task failed");
@@ -208,10 +194,18 @@ async fn test_multiple_configs_listener() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}%02{}{}{}{}",
-                    data_id1, DEFAULT_GROUP, "md5_1", "30000",
-                    data_id2, DEFAULT_GROUP, "md5_2", "30000"
-                ).as_str()
+                format!(
+                    "{}{}{}{}%02{}{}{}{}",
+                    data_id1,
+                    DEFAULT_GROUP,
+                    "md5_1",
+                    "30000",
+                    data_id2,
+                    DEFAULT_GROUP,
+                    "md5_2",
+                    "30000"
+                )
+                .as_str(),
             )],
         )
         .await
@@ -249,9 +243,7 @@ async fn test_listener_with_namespace() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, md5, "30000"
-                ).as_str()
+                format!("{}{}{}{}", data_id, DEFAULT_GROUP, md5, "30000").as_str(),
             )],
         )
         .await
@@ -288,9 +280,7 @@ async fn test_listener_custom_group() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, "TEST_GROUP", md5, "30000"
-                ).as_str()
+                format!("{}{}{}{}", data_id, "TEST_GROUP", md5, "30000").as_str(),
             )],
         )
         .await
@@ -325,9 +315,11 @@ async fn test_listener_md5_mismatch() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
+                format!(
+                    "{}{}{}{}",
                     data_id, DEFAULT_GROUP, "wrong_md5_value", "30000"
-                ).as_str()
+                )
+                .as_str(),
             )],
         )
         .await
@@ -359,10 +351,7 @@ async fn test_concurrent_listeners() {
     // Add multiple concurrent listeners
     let mut handles = Vec::new();
     for i in 0..3 {
-        let client_clone = TestClient::new_with_cookies(
-            MAIN_BASE_URL,
-            client.cookies().clone()
-        );
+        let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, client.cookies().clone());
         let data_id_clone = data_id.clone();
 
         handles.push(tokio::spawn(async move {
@@ -371,9 +360,11 @@ async fn test_concurrent_listeners() {
                     "/nacos/v2/cs/config/listener",
                     &[(
                         "Listening-Configs",
-                        format!("{}{}{}{}",
+                        format!(
+                            "{}{}{}{}",
                             data_id_clone, DEFAULT_GROUP, "md5_placeholder", "30000"
-                        ).as_str()
+                        )
+                        .as_str(),
                     )],
                 )
                 .await
@@ -418,9 +409,7 @@ async fn test_listener_timeout() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, md5, "1000"
-                ).as_str()
+                format!("{}{}{}{}", data_id, DEFAULT_GROUP, md5, "1000").as_str(),
             )],
             Duration::from_millis(500),
         )
@@ -429,7 +418,10 @@ async fn test_listener_timeout() {
 
     let elapsed = start.elapsed();
     assert_eq!(response["code"], 0, "Timeout listener should succeed");
-    assert!(elapsed > Duration::from_millis(100), "Should wait for timeout");
+    assert!(
+        elapsed > Duration::from_millis(100),
+        "Should wait for timeout"
+    );
 }
 
 /// Test listener reconnection
@@ -459,9 +451,11 @@ async fn test_listener_reconnection() {
                 "/nacos/v2/cs/config/listener",
                 &[(
                     "Listening-Configs",
-                    format!("{}{}{}{}",
+                    format!(
+                        "{}{}{}{}",
                         data_id, DEFAULT_GROUP, "md5_placeholder", "30000"
-                    ).as_str()
+                    )
+                    .as_str(),
                 )],
             )
             .await
@@ -494,10 +488,7 @@ async fn test_listener_deleted_config() {
     let md5 = response["data"]["md5"].as_str().unwrap_or("").to_string();
 
     // Start listener
-    let client_clone = TestClient::new_with_cookies(
-        MAIN_BASE_URL,
-        client.cookies().clone()
-    );
+    let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, client.cookies().clone());
     let data_id_clone = data_id.clone();
 
     let listener_handle = tokio::spawn(async move {
@@ -506,9 +497,7 @@ async fn test_listener_deleted_config() {
                 "/nacos/v2/cs/config/listener",
                 &[(
                     "Listening-Configs",
-                    format!("{}{}{}{}",
-                        data_id_clone, DEFAULT_GROUP, md5, "30000"
-                    ).as_str()
+                    format!("{}{}{}{}", data_id_clone, DEFAULT_GROUP, md5, "30000").as_str(),
                 )],
             )
             .await
@@ -522,19 +511,13 @@ async fn test_listener_deleted_config() {
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", "DEFAULT_GROUP"),
-            ],
+            &[("dataId", data_id.as_str()), ("group", "DEFAULT_GROUP")],
         )
         .await
         .expect("Failed to delete config");
 
     // Wait for listener to receive deletion notification
-    let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        listener_handle
-    ).await;
+    let result = tokio::time::timeout(Duration::from_secs(10), listener_handle).await;
 
     assert!(result.is_ok(), "Listener should handle deletion");
     let response = result.unwrap().expect("Listener task failed");
@@ -549,10 +532,7 @@ async fn test_listener_empty_configs() {
 
     // Listen with empty configs (heartbeat)
     let response: serde_json::Value = client
-        .post_form(
-            "/nacos/v2/cs/config/listener",
-            &[("Listening-Configs", "")],
-        )
+        .post_form("/nacos/v2/cs/config/listener", &[("Listening-Configs", "")])
         .await
         .expect("Failed to listen with empty configs");
 
@@ -629,10 +609,7 @@ async fn test_listener_persists_across_updates() {
         let current_md5 = response["data"]["md5"].as_str().unwrap_or("").to_string();
 
         // Listen for change
-        let client_clone = TestClient::new_with_cookies(
-            MAIN_BASE_URL,
-            client.cookies().clone()
-        );
+        let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, client.cookies().clone());
         let data_id_clone = data_id.clone();
 
         let listener_handle = tokio::spawn(async move {
@@ -641,9 +618,11 @@ async fn test_listener_persists_across_updates() {
                     "/nacos/v2/cs/config/listener",
                     &[(
                         "Listening-Configs",
-                        format!("{}{}{}{}",
+                        format!(
+                            "{}{}{}{}",
                             data_id_clone, DEFAULT_GROUP, current_md5, "30000"
-                        ).as_str()
+                        )
+                        .as_str(),
                     )],
                 )
                 .await
@@ -666,13 +645,13 @@ async fn test_listener_persists_across_updates() {
             .expect(&format!("Failed to update config to version {}", i));
 
         // Wait for listener
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            listener_handle
-        ).await;
+        let result = tokio::time::timeout(Duration::from_secs(5), listener_handle).await;
         assert!(result.is_ok(), "Listener should handle update");
         let listener_response = result.unwrap().expect("Listener failed");
-        assert_eq!(listener_response["code"], 0, "Update notification should succeed");
+        assert_eq!(
+            listener_response["code"], 0,
+            "Update notification should succeed"
+        );
     }
 }
 
@@ -703,9 +682,11 @@ async fn test_listener_with_tags() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
+                format!(
+                    "{}{}{}{}",
                     data_id, DEFAULT_GROUP, "md5_placeholder", "30000"
-                ).as_str()
+                )
+                .as_str(),
             )],
         )
         .await

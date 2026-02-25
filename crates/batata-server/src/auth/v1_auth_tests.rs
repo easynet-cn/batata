@@ -10,7 +10,6 @@ use batata_server::model::common::{AppState, Configuration};
 async fn test_v1_auth_login_success() {
     // Initialize test app state
     let configuration = Configuration::new();
-    let db = configuration.database_connection().await.unwrap();
     let server_member_manager = None;
     let config_subscriber_manager = std::sync::Arc::new(batata_core::ConfigSubscriberManager::new());
     let console_datasource = None;
@@ -20,7 +19,6 @@ async fn test_v1_auth_login_success() {
 
     let app_state = std::sync::Arc::new(AppState {
         configuration,
-        database_connection: Some(db),
         server_member_manager,
         config_subscriber_manager,
         console_datasource,
@@ -66,7 +64,6 @@ async fn test_v1_auth_login_success() {
 async fn test_v3_auth_login_success() {
     // Initialize test app state
     let configuration = Configuration::new();
-    let db = configuration.database_connection().await.unwrap();
     let server_member_manager = None;
     let config_subscriber_manager = std::sync::Arc::new(batata_core::ConfigSubscriberManager::new());
     let console_datasource = None;
@@ -76,7 +73,6 @@ async fn test_v3_auth_login_success() {
 
     let app_state = std::sync::Arc::new(AppState {
         configuration,
-        database_connection: Some(db),
         server_member_manager,
         config_subscriber_manager,
         console_datasource,

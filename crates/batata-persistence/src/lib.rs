@@ -19,7 +19,10 @@ pub use sea_orm;
 pub use entity::prelude::*;
 
 // Re-export persistence traits
-pub use traits::{AuthPersistence, ConfigPersistence, NamespacePersistence, PersistenceService};
+pub use traits::{
+    AuthPersistence, CapacityPersistence, ConfigPersistence, NamespacePersistence,
+    PersistenceService,
+};
 
 // Re-export SQL backend
 pub use sql::ExternalDbPersistService;
@@ -32,6 +35,6 @@ pub use distributed::DistributedPersistService;
 
 // Re-export model types
 pub use model::{
-    ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData, NamespaceInfo, Page,
-    PermissionInfo, RoleInfo, StorageMode, UserInfo,
+    CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
+    NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageMode, UserInfo,
 };

@@ -5,7 +5,6 @@ use batata_auth::service::ldap::LdapAuthService;
 
 use crate::{
     auth::{
-        self,
         model::{AUTHORIZATION_HEADER, TOKEN_PREFIX, USER_NOT_FOUND_MESSAGE},
         service::auth::encode_jwt_token,
     },
@@ -120,18 +119,21 @@ async fn ldap_login(data: &web::Data<AppState>, username: &str, password: &str) 
     }
 
     // LDAP authentication successful, now check if user exists in local database
-    let local_user =
-        match auth::service::user::find_by_username(data.db(), &auth_result.username).await {
-            Ok(user) => user,
-            Err(e) => {
-                tracing::error!("Failed to query user '{}': {}", auth_result.username, e);
-                return HttpResponse::InternalServerError().json(serde_json::json!({
-                    "code": 500,
-                    "message": "Failed to query user from database",
-                    "data": null
-                }));
-            }
-        };
+    let local_user = match data
+        .persistence()
+        .user_find_by_username(&auth_result.username)
+        .await
+    {
+        Ok(user) => user,
+        Err(e) => {
+            tracing::error!("Failed to query user '{}': {}", auth_result.username, e);
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "code": 500,
+                "message": "Failed to query user from database",
+                "data": null
+            }));
+        }
+    };
 
     // If user doesn't exist locally, create a placeholder user
     // This allows LDAP users to be assigned roles/permissions locally
@@ -151,8 +153,10 @@ async fn ldap_login(data: &web::Data<AppState>, username: &str, password: &str) 
             }
         };
 
-        if let Err(e) =
-            auth::service::user::create(data.db(), &auth_result.username, &hashed_password).await
+        if let Err(e) = data
+            .persistence()
+            .user_create(&auth_result.username, &hashed_password, true)
+            .await
         {
             tracing::error!(
                 "Failed to create LDAP user '{}': {}",
@@ -174,7 +178,7 @@ async fn ldap_login(data: &web::Data<AppState>, username: &str, password: &str) 
 
 /// Perform standard Nacos authentication
 async fn nacos_login(data: &web::Data<AppState>, username: &str, password: &str) -> HttpResponse {
-    let user_option = match auth::service::user::find_by_username(data.db(), username).await {
+    let user_option = match data.persistence().user_find_by_username(username).await {
         Ok(user) => user,
         Err(e) => {
             tracing::error!("Failed to query user '{}': {}", username, e);
@@ -213,7 +217,9 @@ async fn generate_token_response(data: &web::Data<AppState>, username: &str) -> 
             }
         };
 
-    let global_admin = auth::service::role::has_global_admin_role_by_username(data.db(), username)
+    let global_admin = data
+        .persistence()
+        .role_has_global_admin_by_username(username)
         .await
         .ok()
         .unwrap_or_default();

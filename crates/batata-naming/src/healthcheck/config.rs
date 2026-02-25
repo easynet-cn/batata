@@ -58,8 +58,6 @@ impl Default for HttpHealthParams {
     }
 }
 
-
-
 /// Main health check configuration (matches Nacos SwitchDomain)
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HealthCheckConfig {
@@ -103,14 +101,18 @@ impl HealthCheckConfig {
         // This allows overriding from application.yml
         let mut config = Self::default();
 
-        if let Some(health_check) = yaml_config.get("nacos")
+        if let Some(health_check) = yaml_config
+            .get("nacos")
             .and_then(|n| n.get("naming"))
             .and_then(|n| n.get("health"))
         {
             if let Some(enabled) = health_check.get("enabled").and_then(|v| v.as_bool()) {
                 config.health_check_enabled = enabled;
             }
-            if let Some(auto_change) = health_check.get("auto_change_enabled").and_then(|v| v.as_bool()) {
+            if let Some(auto_change) = health_check
+                .get("auto_change_enabled")
+                .and_then(|v| v.as_bool())
+            {
                 config.auto_change_health_check_enabled = auto_change;
             }
             if let Some(check_times) = health_check.get("check_times").and_then(|v| v.as_i64()) {

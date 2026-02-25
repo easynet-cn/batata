@@ -37,6 +37,20 @@ impl RaftNode {
         addr: String,
         config: RaftConfig,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let (node, _db) = Self::new_with_db(node_id, addr, config).await?;
+        Ok(node)
+    }
+
+    /// Create a new Raft node and return the underlying RocksDB handle.
+    ///
+    /// The returned `Arc<DB>` shares the same RocksDB instance used by the
+    /// Raft state machine, so it can be used to construct a `RocksDbReader`
+    /// for read-only queries against the state machine's data.
+    pub async fn new_with_db(
+        node_id: NodeId,
+        addr: String,
+        config: RaftConfig,
+    ) -> Result<(Self, Arc<rocksdb::DB>), Box<dyn std::error::Error + Send + Sync>> {
         info!(
             "Creating Raft node: id={}, addr={}, data_dir={:?}",
             node_id, addr, config.data_dir
@@ -48,8 +62,9 @@ impl RaftNode {
         // Create log store
         let log_store = RocksLogStore::new(config.log_dir()).await?;
 
-        // Create state machine
+        // Create state machine and capture the DB handle before SM is consumed by Raft
         let state_machine = RocksStateMachine::new(config.state_machine_dir()).await?;
+        let db = state_machine.db();
 
         // Create network factory
         let network_factory = BatataRaftNetworkFactory::new();
@@ -57,7 +72,7 @@ impl RaftNode {
         // Create openraft config
         let raft_config = Arc::new(config.to_openraft_config());
 
-        // Create the Raft instance
+        // Create the Raft instance (consumes state_machine)
         let raft = Raft::new(
             node_id,
             raft_config,
@@ -69,12 +84,15 @@ impl RaftNode {
 
         info!("Raft node created successfully: id={}", node_id);
 
-        Ok(Self {
-            node_id,
-            addr,
-            raft,
-            config,
-        })
+        Ok((
+            Self {
+                node_id,
+                addr,
+                raft,
+                config,
+            },
+            db,
+        ))
     }
 
     /// Get the node ID

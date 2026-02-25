@@ -169,9 +169,7 @@ impl PayloadHandler for ServerReloadHandler {
             .unwrap_or("");
         info!(
             "Server reload requested from client: {} ({}:{})",
-            connection.meta_info.connection_id,
-            client_ip,
-            connection.meta_info.remote_port
+            connection.meta_info.connection_id, client_ip, connection.meta_info.remote_port
         );
 
         // Attempt to reload configuration
@@ -273,9 +271,7 @@ impl PayloadHandler for ConnectResetHandler {
         // Log the connection reset request
         info!(
             "Connection reset requested: {} from {}:{}",
-            connection.meta_info.connection_id,
-            client_ip,
-            connection.meta_info.remote_port
+            connection.meta_info.connection_id, client_ip, connection.meta_info.remote_port
         );
 
         // Connection cleanup is handled by the bi-stream service when the stream closes.

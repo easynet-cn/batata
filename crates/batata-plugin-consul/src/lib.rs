@@ -73,7 +73,6 @@ pub use route::{
     consul_peering_routes,
     consul_peering_routes_persistent,
     consul_query_routes,
-    consul_ui_routes,
     // Combined route scopes
     consul_routes,            // In-memory (for development/testing)
     consul_routes_full,       // Persistent + real cluster (recommended for production)
@@ -83,6 +82,7 @@ pub use route::{
     consul_snapshot_routes_persistent,
     consul_status_routes,
     consul_status_routes_real,
+    consul_ui_routes,
 };
 
 // Re-export key services
@@ -92,7 +92,7 @@ pub use catalog::ConsulCatalogService;
 pub use config_entry::{ConsulConfigEntryService, ConsulConfigEntryServicePersistent};
 pub use event::{ConsulEventService, ConsulEventServicePersistent};
 pub use health::{ConsulHealthService, ConsulHealthServicePersistent};
-pub use health_actor::{HealthActorHandle, create_health_actor, CheckConfig, HealthStatus};
+pub use health_actor::{CheckConfig, HealthActorHandle, HealthStatus, create_health_actor};
 pub use health_executor::HealthCheckExecutor;
 pub use kv::ConsulKVService;
 pub use lock::{ConsulLockService, ConsulSemaphoreService};

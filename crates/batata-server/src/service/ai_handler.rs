@@ -39,7 +39,11 @@ pub struct McpServerEndpointHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for McpServerEndpointHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = McpServerEndpointRequest::from(payload);
         let request_id = request.request_id();
         let operation = request.operation_type.to_lowercase();
@@ -135,7 +139,11 @@ pub struct QueryMcpServerHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for QueryMcpServerHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = QueryMcpServerRequest::from(payload);
         let request_id = request.request_id();
 
@@ -199,7 +207,11 @@ pub struct ReleaseMcpServerHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ReleaseMcpServerHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = ReleaseMcpServerRequest::from(payload);
         let request_id = request.request_id();
 
@@ -298,7 +310,11 @@ pub struct AgentEndpointHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for AgentEndpointHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = AgentEndpointRequest::from(payload);
         let request_id = request.request_id();
         let operation = request.operation_type.to_lowercase();
@@ -411,7 +427,11 @@ pub struct QueryAgentCardHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for QueryAgentCardHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = QueryAgentCardRequest::from(payload);
         let request_id = request.request_id();
 
@@ -475,7 +495,11 @@ pub struct ReleaseAgentCardHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for ReleaseAgentCardHandler {
-    async fn handle(&self, __connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(
+        &self,
+        __connection: &Connection,
+        payload: &Payload,
+    ) -> Result<Payload, Status> {
         let request = ReleaseAgentCardRequest::from(payload);
         let request_id = request.request_id();
 

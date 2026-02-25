@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender, UnboundedReceiver};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tracing::{info, warn};
 
-use crate::model::{HealthCheck, CheckRegistration};
+use crate::model::{CheckRegistration, HealthCheck};
 
 /// Health check configuration (static, read-mostly)
 #[derive(Debug, Clone)]
@@ -26,13 +26,13 @@ pub struct CheckConfig {
     pub timeout: Option<String>,
     pub ttl_seconds: Option<u64>,
     pub deregister_after_secs: Option<u64>,
-    pub initial_status: String,  // Initial status when check is registered (default: "critical")
+    pub initial_status: String, // Initial status when check is registered (default: "critical")
 }
 
 /// Health check status (dynamic, write-frequent)
 #[derive(Debug, Clone)]
 pub struct HealthStatus {
-    pub status: String,           // "passing", "critical", "warning"
+    pub status: String, // "passing", "critical", "warning"
     pub output: String,
     pub last_updated: i64,
     pub critical_time: Option<i64>, // Timestamp when status became critical
@@ -235,14 +235,18 @@ impl HealthStatusActor {
 
     async fn handle_message(&mut self, msg: HealthActorMessage) {
         match msg {
-            HealthActorMessage::RegisterCheck { check_config, respond_to } => {
+            HealthActorMessage::RegisterCheck {
+                check_config,
+                respond_to,
+            } => {
                 let check_id = check_config.check_id.clone();
                 let initial_status = check_config.initial_status.clone();
 
                 self.config_registry.register(check_config);
 
                 // Initialize health status with initial status
-                self.status_store.update(&check_id, initial_status.clone(), None);
+                self.status_store
+                    .update(&check_id, initial_status.clone(), None);
 
                 info!(
                     "Registered check: id={}, initial_status={}",
@@ -251,7 +255,10 @@ impl HealthStatusActor {
                 let _ = respond_to.send(Ok(()));
             }
 
-            HealthActorMessage::DeregisterCheck { check_id, respond_to } => {
+            HealthActorMessage::DeregisterCheck {
+                check_id,
+                respond_to,
+            } => {
                 let result = self
                     .config_registry
                     .deregister(&check_id)
@@ -270,12 +277,18 @@ impl HealthStatusActor {
                 let _ = respond_to.send(Ok(()));
             }
 
-            HealthActorMessage::GetConfig { check_id, respond_to } => {
+            HealthActorMessage::GetConfig {
+                check_id,
+                respond_to,
+            } => {
                 let config = self.config_registry.get(&check_id);
                 let _ = respond_to.send(config);
             }
 
-            HealthActorMessage::GetStatus { check_id, respond_to } => {
+            HealthActorMessage::GetStatus {
+                check_id,
+                respond_to,
+            } => {
                 let status = self.status_store.get(&check_id);
                 let _ = respond_to.send(status);
             }
@@ -320,7 +333,10 @@ impl HealthStatusActor {
                 let _ = respond_to.send(checks);
             }
 
-            HealthActorMessage::GetServiceChecks { service_id, respond_to } => {
+            HealthActorMessage::GetServiceChecks {
+                service_id,
+                respond_to,
+            } => {
                 let check_ids = self.config_registry.get_service_check_ids(&service_id);
 
                 let mut checks = Vec::new();
@@ -375,7 +391,10 @@ impl HealthActorHandle {
 
     pub async fn deregister_check(&self, check_id: String) -> Result<(), String> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let msg = HealthActorMessage::DeregisterCheck { check_id, respond_to: tx };
+        let msg = HealthActorMessage::DeregisterCheck {
+            check_id,
+            respond_to: tx,
+        };
         let _ = self.tx.send(msg);
         rx.await.map_err(|e| format!("Send error: {}", e))?
     }
@@ -399,14 +418,20 @@ impl HealthActorHandle {
 
     pub async fn get_config(&self, check_id: String) -> Option<CheckConfig> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let msg = HealthActorMessage::GetConfig { check_id, respond_to: tx };
+        let msg = HealthActorMessage::GetConfig {
+            check_id,
+            respond_to: tx,
+        };
         let _ = self.tx.send(msg);
         rx.await.ok().flatten()
     }
 
     pub async fn get_status(&self, check_id: String) -> Option<HealthStatus> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let msg = HealthActorMessage::GetStatus { check_id, respond_to: tx };
+        let msg = HealthActorMessage::GetStatus {
+            check_id,
+            respond_to: tx,
+        };
         let _ = self.tx.send(msg);
         rx.await.ok().flatten()
     }
@@ -427,14 +452,20 @@ impl HealthActorHandle {
 
     pub async fn get_checks_by_status(&self, status: String) -> Vec<HealthCheck> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let msg = HealthActorMessage::GetByStatus { status, respond_to: tx };
+        let msg = HealthActorMessage::GetByStatus {
+            status,
+            respond_to: tx,
+        };
         let _ = self.tx.send(msg);
         rx.await.unwrap_or_default()
     }
 
     pub async fn get_service_checks(&self, service_id: String) -> Vec<HealthCheck> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let msg = HealthActorMessage::GetServiceChecks { service_id, respond_to: tx };
+        let msg = HealthActorMessage::GetServiceChecks {
+            service_id,
+            respond_to: tx,
+        };
         let _ = self.tx.send(msg);
         rx.await.unwrap_or_default()
     }
@@ -512,7 +543,10 @@ pub async fn start_deregistration_monitor(
     interval_secs: u64,
 ) {
     tokio::spawn(async move {
-        info!("Starting service deregistration monitor with interval: {}s", interval_secs);
+        info!(
+            "Starting service deregistration monitor with interval: {}s",
+            interval_secs
+        );
         loop {
             tokio::time::sleep(Duration::from_secs(interval_secs)).await;
             reap_services(health_actor.clone(), naming_service.clone()).await;
@@ -544,17 +578,22 @@ async fn reap_services(
                             {
                                 info!(
                                     "Deregistering service due to critical health: service={}, check={}, duration={}s, threshold={}s",
-                                    config.service_id, check_id, critical_duration_secs, deregister_after_secs
+                                    config.service_id,
+                                    check_id,
+                                    critical_duration_secs,
+                                    deregister_after_secs
                                 );
 
                                 if let Some(ns) = &naming_service {
-                                    let _ = ns.deregister_instance(
-                                        "public",
-                                        "DEFAULT_GROUP",
-                                        &config.service_name,
-                                        &config.service_id,
-                                        true,  // ephemeral: service instances are typically ephemeral
-                                    ).await;
+                                    let _ = ns
+                                        .deregister_instance(
+                                            "public",
+                                            "DEFAULT_GROUP",
+                                            &config.service_name,
+                                            &config.service_id,
+                                            true, // ephemeral: service instances are typically ephemeral
+                                        )
+                                        .await;
                                 }
 
                                 deregistered_services.insert(config.service_id.clone());
@@ -582,4 +621,3 @@ pub trait NamingServiceTrait: Send + Sync {
         ephemeral: bool,
     ) -> Result<(), String>;
 }
-

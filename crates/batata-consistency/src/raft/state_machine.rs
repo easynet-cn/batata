@@ -307,6 +307,36 @@ impl RocksStateMachine {
                 tenant,
             } => self.apply_config_remove(&data_id, &group, &tenant),
 
+            RaftRequest::ConfigGrayPublish {
+                data_id,
+                group,
+                tenant,
+                content,
+                gray_name,
+                gray_rule,
+                app_name,
+                encrypted_data_key,
+                src_user,
+                src_ip,
+            } => self.apply_config_gray_publish(
+                &data_id,
+                &group,
+                &tenant,
+                &content,
+                &gray_name,
+                &gray_rule,
+                app_name,
+                encrypted_data_key,
+                src_user,
+                src_ip,
+            ),
+
+            RaftRequest::ConfigGrayRemove {
+                data_id,
+                group,
+                tenant,
+            } => self.apply_config_gray_remove(&data_id, &group, &tenant),
+
             RaftRequest::NamespaceCreate {
                 namespace_id,
                 namespace_name,
@@ -553,6 +583,107 @@ impl RocksStateMachine {
             Err(e) => {
                 error!("Failed to remove config: {}", e);
                 RaftResponse::failure(format!("Failed to remove config: {}", e))
+            }
+        }
+    }
+
+    // Gray config operations
+    #[allow(clippy::too_many_arguments)]
+    fn apply_config_gray_publish(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        content: &str,
+        gray_name: &str,
+        gray_rule: &str,
+        app_name: Option<String>,
+        encrypted_data_key: Option<String>,
+        src_user: Option<String>,
+        src_ip: Option<String>,
+    ) -> RaftResponse {
+        let key = Self::config_gray_key(data_id, group, tenant, gray_name);
+        let now = chrono::Utc::now().timestamp_millis();
+        let md5_val = format!("{:x}", md5::compute(content.as_bytes()));
+
+        let value = serde_json::json!({
+            "data_id": data_id,
+            "group": group,
+            "tenant": tenant,
+            "content": content,
+            "md5": md5_val,
+            "app_name": app_name.unwrap_or_default(),
+            "gray_name": gray_name,
+            "gray_rule": gray_rule,
+            "encrypted_data_key": encrypted_data_key.unwrap_or_default(),
+            "src_user": src_user.unwrap_or_default(),
+            "src_ip": src_ip.unwrap_or_default(),
+            "created_time": now,
+            "modified_time": now,
+        });
+
+        match self.db.put_cf(
+            self.cf_config_gray(),
+            key.as_bytes(),
+            value.to_string().as_bytes(),
+        ) {
+            Ok(_) => {
+                debug!("Gray config published: {}", key);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to publish gray config: {}", e);
+                RaftResponse::failure(format!("Failed to publish gray config: {}", e))
+            }
+        }
+    }
+
+    fn apply_config_gray_remove(&self, data_id: &str, group: &str, tenant: &str) -> RaftResponse {
+        // Scan and delete all gray configs for this data_id/group/tenant
+        let prefix = format!("{}@@{}@@{}@@", tenant, group, data_id);
+        let cf = self.cf_config_gray();
+
+        let mut keys_to_delete = Vec::new();
+        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            match item {
+                Ok((key, _)) => {
+                    let key_str = String::from_utf8_lossy(&key);
+                    if !key_str.starts_with(&prefix) {
+                        break;
+                    }
+                    keys_to_delete.push(key.to_vec());
+                }
+                Err(e) => {
+                    error!("Failed to iterate gray configs: {}", e);
+                    return RaftResponse::failure(format!("Failed to iterate gray configs: {}", e));
+                }
+            }
+        }
+
+        if keys_to_delete.is_empty() {
+            return RaftResponse::success();
+        }
+
+        let mut batch = rocksdb::WriteBatch::default();
+        for key in &keys_to_delete {
+            batch.delete_cf(cf, key);
+        }
+
+        match self.db.write(batch) {
+            Ok(_) => {
+                debug!(
+                    "Gray configs removed for {}/{}/{}: {} entries",
+                    tenant,
+                    group,
+                    data_id,
+                    keys_to_delete.len()
+                );
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to remove gray configs: {}", e);
+                RaftResponse::failure(format!("Failed to remove gray configs: {}", e))
             }
         }
     }

@@ -5,8 +5,8 @@
 
 pub mod file;
 
-use async_trait::async_trait;
 use crate::service::{ClusterConfig, ServiceMetadata};
+use async_trait::async_trait;
 
 /// Metadata persistence trait
 #[async_trait::async_trait]

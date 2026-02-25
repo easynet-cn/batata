@@ -154,7 +154,9 @@ impl AgentServiceRegistration {
 
         // Process single Check field
         if let Some(ref check) = self.check {
-            check.validate().map_err(|e| format!("Single check validation failed: {}", e))?;
+            check
+                .validate()
+                .map_err(|e| format!("Single check validation failed: {}", e))?;
 
             let check_id = check.generate_check_id(&service_id, 0, 1);
             let check_name = check.default_name(service_name);
@@ -202,7 +204,9 @@ impl AgentServiceRegistration {
                     grpc: check.grpc.clone(),
                     interval: check.interval.clone(),
                     timeout: check.timeout.clone(),
-                    deregister_critical_service_after: check.deregister_critical_service_after.clone(),
+                    deregister_critical_service_after: check
+                        .deregister_critical_service_after
+                        .clone(),
                     notes: check.notes.clone(),
                     status: check.status.clone(),
                     check_type: check.check_type().to_string(),
@@ -362,7 +366,11 @@ pub struct AgentServiceCheck {
     pub timeout: Option<String>,
 
     /// Deregister after critical for duration
-    #[serde(rename = "DeregisterCriticalServiceAfter", alias = "deregister_critical_service_after", default)]
+    #[serde(
+        rename = "DeregisterCriticalServiceAfter",
+        alias = "deregister_critical_service_after",
+        default
+    )]
     pub deregister_critical_service_after: Option<String>,
 
     /// Notes for the check
@@ -670,7 +678,10 @@ impl Default for Node {
 
         let mut meta = HashMap::new();
         meta.insert("consul-network-segment".to_string(), "".to_string());
-        meta.insert("consul-version".to_string(), env!("CARGO_PKG_VERSION").to_string());
+        meta.insert(
+            "consul-version".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+        );
 
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -1825,7 +1836,11 @@ mod tests {
         };
         let result = check.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must be 'passing', 'warning', or 'critical'"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("must be 'passing', 'warning', or 'critical'")
+        );
     }
 
     #[test]

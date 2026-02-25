@@ -16,16 +16,14 @@ pub mod task;
 use std::sync::Arc;
 
 // Re-export common types
-pub use checker::{HealthChecker, HealthCheckResult};
+pub use checker::{HealthCheckResult, HealthChecker};
 pub use config::{HealthCheckConfig, HttpHealthParams, TcpHealthParams};
-pub use configurer::{
-    HealthCheckerConfig, HttpHealthCheckerConfig, TcpHealthCheckerConfig,
-};
+pub use configurer::{HealthCheckerConfig, HttpHealthCheckerConfig, TcpHealthCheckerConfig};
 pub use factory::HealthCheckerFactory;
 pub use heartbeat::{ExpiredInstanceChecker, UnhealthyInstanceChecker};
 pub use processor::{
-    HealthCheckProcessor, HealthCheckType,
-    HttpHealthCheckProcessor, NoneHealthCheckProcessor, TcpHealthCheckProcessor,
+    HealthCheckProcessor, HealthCheckType, HttpHealthCheckProcessor, NoneHealthCheckProcessor,
+    TcpHealthCheckProcessor,
 };
 pub use reactor::HealthCheckReactor;
 pub use task::HealthCheckTask;
@@ -47,7 +45,8 @@ impl HealthCheckManager {
         config: Arc<HealthCheckConfig>,
         expire_enabled: bool,
     ) -> Self {
-        let unhealthy_checker = UnhealthyInstanceChecker::new(naming_service.clone(), config.clone());
+        let unhealthy_checker =
+            UnhealthyInstanceChecker::new(naming_service.clone(), config.clone());
         let expired_checker = ExpiredInstanceChecker::new(
             naming_service.clone(),
             config.clone(),

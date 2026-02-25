@@ -98,7 +98,10 @@ impl HealthCheckTask {
         config: Arc<HealthCheckConfig>,
         naming_service: Arc<NamingService>,
     ) -> Self {
-        let task_id = format!("{}:{}:{}", instance.ip, instance.port, instance.cluster_name);
+        let task_id = format!(
+            "{}:{}:{}",
+            instance.ip, instance.port, instance.cluster_name
+        );
         let check_type = HealthCheckType::from_str(&cluster_config.health_check_type);
 
         let check_rt_normalized = Self::init_check_interval(&config, &check_type);
@@ -274,18 +277,14 @@ impl HealthCheckTask {
     /// Normalize check interval to stay within bounds (matches Nacos)
     fn normalize_check_interval(&mut self) {
         let (min, max) = match self.check_type {
-            HealthCheckType::Tcp => {
-                (
-                    self.config.tcp_health_params.min,
-                    self.config.tcp_health_params.max,
-                )
-            }
-            HealthCheckType::Http => {
-                (
-                    self.config.http_health_params.min,
-                    self.config.http_health_params.max,
-                )
-            }
+            HealthCheckType::Tcp => (
+                self.config.tcp_health_params.min,
+                self.config.tcp_health_params.max,
+            ),
+            HealthCheckType::Http => (
+                self.config.http_health_params.min,
+                self.config.http_health_params.max,
+            ),
             HealthCheckType::None => (2000, 5000),
         };
 

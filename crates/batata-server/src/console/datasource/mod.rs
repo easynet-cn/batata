@@ -355,9 +355,6 @@ pub trait ConsoleDataSource: Send + Sync {
     /// Check if this is a remote data source
     fn is_remote(&self) -> bool;
 
-    /// Get database connection (only available in local mode)
-    fn get_database_connection(&self) -> Option<&DatabaseConnection>;
-
     /// Get server member manager (only available in local mode)
     fn get_server_member_manager(&self) -> Option<Arc<ServerMemberManager>>;
 }
@@ -374,11 +371,8 @@ pub async fn create_datasource(
         // Remote mode: use HTTP client to connect to server
         let remote_datasource = remote::RemoteDataSource::new(configuration).await?;
         Ok(Arc::new(remote_datasource))
-    } else {
-        // Local mode: direct database access
-        let db = database_connection.ok_or_else(|| {
-            anyhow::anyhow!("Database connection required for local console mode")
-        })?;
+    } else if let Some(db) = database_connection {
+        // Local mode with external DB: direct database access
         let smm = server_member_manager.ok_or_else(|| {
             anyhow::anyhow!("Server member manager required for local console mode")
         })?;
@@ -390,5 +384,29 @@ pub async fn create_datasource(
             naming_service,
         );
         Ok(Arc::new(local_datasource))
+    } else {
+        // Embedded mode (standalone/distributed): no external DB available.
+        // Console datasource uses remote HTTP client connecting to the main
+        // server's API, which is backed by the PersistenceService.
+        //
+        // Generate a JWT token locally to avoid self-connecting authentication
+        // issues (the server may not be ready yet, or no admin user may exist).
+        tracing::info!(
+            "No external database available; console will use self-connecting remote datasource with local token"
+        );
+        let token_secret = configuration.token_secret_key();
+        // Use a long-lived internal token (365 days) for self-connection.
+        // This token is only used for the server's internal console-to-main-server
+        // communication and never exposed externally.
+        let internal_token_ttl: i64 = 365 * 24 * 3600;
+        let internal_user = configuration.console_remote_username();
+        let token = crate::auth::service::auth::encode_jwt_token(
+            &internal_user,
+            &token_secret,
+            internal_token_ttl,
+        )?;
+        let remote_datasource =
+            remote::RemoteDataSource::new_with_token(configuration, token, internal_token_ttl)?;
+        Ok(Arc::new(remote_datasource))
     }
 }

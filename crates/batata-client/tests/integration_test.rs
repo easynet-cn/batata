@@ -7,13 +7,13 @@
 //! 1. Start a Batata server (e.g., using docker-compose.test.yml)
 //! 2. Run: cargo test --test integration_test -- --ignored
 
+use batata_api::naming::model::Instance;
 use batata_client::{
-    http::{BatataHttpClient, HttpClientConfig},
-    grpc::{GrpcClient, GrpcClientConfig},
     config::BatataConfigService,
+    grpc::{GrpcClient, GrpcClientConfig},
+    http::{BatataHttpClient, HttpClientConfig},
     naming::BatataNamingService,
 };
-use batata_api::naming::model::Instance;
 use std::sync::Arc;
 
 const TEST_SERVER_ADDR: &str = "http://127.0.0.1:8848";
@@ -141,7 +141,9 @@ async fn test_config_service_publish_and_get() -> anyhow::Result<()> {
     println!("✓ Removed config: {}", data_id);
 
     // Verify removal
-    let result = config_service.get_config(&data_id, TEST_GROUP, TEST_NAMESPACE).await;
+    let result = config_service
+        .get_config(&data_id, TEST_GROUP, TEST_NAMESPACE)
+        .await;
     assert!(result.is_err());
     println!("✓ Config successfully removed");
 
@@ -243,7 +245,9 @@ async fn test_config_service_get_nonexistent() -> anyhow::Result<()> {
     let data_id = format!("nonexistent-{}", uuid::Uuid::new_v4());
 
     // Get non-existent config should fail
-    let result = config_service.get_config(&data_id, TEST_GROUP, TEST_NAMESPACE).await;
+    let result = config_service
+        .get_config(&data_id, TEST_GROUP, TEST_NAMESPACE)
+        .await;
     assert!(result.is_err());
     println!("✓ Non-existent config correctly returns error");
 
@@ -328,7 +332,13 @@ async fn test_naming_service_subscribe_and_unsubscribe() -> anyhow::Result<()> {
 
     // Subscribe
     let instances = naming_service
-        .subscribe(TEST_NAMESPACE, TEST_GROUP, &service_name, "DEFAULT", Arc::new(listener))
+        .subscribe(
+            TEST_NAMESPACE,
+            TEST_GROUP,
+            &service_name,
+            "DEFAULT",
+            Arc::new(listener),
+        )
         .await?;
     assert!(!instances.is_empty());
     println!("✓ Subscribed to service: {}", service_name);

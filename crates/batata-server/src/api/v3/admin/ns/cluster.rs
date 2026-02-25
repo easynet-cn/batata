@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use actix_web::{get, HttpMessage, HttpRequest, Responder, post, put, web};
+use actix_web::{HttpMessage, HttpRequest, Responder, get, post, put, web};
 use serde::Deserialize;
 
 use crate::{
@@ -72,8 +72,16 @@ async fn create_cluster(
     naming_service: web::Data<Arc<NamingService>>,
     form: web::Json<CreateClusterForm>,
 ) -> impl Responder {
-    let namespace_id = form.namespace_id.as_deref().filter(|s| !s.is_empty()).unwrap_or(DEFAULT_NAMESPACE_ID);
-    let group_name = form.group_name.as_deref().filter(|s| !s.is_empty()).unwrap_or(DEFAULT_GROUP);
+    let namespace_id = form
+        .namespace_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_NAMESPACE_ID);
+    let group_name = form
+        .group_name
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_GROUP);
 
     let resource = format!(
         "{}:{}:naming/{}",
@@ -88,15 +96,16 @@ async fn create_cluster(
     );
 
     // Parse health checker config
-    let (health_check_type, check_port, use_instance_port) = if let Some(checker) = &form.health_checker {
-        (
-            checker.r#type.clone(),
-            checker.check_port.unwrap_or(0),
-            checker.use_instance_port.unwrap_or(true),
-        )
-    } else {
-        ("TCP".to_string(), 0, true)
-    };
+    let (health_check_type, check_port, use_instance_port) =
+        if let Some(checker) = &form.health_checker {
+            (
+                checker.r#type.clone(),
+                checker.check_port.unwrap_or(0),
+                checker.use_instance_port.unwrap_or(true),
+            )
+        } else {
+            ("TCP".to_string(), 0, true)
+        };
 
     let metadata = form.metadata.clone().unwrap_or_default();
 
@@ -125,10 +134,7 @@ async fn get_cluster_statistics(
 ) -> impl Responder {
     let (namespace_id, group_name, service_name) = path.into_inner();
 
-    let resource = format!(
-        "{}:{}:naming/{}",
-        namespace_id, group_name, service_name
-    );
+    let resource = format!("{}:{}:naming/{}", namespace_id, group_name, service_name);
     secured!(
         Secured::builder(&req, &data, &resource)
             .action(ActionTypes::Read)

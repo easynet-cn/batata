@@ -3,8 +3,8 @@
 //! Tests for AES encryption of configuration content
 
 use crate::common::{
-    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
-    TestClient, unique_data_id,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id,
 };
 
 /// Create an authenticated test client
@@ -42,10 +42,7 @@ async fn test_publish_encrypted_config() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get encrypted config");
@@ -79,10 +76,7 @@ async fn test_get_encrypted_config() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get encrypted config");
@@ -129,10 +123,7 @@ async fn test_update_encrypted_config() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get updated config");
@@ -165,10 +156,7 @@ async fn test_delete_encrypted_config() {
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to delete encrypted config");
@@ -177,10 +165,7 @@ async fn test_delete_encrypted_config() {
     let result: Result<serde_json::Value, _> = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await;
 
@@ -262,10 +247,7 @@ async fn test_mixed_encrypted_configs() {
         let response: serde_json::Value = client
             .get_with_query(
                 "/nacos/v2/cs/config",
-                &[
-                    ("dataId", data_id.as_str()),
-                    ("group", DEFAULT_GROUP),
-                ],
+                &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
             )
             .await
             .expect("Failed to get config");
@@ -300,10 +282,7 @@ async fn test_encrypted_config_special_chars() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get encrypted config");
@@ -337,10 +316,7 @@ async fn test_encrypted_config_unicode() {
     let response: serde_json::Value = client
         .get_with_query(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to get encrypted config");

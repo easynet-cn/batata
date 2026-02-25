@@ -185,8 +185,8 @@ pub async fn oauth_callback(
     let username = format!("oauth_{}_{}", provider_name, user_info.provider_user_id);
 
     // Check if user exists locally
-    let local_user = match crate::auth::service::user::find_by_username(data.db(), &username).await
-    {
+    let persistence = data.persistence();
+    let local_user = match persistence.user_find_by_username(&username).await {
         Ok(user) => user,
         Err(e) => {
             tracing::error!("Failed to query user '{}': {}", username, e);
@@ -213,8 +213,9 @@ pub async fn oauth_callback(
             }
         };
 
-        if let Err(e) =
-            crate::auth::service::user::create(data.db(), &username, &hashed_password).await
+        if let Err(e) = persistence
+            .user_create(&username, &hashed_password, true)
+            .await
         {
             tracing::error!("Failed to create OAuth user '{}': {}", username, e);
             // Continue anyway - user can still authenticate
@@ -243,11 +244,11 @@ pub async fn oauth_callback(
         }
     };
 
-    let global_admin =
-        crate::auth::service::role::has_global_admin_role_by_username(data.db(), &username)
-            .await
-            .ok()
-            .unwrap_or_default();
+    let global_admin = persistence
+        .role_has_global_admin_by_username(&username)
+        .await
+        .ok()
+        .unwrap_or_default();
 
     let login_result = OAuthLoginResult {
         access_token: access_token.clone(),

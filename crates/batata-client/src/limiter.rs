@@ -2,8 +2,8 @@
 //!
 //! Provides token bucket and sliding window rate limiting.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
@@ -45,7 +45,8 @@ impl RateLimiter {
             let tokens_to_add = elapsed.as_secs_f64() / self.rate.as_secs_f64() as f64;
             let current = self.tokens.load(Ordering::Relaxed);
             let new_tokens = (current as f64 + tokens_to_add).floor() as u64;
-            self.tokens.store(new_tokens.min(self.capacity), Ordering::Relaxed);
+            self.tokens
+                .store(new_tokens.min(self.capacity), Ordering::Relaxed);
             *last_refill = now;
         }
 
@@ -122,7 +123,10 @@ impl SlidingWindowLimiter {
     pub async fn current_count(&self) -> usize {
         let requests = self.requests.lock().await;
         let now = Instant::now();
-        requests.iter().filter(|&&req| now.duration_since(req) < self.window).count()
+        requests
+            .iter()
+            .filter(|&&req| now.duration_since(req) < self.window)
+            .count()
     }
 
     /// Reset the limiter

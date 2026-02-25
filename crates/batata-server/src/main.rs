@@ -112,18 +112,55 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (None, Some(smm), Some(persist), Some(rdb))
             }
             StorageMode::DistributedEmbedded => {
-                // Distributed mode requires Raft setup which is handled by the cluster manager.
-                // For now, initialize the DB connection as fallback until full Raft integration is done.
-                let db = configuration.database_connection().await?;
+                let data_dir = configuration.embedded_data_dir();
+                let node_addr = format!(
+                    "{}:{}",
+                    configuration.server_address(),
+                    configuration.server_main_port()
+                );
+                let node_id = batata_consistency::calculate_node_id(&node_addr);
+                info!(
+                    "Initializing distributed embedded storage: node_id={}, addr={}, data_dir={}",
+                    node_id, node_addr, data_dir
+                );
+
+                let raft_config = batata_consistency::RaftConfig {
+                    data_dir: std::path::PathBuf::from(&data_dir),
+                    ..Default::default()
+                };
+
+                // Create Raft node and get the underlying DB handle for reads
+                let (raft_node, rdb) = batata_consistency::RaftNode::new_with_db(
+                    node_id,
+                    node_addr.clone(),
+                    raft_config,
+                )
+                .await
+                .map_err(|e| format!("Failed to initialize Raft node: {}", e))?;
+
+                let raft_node = Arc::new(raft_node);
+                let reader = batata_consistency::RocksDbReader::new(rdb.clone());
+                let persist: Arc<dyn PersistenceService> = Arc::new(
+                    batata_persistence::DistributedPersistService::new(raft_node.clone(), reader),
+                );
+
+                // Initialize single-node cluster in standalone mode
+                if configuration.is_standalone() {
+                    info!("Standalone distributed mode: initializing single-node Raft cluster");
+                    let mut members = std::collections::BTreeMap::new();
+                    members.insert(node_id, openraft::BasicNode { addr: node_addr });
+                    if let Err(e) = raft_node.initialize(members).await {
+                        // Already initialized is OK (e.g. on restart)
+                        info!(
+                            "Raft cluster init result: {} (already initialized is OK)",
+                            e
+                        );
+                    }
+                }
+
                 let core_config = configuration.to_core_config();
                 let smm = Arc::new(ServerMemberManager::new(&core_config));
-                let persist: Arc<dyn PersistenceService> = Arc::new(
-                    batata_persistence::ExternalDbPersistService::new(db.clone()),
-                );
-                info!(
-                    "Distributed embedded mode: using external DB as fallback until Raft cluster is initialized"
-                );
-                (Some(db), Some(smm), Some(persist), None)
+                (None, Some(smm), Some(persist), Some(rdb))
             }
         }
     };
@@ -165,7 +202,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consul_register_self_for_init = configuration.consul_register_self();
 
     // Create health check manager (only for server mode, not console-remote)
-    let health_check_manager: Option<Arc<HealthCheckManager>> = if let Some(ref ns) = naming_service {
+    let health_check_manager: Option<Arc<HealthCheckManager>> = if let Some(ref ns) = naming_service
+    {
         let health_check_config = Arc::new(HealthCheckConfig::default());
         let expire_enabled = configuration.expire_instance_enabled();
         let health_check_enabled = health_check_config.is_enabled();
@@ -187,7 +225,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create application state
     let app_state = Arc::new(AppState {
         configuration,
-        database_connection,
         server_member_manager,
         config_subscriber_manager,
         console_datasource,
@@ -344,13 +381,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ColumnFamilyDescriptor::new(CF_CONSUL_QUERIES, cf_opts),
             ];
 
-            match rocksdb::DB::open_cf_descriptors(&db_opts, &consul_data_dir_for_init, consul_cfs) {
+            match rocksdb::DB::open_cf_descriptors(&db_opts, &consul_data_dir_for_init, consul_cfs)
+            {
                 Ok(db) => {
                     info!("Consul RocksDB initialized successfully");
                     Some(Arc::new(db))
                 }
                 Err(e) => {
-                    error!("Failed to initialize Consul RocksDB: {}, falling back to in-memory", e);
+                    error!(
+                        "Failed to initialize Consul RocksDB: {}, falling back to in-memory",
+                        e
+                    );
                     None
                 }
             }
@@ -404,14 +445,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Create Apollo service adapters (only if enabled)
+    // Create Apollo service adapters (only if enabled and external DB is available)
     let apollo_services = if apollo_enabled {
-        Some(ApolloServices::new(Arc::new(
-            app_state
-                .database_connection
-                .clone()
-                .expect("Database connection required for Apollo services"),
-        )))
+        if let Some(ref db_conn) = database_connection {
+            Some(ApolloServices::new(Arc::new(db_conn.clone())))
+        } else {
+            tracing::warn!(
+                "Apollo compatibility is enabled but no external database is available (embedded mode). Apollo server will be disabled."
+            );
+            None
+        }
     } else {
         info!("Apollo compatibility server is disabled");
         None

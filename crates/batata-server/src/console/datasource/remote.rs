@@ -2,7 +2,6 @@
 // Provides HTTP-based access to console operations via remote server
 
 use async_trait::async_trait;
-use sea_orm::DatabaseConnection;
 use std::{
     sync::{
         Arc, RwLock,
@@ -303,6 +302,36 @@ pub struct RemoteDataSource {
 impl RemoteDataSource {
     pub async fn new(configuration: &Configuration) -> anyhow::Result<Self> {
         Self::with_auto_refresh(configuration, AutoRefreshConfig::default()).await
+    }
+
+    /// Create with a pre-generated token, bypassing HTTP login.
+    /// Used for embedded mode where the server generates a JWT token locally
+    /// to avoid self-connecting authentication issues.
+    pub fn new_with_token(
+        configuration: &Configuration,
+        token: String,
+        ttl_seconds: i64,
+    ) -> anyhow::Result<Self> {
+        let maintainer_config = build_maintainer_config(configuration);
+        let client = Arc::new(MaintainerClient::new_with_token(
+            maintainer_config,
+            token,
+            ttl_seconds,
+        )?);
+
+        let datasource = Self {
+            client,
+            cached_members: Arc::new(RwLock::new(Vec::new())),
+            cached_health: Arc::new(RwLock::new(None)),
+            cached_self: Arc::new(RwLock::new(None)),
+            auto_refresh_config: AutoRefreshConfig::default(),
+            running: Arc::new(AtomicBool::new(false)),
+        };
+
+        // Start auto-refresh (will use pre-set token for requests)
+        datasource.start_auto_refresh();
+
+        Ok(datasource)
     }
 
     /// Create with custom auto-refresh configuration
@@ -1031,10 +1060,6 @@ impl ConsoleDataSource for RemoteDataSource {
 
     fn is_remote(&self) -> bool {
         true
-    }
-
-    fn get_database_connection(&self) -> Option<&DatabaseConnection> {
-        None
     }
 
     fn get_server_member_manager(&self) -> Option<Arc<ServerMemberManager>> {

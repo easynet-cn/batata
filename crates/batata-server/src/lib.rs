@@ -219,10 +219,10 @@ macro_rules! secured {
                         {
                             // Step 5: Look up roles
                             let __roles =
-                                $crate::auth::service::role::find_by_username(
-                                    __secured.data.db(),
-                                    &__auth_context.username,
-                                )
+                                __secured.data.persistence()
+                                    .role_find_by_username(
+                                        &__auth_context.username,
+                                    )
                                 .await
                                 .ok()
                                 .unwrap_or_default();
@@ -261,10 +261,10 @@ macro_rules! secured {
                                     .map(|e| e.role.to_string())
                                     .collect::<Vec<String>>();
                                 let __permissions =
-                                    $crate::auth::service::permission::find_by_roles(
-                                        __secured.data.db(),
-                                        __role_names,
-                                    )
+                                    __secured.data.persistence()
+                                        .permission_find_by_roles(
+                                            __role_names,
+                                        )
                                     .await
                                     .ok()
                                     .unwrap_or_default();

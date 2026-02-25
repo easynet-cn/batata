@@ -13,11 +13,12 @@ use batata_consistency::raft::state_machine::{
 };
 
 use crate::model::{
-    ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData, NamespaceInfo, Page,
-    PermissionInfo, RoleInfo, StorageMode, UserInfo,
+    CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
+    NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageMode, UserInfo,
 };
 use crate::traits::PersistenceService;
 use crate::traits::auth::AuthPersistence;
+use crate::traits::capacity::CapacityPersistence;
 use crate::traits::config::ConfigPersistence;
 use crate::traits::namespace::NamespacePersistence;
 
@@ -444,11 +445,11 @@ impl ConfigPersistence for EmbeddedPersistService {
         _client_ip: &str,
         _src_user: &str,
     ) -> anyhow::Result<usize> {
-        // In embedded mode, batch delete by IDs is not directly supported
-        // since configs are keyed by tenant@@group@@data_id, not by integer ID.
-        // This would need a secondary index or scan.
-        // For now, return 0 as this operation is primarily used by the SQL backend.
-        Ok(0)
+        // RocksDB configs are keyed by tenant@@group@@data_id, not by integer IDs.
+        // Batch delete by SQL integer ID is not applicable in embedded mode.
+        Err(anyhow::anyhow!(
+            "Batch delete by integer ID is not supported in standalone embedded mode"
+        ))
     }
 
     async fn config_history_find_by_id(
@@ -481,6 +482,102 @@ impl ConfigPersistence for EmbeddedPersistService {
 
     async fn config_find_all_group_names(&self, namespace_id: &str) -> anyhow::Result<Vec<String>> {
         self.reader.find_all_group_names(namespace_id)
+    }
+
+    async fn config_history_get_previous(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        current_nid: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
+        let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
+        let cf = self.cf(CF_CONFIG_HISTORY)?;
+
+        let mut best: Option<serde_json::Value> = None;
+        let mut best_id: u64 = 0;
+
+        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let key_str = String::from_utf8_lossy(&key);
+            if !key_str.starts_with(&prefix) {
+                break;
+            }
+            let json: serde_json::Value = serde_json::from_slice(&value)?;
+            let id = json["id"].as_u64().unwrap_or(0);
+            if id < current_nid && id > best_id {
+                best_id = id;
+                best = Some(json);
+            }
+        }
+
+        Ok(best.as_ref().map(Self::json_to_history))
+    }
+
+    async fn config_find_by_namespace(
+        &self,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigStorageData>> {
+        let prefix = format!("{}@@", namespace_id);
+        let cf = self.cf(CF_CONFIG)?;
+        let mut results = Vec::new();
+
+        let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
+        for item in iter {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let key_str = String::from_utf8_lossy(&key);
+            if !key_str.starts_with(&prefix) {
+                break;
+            }
+            let json: serde_json::Value = serde_json::from_slice(&value)?;
+            results.push(Self::json_to_config(&json));
+        }
+
+        Ok(results)
+    }
+
+    async fn config_find_for_export(
+        &self,
+        namespace_id: &str,
+        group: Option<&str>,
+        data_ids: Option<Vec<String>>,
+        app_name: Option<&str>,
+    ) -> anyhow::Result<Vec<ConfigStorageData>> {
+        let all_configs = self.reader.list_configs(namespace_id)?;
+        let mut results = Vec::new();
+
+        for json in &all_configs {
+            // Filter by group if provided
+            if let Some(g) = group {
+                let config_group = json["group"].as_str().unwrap_or("");
+                if config_group != g {
+                    continue;
+                }
+            }
+
+            // Filter by data_ids if provided
+            if let Some(ref ids) = data_ids {
+                let config_data_id = json["data_id"].as_str().unwrap_or("");
+                if !ids.iter().any(|id| id == config_data_id) {
+                    continue;
+                }
+            }
+
+            // Filter by app_name if provided
+            if let Some(app) = app_name {
+                let config_app_name = json["app_name"].as_str().unwrap_or("");
+                if config_app_name != app {
+                    continue;
+                }
+            }
+
+            results.push(Self::json_to_config(json));
+        }
+
+        Ok(results)
     }
 }
 
@@ -638,6 +735,23 @@ impl AuthPersistence for EmbeddedPersistService {
         self.delete_key(CF_USERS, &key)
     }
 
+    async fn user_search(&self, username: &str) -> anyhow::Result<Vec<String>> {
+        let cf = self.cf(CF_USERS)?;
+        let mut results = Vec::new();
+
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        for item in iter {
+            let (_, value) = item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            let json: serde_json::Value = serde_json::from_slice(&value)?;
+            let u = json["username"].as_str().unwrap_or("");
+            if username.is_empty() || u.contains(username) {
+                results.push(u.to_string());
+            }
+        }
+
+        Ok(results)
+    }
+
     async fn role_find_by_username(&self, username: &str) -> anyhow::Result<Vec<RoleInfo>> {
         let items = self.reader.get_roles_by_username(username)?;
         Ok(items.iter().map(Self::json_to_role).collect())
@@ -684,6 +798,20 @@ impl AuthPersistence for EmbeddedPersistService {
         self.reader.has_global_admin_by_username(username)
     }
 
+    async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>> {
+        // Use search_roles with empty username pattern, non-accurate, and large page to get all matches
+        let (items, _total) = self.reader.search_roles("", role, false, 1, u64::MAX)?;
+        let role_names: Vec<String> = items
+            .iter()
+            .filter_map(|v| {
+                v.get("role")
+                    .and_then(|r| r.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        Ok(role_names)
+    }
+
     async fn permission_find_by_role(&self, role: &str) -> anyhow::Result<Vec<PermissionInfo>> {
         let items = self.reader.get_permissions_by_role(role)?;
         Ok(items.iter().map(Self::json_to_permission).collect())
@@ -709,6 +837,24 @@ impl AuthPersistence for EmbeddedPersistService {
             .search_permissions(role, accurate, page_no, page_size)?;
         let page_items = items.iter().map(Self::json_to_permission).collect();
         Ok(Page::new(total, page_no, page_size, page_items))
+    }
+
+    async fn permission_find_by_id(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<Option<PermissionInfo>> {
+        let key = RocksStateMachine::permission_key(role, resource, action);
+        let cf = self.cf(CF_PERMISSIONS)?;
+
+        match self.db.get_cf(cf, key.as_bytes())? {
+            Some(data) => {
+                let v: serde_json::Value = serde_json::from_slice(&data)?;
+                Ok(Some(Self::json_to_permission(&v)))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn permission_grant(
@@ -738,6 +884,154 @@ impl AuthPersistence for EmbeddedPersistService {
     ) -> anyhow::Result<()> {
         let key = RocksStateMachine::permission_key(role, resource, action);
         self.delete_key(CF_PERMISSIONS, &key)
+    }
+}
+
+#[async_trait]
+impl CapacityPersistence for EmbeddedPersistService {
+    async fn capacity_get_tenant(&self, tenant_id: &str) -> anyhow::Result<Option<CapacityInfo>> {
+        let key = format!("capacity:tenant:{}", tenant_id);
+        match self.db.get(key.as_bytes())? {
+            Some(data) => {
+                let info: CapacityInfo = serde_json::from_slice(&data)?;
+                Ok(Some(info))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn capacity_upsert_tenant(
+        &self,
+        tenant_id: &str,
+        quota: Option<u32>,
+        max_size: Option<u32>,
+        max_aggr_count: Option<u32>,
+        max_aggr_size: Option<u32>,
+        max_history_count: Option<u32>,
+    ) -> anyhow::Result<CapacityInfo> {
+        let key = format!("capacity:tenant:{}", tenant_id);
+
+        // Read existing or create defaults
+        let mut info = match self.db.get(key.as_bytes())? {
+            Some(data) => serde_json::from_slice::<CapacityInfo>(&data)?,
+            None => CapacityInfo {
+                id: None,
+                identifier: tenant_id.to_string(),
+                quota: 200,
+                usage: 0,
+                max_size: 102400,
+                max_aggr_count: 10000,
+                max_aggr_size: 2097152,
+                max_history_count: 24,
+            },
+        };
+
+        // Merge provided fields
+        if let Some(v) = quota {
+            info.quota = v;
+        }
+        if let Some(v) = max_size {
+            info.max_size = v;
+        }
+        if let Some(v) = max_aggr_count {
+            info.max_aggr_count = v;
+        }
+        if let Some(v) = max_aggr_size {
+            info.max_aggr_size = v;
+        }
+        if let Some(v) = max_history_count {
+            info.max_history_count = v;
+        }
+
+        // Compute usage by counting configs in this namespace
+        info.usage = self.reader.count_configs(tenant_id)? as u32;
+
+        // Write back
+        let json = serde_json::to_vec(&info)?;
+        self.db.put(key.as_bytes(), &json)?;
+
+        Ok(info)
+    }
+
+    async fn capacity_delete_tenant(&self, tenant_id: &str) -> anyhow::Result<bool> {
+        let key = format!("capacity:tenant:{}", tenant_id);
+        let exists = self.db.get(key.as_bytes())?.is_some();
+        if exists {
+            self.db.delete(key.as_bytes())?;
+        }
+        Ok(exists)
+    }
+
+    async fn capacity_get_group(&self, group_id: &str) -> anyhow::Result<Option<CapacityInfo>> {
+        let key = format!("capacity:group:{}", group_id);
+        match self.db.get(key.as_bytes())? {
+            Some(data) => {
+                let info: CapacityInfo = serde_json::from_slice(&data)?;
+                Ok(Some(info))
+            }
+            None => Ok(None),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn capacity_upsert_group(
+        &self,
+        group_id: &str,
+        quota: Option<u32>,
+        max_size: Option<u32>,
+        max_aggr_count: Option<u32>,
+        max_aggr_size: Option<u32>,
+        max_history_count: Option<u32>,
+    ) -> anyhow::Result<CapacityInfo> {
+        let key = format!("capacity:group:{}", group_id);
+
+        // Read existing or create defaults
+        let mut info = match self.db.get(key.as_bytes())? {
+            Some(data) => serde_json::from_slice::<CapacityInfo>(&data)?,
+            None => CapacityInfo {
+                id: None,
+                identifier: group_id.to_string(),
+                quota: 200,
+                usage: 0,
+                max_size: 102400,
+                max_aggr_count: 10000,
+                max_aggr_size: 2097152,
+                max_history_count: 24,
+            },
+        };
+
+        // Merge provided fields
+        if let Some(v) = quota {
+            info.quota = v;
+        }
+        if let Some(v) = max_size {
+            info.max_size = v;
+        }
+        if let Some(v) = max_aggr_count {
+            info.max_aggr_count = v;
+        }
+        if let Some(v) = max_aggr_size {
+            info.max_aggr_size = v;
+        }
+        if let Some(v) = max_history_count {
+            info.max_history_count = v;
+        }
+
+        // Write back (group capacity uses the stored usage value, no recount)
+        let json = serde_json::to_vec(&info)?;
+        self.db.put(key.as_bytes(), &json)?;
+
+        Ok(info)
+    }
+
+    async fn capacity_delete_group(&self, group_id: &str) -> anyhow::Result<bool> {
+        let key = format!("capacity:group:{}", group_id);
+        let exists = self.db.get(key.as_bytes())?.is_some();
+        if exists {
+            self.db.delete(key.as_bytes())?;
+        }
+        Ok(exists)
     }
 }
 

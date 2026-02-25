@@ -449,20 +449,20 @@ async fn test_service_not_found() {
 
 async fn test_namespace_isolation_naming() {
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+
     let client = authenticated_client().await;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    
+
     // Create two test namespaces via console API
     let ns_a = format!("test-ns-a-{}", timestamp);
     let ns_b = format!("test-ns-b-{}", timestamp);
     let service_name = "shared-service-name";
     let ip_a = "192.168.1.200";
     let ip_b = "192.168.1.201";
-    
+
     // Create namespace A and B
     let console_client = || async {
         let mut client = TestClient::new(CONSOLE_BASE_URL);
@@ -472,7 +472,7 @@ async fn test_namespace_isolation_naming() {
             .expect("Login failed");
         client
     };
-    
+
     let console = console_client().await;
     let _: serde_json::Value = console
         .post_form(
@@ -484,7 +484,7 @@ async fn test_namespace_isolation_naming() {
         )
         .await
         .expect("Failed to create namespace A");
-    
+
     let _: serde_json::Value = console
         .post_form(
             "/v2/console/namespace",
@@ -495,7 +495,7 @@ async fn test_namespace_isolation_naming() {
         )
         .await
         .expect("Failed to create namespace B");
-    
+
     // Register instance in namespace A
     let _: serde_json::Value = client
         .post_form(
@@ -509,7 +509,7 @@ async fn test_namespace_isolation_naming() {
         )
         .await
         .expect("Failed to register instance in namespace A");
-    
+
     // Register instance in namespace B with same service name
     let _: serde_json::Value = client
         .post_form(
@@ -523,7 +523,7 @@ async fn test_namespace_isolation_naming() {
         )
         .await
         .expect("Failed to register instance in namespace B");
-    
+
     // Get instances from namespace A - should only return instance A
     let response_a: serde_json::Value = client
         .get_with_query(
@@ -535,12 +535,12 @@ async fn test_namespace_isolation_naming() {
         )
         .await
         .expect("Failed to get instances from namespace A");
-    
+
     assert_eq!(response_a["code"], 0);
     let hosts_a = response_a["data"]["hosts"].as_array().unwrap();
     assert_eq!(hosts_a.len(), 1, "Namespace A should have 1 instance");
     assert_eq!(hosts_a[0]["ip"], ip_a, "Namespace A should have instance A");
-    
+
     // Get instances from namespace B - should only return instance B
     let response_b: serde_json::Value = client
         .get_with_query(
@@ -552,12 +552,12 @@ async fn test_namespace_isolation_naming() {
         )
         .await
         .expect("Failed to get instances from namespace B");
-    
+
     assert_eq!(response_b["code"], 0);
     let hosts_b = response_b["data"]["hosts"].as_array().unwrap();
     assert_eq!(hosts_b.len(), 1, "Namespace B should have 1 instance");
     assert_eq!(hosts_b[0]["ip"], ip_b, "Namespace B should have instance B");
-    
+
     // Get instances from default namespace - should not find this service
     let result_default = client
         .get_with_query::<serde_json::Value, _>(
@@ -565,7 +565,7 @@ async fn test_namespace_isolation_naming() {
             &[("serviceName", service_name)],
         )
         .await;
-    
+
     match result_default {
         Ok(response) => {
             // Service might not exist in default namespace
@@ -580,7 +580,7 @@ async fn test_namespace_isolation_naming() {
             // Service not found is acceptable
         }
     }
-    
+
     // Cleanup: deregister instances and delete namespaces
     let _: serde_json::Value = client
         .delete_with_query(
@@ -595,7 +595,7 @@ async fn test_namespace_isolation_naming() {
         .await
         .ok()
         .unwrap_or_default();
-    
+
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v2/ns/instance",
@@ -609,13 +609,13 @@ async fn test_namespace_isolation_naming() {
         .await
         .ok()
         .unwrap_or_default();
-    
+
     let _: serde_json::Value = console
         .delete_with_query("/v2/console/namespace", &[("namespaceId", ns_a.as_str())])
         .await
         .ok()
         .unwrap_or_default();
-    
+
     let _: serde_json::Value = console
         .delete_with_query("/v2/console/namespace", &[("namespaceId", ns_b.as_str())])
         .await

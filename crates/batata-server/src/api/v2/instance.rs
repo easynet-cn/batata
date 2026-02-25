@@ -113,18 +113,16 @@ pub async fn register_instance(
 
     // Record heartbeat for health check tracking
     if let Some(ref hc_manager) = data.health_check_manager {
-        hc_manager
-            .unhealthy_checker()
-            .record_heartbeat(
-                namespace_id,
-                group_name,
-                &form.service_name,
-                &form.ip,
-                form.port,
-                cluster_name,
-                instance.instance_heart_beat_time_out,
-                instance.ip_delete_timeout,
-            );
+        hc_manager.unhealthy_checker().record_heartbeat(
+            namespace_id,
+            group_name,
+            &form.service_name,
+            &form.ip,
+            form.port,
+            cluster_name,
+            instance.instance_heart_beat_time_out,
+            instance.ip_delete_timeout,
+        );
     }
 
     // Register instance
@@ -936,8 +934,8 @@ pub async fn beat_instance(
                     &beat_info.ip,
                     beat_info.port,
                     cluster_name,
-                    15000,  // default heartbeat_timeout
-                    30000,  // default ip_delete_timeout
+                    15000, // default heartbeat_timeout
+                    30000, // default ip_delete_timeout
                 );
             }
         }
@@ -971,8 +969,8 @@ pub async fn beat_instance(
                     ip,
                     port,
                     cluster_name,
-                    15000,  // default heartbeat_timeout
-                    30000,  // default ip_delete_timeout
+                    15000, // default heartbeat_timeout
+                    30000, // default ip_delete_timeout
                 );
             }
         }

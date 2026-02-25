@@ -11,11 +11,9 @@ use std::sync::LazyLock;
 
 use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, post, put, web};
 
-use batata_config::Namespace;
-
 use crate::{
     ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
-    model::response::Result, secured, service,
+    model::response::Result, secured,
 };
 
 use super::model::{
@@ -51,18 +49,25 @@ pub async fn get_namespace_list(req: HttpRequest, data: web::Data<AppState>) -> 
             .build()
     );
 
-    let namespaces: Vec<Namespace> = service::namespace::find_all(data.db()).await;
+    let ns_list = data
+        .persistence()
+        .namespace_find_all()
+        .await
+        .unwrap_or_default();
 
     // Convert to response format
-    let response: Vec<NamespaceResponse> = namespaces
+    let response: Vec<NamespaceResponse> = ns_list
         .into_iter()
-        .map(|ns| NamespaceResponse {
-            namespace: ns.namespace,
-            namespace_show_name: ns.namespace_show_name,
-            namespace_desc: ns.namespace_desc,
-            quota: ns.quota,
-            config_count: ns.config_count,
-            type_: ns.type_,
+        .map(|ns| {
+            let type_ = if ns.namespace_id == "public" { 0 } else { 2 };
+            NamespaceResponse {
+                namespace: ns.namespace_id,
+                namespace_show_name: ns.namespace_name,
+                namespace_desc: ns.namespace_desc,
+                quota: ns.quota,
+                config_count: ns.config_count,
+                type_,
+            }
         })
         .collect();
 
@@ -106,19 +111,24 @@ pub async fn get_namespace(
         );
     }
 
-    match service::namespace::get_by_namespace_id(data.db(), &params.namespace_id, "1").await {
-        Ok(ns) => {
+    match data
+        .persistence()
+        .namespace_get_by_id(&params.namespace_id)
+        .await
+    {
+        Ok(Some(ns)) => {
+            let type_ = if ns.namespace_id == "public" { 0 } else { 2 };
             let response = NamespaceResponse {
-                namespace: ns.namespace,
-                namespace_show_name: ns.namespace_show_name,
+                namespace: ns.namespace_id,
+                namespace_show_name: ns.namespace_name,
                 namespace_desc: ns.namespace_desc,
                 quota: ns.quota,
                 config_count: ns.config_count,
-                type_: ns.type_,
+                type_,
             };
             Result::<NamespaceResponse>::http_success(response)
         }
-        Err(_) => Result::<NamespaceResponse>::http_response(
+        Ok(None) | Err(_) => Result::<NamespaceResponse>::http_response(
             404,
             404,
             format!("Namespace not found: {}", params.namespace_id),
@@ -214,7 +224,9 @@ pub async fn create_namespace(
     }
 
     // Create namespace
-    match service::namespace::create(data.db(), &namespace_id, &namespace_name, &namespace_desc)
+    match data
+        .persistence()
+        .namespace_create(&namespace_id, &namespace_name, &namespace_desc)
         .await
     {
         Ok(_) => {
@@ -297,13 +309,10 @@ pub async fn update_namespace(
     let namespace_desc = form.namespace_desc.clone().unwrap_or_default();
 
     // Update namespace
-    match service::namespace::update(
-        data.db(),
-        &form.namespace_id,
-        &form.namespace_name,
-        &namespace_desc,
-    )
-    .await
+    match data
+        .persistence()
+        .namespace_update(&form.namespace_id, &form.namespace_name, &namespace_desc)
+        .await
     {
         Ok(updated) => {
             if updated {
@@ -372,7 +381,11 @@ pub async fn delete_namespace(
     }
 
     // Delete namespace
-    match service::namespace::delete(data.db(), &params.namespace_id).await {
+    match data
+        .persistence()
+        .namespace_delete(&params.namespace_id)
+        .await
+    {
         Ok(deleted) => {
             if deleted {
                 tracing::info!(

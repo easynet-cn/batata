@@ -3,8 +3,8 @@
 //! Tests for long polling mechanism used for real-time config updates
 
 use crate::common::{
-    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME,
-    TestClient, unique_data_id,
+    CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_PASSWORD, TEST_USERNAME, TestClient,
+    unique_data_id,
 };
 use std::time::Duration;
 
@@ -49,13 +49,14 @@ async fn test_config_long_poll_basic() {
         let response: serde_json::Value = client_clone
             .post_form(
                 "/nacos/v2/cs/config/listener",
-                &[
-                    (
-                        "Listening-Configs",
-                        format!("{}{}{}{}",
-                            data_id_clone, DEFAULT_GROUP, "MD5_NOT_CARE_YET", "30000"
-                        ).as_str()
-                    )],
+                &[(
+                    "Listening-Configs",
+                    format!(
+                        "{}{}{}{}",
+                        data_id_clone, DEFAULT_GROUP, "MD5_NOT_CARE_YET", "30000"
+                    )
+                    .as_str(),
+                )],
             )
             .await
             .expect("Long poll failed");
@@ -78,10 +79,7 @@ async fn test_config_long_poll_basic() {
         .expect("Failed to update config");
 
     // Wait for long poll to return
-    let result = tokio::time::timeout(
-        Duration::from_secs(35),
-        poll_handle
-    ).await;
+    let result = tokio::time::timeout(Duration::from_secs(35), poll_handle).await;
 
     assert!(result.is_ok(), "Long poll should complete");
     let response = result.unwrap().expect("Poll task failed");
@@ -110,10 +108,7 @@ async fn test_config_long_poll_timeout() {
         .expect("Failed to publish config");
 
     // Start long poll with short timeout
-    let client_clone = TestClient::new_with_cookies(
-        MAIN_BASE_URL,
-        client.cookies()
-    );
+    let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, client.cookies());
     let data_id_clone = data_id.clone();
 
     let poll_handle = tokio::spawn(async move {
@@ -122,8 +117,11 @@ async fn test_config_long_poll_timeout() {
                 "/nacos/v2/cs/config/listener",
                 &[(
                     "Listening-Configs",
-                    format!("{}{}{}{}",
-                        data_id_clone, DEFAULT_GROUP, "md5_placeholder", "1000").as_str()
+                    format!(
+                        "{}{}{}{}",
+                        data_id_clone, DEFAULT_GROUP, "md5_placeholder", "1000"
+                    )
+                    .as_str(),
                 )],
             )
             .await
@@ -132,10 +130,7 @@ async fn test_config_long_poll_timeout() {
     });
 
     // Long poll should timeout (no config change)
-    let result = tokio::time::timeout(
-        Duration::from_secs(5),
-        poll_handle
-    ).await;
+    let result = tokio::time::timeout(Duration::from_secs(5), poll_handle).await;
 
     assert!(result.is_ok(), "Long poll should complete on timeout");
     let response = result.unwrap().expect("Poll task failed");
@@ -166,10 +161,7 @@ async fn test_config_long_poll_md5_match() {
     let md5 = response["data"]["md5"].as_str().unwrap_or("");
 
     // Long poll with matching MD5 (should wait for change or timeout)
-    let client_clone = TestClient::new_with_cookies(
-        MAIN_BASE_URL,
-        client.cookies()
-    );
+    let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, client.cookies());
     let data_id_clone = data_id.clone();
     let md5_clone = md5.to_string();
 
@@ -179,8 +171,7 @@ async fn test_config_long_poll_md5_match() {
                 "/nacos/v2/cs/config/listener",
                 &[(
                     "Listening-Configs",
-                    format!("{}{}{}{}",
-                        data_id_clone, DEFAULT_GROUP, md5_clone, "30000").as_str()
+                    format!("{}{}{}{}", data_id_clone, DEFAULT_GROUP, md5_clone, "30000").as_str(),
                 )],
             )
             .await
@@ -189,10 +180,7 @@ async fn test_config_long_poll_md5_match() {
     });
 
     // Wait for timeout (no change)
-    let result = tokio::time::timeout(
-        Duration::from_secs(35),
-        poll_handle
-    ).await;
+    let result = tokio::time::timeout(Duration::from_secs(35), poll_handle).await;
 
     assert!(result.is_ok(), "Long poll should complete");
 }
@@ -235,8 +223,7 @@ async fn test_concurrent_long_polls() {
                 "/nacos/v2/cs/config/listener",
                 &[(
                     "Listening-Configs",
-                    format!("{}{}{}{}",
-                        data_id1_clone, DEFAULT_GROUP, "md5_1", "30000").as_str()
+                    format!("{}{}{}{}", data_id1_clone, DEFAULT_GROUP, "md5_1", "30000").as_str(),
                 )],
             )
             .await
@@ -248,8 +235,10 @@ async fn test_concurrent_long_polls() {
         let _: serde_json::Value = client_clone
             .post_form(
                 "/nacos/v2/cs/config/listener",
-                &[("Listening-Configs", format!("{}{}{}{}",
-                    data_id2_clone, DEFAULT_GROUP, "md5_2", "30000").as_str())],
+                &[(
+                    "Listening-Configs",
+                    format!("{}{}{}{}", data_id2_clone, DEFAULT_GROUP, "md5_2", "30000").as_str(),
+                )],
             )
             .await
             .expect("Long poll failed");
@@ -314,9 +303,12 @@ async fn test_long_poll_removal() {
             "/nacos/v2/cs/config/listener",
             &[(
                 "Listening-Configs",
-                format!("{}{}{}{}",
-                    data_id, DEFAULT_GROUP, "md5_placeholder", "30000").as_str()
-                )],
+                format!(
+                    "{}{}{}{}",
+                    data_id, DEFAULT_GROUP, "md5_placeholder", "30000"
+                )
+                .as_str(),
+            )],
         )
         .await
         .expect("Failed to add listener");
@@ -325,10 +317,7 @@ async fn test_long_poll_removal() {
     let _: serde_json::Value = client
         .delete_with_query(
             "/nacos/v2/cs/config/listener",
-            &[
-                ("dataId", data_id.as_str()),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
         )
         .await
         .expect("Failed to remove listener");
@@ -345,10 +334,7 @@ async fn test_long_poll_empty_md5() {
     let data_id = unique_data_id("longpoll_empty_md5");
 
     // Publish config after starting long poll
-    let client_clone = TestClient::new_with_cookies(
-        MAIN_BASE_URL,
-        client.cookies()
-    );
+    let client_clone = TestClient::new_with_cookies(MAIN_BASE_URL, client.cookies());
     let data_id_clone = data_id.clone();
 
     let poll_handle = tokio::spawn(async move {
@@ -357,8 +343,7 @@ async fn test_long_poll_empty_md5() {
                 "/nacos/v2/cs/config/listener",
                 &[(
                     "Listening-Configs",
-                    format!("{}{}{}{}",
-                        data_id, DEFAULT_GROUP, "", "60000").as_str()
+                    format!("{}{}{}{}", data_id, DEFAULT_GROUP, "", "60000").as_str(),
                 )],
             )
             .await
@@ -382,10 +367,7 @@ async fn test_long_poll_empty_md5() {
         .expect("Failed to publish config");
 
     // Long poll should return with the new config
-    let result = tokio::time::timeout(
-        Duration::from_secs(35),
-        poll_handle
-    ).await;
+    let result = tokio::time::timeout(Duration::from_secs(35), poll_handle).await;
 
     assert!(result.is_ok(), "Long poll should complete");
     let response = result.unwrap().expect("Poll task failed");

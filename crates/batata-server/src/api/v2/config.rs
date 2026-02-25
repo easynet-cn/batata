@@ -20,6 +20,21 @@ use super::model::{
     ConfigDeleteParam, ConfigGetParam, ConfigPublishParam, ConfigResponse, ConfigSearchDetailParam,
 };
 
+/// Helper to convert ConfigStorageData to ConfigBasicInfo
+fn config_storage_to_basic_info(config: batata_persistence::ConfigStorageData) -> ConfigBasicInfo {
+    ConfigBasicInfo {
+        id: 0,
+        namespace_id: config.tenant,
+        group_name: config.group,
+        data_id: config.data_id,
+        md5: config.md5,
+        r#type: config.config_type,
+        app_name: config.app_name,
+        create_time: config.created_time,
+        modify_time: config.modified_time,
+    }
+}
+
 /// Get configuration
 ///
 /// GET /nacos/v2/cs/config
@@ -65,38 +80,34 @@ pub async fn get_config(
             .build()
     );
 
-    // Get config from service
-    let db = data.db();
-    match batata_config::service::config::find_one(db, &params.data_id, &params.group, namespace_id)
+    // Get config from persistence service
+    let persistence = data.persistence();
+    match persistence
+        .config_find_one(&params.data_id, &params.group, namespace_id)
         .await
     {
         Ok(Some(config)) => {
             let response = ConfigResponse {
-                id: config.config_info.config_info_base.id.to_string(),
-                data_id: config.config_info.config_info_base.data_id,
-                group: config.config_info.config_info_base.group,
-                content: config.config_info.config_info_base.content,
-                md5: config.config_info.config_info_base.md5,
-                encrypted_data_key: if config
-                    .config_info
-                    .config_info_base
-                    .encrypted_data_key
-                    .is_empty()
-                {
+                id: "0".to_string(),
+                data_id: config.data_id,
+                group: config.group,
+                content: config.content,
+                md5: config.md5,
+                encrypted_data_key: if config.encrypted_data_key.is_empty() {
                     None
                 } else {
-                    Some(config.config_info.config_info_base.encrypted_data_key)
+                    Some(config.encrypted_data_key)
                 },
-                tenant: config.config_info.tenant,
-                app_name: if config.config_info.app_name.is_empty() {
+                tenant: config.tenant,
+                app_name: if config.app_name.is_empty() {
                     None
                 } else {
-                    Some(config.config_info.app_name)
+                    Some(config.app_name)
                 },
-                r#type: if config.config_info.r#type.is_empty() {
+                r#type: if config.config_type.is_empty() {
                     None
                 } else {
-                    Some(config.config_info.r#type)
+                    Some(config.config_type)
                 },
             };
             Result::<ConfigResponse>::http_success(response)
@@ -177,26 +188,26 @@ pub async fn publish_config(
 
     let src_user = form.src_user.clone().unwrap_or_default();
 
-    // Publish config using service
-    let db = data.db();
-    match batata_config::service::config::create_or_update(
-        db,
-        &form.data_id,
-        &form.group,
-        namespace_id,
-        &form.content,
-        form.app_name.as_deref().unwrap_or(""),
-        &src_user,
-        &src_ip,
-        form.config_tags.as_deref().unwrap_or(""),
-        form.desc.as_deref().unwrap_or(""),
-        form.r#use.as_deref().unwrap_or(""),
-        form.effect.as_deref().unwrap_or(""),
-        form.r#type.as_deref().unwrap_or(""),
-        form.schema.as_deref().unwrap_or(""),
-        "",
-    )
-    .await
+    // Publish config using persistence service
+    let persistence = data.persistence();
+    match persistence
+        .config_create_or_update(
+            &form.data_id,
+            &form.group,
+            namespace_id,
+            &form.content,
+            form.app_name.as_deref().unwrap_or(""),
+            &src_user,
+            &src_ip,
+            form.config_tags.as_deref().unwrap_or(""),
+            form.desc.as_deref().unwrap_or(""),
+            form.r#use.as_deref().unwrap_or(""),
+            form.effect.as_deref().unwrap_or(""),
+            form.r#type.as_deref().unwrap_or(""),
+            form.schema.as_deref().unwrap_or(""),
+            "",
+        )
+        .await
     {
         Ok(_) => {
             info!(
@@ -266,18 +277,18 @@ pub async fn delete_config(
         .unwrap_or("unknown")
         .to_string();
 
-    // Delete config using service
-    let db = data.db();
-    match batata_config::service::config::delete(
-        db,
-        &params.data_id,
-        &params.group,
-        namespace_id,
-        "",
-        &src_ip,
-        "",
-    )
-    .await
+    // Delete config using persistence service
+    let persistence = data.persistence();
+    match persistence
+        .config_delete(
+            &params.data_id,
+            &params.group,
+            namespace_id,
+            "",
+            &src_ip,
+            "",
+        )
+        .await
     {
         Ok(deleted) => {
             if deleted {
@@ -348,22 +359,35 @@ pub async fn search_config_detail(
         .map(|s| s.to_string())
         .collect();
 
-    let db = data.db();
-    match batata_config::service::config::search_page(
-        db,
-        params.page_no,
-        params.page_size,
-        namespace_id,
-        params.data_id.as_deref().unwrap_or(""),
-        params.group.as_deref().unwrap_or(""),
-        params.app_name.as_deref().unwrap_or(""),
-        tags,
-        types,
-        params.content.as_deref().unwrap_or(""),
-    )
-    .await
+    let persistence = data.persistence();
+    match persistence
+        .config_search_page(
+            params.page_no,
+            params.page_size,
+            namespace_id,
+            params.data_id.as_deref().unwrap_or(""),
+            params.group.as_deref().unwrap_or(""),
+            params.app_name.as_deref().unwrap_or(""),
+            tags,
+            types,
+            params.content.as_deref().unwrap_or(""),
+        )
+        .await
     {
-        Ok(page) => Result::<Page<ConfigBasicInfo>>::http_success(page),
+        Ok(page) => {
+            // Convert Page<ConfigStorageData> to Page<ConfigBasicInfo>
+            let result_page = Page {
+                total_count: page.total_count,
+                page_number: page.page_number,
+                pages_available: page.pages_available,
+                page_items: page
+                    .page_items
+                    .into_iter()
+                    .map(config_storage_to_basic_info)
+                    .collect(),
+            };
+            Result::<Page<ConfigBasicInfo>>::http_success(result_page)
+        }
         Err(e) => {
             warn!(error = %e, "Failed to search config detail");
             Result::<Page<ConfigBasicInfo>>::http_response(

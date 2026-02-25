@@ -86,6 +86,28 @@ pub enum RaftRequest {
         action: String,
     },
 
+    // ==================== Config Gray (Beta) Operations ====================
+    /// Publish or update a gray (beta) config
+    ConfigGrayPublish {
+        data_id: String,
+        group: String,
+        tenant: String,
+        content: String,
+        gray_name: String,
+        gray_rule: String,
+        app_name: Option<String>,
+        encrypted_data_key: Option<String>,
+        src_user: Option<String>,
+        src_ip: Option<String>,
+    },
+
+    /// Remove gray (beta) configs for a data_id/group/tenant
+    ConfigGrayRemove {
+        data_id: String,
+        group: String,
+        tenant: String,
+    },
+
     // ==================== Config History Operations ====================
     /// Record config change history
     ConfigHistoryInsert {
@@ -213,6 +235,8 @@ impl RaftRequest {
             RaftRequest::RoleDelete { .. } => "RoleDelete",
             RaftRequest::PermissionGrant { .. } => "PermissionGrant",
             RaftRequest::PermissionRevoke { .. } => "PermissionRevoke",
+            RaftRequest::ConfigGrayPublish { .. } => "ConfigGrayPublish",
+            RaftRequest::ConfigGrayRemove { .. } => "ConfigGrayRemove",
             RaftRequest::ConfigHistoryInsert { .. } => "ConfigHistoryInsert",
             RaftRequest::ConfigTagsUpdate { .. } => "ConfigTagsUpdate",
             RaftRequest::ConfigTagsDelete { .. } => "ConfigTagsDelete",

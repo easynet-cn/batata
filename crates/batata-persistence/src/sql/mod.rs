@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
 
 use crate::entity::{
-    config_info, config_info_gray, config_tags_relation, his_config_info, permissions, roles,
-    tenant_info, users,
+    config_info, config_info_gray, config_tags_relation, group_capacity, his_config_info,
+    permissions, roles, tenant_capacity, tenant_info, users,
 };
 use crate::model::*;
 use crate::traits::*;
@@ -772,6 +772,123 @@ impl ConfigPersistence for ExternalDbPersistService {
 
         Ok(groups)
     }
+
+    async fn config_history_get_previous(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        current_nid: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryStorageData>> {
+        let result = his_config_info::Entity::find()
+            .filter(his_config_info::Column::TenantId.eq(namespace_id))
+            .filter(his_config_info::Column::DataId.eq(data_id))
+            .filter(his_config_info::Column::GroupId.eq(group))
+            .filter(his_config_info::Column::Nid.lt(current_nid))
+            .order_by_desc(his_config_info::Column::Nid)
+            .one(&self.db)
+            .await?;
+
+        Ok(result.map(history_entity_to_storage))
+    }
+
+    async fn config_find_by_namespace(
+        &self,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigStorageData>> {
+        let configs = config_info::Entity::find()
+            .filter(config_info::Column::TenantId.eq(namespace_id))
+            .all(&self.db)
+            .await?;
+
+        let mut result = Vec::with_capacity(configs.len());
+        for model in configs {
+            let tag_names = config_tags_relation::Entity::find()
+                .select_only()
+                .column(config_tags_relation::Column::TagName)
+                .filter(config_tags_relation::Column::DataId.eq(&model.data_id))
+                .filter(
+                    config_tags_relation::Column::GroupId
+                        .eq(model.group_id.as_deref().unwrap_or_default()),
+                )
+                .filter(
+                    config_tags_relation::Column::TenantId
+                        .eq(model.tenant_id.as_deref().unwrap_or_default()),
+                )
+                .order_by_asc(config_tags_relation::Column::Nid)
+                .into_tuple::<String>()
+                .all(&self.db)
+                .await?;
+            let tags = tag_names.join(",");
+            result.push(config_entity_to_storage(model, tags));
+        }
+
+        Ok(result)
+    }
+
+    async fn config_find_for_export(
+        &self,
+        namespace_id: &str,
+        group: Option<&str>,
+        data_ids: Option<Vec<String>>,
+        app_name: Option<&str>,
+    ) -> anyhow::Result<Vec<ConfigStorageData>> {
+        let mut query = config_info::Entity::find()
+            .filter(config_info::Column::TenantId.eq(namespace_id))
+            .order_by_asc(config_info::Column::GroupId)
+            .order_by_asc(config_info::Column::DataId);
+
+        if let Some(g) = group {
+            if !g.is_empty() {
+                query = query.filter(config_info::Column::GroupId.eq(g));
+            }
+        }
+
+        if let Some(ref ids) = data_ids {
+            if !ids.is_empty() {
+                query = query.filter(config_info::Column::DataId.is_in(ids.clone()));
+            }
+        }
+
+        if let Some(app) = app_name {
+            if !app.is_empty() {
+                query = query.filter(config_info::Column::AppName.eq(app));
+            }
+        }
+
+        let configs = query.all(&self.db).await?;
+
+        // Fetch tags for all matching configs
+        let config_ids: Vec<i64> = configs.iter().map(|c| c.id).collect();
+
+        let tags = if !config_ids.is_empty() {
+            config_tags_relation::Entity::find()
+                .filter(config_tags_relation::Column::Id.is_in(config_ids))
+                .order_by_asc(config_tags_relation::Column::Id)
+                .order_by_asc(config_tags_relation::Column::Nid)
+                .all(&self.db)
+                .await?
+        } else {
+            vec![]
+        };
+
+        // Group tags by config id
+        let mut tags_map: HashMap<i64, Vec<String>> = HashMap::with_capacity(configs.len());
+        for tag in tags {
+            tags_map.entry(tag.id).or_default().push(tag.tag_name);
+        }
+
+        // Convert to ConfigStorageData with tags
+        let result: Vec<ConfigStorageData> = configs
+            .into_iter()
+            .map(|c| {
+                let config_tags = tags_map.get(&c.id).map(|t| t.join(",")).unwrap_or_default();
+                config_entity_to_storage(c, config_tags)
+            })
+            .collect();
+
+        Ok(result)
+    }
 }
 
 // ============================================================================
@@ -1047,6 +1164,18 @@ impl AuthPersistence for ExternalDbPersistService {
         }
     }
 
+    async fn user_search(&self, username: &str) -> anyhow::Result<Vec<String>> {
+        let usernames = users::Entity::find()
+            .select_only()
+            .column(users::Column::Username)
+            .filter(users::Column::Username.like(&format!("%{}%", username)))
+            .into_tuple::<String>()
+            .all(&self.db)
+            .await?;
+
+        Ok(usernames)
+    }
+
     async fn role_find_by_username(&self, username: &str) -> anyhow::Result<Vec<RoleInfo>> {
         let role_list = roles::Entity::find()
             .filter(roles::Column::Username.eq(username))
@@ -1169,6 +1298,18 @@ impl AuthPersistence for ExternalDbPersistService {
         Ok(result.is_some())
     }
 
+    async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>> {
+        let role_names = roles::Entity::find()
+            .select_only()
+            .column(roles::Column::Role)
+            .filter(roles::Column::Role.contains(role))
+            .into_tuple::<String>()
+            .all(&self.db)
+            .await?;
+
+        Ok(role_names)
+    }
+
     async fn permission_find_by_role(&self, role: &str) -> anyhow::Result<Vec<PermissionInfo>> {
         let perms = permissions::Entity::find()
             .filter(permissions::Column::Role.eq(role))
@@ -1251,6 +1392,28 @@ impl AuthPersistence for ExternalDbPersistService {
         Ok(Page::new(total_count, page_no, page_size, items))
     }
 
+    async fn permission_find_by_id(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<Option<PermissionInfo>> {
+        let perm = permissions::Entity::find_by_id((
+            role.to_string(),
+            resource.to_string(),
+            action.to_string(),
+        ))
+        .one(&self.db)
+        .await?
+        .map(|m| PermissionInfo {
+            role: m.role,
+            resource: m.resource,
+            action: m.action,
+        });
+
+        Ok(perm)
+    }
+
     async fn permission_grant(
         &self,
         role: &str,
@@ -1281,5 +1444,231 @@ impl AuthPersistence for ExternalDbPersistService {
         .exec(&self.db)
         .await?;
         Ok(())
+    }
+}
+
+// ============================================================================
+// CapacityPersistence implementation
+// ============================================================================
+
+/// Default capacity values
+const DEFAULT_QUOTA: u32 = 200;
+const DEFAULT_MAX_SIZE: u32 = 102400; // 100KB
+const DEFAULT_MAX_AGGR_COUNT: u32 = 10000;
+const DEFAULT_MAX_AGGR_SIZE: u32 = 2097152; // 2MB
+const DEFAULT_MAX_HISTORY_COUNT: u32 = 24;
+
+#[async_trait]
+impl CapacityPersistence for ExternalDbPersistService {
+    async fn capacity_get_tenant(&self, tenant_id: &str) -> anyhow::Result<Option<CapacityInfo>> {
+        let result = tenant_capacity::Entity::find()
+            .filter(tenant_capacity::Column::TenantId.eq(tenant_id))
+            .one(&self.db)
+            .await?;
+
+        Ok(result.map(|m| CapacityInfo {
+            id: Some(m.id),
+            identifier: m.tenant_id,
+            quota: m.quota,
+            usage: m.usage,
+            max_size: m.max_size,
+            max_aggr_count: m.max_aggr_count,
+            max_aggr_size: m.max_aggr_size,
+            max_history_count: m.max_history_count,
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn capacity_upsert_tenant(
+        &self,
+        tenant_id: &str,
+        quota: Option<u32>,
+        max_size: Option<u32>,
+        max_aggr_count: Option<u32>,
+        max_aggr_size: Option<u32>,
+        max_history_count: Option<u32>,
+    ) -> anyhow::Result<CapacityInfo> {
+        let existing = tenant_capacity::Entity::find()
+            .filter(tenant_capacity::Column::TenantId.eq(tenant_id))
+            .one(&self.db)
+            .await?;
+
+        let now = chrono::Utc::now().naive_utc();
+
+        if let Some(model) = existing {
+            // Update existing record
+            let mut active: tenant_capacity::ActiveModel = model.into();
+            if let Some(q) = quota {
+                active.quota = Set(q);
+            }
+            if let Some(s) = max_size {
+                active.max_size = Set(s);
+            }
+            if let Some(c) = max_aggr_count {
+                active.max_aggr_count = Set(c);
+            }
+            if let Some(s) = max_aggr_size {
+                active.max_aggr_size = Set(s);
+            }
+            if let Some(h) = max_history_count {
+                active.max_history_count = Set(h);
+            }
+            active.gmt_modified = Set(now);
+
+            let updated = active.update(&self.db).await?;
+
+            Ok(CapacityInfo {
+                id: Some(updated.id),
+                identifier: updated.tenant_id,
+                quota: updated.quota,
+                usage: updated.usage,
+                max_size: updated.max_size,
+                max_aggr_count: updated.max_aggr_count,
+                max_aggr_size: updated.max_aggr_size,
+                max_history_count: updated.max_history_count,
+            })
+        } else {
+            // Create new record with defaults overridden by provided values
+            let active = tenant_capacity::ActiveModel {
+                tenant_id: Set(tenant_id.to_string()),
+                quota: Set(quota.unwrap_or(DEFAULT_QUOTA)),
+                usage: Set(0),
+                max_size: Set(max_size.unwrap_or(DEFAULT_MAX_SIZE)),
+                max_aggr_count: Set(max_aggr_count.unwrap_or(DEFAULT_MAX_AGGR_COUNT)),
+                max_aggr_size: Set(max_aggr_size.unwrap_or(DEFAULT_MAX_AGGR_SIZE)),
+                max_history_count: Set(max_history_count.unwrap_or(DEFAULT_MAX_HISTORY_COUNT)),
+                gmt_create: Set(now),
+                gmt_modified: Set(now),
+                ..Default::default()
+            };
+
+            let inserted = active.insert(&self.db).await?;
+
+            Ok(CapacityInfo {
+                id: Some(inserted.id),
+                identifier: inserted.tenant_id,
+                quota: inserted.quota,
+                usage: inserted.usage,
+                max_size: inserted.max_size,
+                max_aggr_count: inserted.max_aggr_count,
+                max_aggr_size: inserted.max_aggr_size,
+                max_history_count: inserted.max_history_count,
+            })
+        }
+    }
+
+    async fn capacity_delete_tenant(&self, tenant_id: &str) -> anyhow::Result<bool> {
+        let result = tenant_capacity::Entity::delete_many()
+            .filter(tenant_capacity::Column::TenantId.eq(tenant_id))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected > 0)
+    }
+
+    async fn capacity_get_group(&self, group_id: &str) -> anyhow::Result<Option<CapacityInfo>> {
+        let result = group_capacity::Entity::find()
+            .filter(group_capacity::Column::GroupId.eq(group_id))
+            .one(&self.db)
+            .await?;
+
+        Ok(result.map(|m| CapacityInfo {
+            id: Some(m.id),
+            identifier: m.group_id,
+            quota: m.quota,
+            usage: m.usage,
+            max_size: m.max_size,
+            max_aggr_count: m.max_aggr_count,
+            max_aggr_size: m.max_aggr_size,
+            max_history_count: m.max_history_count,
+        }))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn capacity_upsert_group(
+        &self,
+        group_id: &str,
+        quota: Option<u32>,
+        max_size: Option<u32>,
+        max_aggr_count: Option<u32>,
+        max_aggr_size: Option<u32>,
+        max_history_count: Option<u32>,
+    ) -> anyhow::Result<CapacityInfo> {
+        let existing = group_capacity::Entity::find()
+            .filter(group_capacity::Column::GroupId.eq(group_id))
+            .one(&self.db)
+            .await?;
+
+        let now = chrono::Utc::now().naive_utc();
+
+        if let Some(model) = existing {
+            // Update existing record
+            let mut active: group_capacity::ActiveModel = model.into();
+            if let Some(q) = quota {
+                active.quota = Set(q);
+            }
+            if let Some(s) = max_size {
+                active.max_size = Set(s);
+            }
+            if let Some(c) = max_aggr_count {
+                active.max_aggr_count = Set(c);
+            }
+            if let Some(s) = max_aggr_size {
+                active.max_aggr_size = Set(s);
+            }
+            if let Some(h) = max_history_count {
+                active.max_history_count = Set(h);
+            }
+            active.gmt_modified = Set(now);
+
+            let updated = active.update(&self.db).await?;
+
+            Ok(CapacityInfo {
+                id: Some(updated.id),
+                identifier: updated.group_id,
+                quota: updated.quota,
+                usage: updated.usage,
+                max_size: updated.max_size,
+                max_aggr_count: updated.max_aggr_count,
+                max_aggr_size: updated.max_aggr_size,
+                max_history_count: updated.max_history_count,
+            })
+        } else {
+            // Create new record with defaults overridden by provided values
+            let active = group_capacity::ActiveModel {
+                group_id: Set(group_id.to_string()),
+                quota: Set(quota.unwrap_or(DEFAULT_QUOTA)),
+                usage: Set(0),
+                max_size: Set(max_size.unwrap_or(DEFAULT_MAX_SIZE)),
+                max_aggr_count: Set(max_aggr_count.unwrap_or(DEFAULT_MAX_AGGR_COUNT)),
+                max_aggr_size: Set(max_aggr_size.unwrap_or(DEFAULT_MAX_AGGR_SIZE)),
+                max_history_count: Set(max_history_count.unwrap_or(DEFAULT_MAX_HISTORY_COUNT)),
+                gmt_create: Set(now),
+                gmt_modified: Set(now),
+                ..Default::default()
+            };
+
+            let inserted = active.insert(&self.db).await?;
+
+            Ok(CapacityInfo {
+                id: Some(inserted.id),
+                identifier: inserted.group_id,
+                quota: inserted.quota,
+                usage: inserted.usage,
+                max_size: inserted.max_size,
+                max_aggr_count: inserted.max_aggr_count,
+                max_aggr_size: inserted.max_aggr_size,
+                max_history_count: inserted.max_history_count,
+            })
+        }
+    }
+
+    async fn capacity_delete_group(&self, group_id: &str) -> anyhow::Result<bool> {
+        let result = group_capacity::Entity::delete_many()
+            .filter(group_capacity::Column::GroupId.eq(group_id))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected > 0)
     }
 }

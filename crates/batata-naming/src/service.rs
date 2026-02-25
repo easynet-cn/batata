@@ -99,7 +99,6 @@ impl ClusterStatistics {
     }
 }
 
-
 /// Cluster-level configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClusterConfig {
@@ -1085,9 +1084,9 @@ impl NamingService {
 
             cluster_map
                 .iter()
-                .map(|(cluster_name, cluster_instances)| 
+                .map(|(cluster_name, cluster_instances)| {
                     ClusterStatistics::from_instances(cluster_name, cluster_instances)
-                )
+                })
                 .collect()
         } else {
             Vec::new()
@@ -1105,8 +1104,6 @@ impl NamingService {
         let stats = self.get_cluster_statistics(namespace, group_name, service_name);
         stats.into_iter().find(|s| s.cluster_name == cluster_name)
     }
-
-
 
     /// Check if a service exists (has metadata or instances)
     pub fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool {

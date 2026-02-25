@@ -49,37 +49,33 @@ async fn get_config(
             .build()
     );
 
-    let db = data.db();
-    match batata_config::service::config::find_one(db, &params.data_id, &params.group, namespace_id)
+    let persistence = data.persistence();
+    match persistence
+        .config_find_one(&params.data_id, &params.group, namespace_id)
         .await
     {
         Ok(Some(config)) => {
             let response = ConfigResponse {
-                id: config.config_info.config_info_base.id.to_string(),
-                data_id: config.config_info.config_info_base.data_id,
-                group: config.config_info.config_info_base.group,
-                content: config.config_info.config_info_base.content,
-                md5: config.config_info.config_info_base.md5,
-                encrypted_data_key: if config
-                    .config_info
-                    .config_info_base
-                    .encrypted_data_key
-                    .is_empty()
-                {
+                id: String::new(),
+                data_id: config.data_id.clone(),
+                group: config.group.clone(),
+                content: config.content.clone(),
+                md5: config.md5.clone(),
+                encrypted_data_key: if config.encrypted_data_key.is_empty() {
                     None
                 } else {
-                    Some(config.config_info.config_info_base.encrypted_data_key)
+                    Some(config.encrypted_data_key.clone())
                 },
-                tenant: config.config_info.tenant,
-                app_name: if config.config_info.app_name.is_empty() {
+                tenant: config.tenant.clone(),
+                app_name: if config.app_name.is_empty() {
                     None
                 } else {
-                    Some(config.config_info.app_name)
+                    Some(config.app_name.clone())
                 },
-                r#type: if config.config_info.r#type.is_empty() {
+                r#type: if config.config_type.is_empty() {
                     None
                 } else {
-                    Some(config.config_info.r#type)
+                    Some(config.config_type.clone())
                 },
             };
             Result::<ConfigResponse>::http_success(response)

@@ -38,6 +38,9 @@ pub trait AuthPersistence: Send + Sync {
     /// Delete a user
     async fn user_delete(&self, username: &str) -> anyhow::Result<()>;
 
+    /// Search usernames matching a pattern
+    async fn user_search(&self, username: &str) -> anyhow::Result<Vec<String>>;
+
     // ==================== Role Operations ====================
 
     /// Find roles by username
@@ -65,6 +68,9 @@ pub trait AuthPersistence: Send + Sync {
     /// Check if a specific user has the global admin role
     async fn role_has_global_admin_by_username(&self, username: &str) -> anyhow::Result<bool>;
 
+    /// Search role names matching a pattern
+    async fn role_search(&self, role: &str) -> anyhow::Result<Vec<String>>;
+
     // ==================== Permission Operations ====================
 
     /// Find permissions by role
@@ -84,6 +90,14 @@ pub trait AuthPersistence: Send + Sync {
         page_size: u64,
         accurate: bool,
     ) -> anyhow::Result<Page<PermissionInfo>>;
+
+    /// Find a specific permission by role, resource, and action
+    async fn permission_find_by_id(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<Option<PermissionInfo>>;
 
     /// Grant a permission to a role
     async fn permission_grant(

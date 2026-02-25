@@ -290,20 +290,20 @@ async fn test_config_md5() {
 
 async fn test_namespace_isolation() {
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+
     let client = authenticated_client().await;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    
+
     // Create two test namespaces via console API
     let ns_a = format!("test-ns-a-{}", timestamp);
     let ns_b = format!("test-ns-b-{}", timestamp);
     let data_id = "shared-data-id";
     let content_a = "content-from-namespace-a";
     let content_b = "content-from-namespace-b";
-    
+
     // Create namespace A
     let console_client = || async {
         let mut client = TestClient::new(CONSOLE_BASE_URL);
@@ -313,7 +313,7 @@ async fn test_namespace_isolation() {
             .expect("Login failed");
         client
     };
-    
+
     let console = console_client().await;
     let _: serde_json::Value = console
         .post_form(
@@ -325,7 +325,7 @@ async fn test_namespace_isolation() {
         )
         .await
         .expect("Failed to create namespace A");
-    
+
     let _: serde_json::Value = console
         .post_form(
             "/v2/console/namespace",
@@ -336,7 +336,7 @@ async fn test_namespace_isolation() {
         )
         .await
         .expect("Failed to create namespace B");
-    
+
     // Publish same dataId in namespace A with content A
     let _: serde_json::Value = client
         .post_form(
@@ -350,7 +350,7 @@ async fn test_namespace_isolation() {
         )
         .await
         .expect("Failed to publish in namespace A");
-    
+
     // Publish same dataId in namespace B with content B
     let _: serde_json::Value = client
         .post_form(
@@ -364,7 +364,7 @@ async fn test_namespace_isolation() {
         )
         .await
         .expect("Failed to publish in namespace B");
-    
+
     // Get from namespace A should return content A
     let response_a: serde_json::Value = client
         .get_with_query(
@@ -377,10 +377,13 @@ async fn test_namespace_isolation() {
         )
         .await
         .expect("Failed to get from namespace A");
-    
+
     assert_eq!(response_a["code"], 0);
-    assert_eq!(response_a["data"]["content"], content_a, "Namespace A should have content A");
-    
+    assert_eq!(
+        response_a["data"]["content"], content_a,
+        "Namespace A should have content A"
+    );
+
     // Get from namespace B should return content B
     let response_b: serde_json::Value = client
         .get_with_query(
@@ -393,21 +396,21 @@ async fn test_namespace_isolation() {
         )
         .await
         .expect("Failed to get from namespace B");
-    
+
     assert_eq!(response_b["code"], 0);
-    assert_eq!(response_b["data"]["content"], content_b, "Namespace B should have content B");
-    
+    assert_eq!(
+        response_b["data"]["content"], content_b,
+        "Namespace B should have content B"
+    );
+
     // Get from default namespace should not find this dataId
     let result_default = client
         .get_with_query::<serde_json::Value, _>(
             "/nacos/v2/cs/config",
-            &[
-                ("dataId", data_id),
-                ("group", DEFAULT_GROUP),
-            ],
+            &[("dataId", data_id), ("group", DEFAULT_GROUP)],
         )
         .await;
-    
+
     // Should not find config in default namespace
     match result_default {
         Ok(response) => {
@@ -420,14 +423,14 @@ async fn test_namespace_isolation() {
             // HTTP 404 is acceptable
         }
     }
-    
+
     // Cleanup namespaces
     let _: serde_json::Value = console
         .delete_with_query("/v2/console/namespace", &[("namespaceId", ns_a.as_str())])
         .await
         .ok()
         .unwrap_or_default();
-    
+
     let _: serde_json::Value = console
         .delete_with_query("/v2/console/namespace", &[("namespaceId", ns_b.as_str())])
         .await

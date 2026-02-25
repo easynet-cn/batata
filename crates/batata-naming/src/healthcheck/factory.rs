@@ -3,7 +3,7 @@
 //! This module provides a factory for creating and managing health checkers,
 //! supporting dynamic registration of custom checkers.
 
-use super::checker::{HealthChecker, HealthCheckResult};
+use super::checker::{HealthCheckResult, HealthChecker};
 use super::configurer::HealthCheckerConfig;
 use crate::model::Instance;
 use dashmap::DashMap;
@@ -51,12 +51,17 @@ impl HealthCheckerFactory {
     /// Returns None if the checker type is not registered.
     pub fn get_checker(&self, r#type: &str) -> Option<Arc<dyn HealthChecker>> {
         let type_upper = r#type.to_uppercase();
-        self.checkers.get(&type_upper).map(|entry| entry.value().clone())
+        self.checkers
+            .get(&type_upper)
+            .map(|entry| entry.value().clone())
     }
 
     /// Get all registered checker types
     pub fn get_checker_types(&self) -> Vec<String> {
-        self.checkers.iter().map(|entry| entry.key().clone()).collect()
+        self.checkers
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Check if a checker type is registered
@@ -68,7 +73,11 @@ impl HealthCheckerFactory {
     ///
     /// Automatically selects the checker based on the config type.
     /// Returns failure result if checker type is not registered.
-    pub async fn check(&self, instance: &Instance, config: &HealthCheckerConfig) -> HealthCheckResult {
+    pub async fn check(
+        &self,
+        instance: &Instance,
+        config: &HealthCheckerConfig,
+    ) -> HealthCheckResult {
         let checker = match self.get_checker(&config.r#type) {
             Some(c) => c,
             None => {
@@ -124,8 +133,14 @@ mod tests {
         struct CustomChecker;
         #[async_trait::async_trait]
         impl HealthChecker for CustomChecker {
-            fn get_type(&self) -> &str { "CUSTOM" }
-            async fn check(&self, _instance: &Instance, _config: &HealthCheckerConfig) -> HealthCheckResult {
+            fn get_type(&self) -> &str {
+                "CUSTOM"
+            }
+            async fn check(
+                &self,
+                _instance: &Instance,
+                _config: &HealthCheckerConfig,
+            ) -> HealthCheckResult {
                 HealthCheckResult {
                     success: true,
                     message: Some("Custom check".to_string()),

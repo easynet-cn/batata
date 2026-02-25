@@ -47,8 +47,8 @@ pub struct Configuration {
 impl Configuration {
     pub fn new() -> Self {
         let args = Cli::parse();
-        let mut config_builder = Config::builder()
-            .add_source(config::File::with_name("conf/application.yml"));
+        let mut config_builder =
+            Config::builder().add_source(config::File::with_name("conf/application.yml"));
 
         // clap already handles command line args and environment variables
         // We don't need Environment::with_prefix here as clap does that
@@ -1124,7 +1124,10 @@ mod tests {
 
     #[test]
     fn test_consul_data_dir_custom() {
-        let cfg = build_config(vec![("nacos.plugin.consul.data_dir", "/custom/path/consul".into())]);
+        let cfg = build_config(vec![(
+            "nacos.plugin.consul.data_dir",
+            "/custom/path/consul".into(),
+        )]);
         assert_eq!(cfg.consul_data_dir(), "/custom/path/consul");
     }
 

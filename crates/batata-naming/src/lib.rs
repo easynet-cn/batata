@@ -19,11 +19,13 @@ pub mod service;
 pub use health_checker::{InstanceHealthCheckConfig, InstanceHealthChecker, InstanceHealthStatus};
 pub use healthcheck::{
     ExpiredInstanceChecker, HealthCheckConfig, HealthCheckManager, HealthCheckProcessor,
-    HealthCheckResult, HealthCheckReactor, HealthCheckTask, HealthCheckType, HttpHealthParams,
-    HttpHealthCheckProcessor, TcpHealthParams, TcpHealthCheckProcessor, UnhealthyInstanceChecker,
+    HealthCheckReactor, HealthCheckResult, HealthCheckTask, HealthCheckType,
+    HttpHealthCheckProcessor, HttpHealthParams, TcpHealthCheckProcessor, TcpHealthParams,
+    UnhealthyInstanceChecker,
 };
 pub use model::{Instance, Service, ServiceInfo, ServiceQuery};
 pub use selector::{LabelOperator, LabelRequirement, SelectorBuilder, ServiceSelector};
 pub use service::{
-    ClusterConfig, ClusterStatistics, FuzzyWatchPattern, NamingService, ProtectionInfo, ServiceMetadata,
+    ClusterConfig, ClusterStatistics, FuzzyWatchPattern, NamingService, ProtectionInfo,
+    ServiceMetadata,
 };

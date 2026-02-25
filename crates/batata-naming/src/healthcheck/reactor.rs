@@ -4,29 +4,27 @@
 //! responsible for scheduling health check tasks for all instances.
 
 use super::config::HealthCheckConfig;
-use super::processor::{HealthCheckType, HttpHealthCheckProcessor, NoneHealthCheckProcessor, TcpHealthCheckProcessor};
+use super::processor::{
+    HealthCheckType, HttpHealthCheckProcessor, NoneHealthCheckProcessor, TcpHealthCheckProcessor,
+};
 use super::task::HealthCheckTask;
 use crate::service::{ClusterConfig, NamingService};
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
-use std::collections::HashMap;
 
 /// Health check reactor message
 #[derive(Debug)]
 pub enum ReactorMessage {
     /// Schedule a new health check task
-    Schedule {
-        task: HealthCheckTask,
-    },
+    Schedule { task: HealthCheckTask },
     /// Cancel a health check task
-    Cancel {
-        task_id: String,
-    },
+    Cancel { task_id: String },
     /// Shutdown the reactor
     Shutdown,
 }
@@ -56,10 +54,7 @@ pub struct HealthCheckReactor {
 
 impl HealthCheckReactor {
     /// Create a new health check reactor
-    pub fn new(
-        naming_service: Arc<NamingService>,
-        config: Arc<HealthCheckConfig>,
-    ) -> Self {
+    pub fn new(naming_service: Arc<NamingService>, config: Arc<HealthCheckConfig>) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
 
         let reactor = Self {
@@ -109,7 +104,8 @@ impl HealthCheckReactor {
                             config.clone(),
                             tasks.clone(),
                             task_handles.clone(),
-                        ).await;
+                        )
+                        .await;
                     }
                     ReactorMessage::Cancel { task_id } => {
                         // Cancel the task
@@ -192,7 +188,10 @@ impl HealthCheckReactor {
     /// Schedule a health check task for an instance
     pub fn schedule_check(&self, task: HealthCheckTask) {
         if !self.config.is_enabled() {
-            debug!("Health check disabled, skipping task: {}", task.get_task_id());
+            debug!(
+                "Health check disabled, skipping task: {}",
+                task.get_task_id()
+            );
             return;
         }
 
@@ -217,9 +216,9 @@ impl HealthCheckReactor {
         }
 
         // Get all instances for this service
-        let instances = self
-            .naming_service
-            .get_instances(namespace, group_name, service_name, "", false);
+        let instances =
+            self.naming_service
+                .get_instances(namespace, group_name, service_name, "", false);
 
         for instance in instances {
             // Skip disabled instances

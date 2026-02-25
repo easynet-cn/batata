@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
     api::model::Page,
-    auth::{self, model::RoleInfo},
+    auth::model::RoleInfo,
     error::BatataError,
     model::common::{self, AppState},
     secured,
@@ -73,18 +73,29 @@ async fn search_page(
         role = stripped.to_string();
     }
 
-    let result = auth::service::role::search_page(
-        data.db(),
-        &username,
-        &role,
-        params.page_no,
-        params.page_size,
-        accurate,
-    )
-    .await;
+    let result = data
+        .persistence()
+        .role_find_page(&username, &role, params.page_no, params.page_size, accurate)
+        .await;
 
     match result {
-        Ok(page) => common::Result::<Page<RoleInfo>>::http_success(page),
+        Ok(page) => {
+            // Convert persistence Page<RoleInfo> to API Page<RoleInfo>
+            let api_page = Page {
+                total_count: page.total_count,
+                page_number: page.page_number,
+                pages_available: page.pages_available,
+                page_items: page
+                    .page_items
+                    .into_iter()
+                    .map(|r| RoleInfo {
+                        role: r.role,
+                        username: r.username,
+                    })
+                    .collect(),
+            };
+            common::Result::<Page<RoleInfo>>::http_success(api_page)
+        }
         Err(e) => HttpResponse::InternalServerError().json(common::Result::<Page<RoleInfo>> {
             code: 500,
             message: e.to_string(),
@@ -107,7 +118,7 @@ async fn search(
             .build()
     );
 
-    let result = auth::service::role::search(data.db(), &params.role).await;
+    let result = data.persistence().role_search(&params.role).await;
 
     match result {
         Ok(roles) => common::Result::<Vec<String>>::http_success(roles),
@@ -133,7 +144,10 @@ async fn create(
             .build()
     );
 
-    let result = auth::service::role::create(data.db(), &params.role, &params.username).await;
+    let result = data
+        .persistence()
+        .role_create(&params.role, &params.username)
+        .await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success("add role ok!"),
@@ -167,12 +181,10 @@ pub async fn delete(
             .build()
     );
 
-    let result = auth::service::role::delete(
-        data.db(),
-        &params.role,
-        &params.username.clone().unwrap_or_default(),
-    )
-    .await;
+    let result = data
+        .persistence()
+        .role_delete(&params.role, &params.username.clone().unwrap_or_default())
+        .await;
 
     match result {
         Ok(()) => common::Result::<String>::http_success(format!(

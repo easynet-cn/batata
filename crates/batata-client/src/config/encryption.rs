@@ -4,12 +4,12 @@
 //! - LocalEncryptedDataKeyProcessor: Store/retrieve encrypted data keys
 //! - EncryptionFilter: Encrypt/decrypt config content using AES-256-GCM
 
-use crate::error::{Result, ClientError};
+use crate::error::{ClientError, Result};
 use crate::local_config::SnapshotSwitch;
+use md5::Digest;
+use md5::Md5;
 use std::path::PathBuf;
 use tracing::debug;
-use md5::Md5;
-use md5::Digest;
 
 /// Local encrypted data key processor
 /// Similar to Nacos LocalEncryptedDataKeyProcessor
@@ -29,10 +29,7 @@ impl LocalEncryptedDataKeyProcessor {
         }
     }
 
-    pub fn with_snapshot_switch(
-        env_name: String,
-        snapshot_switch: SnapshotSwitch,
-    ) -> Self {
+    pub fn with_snapshot_switch(env_name: String, snapshot_switch: SnapshotSwitch) -> Self {
         let base_path = Self::get_base_path();
         Self {
             snapshot_switch,
@@ -105,14 +102,11 @@ impl LocalEncryptedDataKeyProcessor {
 
         if let Some(content) = encrypt_data_key {
             if let Some(parent) = file.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| ClientError::Other(e.into()))?;
+                std::fs::create_dir_all(parent).map_err(|e| ClientError::Other(e.into()))?;
             }
-            std::fs::write(&file, content)
-                .map_err(|e| ClientError::Other(e.into()))?;
+            std::fs::write(&file, content).map_err(|e| ClientError::Other(e.into()))?;
         } else if file.exists() {
-            std::fs::remove_file(&file)
-                .map_err(|e| ClientError::Other(e.into()))?;
+            std::fs::remove_file(&file).map_err(|e| ClientError::Other(e.into()))?;
         }
 
         Ok(())
@@ -120,7 +114,11 @@ impl LocalEncryptedDataKeyProcessor {
 
     fn get_failover_file(&self, data_id: &str, group: &str, tenant: &str) -> Result<PathBuf> {
         let mut path = self.base_path.clone();
-        path.push(format!("{}{}", self.simplify_env_name(&self.env_name), "_batata"));
+        path.push(format!(
+            "{}{}",
+            self.simplify_env_name(&self.env_name),
+            "_batata"
+        ));
         path.push("encrypted-data-key");
 
         if tenant.is_empty() {
@@ -138,7 +136,11 @@ impl LocalEncryptedDataKeyProcessor {
 
     fn get_snapshot_file(&self, data_id: &str, group: &str, tenant: &str) -> Result<PathBuf> {
         let mut path = self.base_path.clone();
-        path.push(format!("{}{}", self.simplify_env_name(&self.env_name), "_batata"));
+        path.push(format!(
+            "{}{}",
+            self.simplify_env_name(&self.env_name),
+            "_batata"
+        ));
         path.push("encrypted-data-key");
 
         if tenant.is_empty() {
@@ -207,7 +209,10 @@ impl super::filter::IConfigFilter for SimpleEncryptionFilter {
         "simple-encryption"
     }
 
-    async fn filter_publish(&self, request: &mut super::filter::ConfigRequest) -> anyhow::Result<()> {
+    async fn filter_publish(
+        &self,
+        request: &mut super::filter::ConfigRequest,
+    ) -> anyhow::Result<()> {
         // Simple XOR encryption for demo
         // In production, use AES-256-GCM with proper KMS
         let key = &self.secret_key;
@@ -225,7 +230,10 @@ impl super::filter::IConfigFilter for SimpleEncryptionFilter {
         Ok(())
     }
 
-    async fn filter_query(&self, response: &mut super::filter::ConfigResponse) -> anyhow::Result<()> {
+    async fn filter_query(
+        &self,
+        response: &mut super::filter::ConfigResponse,
+    ) -> anyhow::Result<()> {
         if response.encrypted_data_key.is_empty() {
             return Ok(());
         }
@@ -253,7 +261,11 @@ mod tests {
     fn test_encryption_filter_roundtrip() {
         let filter = SimpleEncryptionFilter::new_from_string("my-secret-key-1234567890");
 
-        let mut request = super::super::filter::ConfigRequest::new("test".to_string(), "group".to_string(), "tenant".to_string());
+        let mut request = super::super::filter::ConfigRequest::new(
+            "test".to_string(),
+            "group".to_string(),
+            "tenant".to_string(),
+        );
         request.content = "Hello, World!".to_string();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -282,19 +294,25 @@ mod tests {
         let processor = LocalEncryptedDataKeyProcessor::new("test".to_string());
 
         // Save encrypted data key
-        processor.save_encrypt_data_key_snapshot("dataId", "group", "tenant", Some("encrypted-key"))
+        processor
+            .save_encrypt_data_key_snapshot("dataId", "group", "tenant", Some("encrypted-key"))
             .unwrap();
 
         // Get encrypted data key
-        let key = processor.get_encrypt_data_key_snapshot("dataId", "group", "tenant").unwrap();
+        let key = processor
+            .get_encrypt_data_key_snapshot("dataId", "group", "tenant")
+            .unwrap();
         assert_eq!(key, Some("encrypted-key".to_string()));
 
         // Delete encrypted data key
-        processor.save_encrypt_data_key_snapshot("dataId", "group", "tenant", None)
+        processor
+            .save_encrypt_data_key_snapshot("dataId", "group", "tenant", None)
             .unwrap();
 
         // Get again should return None
-        let key = processor.get_encrypt_data_key_snapshot("dataId", "group", "tenant").unwrap();
+        let key = processor
+            .get_encrypt_data_key_snapshot("dataId", "group", "tenant")
+            .unwrap();
         assert_eq!(key, None);
     }
 
@@ -311,7 +329,9 @@ mod tests {
         std::fs::write(&file, "failover-key").unwrap();
 
         // Get failover
-        let key = processor.get_encrypt_data_key_failover("dataId", "group", "").unwrap();
+        let key = processor
+            .get_encrypt_data_key_failover("dataId", "group", "")
+            .unwrap();
         assert_eq!(key, Some("failover-key".to_string()));
     }
 }
