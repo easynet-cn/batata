@@ -322,6 +322,90 @@ impl AgentRegistry {
         }
     }
 
+    /// Get an agent by query params (Nacos-compatible)
+    pub fn get_by_query(&self, query: &AgentDetailQuery) -> Option<RegisteredAgent> {
+        let namespace = query.namespace_id.as_deref().unwrap_or("public");
+
+        if let Some(ref name) = query.agent_name {
+            return self.get(namespace, name);
+        }
+
+        None
+    }
+
+    /// List agents with Nacos-compatible search params
+    pub fn list_with_search(&self, query: &AgentListQuery) -> AgentListResponse {
+        let namespace = query.namespace_id.clone();
+        let search_type = query.search.as_deref().unwrap_or("blur");
+        let page_no = query.page_no.unwrap_or(1).max(1);
+        let page_size = query.page_size.unwrap_or(20);
+
+        let mut agents: Vec<RegisteredAgent> = self
+            .agents
+            .iter()
+            .map(|e| e.value().clone())
+            .filter(|a| {
+                // Filter by namespace
+                if let Some(ref ns) = namespace
+                    && &a.namespace != ns
+                {
+                    return false;
+                }
+
+                // Filter by name
+                if let Some(ref name) = query.agent_name {
+                    if search_type == "accurate" {
+                        if &a.card.name != name {
+                            return false;
+                        }
+                    } else if !a.card.name.contains(name.as_str()) {
+                        return false;
+                    }
+                }
+
+                true
+            })
+            .collect();
+
+        agents.sort_by(|a, b| a.card.name.cmp(&b.card.name));
+
+        let total = agents.len() as u64;
+        let start = ((page_no - 1) * page_size) as usize;
+        let end = (start + page_size as usize).min(agents.len());
+
+        let agents = if start < agents.len() {
+            agents[start..end].to_vec()
+        } else {
+            vec![]
+        };
+
+        AgentListResponse {
+            agents,
+            total,
+            page: page_no,
+            page_size,
+        }
+    }
+
+    /// Delete an agent by query params (Nacos-compatible)
+    pub fn delete_by_query(&self, query: &AgentDeleteQuery) -> Result<(), String> {
+        let namespace = query.namespace_id.as_deref().unwrap_or("public");
+
+        if let Some(ref name) = query.agent_name {
+            return self.deregister(namespace, name);
+        }
+
+        Err("agentName must be provided".to_string())
+    }
+
+    /// List versions for an agent (returns single version since Batata doesn't have versioning yet)
+    pub fn list_versions(&self, namespace: &str, name: &str) -> Vec<RegisteredAgent> {
+        match self.get(namespace, name) {
+            Some(agent) => vec![agent],
+            None => vec![],
+        }
+    }
+
     /// Update agent health status
     pub fn update_health(&self, id: &str, status: HealthStatus) {
         if let Some(mut agent) = self.agents.get_mut(id) {

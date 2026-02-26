@@ -1,9 +1,13 @@
 //! V3 Admin MCP server management endpoints
+//! Aligned with Nacos V3 Admin API contract
 
 use std::sync::Arc;
 
 use crate::{
-    api::ai::{McpServerRegistry, model::McpServerQuery, model::McpServerRegistration},
+    api::ai::{
+        McpServerRegistry,
+        model::{McpDeleteQuery, McpDetailQuery, McpListQuery, McpServerRegistration},
+    },
     model::response::RestResult,
 };
 use actix_web::{HttpResponse, Responder, delete, get, post, put, web};
@@ -12,26 +16,21 @@ use actix_web::{HttpResponse, Responder, delete, get, post, put, web};
 #[get("list")]
 async fn list_mcp(
     registry: web::Data<Arc<McpServerRegistry>>,
-    query: web::Query<McpServerQuery>,
+    query: web::Query<McpListQuery>,
 ) -> impl Responder {
-    let result = registry.list(&query.into_inner());
+    let result = registry.list_with_search(&query.into_inner());
     HttpResponse::Ok().json(RestResult::ok(Some(result)))
 }
 
-/// GET /v3/admin/ai/mcp
-#[get("{namespace}/{name}")]
+/// GET /v3/admin/ai/mcp?namespaceId=xxx&mcpName=xxx
+#[get("")]
 async fn get_mcp(
     registry: web::Data<Arc<McpServerRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<McpDetailQuery>,
 ) -> impl Responder {
-    let (namespace, name) = path.into_inner();
-
-    match registry.get(&namespace, &name) {
+    match registry.get_by_query(&query.into_inner()) {
         Some(server) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
-        None => HttpResponse::NotFound().json(RestResult::<()>::err(
-            404,
-            &format!("Server '{}' not found in namespace '{}'", name, namespace),
-        )),
+        None => HttpResponse::NotFound().json(RestResult::<()>::err(404, "MCP server not found")),
     }
 }
 
@@ -47,14 +46,17 @@ async fn create_mcp(
     }
 }
 
-/// PUT /v3/admin/ai/mcp/{namespace}/{name}
-#[put("{namespace}/{name}")]
+/// PUT /v3/admin/ai/mcp?namespaceId=xxx&mcpName=xxx
+#[put("")]
 async fn update_mcp(
     registry: web::Data<Arc<McpServerRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<McpDetailQuery>,
     body: web::Json<McpServerRegistration>,
 ) -> impl Responder {
-    let (namespace, name) = path.into_inner();
+    let q = query.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public").to_string();
+    let fallback_name = body.name.clone();
+    let name = q.mcp_name.unwrap_or(fallback_name);
 
     match registry.update(&namespace, &name, body.into_inner()) {
         Ok(server) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
@@ -62,15 +64,13 @@ async fn update_mcp(
     }
 }
 
-/// DELETE /v3/admin/ai/mcp/{namespace}/{name}
-#[delete("{namespace}/{name}")]
+/// DELETE /v3/admin/ai/mcp?namespaceId=xxx&mcpName=xxx
+#[delete("")]
 async fn delete_mcp(
     registry: web::Data<Arc<McpServerRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<McpDeleteQuery>,
 ) -> impl Responder {
-    let (namespace, name) = path.into_inner();
-
-    match registry.deregister(&namespace, &name) {
+    match registry.delete_by_query(&query.into_inner()) {
         Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
         Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
     }
@@ -80,7 +80,7 @@ pub fn routes() -> actix_web::Scope {
     web::scope("/mcp")
         .service(list_mcp)
         .service(create_mcp)
-        .service(get_mcp)
         .service(update_mcp)
+        .service(get_mcp)
         .service(delete_mcp)
 }

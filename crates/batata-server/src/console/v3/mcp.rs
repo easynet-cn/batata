@@ -1,6 +1,7 @@
 // Console MCP server management API endpoints
-// This module provides console endpoints for MCP server registration and management
+// Aligned with Nacos V3 Console API contract
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::{HttpMessage, HttpRequest, Responder, Scope, delete, get, post, put, web};
@@ -8,8 +9,9 @@ use actix_web::{HttpMessage, HttpRequest, Responder, Scope, delete, get, post, p
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
     api::ai::model::{
-        BatchRegistrationResponse, McpServer, McpServerImportRequest, McpServerListResponse,
-        McpServerQuery, McpServerRegistration,
+        BatchRegistrationResponse, McpDeleteQuery, McpDetailQuery, McpImportExecuteRequest,
+        McpImportValidateRequest, McpImportValidateResponse, McpListQuery, McpServer,
+        McpServerConfig, McpServerImportRequest, McpServerListResponse, McpServerRegistration,
     },
     api::ai::{McpRegistryStats, McpServerRegistry},
     model::{self, common::AppState},
@@ -17,12 +19,13 @@ use crate::{
 };
 
 /// List MCP servers
-#[get("")]
+/// GET /v3/console/ai/mcp/list
+#[get("/list")]
 async fn list_servers(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    params: web::Query<McpServerQuery>,
+    params: web::Query<McpListQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/mcp")
@@ -32,17 +35,18 @@ async fn list_servers(
             .build()
     );
 
-    let result = registry.list(&params.into_inner());
+    let result = registry.list_with_search(&params.into_inner());
     model::common::Result::<McpServerListResponse>::http_success(result)
 }
 
-/// Get MCP server by namespace and name
-#[get("/{namespace}/{name}")]
+/// Get MCP server by query params
+/// GET /v3/console/ai/mcp?namespaceId=xxx&mcpName=xxx
+#[get("")]
 async fn get_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/mcp")
@@ -52,19 +56,19 @@ async fn get_server(
             .build()
     );
 
-    let (namespace, name) = path.into_inner();
-    match registry.get(&namespace, &name) {
+    match registry.get_by_query(&query.into_inner()) {
         Some(server) => model::common::Result::<McpServer>::http_success(server),
         None => model::common::Result::<String>::http_response(
             404,
             404,
-            format!("Server '{}' not found in namespace '{}'", name, namespace),
+            "MCP server not found".to_string(),
             String::new(),
         ),
     }
 }
 
 /// Register a new MCP server
+/// POST /v3/console/ai/mcp
 #[post("")]
 async fn register_server(
     req: HttpRequest,
@@ -87,12 +91,13 @@ async fn register_server(
 }
 
 /// Update an existing MCP server
-#[put("/{namespace}/{name}")]
+/// PUT /v3/console/ai/mcp?namespaceId=xxx&mcpName=xxx
+#[put("")]
 async fn update_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<McpDetailQuery>,
     body: web::Json<McpServerRegistration>,
 ) -> impl Responder {
     secured!(
@@ -103,7 +108,11 @@ async fn update_server(
             .build()
     );
 
-    let (namespace, name) = path.into_inner();
+    let q = query.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public").to_string();
+    let fallback_name = body.name.clone();
+    let name = q.mcp_name.unwrap_or(fallback_name);
+
     match registry.update(&namespace, &name, body.into_inner()) {
         Ok(server) => model::common::Result::<McpServer>::http_success(server),
         Err(e) => model::common::Result::<String>::http_response(404, 404, e, String::new()),
@@ -111,12 +120,13 @@ async fn update_server(
 }
 
 /// Delete an MCP server
-#[delete("/{namespace}/{name}")]
+/// DELETE /v3/console/ai/mcp?namespaceId=xxx&mcpName=xxx
+#[delete("")]
 async fn delete_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<McpDeleteQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/mcp")
@@ -126,14 +136,109 @@ async fn delete_server(
             .build()
     );
 
-    let (namespace, name) = path.into_inner();
-    match registry.deregister(&namespace, &name) {
+    match registry.delete_by_query(&query.into_inner()) {
         Ok(()) => model::common::Result::<bool>::http_success(true),
         Err(e) => model::common::Result::<String>::http_response(404, 404, e, String::new()),
     }
 }
 
-/// Import MCP servers from JSON config
+/// Import tools from a running MCP server
+/// GET /v3/console/ai/mcp/importToolsFromMcp
+#[get("/importToolsFromMcp")]
+async fn import_tools_from_mcp(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    _query: web::Query<crate::api::ai::model::ImportToolsQuery>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/mcp")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    // Stub: returns empty tools list
+    let tools: Vec<crate::api::ai::model::McpTool> = vec![];
+    model::common::Result::<Vec<crate::api::ai::model::McpTool>>::http_success(tools)
+}
+
+/// Validate MCP import content
+/// POST /v3/console/ai/mcp/import/validate
+#[post("/import/validate")]
+async fn import_validate(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    body: web::Json<McpImportValidateRequest>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/mcp")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let content = &body.content;
+    match serde_json::from_str::<HashMap<String, McpServerConfig>>(content) {
+        Ok(servers) => {
+            let response = McpImportValidateResponse {
+                valid: true,
+                message: String::new(),
+                server_count: servers.len() as u32,
+            };
+            model::common::Result::<McpImportValidateResponse>::http_success(response)
+        }
+        Err(e) => {
+            let response = McpImportValidateResponse {
+                valid: false,
+                message: format!("Invalid JSON: {}", e),
+                server_count: 0,
+            };
+            model::common::Result::<McpImportValidateResponse>::http_success(response)
+        }
+    }
+}
+
+/// Execute MCP import
+/// POST /v3/console/ai/mcp/import/execute
+#[post("/import/execute")]
+async fn import_execute(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    registry: web::Data<Arc<McpServerRegistry>>,
+    body: web::Json<McpImportExecuteRequest>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/mcp")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let exec = body.into_inner();
+    match serde_json::from_str::<HashMap<String, McpServerConfig>>(&exec.content) {
+        Ok(servers) => {
+            let import_request = McpServerImportRequest {
+                mcp_servers: servers,
+                namespace: exec.namespace,
+                overwrite: exec.overwrite,
+            };
+            let result = registry.import(import_request);
+            model::common::Result::<BatchRegistrationResponse>::http_success(result)
+        }
+        Err(e) => model::common::Result::<String>::http_response(
+            400,
+            400,
+            format!("Invalid JSON: {}", e),
+            String::new(),
+        ),
+    }
+}
+
+/// Import MCP servers from JSON config (Batata extension)
+/// POST /v3/console/ai/mcp/import
 #[post("/import")]
 async fn import_servers(
     req: HttpRequest,
@@ -154,6 +259,7 @@ async fn import_servers(
 }
 
 /// Get MCP registry statistics
+/// GET /v3/console/ai/mcp/stats
 #[get("/stats")]
 async fn get_stats(
     req: HttpRequest,
@@ -173,12 +279,15 @@ async fn get_stats(
 }
 
 pub fn routes() -> Scope {
-    web::scope("/ai/mcp/servers")
+    web::scope("/ai/mcp")
         .service(get_stats)
+        .service(import_tools_from_mcp)
+        .service(import_validate)
+        .service(import_execute)
         .service(import_servers)
         .service(list_servers)
-        .service(get_server)
         .service(register_server)
         .service(update_server)
+        .service(get_server)
         .service(delete_server)
 }

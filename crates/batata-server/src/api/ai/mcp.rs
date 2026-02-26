@@ -365,6 +365,98 @@ impl McpServerRegistry {
         self.name_index.iter().map(|e| e.key().clone()).collect()
     }
 
+    /// Get a server by query params (Nacos-compatible)
+    /// Resolves by mcpId or mcpName within the given namespace
+    pub fn get_by_query(&self, query: &McpDetailQuery) -> Option<McpServer> {
+        let namespace = query.namespace_id.as_deref().unwrap_or("public");
+
+        // Try by ID first
+        if let Some(ref id) = query.mcp_id {
+            return self.get_by_id(id);
+        }
+
+        // Try by name
+        if let Some(ref name) = query.mcp_name {
+            return self.get(namespace, name);
+        }
+
+        None
+    }
+
+    /// List servers with Nacos-compatible search params
+    pub fn list_with_search(&self, query: &McpListQuery) -> McpServerListResponse {
+        let namespace = query.namespace_id.clone();
+        let search_type = query.search.as_deref().unwrap_or("blur");
+        let page_no = query.page_no.unwrap_or(1).max(1);
+        let page_size = query.page_size.unwrap_or(20);
+
+        let mut servers: Vec<McpServer> = self
+            .servers
+            .iter()
+            .map(|e| e.value().clone())
+            .filter(|s| {
+                // Filter by namespace
+                if let Some(ref ns) = namespace
+                    && &s.namespace != ns
+                {
+                    return false;
+                }
+
+                // Filter by name
+                if let Some(ref name) = query.mcp_name {
+                    if search_type == "accurate" {
+                        if &s.name != name {
+                            return false;
+                        }
+                    } else if !s.name.contains(name.as_str()) {
+                        return false;
+                    }
+                }
+
+                true
+            })
+            .collect();
+
+        servers.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let total = servers.len() as u64;
+        let start = ((page_no - 1) * page_size) as usize;
+        let end = (start + page_size as usize).min(servers.len());
+
+        let servers = if start < servers.len() {
+            servers[start..end].to_vec()
+        } else {
+            vec![]
+        };
+
+        McpServerListResponse {
+            servers,
+            total,
+            page: page_no,
+            page_size,
+        }
+    }
+
+    /// Delete a server by query params (Nacos-compatible)
+    pub fn delete_by_query(&self, query: &McpDeleteQuery) -> Result<(), String> {
+        let namespace = query.namespace_id.as_deref().unwrap_or("public");
+
+        // Try by name first
+        if let Some(ref name) = query.mcp_name {
+            return self.deregister(namespace, name);
+        }
+
+        // Try by ID
+        if let Some(ref id) = query.mcp_id {
+            if let Some(server) = self.get_by_id(id) {
+                return self.deregister(&server.namespace, &server.name);
+            }
+            return Err(format!("Server with ID '{}' not found", id));
+        }
+
+        Err("Either mcpName or mcpId must be provided".to_string())
+    }
+
     /// Get stats
     pub fn stats(&self) -> McpRegistryStats {
         let mut by_namespace: HashMap<String, u32> = HashMap::new();

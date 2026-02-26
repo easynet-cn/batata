@@ -1,5 +1,5 @@
 // Console A2A agent management API endpoints
-// This module provides console endpoints for A2A agent registration and management
+// Aligned with Nacos V3 Console API contract
 
 use std::sync::Arc;
 
@@ -8,7 +8,8 @@ use actix_web::{HttpMessage, HttpRequest, Responder, Scope, delete, get, post, p
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
     api::ai::model::{
-        AgentListResponse, AgentQuery, AgentRegistrationRequest, BatchAgentRegistrationRequest,
+        AgentDeleteQuery, AgentDetailQuery, AgentListQuery, AgentListResponse,
+        AgentRegistrationRequest, AgentVersionListQuery, BatchAgentRegistrationRequest,
         BatchRegistrationResponse, RegisteredAgent,
     },
     api::ai::{AgentRegistry, AgentRegistryStats},
@@ -17,12 +18,13 @@ use crate::{
 };
 
 /// List agents
-#[get("")]
+/// GET /v3/console/ai/a2a/list
+#[get("/list")]
 async fn list_agents(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    params: web::Query<AgentQuery>,
+    params: web::Query<AgentListQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/a2a")
@@ -32,17 +34,18 @@ async fn list_agents(
             .build()
     );
 
-    let result = registry.list(&params.into_inner());
+    let result = registry.list_with_search(&params.into_inner());
     model::common::Result::<AgentListResponse>::http_success(result)
 }
 
-/// Get agent by namespace and name
-#[get("/{namespace}/{name}")]
+/// Get agent by query params
+/// GET /v3/console/ai/a2a?namespaceId=xxx&agentName=xxx
+#[get("")]
 async fn get_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<AgentDetailQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/a2a")
@@ -52,19 +55,19 @@ async fn get_agent(
             .build()
     );
 
-    let (namespace, name) = path.into_inner();
-    match registry.get(&namespace, &name) {
+    match registry.get_by_query(&query.into_inner()) {
         Some(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
         None => model::common::Result::<String>::http_response(
             404,
             404,
-            format!("Agent '{}' not found in namespace '{}'", name, namespace),
+            "Agent not found".to_string(),
             String::new(),
         ),
     }
 }
 
 /// Register a new agent
+/// POST /v3/console/ai/a2a
 #[post("")]
 async fn register_agent(
     req: HttpRequest,
@@ -87,12 +90,13 @@ async fn register_agent(
 }
 
 /// Update an existing agent
-#[put("/{namespace}/{name}")]
+/// PUT /v3/console/ai/a2a?namespaceId=xxx&agentName=xxx
+#[put("")]
 async fn update_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<AgentDetailQuery>,
     body: web::Json<AgentRegistrationRequest>,
 ) -> impl Responder {
     secured!(
@@ -103,7 +107,11 @@ async fn update_agent(
             .build()
     );
 
-    let (namespace, name) = path.into_inner();
+    let q = query.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public").to_string();
+    let fallback_name = body.card.name.clone();
+    let name = q.agent_name.unwrap_or(fallback_name);
+
     match registry.update(&namespace, &name, body.into_inner()) {
         Ok(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
         Err(e) => model::common::Result::<String>::http_response(404, 404, e, String::new()),
@@ -111,12 +119,13 @@ async fn update_agent(
 }
 
 /// Delete an agent
-#[delete("/{namespace}/{name}")]
+/// DELETE /v3/console/ai/a2a?namespaceId=xxx&agentName=xxx
+#[delete("")]
 async fn delete_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    path: web::Path<(String, String)>,
+    query: web::Query<AgentDeleteQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/a2a")
@@ -126,14 +135,39 @@ async fn delete_agent(
             .build()
     );
 
-    let (namespace, name) = path.into_inner();
-    match registry.deregister(&namespace, &name) {
+    match registry.delete_by_query(&query.into_inner()) {
         Ok(()) => model::common::Result::<bool>::http_success(true),
         Err(e) => model::common::Result::<String>::http_response(404, 404, e, String::new()),
     }
 }
 
-/// Find agents by skill
+/// List agent versions
+/// GET /v3/console/ai/a2a/version/list
+#[get("/version/list")]
+async fn list_versions(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    registry: web::Data<Arc<AgentRegistry>>,
+    query: web::Query<AgentVersionListQuery>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/ai/a2a")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let q = query.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    let name = q.agent_name.as_deref().unwrap_or("");
+
+    let versions = registry.list_versions(namespace, name);
+    model::common::Result::<Vec<RegisteredAgent>>::http_success(versions)
+}
+
+/// Find agents by skill (Batata extension)
+/// GET /v3/console/ai/a2a/by-skill/{skill}
 #[get("/by-skill/{skill}")]
 async fn find_by_skill(
     req: HttpRequest,
@@ -154,7 +188,8 @@ async fn find_by_skill(
     model::common::Result::<Vec<RegisteredAgent>>::http_success(agents)
 }
 
-/// Batch register agents
+/// Batch register agents (Batata extension)
+/// POST /v3/console/ai/a2a/batch
 #[post("/batch")]
 async fn batch_register(
     req: HttpRequest,
@@ -174,7 +209,8 @@ async fn batch_register(
     model::common::Result::<BatchRegistrationResponse>::http_success(result)
 }
 
-/// Get agent registry statistics
+/// Get agent registry statistics (Batata extension)
+/// GET /v3/console/ai/a2a/stats
 #[get("/stats")]
 async fn get_stats(
     req: HttpRequest,
@@ -194,13 +230,14 @@ async fn get_stats(
 }
 
 pub fn routes() -> Scope {
-    web::scope("/ai/a2a/agents")
+    web::scope("/ai/a2a")
         .service(get_stats)
+        .service(list_versions)
         .service(find_by_skill)
         .service(batch_register)
         .service(list_agents)
-        .service(get_agent)
         .service(register_agent)
         .service(update_agent)
+        .service(get_agent)
         .service(delete_agent)
 }

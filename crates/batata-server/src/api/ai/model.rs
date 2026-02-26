@@ -435,6 +435,149 @@ pub struct McpServerListResponse {
     pub page_size: u32,
 }
 
+/// Nacos-compatible MCP detail query params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDetailQuery {
+    /// Namespace ID (defaults to "public")
+    pub namespace_id: Option<String>,
+    /// MCP server ID
+    pub mcp_id: Option<String>,
+    /// MCP server name
+    pub mcp_name: Option<String>,
+    /// Version
+    pub version: Option<String>,
+}
+
+/// Nacos-compatible MCP list query params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpListQuery {
+    /// Namespace ID
+    pub namespace_id: Option<String>,
+    /// MCP server name
+    pub mcp_name: Option<String>,
+    /// Search type: "accurate" or "blur"
+    pub search: Option<String>,
+    /// Page number (1-indexed)
+    pub page_no: Option<u32>,
+    /// Page size
+    pub page_size: Option<u32>,
+}
+
+/// Nacos-compatible MCP delete query params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpDeleteQuery {
+    /// Namespace ID
+    pub namespace_id: Option<String>,
+    /// MCP server ID
+    pub mcp_id: Option<String>,
+    /// MCP server name
+    pub mcp_name: Option<String>,
+    /// Version
+    pub version: Option<String>,
+}
+
+/// Nacos-compatible Agent detail query params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDetailQuery {
+    /// Namespace ID
+    pub namespace_id: Option<String>,
+    /// Agent name
+    pub agent_name: Option<String>,
+    /// Version
+    pub version: Option<String>,
+}
+
+/// Nacos-compatible Agent list query params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentListQuery {
+    /// Namespace ID
+    pub namespace_id: Option<String>,
+    /// Agent name
+    pub agent_name: Option<String>,
+    /// Search type: "accurate" or "blur"
+    pub search: Option<String>,
+    /// Page number (1-indexed)
+    pub page_no: Option<u32>,
+    /// Page size
+    pub page_size: Option<u32>,
+}
+
+/// Nacos-compatible Agent delete query params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDeleteQuery {
+    /// Namespace ID
+    pub namespace_id: Option<String>,
+    /// Agent name
+    pub agent_name: Option<String>,
+    /// Version
+    pub version: Option<String>,
+}
+
+/// Agent version list query params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentVersionListQuery {
+    /// Namespace ID
+    pub namespace_id: Option<String>,
+    /// Agent name
+    pub agent_name: Option<String>,
+}
+
+/// Import tools from MCP query params
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportToolsQuery {
+    /// Transport type (e.g., "sse", "http")
+    pub transport_type: String,
+    /// Base URL
+    pub base_url: String,
+    /// Endpoint path
+    pub endpoint: String,
+    /// Authentication token
+    pub auth_token: Option<String>,
+}
+
+/// MCP import validate request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportValidateRequest {
+    /// Content to validate (JSON string)
+    pub content: String,
+}
+
+/// MCP import validate response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportValidateResponse {
+    /// Whether the content is valid
+    pub valid: bool,
+    /// Validation error message
+    #[serde(default)]
+    pub message: String,
+    /// Number of servers found in the import
+    pub server_count: u32,
+}
+
+/// MCP import execute request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpImportExecuteRequest {
+    /// Content to import (JSON string)
+    pub content: String,
+    /// Namespace to import into
+    #[serde(default = "default_namespace")]
+    pub namespace: String,
+    /// Whether to overwrite existing servers
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
 /// MCP Server JSON import request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
