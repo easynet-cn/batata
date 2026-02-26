@@ -307,10 +307,7 @@ impl SubscriptionTracker {
         resource_type: ResourceType,
         resource_names: Vec<String>,
     ) {
-        let mut entry = self
-            .subscriptions
-            .entry(node_id.to_string())
-            .or_insert_with(HashMap::new);
+        let mut entry = self.subscriptions.entry(node_id.to_string()).or_default();
 
         if resource_names.is_empty() {
             // Empty list means subscribe to all (wildcard)
@@ -328,10 +325,7 @@ impl SubscriptionTracker {
 
     /// Record ACK for a resource type
     pub fn record_ack(&self, node_id: &str, resource_type: ResourceType, version: &str) {
-        let mut entry = self
-            .acked_versions
-            .entry(node_id.to_string())
-            .or_insert_with(HashMap::new);
+        let mut entry = self.acked_versions.entry(node_id.to_string()).or_default();
 
         entry.insert(resource_type, version.to_string());
     }

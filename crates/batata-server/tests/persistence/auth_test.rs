@@ -8,10 +8,10 @@ use crate::common::{TestDatabase, unique_test_id};
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_users_crud() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let username = format!("testuser_{}", unique_test_id());
+    let _username = format!("testuser_{}", unique_test_id());
 
     // Create user (username is PK, not auto-increment)
     // INSERT INTO users (username, password, enabled) VALUES (?, ?, true)
@@ -30,11 +30,11 @@ async fn test_users_crud() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_roles_assignment() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let username = format!("roleuser_{}", unique_test_id());
-    let role = format!("testrole_{}", unique_test_id());
+    let _username = format!("roleuser_{}", unique_test_id());
+    let _role = format!("testrole_{}", unique_test_id());
 
     // Create user
     // Assign role to user
@@ -51,10 +51,10 @@ async fn test_roles_assignment() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_permissions_crud() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let role = format!("permrole_{}", unique_test_id());
+    let _role = format!("permrole_{}", unique_test_id());
 
     // Create permission
     // INSERT INTO permissions (role, resource, action) VALUES (?, ?, ?)
@@ -70,10 +70,10 @@ async fn test_permissions_crud() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_multi_role_user() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let username = format!("multirole_{}", unique_test_id());
+    let _username = format!("multirole_{}", unique_test_id());
 
     // Create user
     // Assign multiple roles
@@ -90,11 +90,11 @@ async fn test_multi_role_user() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_permission_inheritance() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let username = format!("inherit_{}", unique_test_id());
-    let role = format!("inheritrole_{}", unique_test_id());
+    let _username = format!("inherit_{}", unique_test_id());
+    let _role = format!("inheritrole_{}", unique_test_id());
 
     // Create role with permissions
     // INSERT INTO permissions (role, resource, action) VALUES (?, 'public:*:config/*', 'r')
@@ -113,11 +113,11 @@ async fn test_permission_inheritance() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_roles_unique_constraint() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let username = format!("uniquerole_{}", unique_test_id());
-    let role = "admin";
+    let _username = format!("uniquerole_{}", unique_test_id());
+    let _role = "admin";
 
     // Assign role first time - should succeed
 
@@ -128,10 +128,10 @@ async fn test_roles_unique_constraint() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_permissions_unique_constraint() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let role = format!("uniqueperm_{}", unique_test_id());
+    let _role = format!("uniqueperm_{}", unique_test_id());
 
     // Create permission first time - should succeed
 
@@ -142,10 +142,10 @@ async fn test_permissions_unique_constraint() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_user_enabled_status() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let username = format!("enabled_{}", unique_test_id());
+    let _username = format!("enabled_{}", unique_test_id());
 
     // Create enabled user
     // INSERT INTO users (username, password, enabled) VALUES (?, ?, true)

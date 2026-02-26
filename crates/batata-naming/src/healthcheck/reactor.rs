@@ -22,7 +22,7 @@ use tracing::{debug, info};
 #[derive(Debug)]
 pub enum ReactorMessage {
     /// Schedule a new health check task
-    Schedule { task: HealthCheckTask },
+    Schedule { task: Box<HealthCheckTask> },
     /// Cancel a health check task
     Cancel { task_id: String },
     /// Shutdown the reactor
@@ -84,6 +84,7 @@ impl HealthCheckReactor {
             while let Some(msg) = receiver.recv().await {
                 match msg {
                     ReactorMessage::Schedule { task } => {
+                        let task = *task;
                         let task_id = task.get_task_id().to_string();
 
                         // Cancel existing task if present
@@ -198,7 +199,9 @@ impl HealthCheckReactor {
         let task_id = task.get_task_id().to_string();
         debug!("Scheduling health check task: {}", task_id);
 
-        let _ = self.sender.send(ReactorMessage::Schedule { task });
+        let _ = self.sender.send(ReactorMessage::Schedule {
+            task: Box::new(task),
+        });
     }
 
     /// Cancel a health check task

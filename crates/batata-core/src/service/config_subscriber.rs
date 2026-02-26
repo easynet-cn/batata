@@ -198,10 +198,10 @@ impl ConfigSubscriberManager {
     pub fn update_md5(&self, connection_id: &str, config_key: &ConfigKey, md5: &str) {
         let key_string = config_key.to_key_string();
 
-        if let Some(mut subscribers) = self.config_subscribers.get_mut(&key_string) {
-            if let Some(subscriber) = subscribers.get_mut(connection_id) {
-                subscriber.md5 = md5.to_string();
-            }
+        if let Some(mut subscribers) = self.config_subscribers.get_mut(&key_string)
+            && let Some(subscriber) = subscribers.get_mut(connection_id)
+        {
+            subscriber.md5 = md5.to_string();
         }
     }
 

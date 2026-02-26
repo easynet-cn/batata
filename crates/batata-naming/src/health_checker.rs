@@ -237,6 +237,7 @@ impl InstanceHealthChecker {
     }
 
     /// Check a single instance's health
+    #[allow(clippy::too_many_arguments)]
     async fn check_instance(
         service_key: &str,
         namespace: &str,
@@ -452,27 +453,26 @@ impl InstanceHealthChecker {
                 let response_str = String::from_utf8_lossy(&response[..n]);
 
                 // Check HTTP status code (2xx or 3xx is considered healthy)
-                if let Some(status_line) = response_str.lines().next() {
-                    if let Some(status_code) = status_line.split_whitespace().nth(1) {
-                        if let Ok(code) = status_code.parse::<u16>() {
-                            if (200..400).contains(&code) {
-                                debug!(
-                                    "HTTP health check passed for {}:{}{} with status {}",
-                                    ip, port, path, code
-                                );
-                                return HealthCheckResult {
-                                    success: true,
-                                    message: None,
-                                    response_time_ms: start.elapsed().as_millis() as u64,
-                                };
-                            } else {
-                                return HealthCheckResult {
-                                    success: false,
-                                    message: Some(format!("HTTP status code: {}", code)),
-                                    response_time_ms: start.elapsed().as_millis() as u64,
-                                };
-                            }
-                        }
+                if let Some(status_line) = response_str.lines().next()
+                    && let Some(status_code) = status_line.split_whitespace().nth(1)
+                    && let Ok(code) = status_code.parse::<u16>()
+                {
+                    if (200..400).contains(&code) {
+                        debug!(
+                            "HTTP health check passed for {}:{}{} with status {}",
+                            ip, port, path, code
+                        );
+                        return HealthCheckResult {
+                            success: true,
+                            message: None,
+                            response_time_ms: start.elapsed().as_millis() as u64,
+                        };
+                    } else {
+                        return HealthCheckResult {
+                            success: false,
+                            message: Some(format!("HTTP status code: {}", code)),
+                            response_time_ms: start.elapsed().as_millis() as u64,
+                        };
                     }
                 }
 

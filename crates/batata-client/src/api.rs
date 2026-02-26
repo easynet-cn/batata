@@ -382,7 +382,7 @@ impl BatataApiClient {
     ) -> anyhow::Result<ImportResult> {
         // Build query parameters
         let query_string =
-            serde_urlencoded::to_string(&[("namespace_id", namespace_id), ("policy", policy)])?;
+            serde_urlencoded::to_string([("namespace_id", namespace_id), ("policy", policy)])?;
         let path = format!("/v3/console/cs/config/import?{}", query_string);
 
         // Create multipart form

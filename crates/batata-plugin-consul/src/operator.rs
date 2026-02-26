@@ -1036,13 +1036,13 @@ mod tests {
         let result = service
             .set_autopilot_config(config.clone(), Some(999))
             .await;
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
 
         // CAS with correct index should succeed
         let result = service
             .set_autopilot_config(config.clone(), Some(config.modify_index))
             .await;
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[test]

@@ -121,6 +121,7 @@ pub struct InstanceInfo {
 /// This trait allows the console to work in two modes:
 /// - Local mode: Direct database access (co-located with server)
 /// - Remote mode: HTTP client-based access (separate console deployment)
+#[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub trait ConsoleDataSource: Send + Sync {
     // ============== Namespace Operations ==============

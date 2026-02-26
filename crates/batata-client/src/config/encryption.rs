@@ -7,7 +7,6 @@
 use crate::error::{ClientError, Result};
 use crate::local_config::SnapshotSwitch;
 use md5::Digest;
-use md5::Md5;
 use std::path::PathBuf;
 use tracing::debug;
 
@@ -256,6 +255,7 @@ impl super::filter::IConfigFilter for SimpleEncryptionFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::filter::IConfigFilter;
 
     #[test]
     fn test_encryption_filter_roundtrip() {
@@ -289,7 +289,7 @@ mod tests {
     #[test]
     fn test_encrypted_data_key_processor() {
         let temp_dir = tempfile::tempdir().unwrap();
-        std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        unsafe { std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path()) };
 
         let processor = LocalEncryptedDataKeyProcessor::new("test".to_string());
 
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn test_failover_encrypted_data_key() {
         let temp_dir = tempfile::tempdir().unwrap();
-        std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        unsafe { std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path()) };
 
         let processor = LocalEncryptedDataKeyProcessor::new("test".to_string());
 

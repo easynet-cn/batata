@@ -122,10 +122,7 @@ pub async fn start_xds_service(
 
     sync_bridge.start().await.map_err(|e| {
         error!(error = %e, "Failed to start xDS sync bridge");
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )) as Box<dyn std::error::Error + Send + Sync>
+        Box::new(std::io::Error::other(e.to_string())) as Box<dyn std::error::Error + Send + Sync>
     })?;
 
     // Start the xDS gRPC server

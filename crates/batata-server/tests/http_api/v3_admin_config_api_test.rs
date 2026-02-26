@@ -173,10 +173,10 @@ async fn test_v3_admin_config_validation() {
         )
         .await;
 
-    match result {
-        Ok(response) => assert_ne!(response["code"], 0, "Should fail with missing dataId"),
-        Err(_) => {} // HTTP error is also acceptable
+    if let Ok(response) = result {
+        assert_ne!(response["code"], 0, "Should fail with missing dataId");
     }
+    // HTTP error is also acceptable
 }
 
 // ========== Config History ==========

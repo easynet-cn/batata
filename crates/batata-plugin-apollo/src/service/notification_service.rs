@@ -147,13 +147,7 @@ impl ApolloNotificationService {
         })
         .await;
 
-        match poll_result {
-            Ok(notifications) => notifications,
-            Err(_) => {
-                // Timeout, return empty (client will retry)
-                Vec::new()
-            }
-        }
+        poll_result.unwrap_or_default()
     }
 
     /// Get or initialize notification ID for a watched key

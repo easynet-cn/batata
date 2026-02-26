@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use prometheus::{
-    CounterVec, Encoder, GaugeVec, HistogramVec, TextEncoder, register_counter_vec,
-    register_gauge_vec, register_histogram_vec,
+    CounterVec, GaugeVec, HistogramVec, TextEncoder, register_counter_vec, register_gauge_vec,
+    register_histogram_vec,
 };
 
 /// Prometheus metrics collector

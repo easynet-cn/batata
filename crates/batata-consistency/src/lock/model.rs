@@ -6,8 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Lock state enumeration
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LockState {
     /// Lock is available
+    #[default]
     Unlocked,
     /// Lock is held by an owner
     Locked,
@@ -17,12 +19,6 @@ pub enum LockState {
     Releasing,
     /// Lock expired and is being cleaned up
     Expired,
-}
-
-impl Default for LockState {
-    fn default() -> Self {
-        Self::Unlocked
-    }
 }
 
 /// Distributed lock entry
@@ -273,7 +269,7 @@ impl Default for LockAcquireRequest {
 }
 
 /// Lock acquisition result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LockAcquireResult {
     /// Whether the lock was acquired
     pub acquired: bool,
@@ -287,19 +283,6 @@ pub struct LockAcquireResult {
     pub remaining_wait_ms: u64,
     /// Error message (if any)
     pub error: Option<String>,
-}
-
-impl Default for LockAcquireResult {
-    fn default() -> Self {
-        Self {
-            acquired: false,
-            lock: None,
-            fence_token: 0,
-            current_owner: None,
-            remaining_wait_ms: 0,
-            error: None,
-        }
-    }
 }
 
 /// Lock release request
@@ -418,7 +401,7 @@ pub enum LockCommand {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LockCommandResponse {
     /// Acquire result
-    Acquire(LockAcquireResult),
+    Acquire(Box<LockAcquireResult>),
     /// Release result
     Release(LockReleaseResult),
     /// Renew result

@@ -25,6 +25,7 @@ use batata_server::{
 use rocksdb::{BlockBasedOptions, ColumnFamilyDescriptor, Options};
 use tracing::{error, info};
 
+#[allow(clippy::type_complexity)]
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize configuration and logging
@@ -638,12 +639,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Cleanup: stop cluster manager if running
-    if let Some(ref smm) = app_state.server_member_manager {
-        if !app_state.configuration.is_standalone() {
-            info!("Stopping cluster manager...");
-            smm.stop().await;
-            info!("Cluster manager stopped");
-        }
+    if let Some(ref smm) = app_state.server_member_manager
+        && !app_state.configuration.is_standalone()
+    {
+        info!("Stopping cluster manager...");
+        smm.stop().await;
+        info!("Cluster manager stopped");
     }
 
     info!("Batata server shutdown complete");

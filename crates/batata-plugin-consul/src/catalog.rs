@@ -1229,7 +1229,7 @@ mod tests {
             ephemeral: true,
             cluster_name: "DEFAULT".to_string(),
             service_name: "db".to_string(),
-            metadata: metadata,
+            metadata,
             instance_heart_beat_interval: 5000,
             instance_heart_beat_time_out: 15000,
             ip_delete_timeout: 30000,

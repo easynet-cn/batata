@@ -46,6 +46,12 @@ pub struct ConfigResponse {
     pub addition_map: dashmap::DashMap<String, String>,
 }
 
+impl Default for ConfigResponse {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfigResponse {
     pub fn new() -> Self {
         Self {

@@ -89,12 +89,14 @@ impl EncryptionManager {
     }
 
     /// Encrypt content if needed (delegates to inner service)
+    #[allow(clippy::await_holding_lock)]
     pub async fn encrypt_if_needed(&self, data_id: &str, content: &str) -> (String, String) {
         let service = self.service.read();
         service.encrypt_if_needed(data_id, content).await
     }
 
     /// Decrypt content if needed (delegates to inner service)
+    #[allow(clippy::await_holding_lock)]
     pub async fn decrypt_if_needed(
         &self,
         data_id: &str,

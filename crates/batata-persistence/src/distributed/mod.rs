@@ -383,22 +383,25 @@ impl ConfigPersistence for DistributedPersistService {
             .map(EmbeddedPersistService::json_to_config)
             .filter(|cfg| {
                 // Filter by group if specified
-                if let Some(g) = group {
-                    if !g.is_empty() && cfg.group != g {
-                        return false;
-                    }
+                if let Some(g) = group
+                    && !g.is_empty()
+                    && cfg.group != g
+                {
+                    return false;
                 }
                 // Filter by data_ids if specified
-                if let Some(ref ids) = data_ids {
-                    if !ids.is_empty() && !ids.contains(&cfg.data_id) {
-                        return false;
-                    }
+                if let Some(ref ids) = data_ids
+                    && !ids.is_empty()
+                    && !ids.contains(&cfg.data_id)
+                {
+                    return false;
                 }
                 // Filter by app_name if specified
-                if let Some(app) = app_name {
-                    if !app.is_empty() && cfg.app_name != app {
-                        return false;
-                    }
+                if let Some(app) = app_name
+                    && !app.is_empty()
+                    && cfg.app_name != app
+                {
+                    return false;
                 }
                 true
             })

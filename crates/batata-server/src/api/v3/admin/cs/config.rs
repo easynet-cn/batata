@@ -47,7 +47,7 @@ struct ListConfigParam {
     #[serde(default = "default_page_size")]
     pub page_size: u64,
     #[serde(default = "default_search")]
-    pub search: String,
+    pub _search: String,
     #[serde(default)]
     pub config_detail: String,
 }

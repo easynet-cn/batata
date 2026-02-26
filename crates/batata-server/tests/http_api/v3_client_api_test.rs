@@ -224,10 +224,10 @@ async fn test_v3_client_register_validation() {
         )
         .await;
 
-    match result {
-        Ok(response) => assert_ne!(response["code"], 0, "Should fail with missing fields"),
-        Err(_) => {} // HTTP 400 error is also acceptable
+    if let Ok(response) = result {
+        assert_ne!(response["code"], 0, "Should fail with missing fields");
     }
+    // HTTP 400 error is also acceptable
 }
 
 // ========== Client Config Endpoints ==========
@@ -279,11 +279,11 @@ async fn test_v3_client_get_config_not_found() {
         )
         .await;
 
-    match result {
-        Ok(response) => assert!(
+    if let Ok(response) = result {
+        assert!(
             response["data"].is_null() || response["code"] != 0,
             "Should indicate config not found"
-        ),
-        Err(_) => {} // HTTP 404 error is also acceptable
+        );
     }
+    // HTTP 404 error is also acceptable
 }

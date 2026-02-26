@@ -925,19 +925,17 @@ pub async fn beat_instance(
         );
 
         // Update heartbeat tracking
-        if result {
-            if let Some(ref hc_manager) = data.health_check_manager {
-                hc_manager.unhealthy_checker().record_heartbeat(
-                    namespace_id,
-                    group_name,
-                    &form.service_name,
-                    &beat_info.ip,
-                    beat_info.port,
-                    cluster_name,
-                    15000, // default heartbeat_timeout
-                    30000, // default ip_delete_timeout
-                );
-            }
+        if result && let Some(ref hc_manager) = data.health_check_manager {
+            hc_manager.unhealthy_checker().record_heartbeat(
+                namespace_id,
+                group_name,
+                &form.service_name,
+                &beat_info.ip,
+                beat_info.port,
+                cluster_name,
+                15000, // default heartbeat_timeout
+                30000, // default ip_delete_timeout
+            );
         }
 
         return Result::<BeatResponse>::http_success(BeatResponse {
@@ -960,19 +958,17 @@ pub async fn beat_instance(
         );
 
         // Update heartbeat tracking
-        if result {
-            if let Some(ref hc_manager) = data.health_check_manager {
-                hc_manager.unhealthy_checker().record_heartbeat(
-                    namespace_id,
-                    group_name,
-                    &form.service_name,
-                    ip,
-                    port,
-                    cluster_name,
-                    15000, // default heartbeat_timeout
-                    30000, // default ip_delete_timeout
-                );
-            }
+        if result && let Some(ref hc_manager) = data.health_check_manager {
+            hc_manager.unhealthy_checker().record_heartbeat(
+                namespace_id,
+                group_name,
+                &form.service_name,
+                ip,
+                port,
+                cluster_name,
+                15000, // default heartbeat_timeout
+                30000, // default ip_delete_timeout
+            );
         }
 
         Result::<BeatResponse>::http_success(BeatResponse {

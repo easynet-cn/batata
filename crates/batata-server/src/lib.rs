@@ -157,29 +157,46 @@ macro_rules! secured {
             .auth_enabled_for_api_type(__secured.api_type);
 
         if __auth_enabled {
-            // Step 2: For InnerApi, check server identity headers instead of token
-            if __secured.api_type == $crate::ApiType::InnerApi {
+            // Step 2: For InnerApi and AdminApi, check server identity headers first
+            let __skip_jwt = if __secured.api_type == $crate::ApiType::InnerApi
+                || __secured.api_type == $crate::ApiType::AdminApi
+            {
                 let __identity_key = __secured.data.configuration.server_identity_key();
                 let __identity_value = __secured.data.configuration.server_identity_value();
 
-                if !__identity_key.is_empty() {
-                    let __header_match = __secured
+                let __identity_matched = if !__identity_key.is_empty() {
+                    __secured
                         .req
                         .headers()
                         .get(&__identity_key)
                         .and_then(|v| v.to_str().ok())
                         .map(|v| v == __identity_value)
-                        .unwrap_or(false);
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
 
-                    if !__header_match {
-                        return $crate::model::common::ErrorResult::http_response_forbidden(
-                            actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
-                            "server identity verification failed",
-                            __secured.req.path(),
-                        );
-                    }
+                if __identity_matched {
+                    // Identity matched → bypass JWT auth entirely
+                    true
+                } else if __secured.api_type == $crate::ApiType::InnerApi
+                    && !__identity_key.is_empty()
+                {
+                    // InnerApi requires identity; mismatch → reject
+                    return $crate::model::common::ErrorResult::http_response_forbidden(
+                        actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+                        "server identity verification failed",
+                        __secured.req.path(),
+                    );
+                } else {
+                    // AdminApi identity mismatch or no identity configured → fall through to JWT
+                    false
                 }
             } else {
+                false
+            };
+
+            if !__skip_jwt {
                 // Step 3: Extract AuthContext from request extensions
                 let __auth_context_opt: Option<$crate::auth::model::AuthContext> = {
                     __secured

@@ -23,6 +23,7 @@ pub enum HealthCheckType {
 }
 
 impl HealthCheckType {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "TCP" => Self::Tcp,
@@ -49,6 +50,7 @@ pub struct HealthCheckResult {
 }
 
 /// Health check processor trait
+#[allow(async_fn_in_trait)]
 pub trait HealthCheckProcessor: Send + Sync {
     /// Check the health of an instance
     async fn check(&self, instance: &Instance, cluster_config: &ClusterConfig)
@@ -225,27 +227,26 @@ impl HttpHealthCheckProcessor {
                 let response_str = String::from_utf8_lossy(&response[..n]);
 
                 // Check HTTP status code (2xx or 3xx is considered healthy)
-                if let Some(status_line) = response_str.lines().next() {
-                    if let Some(status_code) = status_line.split_whitespace().nth(1) {
-                        if let Ok(code) = status_code.parse::<u16>() {
-                            if (200..400).contains(&code) {
-                                debug!(
-                                    "HTTP health check passed for {}:{}{} with status {}",
-                                    ip, port, path, code
-                                );
-                                return HealthCheckResult {
-                                    success: true,
-                                    message: None,
-                                    response_time_ms: start.elapsed().as_millis() as u64,
-                                };
-                            } else {
-                                return HealthCheckResult {
-                                    success: false,
-                                    message: Some(format!("HTTP status code: {}", code)),
-                                    response_time_ms: start.elapsed().as_millis() as u64,
-                                };
-                            }
-                        }
+                if let Some(status_line) = response_str.lines().next()
+                    && let Some(status_code) = status_line.split_whitespace().nth(1)
+                    && let Ok(code) = status_code.parse::<u16>()
+                {
+                    if (200..400).contains(&code) {
+                        debug!(
+                            "HTTP health check passed for {}:{}{} with status {}",
+                            ip, port, path, code
+                        );
+                        return HealthCheckResult {
+                            success: true,
+                            message: None,
+                            response_time_ms: start.elapsed().as_millis() as u64,
+                        };
+                    } else {
+                        return HealthCheckResult {
+                            success: false,
+                            message: Some(format!("HTTP status code: {}", code)),
+                            response_time_ms: start.elapsed().as_millis() as u64,
+                        };
                     }
                 }
 
@@ -367,9 +368,11 @@ mod tests {
     #[tokio::test]
     async fn test_tcp_health_check_invalid_address() {
         let processor = TcpHealthCheckProcessor::new();
-        let mut instance = Instance::default();
-        instance.ip = "invalid".to_string();
-        instance.port = 8080;
+        let instance = Instance {
+            ip: "invalid".to_string(),
+            port: 8080,
+            ..Default::default()
+        };
         let cluster_config = ClusterConfig::default();
         let result = processor.check(&instance, &cluster_config).await;
         assert!(!result.success);
@@ -379,9 +382,11 @@ mod tests {
     #[tokio::test]
     async fn test_http_health_check_invalid_address() {
         let processor = HttpHealthCheckProcessor::new();
-        let mut instance = Instance::default();
-        instance.ip = "invalid".to_string();
-        instance.port = 8080;
+        let instance = Instance {
+            ip: "invalid".to_string(),
+            port: 8080,
+            ..Default::default()
+        };
         let cluster_config = ClusterConfig::default();
         let result = processor.check(&instance, &cluster_config).await;
         assert!(!result.success);

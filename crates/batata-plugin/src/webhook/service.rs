@@ -113,7 +113,7 @@ impl WebhookHttpClient {
             body
         };
 
-        if status >= 200 && status < 300 {
+        if (200..300).contains(&status) {
             Ok((status, body))
         } else {
             Err(format!("HTTP {}: {}", status, body))
@@ -204,7 +204,7 @@ impl DefaultWebhookPlugin {
 
     fn matches_event(&self, config: &WebhookConfig, event: &WebhookEvent) -> bool {
         // Check if event type matches
-        if !config.event_types.iter().any(|t| *t == event.event_type) {
+        if !config.event_types.contains(&event.event_type) {
             return false;
         }
 
@@ -256,7 +256,7 @@ impl DefaultWebhookPlugin {
             }
 
             // Check if we should retry
-            if !config.retry.enabled || attempts >= config.retry.max_retries + 1 {
+            if !config.retry.enabled || attempts > config.retry.max_retries {
                 break;
             }
 
@@ -342,7 +342,7 @@ async fn delivery_worker(
                 }
             }
 
-            if !config.retry.enabled || attempts >= config.retry.max_retries + 1 {
+            if !config.retry.enabled || attempts > config.retry.max_retries {
                 delivery.status = WebhookDeliveryStatus::Failed;
                 break;
             }
@@ -442,7 +442,7 @@ impl WebhookPlugin for DefaultWebhookPlugin {
         let matching_webhooks: Vec<_> = self
             .webhooks
             .iter()
-            .filter(|w| w.enabled && self.matches_event(&w, &event))
+            .filter(|w| w.enabled && self.matches_event(w, &event))
             .map(|w| w.clone())
             .collect();
 

@@ -41,10 +41,7 @@ impl McpServerRegistry {
         let name = &registration.name;
 
         // Check if server already exists
-        let ns_index = self
-            .name_index
-            .entry(namespace.clone())
-            .or_insert_with(DashMap::new);
+        let ns_index = self.name_index.entry(namespace.clone()).or_default();
 
         if ns_index.contains_key(name) {
             return Err(format!(
@@ -191,57 +188,57 @@ impl McpServerRegistry {
             .map(|e| e.value().clone())
             .filter(|s| {
                 // Filter by namespace
-                if let Some(ref ns) = query.namespace {
-                    if &s.namespace != ns {
-                        return false;
-                    }
+                if let Some(ref ns) = query.namespace
+                    && &s.namespace != ns
+                {
+                    return false;
                 }
 
                 // Filter by name pattern
-                if let Some(ref pattern) = query.name_pattern {
-                    if !matches_pattern(&s.name, pattern) {
-                        return false;
-                    }
+                if let Some(ref pattern) = query.name_pattern
+                    && !matches_pattern(&s.name, pattern)
+                {
+                    return false;
                 }
 
                 // Filter by server type
-                if let Some(st) = query.server_type {
-                    if s.server_type != st {
-                        return false;
-                    }
+                if let Some(st) = query.server_type
+                    && s.server_type != st
+                {
+                    return false;
                 }
 
                 // Filter by health status
-                if let Some(hs) = query.health_status {
-                    if s.health_status != hs {
-                        return false;
-                    }
+                if let Some(hs) = query.health_status
+                    && s.health_status != hs
+                {
+                    return false;
                 }
 
                 // Filter by tags
-                if let Some(ref tags) = query.tags {
-                    if !tags.iter().any(|t| s.tags.contains(t)) {
-                        return false;
-                    }
+                if let Some(ref tags) = query.tags
+                    && !tags.iter().any(|t| s.tags.contains(t))
+                {
+                    return false;
                 }
 
                 // Filter by capabilities
-                if let Some(has_tools) = query.has_tools {
-                    if s.capabilities.tools != has_tools {
-                        return false;
-                    }
+                if let Some(has_tools) = query.has_tools
+                    && s.capabilities.tools != has_tools
+                {
+                    return false;
                 }
 
-                if let Some(has_resources) = query.has_resources {
-                    if s.capabilities.resources != has_resources {
-                        return false;
-                    }
+                if let Some(has_resources) = query.has_resources
+                    && s.capabilities.resources != has_resources
+                {
+                    return false;
                 }
 
-                if let Some(has_prompts) = query.has_prompts {
-                    if s.capabilities.prompts != has_prompts {
-                        return false;
-                    }
+                if let Some(has_prompts) = query.has_prompts
+                    && s.capabilities.prompts != has_prompts
+                {
+                    return false;
                 }
 
                 true
@@ -420,13 +417,11 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
         return name.contains(inner);
     }
 
-    if pattern.starts_with('*') {
-        let suffix = &pattern[1..];
+    if let Some(suffix) = pattern.strip_prefix('*') {
         return name.ends_with(suffix);
     }
 
-    if pattern.ends_with('*') {
-        let prefix = &pattern[..pattern.len() - 1];
+    if let Some(prefix) = pattern.strip_suffix('*') {
         return name.starts_with(prefix);
     }
 

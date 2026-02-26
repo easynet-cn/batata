@@ -83,15 +83,13 @@ async fn test_v2_patch_nonexistent_instance() {
         .await;
 
     // Should fail - either HTTP error or response with non-zero code
-    match result {
-        Ok(response) => {
-            assert_ne!(
-                response["code"], 0,
-                "Patching nonexistent instance should fail"
-            )
-        }
-        Err(_) => {} // HTTP 404 error is also acceptable
+    if let Ok(response) = result {
+        assert_ne!(
+            response["code"], 0,
+            "Patching nonexistent instance should fail"
+        );
     }
+    // HTTP 404 error is also acceptable
 }
 
 // ========== Instance Beat ==========

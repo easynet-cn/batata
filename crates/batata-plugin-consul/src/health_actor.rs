@@ -43,7 +43,7 @@ pub struct HealthStatus {
 pub enum HealthActorMessage {
     /// Register a new check configuration
     RegisterCheck {
-        check_config: CheckConfig,
+        check_config: Box<CheckConfig>,
         respond_to: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
     /// Deregister a check
@@ -92,6 +92,12 @@ pub enum HealthActorMessage {
 pub struct CheckConfigRegistry {
     configs: Arc<DashMap<String, CheckConfig>>,
     service_checks: Arc<DashMap<String, Vec<String>>>,
+}
+
+impl Default for CheckConfigRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CheckConfigRegistry {
@@ -157,6 +163,12 @@ impl CheckConfigRegistry {
 /// Health status store (dynamic, write-frequent)
 pub struct HealthStatusStore {
     statuses: Arc<DashMap<String, HealthStatus>>,
+}
+
+impl Default for HealthStatusStore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HealthStatusStore {
@@ -242,7 +254,7 @@ impl HealthStatusActor {
                 let check_id = check_config.check_id.clone();
                 let initial_status = check_config.initial_status.clone();
 
-                self.config_registry.register(check_config);
+                self.config_registry.register(*check_config);
 
                 // Initialize health status with initial status
                 self.status_store
@@ -382,7 +394,7 @@ impl HealthActorHandle {
     pub async fn register_check(&self, check_config: CheckConfig) -> Result<(), String> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let msg = HealthActorMessage::RegisterCheck {
-            check_config,
+            check_config: Box::new(check_config),
             respond_to: tx,
         };
         let _ = self.tx.send(msg);
@@ -521,12 +533,12 @@ fn current_timestamp() -> i64 {
 
 fn parse_duration(s: &str) -> Option<u64> {
     let s = s.trim();
-    if s.ends_with('s') {
-        s[..s.len() - 1].parse().ok()
-    } else if s.ends_with('m') {
-        s[..s.len() - 1].parse::<u64>().ok().map(|m| m * 60)
-    } else if s.ends_with('h') {
-        s[..s.len() - 1].parse::<u64>().ok().map(|h| h * 3600)
+    if let Some(stripped) = s.strip_suffix('s') {
+        stripped.parse().ok()
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        stripped.parse::<u64>().ok().map(|m| m * 60)
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        stripped.parse::<u64>().ok().map(|h| h * 3600)
     } else {
         s.parse().ok()
     }
@@ -566,43 +578,38 @@ async fn reap_services(
     let mut deregistered_services = std::collections::HashSet::new();
 
     for (check_id, config) in configs {
-        if let Some(deregister_after_secs) = config.deregister_after_secs {
-            if let Some((_, status_data)) = statuses.iter().find(|(id, _)| id == &check_id) {
-                if status_data.status == "critical" {
-                    if let Some(critical_time) = status_data.critical_time {
-                        let critical_duration_secs = now - critical_time;
-                        if critical_duration_secs >= deregister_after_secs as i64 {
-                            // Exceeded threshold, deregister the service
-                            if !config.service_id.is_empty()
-                                && !deregistered_services.contains(&config.service_id)
-                            {
-                                info!(
-                                    "Deregistering service due to critical health: service={}, check={}, duration={}s, threshold={}s",
-                                    config.service_id,
-                                    check_id,
-                                    critical_duration_secs,
-                                    deregister_after_secs
-                                );
+        if let Some(deregister_after_secs) = config.deregister_after_secs
+            && let Some((_, status_data)) = statuses.iter().find(|(id, _)| id == &check_id)
+            && status_data.status == "critical"
+            && let Some(critical_time) = status_data.critical_time
+        {
+            let critical_duration_secs = now - critical_time;
+            if critical_duration_secs >= deregister_after_secs as i64 {
+                // Exceeded threshold, deregister the service
+                if !config.service_id.is_empty()
+                    && !deregistered_services.contains(&config.service_id)
+                {
+                    info!(
+                        "Deregistering service due to critical health: service={}, check={}, duration={}s, threshold={}s",
+                        config.service_id, check_id, critical_duration_secs, deregister_after_secs
+                    );
 
-                                if let Some(ns) = &naming_service {
-                                    let _ = ns
-                                        .deregister_instance(
-                                            "public",
-                                            "DEFAULT_GROUP",
-                                            &config.service_name,
-                                            &config.service_id,
-                                            true, // ephemeral: service instances are typically ephemeral
-                                        )
-                                        .await;
-                                }
-
-                                deregistered_services.insert(config.service_id.clone());
-
-                                // Also deregister the check
-                                let _ = health_actor.deregister_check(check_id.clone()).await;
-                            }
-                        }
+                    if let Some(ns) = &naming_service {
+                        let _ = ns
+                            .deregister_instance(
+                                "public",
+                                "DEFAULT_GROUP",
+                                &config.service_name,
+                                &config.service_id,
+                                true, // ephemeral: service instances are typically ephemeral
+                            )
+                            .await;
                     }
+
+                    deregistered_services.insert(config.service_id.clone());
+
+                    // Also deregister the check
+                    let _ = health_actor.deregister_check(check_id.clone()).await;
                 }
             }
         }

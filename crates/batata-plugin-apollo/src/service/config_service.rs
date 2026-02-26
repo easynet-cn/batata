@@ -41,10 +41,11 @@ impl ApolloConfigService {
         match release {
             Some(rel) => {
                 // Check if client already has this version
-                if let Some(client_key) = client_release_key {
-                    if client_key != "-1" && client_key == rel.release_key {
-                        return Ok(None);
-                    }
+                if let Some(client_key) = client_release_key
+                    && client_key != "-1"
+                    && client_key == rel.release_key
+                {
+                    return Ok(None);
                 }
 
                 let configurations: HashMap<String, String> = rel
@@ -151,7 +152,7 @@ pub fn build_nacos_query(
     let data_id = crate::mapping::to_nacos_data_id(app_id, namespace);
     let group = crate::mapping::to_nacos_group(cluster);
     let namespace_id = env
-        .map(|e| crate::mapping::to_nacos_namespace(e))
+        .map(crate::mapping::to_nacos_namespace)
         .unwrap_or_default();
     (data_id, group, namespace_id)
 }

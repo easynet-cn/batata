@@ -318,7 +318,7 @@ impl DatacenterManager {
             let best = members
                 .iter()
                 .filter(|m| m.is_healthy())
-                .filter(|m| exclude_self.map_or(true, |s| m.address != s))
+                .filter(|m| exclude_self.is_none_or(|s| m.address != s))
                 .max_by(|a, b| {
                     a.locality_weight()
                         .partial_cmp(&b.locality_weight())

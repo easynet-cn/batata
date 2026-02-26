@@ -29,11 +29,16 @@ pub struct MaintainerClient {
 impl MaintainerClient {
     /// Create a new MaintainerClient with the given configuration
     pub async fn new(config: MaintainerClientConfig) -> anyhow::Result<Self> {
-        let http_config = HttpClientConfig::with_servers(config.server_addrs)
+        let mut http_config = HttpClientConfig::with_servers(config.server_addrs)
             .with_auth(&config.username, &config.password)
             .with_timeouts(config.connect_timeout_ms, config.read_timeout_ms)
             .with_context_path(&config.context_path)
             .with_auth_endpoint(admin_api_path::AUTH_LOGIN);
+
+        if !config.server_identity_key.is_empty() {
+            http_config = http_config
+                .with_server_identity(&config.server_identity_key, &config.server_identity_value);
+        }
 
         let http_client = BatataHttpClient::new(http_config).await?;
         Ok(Self { http_client })

@@ -5,7 +5,6 @@
 
 use super::MetadataPersistence;
 use crate::service::{ClusterConfig, ServiceMetadata};
-use async_trait::async_trait;
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;

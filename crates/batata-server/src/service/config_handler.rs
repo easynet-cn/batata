@@ -218,35 +218,34 @@ impl PayloadHandler for ConfigPublishHandler {
             Ok(_) => {
                 // Notify fuzzy watchers about config change
                 if let Err(e) = self
-                    .notify_fuzzy_watchers(data_id, group, tenant, &src_ip)
+                    .notify_fuzzy_watchers(data_id, group, tenant, src_ip)
                     .await
                 {
                     warn!("Failed to notify fuzzy watchers: {}", e);
                 }
 
                 // Broadcast config change to other cluster nodes
-                if let Some(ref ccm) = self.cluster_client_manager {
-                    if let Some(smm) = self.app_state.try_member_manager() {
-                        if !smm.is_standalone() {
-                            let members = smm.all_members();
-                            let sender = ClusterRequestSender::new(ccm.clone());
-                            let data_id = data_id.to_string();
-                            let group = group.to_string();
-                            let tenant = tenant.to_string();
-                            let last_modified = chrono::Utc::now().timestamp_millis();
-                            tokio::spawn(async move {
-                                sender
-                                    .broadcast_config_change(
-                                        &members,
-                                        &data_id,
-                                        &group,
-                                        &tenant,
-                                        last_modified,
-                                    )
-                                    .await;
-                            });
-                        }
-                    }
+                if let Some(ref ccm) = self.cluster_client_manager
+                    && let Some(smm) = self.app_state.try_member_manager()
+                    && !smm.is_standalone()
+                {
+                    let members = smm.all_members();
+                    let sender = ClusterRequestSender::new(ccm.clone());
+                    let data_id = data_id.to_string();
+                    let group = group.to_string();
+                    let tenant = tenant.to_string();
+                    let last_modified = chrono::Utc::now().timestamp_millis();
+                    tokio::spawn(async move {
+                        sender
+                            .broadcast_config_change(
+                                &members,
+                                &data_id,
+                                &group,
+                                &tenant,
+                                last_modified,
+                            )
+                            .await;
+                    });
                 }
 
                 let mut response = ConfigPublishResponse::new();
@@ -435,28 +434,27 @@ impl PayloadHandler for ConfigRemoveHandler {
                 }
 
                 // Broadcast config removal to other cluster nodes
-                if let Some(ref ccm) = self.cluster_client_manager {
-                    if let Some(smm) = self.app_state.try_member_manager() {
-                        if !smm.is_standalone() {
-                            let members = smm.all_members();
-                            let sender = ClusterRequestSender::new(ccm.clone());
-                            let data_id = data_id.to_string();
-                            let group = group.to_string();
-                            let tenant = tenant.to_string();
-                            let last_modified = chrono::Utc::now().timestamp_millis();
-                            tokio::spawn(async move {
-                                sender
-                                    .broadcast_config_change(
-                                        &members,
-                                        &data_id,
-                                        &group,
-                                        &tenant,
-                                        last_modified,
-                                    )
-                                    .await;
-                            });
-                        }
-                    }
+                if let Some(ref ccm) = self.cluster_client_manager
+                    && let Some(smm) = self.app_state.try_member_manager()
+                    && !smm.is_standalone()
+                {
+                    let members = smm.all_members();
+                    let sender = ClusterRequestSender::new(ccm.clone());
+                    let data_id = data_id.to_string();
+                    let group = group.to_string();
+                    let tenant = tenant.to_string();
+                    let last_modified = chrono::Utc::now().timestamp_millis();
+                    tokio::spawn(async move {
+                        sender
+                            .broadcast_config_change(
+                                &members,
+                                &data_id,
+                                &group,
+                                &tenant,
+                                last_modified,
+                            )
+                            .await;
+                    });
                 }
 
                 let mut response = ConfigRemoveResponse::new();

@@ -258,15 +258,15 @@ pub async fn update_service(
     }
 
     // Update metadata if provided
-    if let Some(metadata_str) = &form.metadata {
-        if let Ok(metadata) = serde_json::from_str::<HashMap<String, String>>(metadata_str) {
-            naming_service.update_service_metadata_map(
-                namespace_id,
-                group_name,
-                &form.service_name,
-                metadata,
-            );
-        }
+    if let Some(metadata_str) = &form.metadata
+        && let Ok(metadata) = serde_json::from_str::<HashMap<String, String>>(metadata_str)
+    {
+        naming_service.update_service_metadata_map(
+            namespace_id,
+            group_name,
+            &form.service_name,
+            metadata,
+        );
     }
 
     // Update selector if provided
@@ -433,7 +433,7 @@ pub async fn get_service_list(
     );
 
     let response = ServiceListResponse {
-        count: total_count as i32,
+        count: total_count,
         services: service_names,
     };
 

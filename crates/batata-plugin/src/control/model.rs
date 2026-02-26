@@ -8,8 +8,10 @@ use std::collections::HashMap;
 /// Rule match type for identifying targets
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RuleMatchType {
     /// Match by exact value
+    #[default]
     Exact,
     /// Match by prefix
     Prefix,
@@ -19,17 +21,13 @@ pub enum RuleMatchType {
     All,
 }
 
-impl Default for RuleMatchType {
-    fn default() -> Self {
-        Self::Exact
-    }
-}
-
 /// Target type for control rules
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RuleTargetType {
     /// Target by client IP
+    #[default]
     Ip,
     /// Target by client ID
     ClientId,
@@ -45,17 +43,13 @@ pub enum RuleTargetType {
     GrpcMethod,
 }
 
-impl Default for RuleTargetType {
-    fn default() -> Self {
-        Self::Ip
-    }
-}
-
 /// Rate limit algorithm type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum RateLimitAlgorithm {
     /// Token bucket algorithm (default)
+    #[default]
     TokenBucket,
     /// Sliding window algorithm
     SlidingWindow,
@@ -63,12 +57,6 @@ pub enum RateLimitAlgorithm {
     FixedWindow,
     /// Leaky bucket algorithm
     LeakyBucket,
-}
-
-impl Default for RateLimitAlgorithm {
-    fn default() -> Self {
-        Self::TokenBucket
-    }
 }
 
 /// Rate limit rule configuration
@@ -246,8 +234,10 @@ impl Default for ConnectionLimitRule {
 /// Action to take when limit is exceeded
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ExceedAction {
     /// Reject the request immediately
+    #[default]
     Reject,
     /// Queue the request and wait
     Queue,
@@ -255,12 +245,6 @@ pub enum ExceedAction {
     Warn,
     /// Delay the request (throttle)
     Delay,
-}
-
-impl Default for ExceedAction {
-    fn default() -> Self {
-        Self::Reject
-    }
 }
 
 /// Result of a rate limit check

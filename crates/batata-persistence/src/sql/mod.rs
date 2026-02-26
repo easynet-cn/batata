@@ -819,15 +819,15 @@ impl ConfigPersistence for ExternalDbPersistService {
         if let Some(user) = src_user {
             select = select.filter(his_config_info::Column::SrcUser.contains(user));
         }
-        if let Some(start) = start_time {
-            if let Some(dt) = chrono::DateTime::from_timestamp_millis(start) {
-                select = select.filter(his_config_info::Column::GmtModified.gte(dt.naive_utc()));
-            }
+        if let Some(start) = start_time
+            && let Some(dt) = chrono::DateTime::from_timestamp_millis(start)
+        {
+            select = select.filter(his_config_info::Column::GmtModified.gte(dt.naive_utc()));
         }
-        if let Some(end) = end_time {
-            if let Some(dt) = chrono::DateTime::from_timestamp_millis(end) {
-                select = select.filter(his_config_info::Column::GmtModified.lte(dt.naive_utc()));
-            }
+        if let Some(end) = end_time
+            && let Some(dt) = chrono::DateTime::from_timestamp_millis(end)
+        {
+            select = select.filter(his_config_info::Column::GmtModified.lte(dt.naive_utc()));
         }
 
         let count = select
@@ -903,22 +903,22 @@ impl ConfigPersistence for ExternalDbPersistService {
             .order_by_asc(config_info::Column::GroupId)
             .order_by_asc(config_info::Column::DataId);
 
-        if let Some(g) = group {
-            if !g.is_empty() {
-                query = query.filter(config_info::Column::GroupId.eq(g));
-            }
+        if let Some(g) = group
+            && !g.is_empty()
+        {
+            query = query.filter(config_info::Column::GroupId.eq(g));
         }
 
-        if let Some(ref ids) = data_ids {
-            if !ids.is_empty() {
-                query = query.filter(config_info::Column::DataId.is_in(ids.clone()));
-            }
+        if let Some(ref ids) = data_ids
+            && !ids.is_empty()
+        {
+            query = query.filter(config_info::Column::DataId.is_in(ids.clone()));
         }
 
-        if let Some(app) = app_name {
-            if !app.is_empty() {
-                query = query.filter(config_info::Column::AppName.eq(app));
-            }
+        if let Some(app) = app_name
+            && !app.is_empty()
+        {
+            query = query.filter(config_info::Column::AppName.eq(app));
         }
 
         let configs = query.all(&self.db).await?;
@@ -1233,7 +1233,7 @@ impl AuthPersistence for ExternalDbPersistService {
         let usernames = users::Entity::find()
             .select_only()
             .column(users::Column::Username)
-            .filter(users::Column::Username.like(&format!("%{}%", username)))
+            .filter(users::Column::Username.like(format!("%{}%", username)))
             .into_tuple::<String>()
             .all(&self.db)
             .await?;

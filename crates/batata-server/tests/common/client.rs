@@ -146,13 +146,12 @@ impl TestClient {
         }
 
         // Try wrapped NacosResponse format
-        if let Ok(result) = serde_json::from_str::<NacosResponse<LoginResponse>>(body) {
-            if result.is_success() {
-                if let Some(data) = result.data {
-                    self.access_token = Some(data.access_token);
-                    return Ok(());
-                }
-            }
+        if let Ok(result) = serde_json::from_str::<NacosResponse<LoginResponse>>(body)
+            && result.is_success()
+            && let Some(data) = result.data
+        {
+            self.access_token = Some(data.access_token);
+            return Ok(());
         }
 
         Err(TestClientError::LoginFailed)

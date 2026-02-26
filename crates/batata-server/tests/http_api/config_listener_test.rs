@@ -368,7 +368,7 @@ async fn test_concurrent_listeners() {
                     )],
                 )
                 .await
-                .expect(&format!("Failed on listener {}", i));
+                .unwrap_or_else(|_| panic!("Failed on listener {}", i));
             response
         }));
     }
@@ -459,7 +459,7 @@ async fn test_listener_reconnection() {
                 )],
             )
             .await
-            .expect(&format!("Failed on listener attempt {}", i));
+            .unwrap_or_else(|_| panic!("Failed on listener attempt {}", i));
 
         assert_eq!(response["code"], 0, "Reconnection listener should succeed");
     }
@@ -642,7 +642,7 @@ async fn test_listener_persists_across_updates() {
                 ],
             )
             .await
-            .expect(&format!("Failed to update config to version {}", i));
+            .unwrap_or_else(|_| panic!("Failed to update config to version {}", i));
 
         // Wait for listener
         let result = tokio::time::timeout(Duration::from_secs(5), listener_handle).await;

@@ -19,7 +19,7 @@ type InstanceKey = String;
 
 /// Heartbeat tracking entry
 #[derive(Clone, Debug)]
-pub(crate) struct HeartbeatEntry {
+pub struct HeartbeatEntry {
     namespace: String,
     group_name: String,
     service_name: String,
@@ -54,6 +54,7 @@ impl UnhealthyInstanceChecker {
     }
 
     /// Record a heartbeat for an instance
+    #[allow(clippy::too_many_arguments)]
     pub fn record_heartbeat(
         &self,
         namespace: &str,
@@ -340,7 +341,7 @@ impl ExpiredInstanceChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Instance;
+
     use std::sync::atomic::Ordering;
 
     #[test]

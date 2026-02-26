@@ -2,16 +2,16 @@
 //!
 //! Tests for config_info, his_config_info, config_tags_relation entities
 
-use crate::common::{DEFAULT_GROUP, TestDatabase, unique_data_id};
+use crate::common::{TestDatabase, unique_data_id};
 
 /// Test config_info CRUD operations
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_info_crud() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let data_id = unique_data_id("crud");
+    let _data_id = unique_data_id("crud");
 
     // Create
     // INSERT INTO config_info (data_id, group_id, content, tenant_id, ...)
@@ -30,10 +30,10 @@ async fn test_config_info_crud() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_info_unique_constraint() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let data_id = unique_data_id("unique");
+    let _data_id = unique_data_id("unique");
 
     // Insert first record - should succeed
 
@@ -44,10 +44,10 @@ async fn test_config_info_unique_constraint() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_his_config_info_insert() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let data_id = unique_data_id("history");
+    let _data_id = unique_data_id("history");
 
     // Insert config
     // Verify history record created
@@ -63,10 +63,10 @@ async fn test_his_config_info_insert() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_tags_relation() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let data_id = unique_data_id("tagged");
+    let _data_id = unique_data_id("tagged");
 
     // Create config with tags
     // Verify tags in config_tags_relation
@@ -81,11 +81,11 @@ async fn test_config_tags_relation() {
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_config_md5_consistency() {
-    let db = TestDatabase::from_env()
+    let _db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let data_id = unique_data_id("md5");
-    let content = "test.key=test.value";
+    let _data_id = unique_data_id("md5");
+    let _content = "test.key=test.value";
 
     // Insert config
     // Verify MD5 is calculated correctly

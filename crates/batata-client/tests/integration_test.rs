@@ -267,14 +267,16 @@ async fn test_naming_service_register_and_deregister() -> anyhow::Result<()> {
 
     let service_name = format!("test-service-{}", uuid::Uuid::new_v4());
 
-    let mut instance = Instance::default();
-    instance.ip = "127.0.0.1".to_string();
-    instance.port = 8080;
-    instance.weight = 1.0;
-    instance.healthy = true;
-    instance.enabled = true;
-    instance.ephemeral = true;
-    instance.cluster_name = "DEFAULT".to_string();
+    let instance = Instance {
+        ip: "127.0.0.1".to_string(),
+        port: 8080,
+        weight: 1.0,
+        healthy: true,
+        enabled: true,
+        ephemeral: true,
+        cluster_name: "DEFAULT".to_string(),
+        ..Default::default()
+    };
 
     // Register instance
     naming_service
@@ -312,14 +314,16 @@ async fn test_naming_service_subscribe_and_unsubscribe() -> anyhow::Result<()> {
     let service_name = format!("test-subscribe-{}", uuid::Uuid::new_v4());
 
     // Register an instance first
-    let mut instance = Instance::default();
-    instance.ip = "127.0.0.1".to_string();
-    instance.port = 8080;
-    instance.weight = 1.0;
-    instance.healthy = true;
-    instance.enabled = true;
-    instance.ephemeral = true;
-    instance.cluster_name = "DEFAULT".to_string();
+    let instance = Instance {
+        ip: "127.0.0.1".to_string(),
+        port: 8080,
+        weight: 1.0,
+        healthy: true,
+        enabled: true,
+        ephemeral: true,
+        cluster_name: "DEFAULT".to_string(),
+        ..Default::default()
+    };
 
     naming_service
         .register_instance(TEST_NAMESPACE, TEST_GROUP, &service_name, instance.clone())
@@ -371,14 +375,16 @@ async fn test_naming_service_multiple_instances() -> anyhow::Result<()> {
 
     // Register multiple instances
     for i in 0..3 {
-        let mut instance = Instance::default();
-        instance.ip = "127.0.0.1".to_string();
-        instance.port = 8080 + i as i32;
-        instance.weight = 1.0;
-        instance.healthy = true;
-        instance.enabled = true;
-        instance.ephemeral = true;
-        instance.cluster_name = "DEFAULT".to_string();
+        let instance = Instance {
+            ip: "127.0.0.1".to_string(),
+            port: 8080 + i,
+            weight: 1.0,
+            healthy: true,
+            enabled: true,
+            ephemeral: true,
+            cluster_name: "DEFAULT".to_string(),
+            ..Default::default()
+        };
 
         naming_service
             .register_instance(TEST_NAMESPACE, TEST_GROUP, &service_name, instance.clone())
@@ -452,14 +458,16 @@ async fn test_config_and_naming_services() -> anyhow::Result<()> {
     let naming_service = BatataNamingService::new(grpc_client);
 
     let service_name = format!("test-service-{}", uuid::Uuid::new_v4());
-    let mut instance = Instance::default();
-    instance.ip = "127.0.0.1".to_string();
-    instance.port = 9090;
-    instance.weight = 1.0;
-    instance.healthy = true;
-    instance.enabled = true;
-    instance.ephemeral = true;
-    instance.cluster_name = "DEFAULT".to_string();
+    let instance = Instance {
+        ip: "127.0.0.1".to_string(),
+        port: 9090,
+        weight: 1.0,
+        healthy: true,
+        enabled: true,
+        ephemeral: true,
+        cluster_name: "DEFAULT".to_string(),
+        ..Default::default()
+    };
 
     naming_service
         .register_instance(TEST_NAMESPACE, TEST_GROUP, &service_name, instance.clone())

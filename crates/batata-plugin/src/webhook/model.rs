@@ -296,7 +296,7 @@ impl WebhookRetryConfig {
 }
 
 /// Result of a webhook delivery attempt
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WebhookResult {
     /// Whether delivery was successful
     pub success: bool,
@@ -314,21 +314,6 @@ pub struct WebhookResult {
     pub webhook_id: String,
     /// Event ID
     pub event_id: String,
-}
-
-impl Default for WebhookResult {
-    fn default() -> Self {
-        Self {
-            success: false,
-            status_code: None,
-            response_body: None,
-            error: None,
-            attempts: 0,
-            duration_ms: 0,
-            webhook_id: String::new(),
-            event_id: String::new(),
-        }
-    }
 }
 
 /// Webhook delivery status for tracking

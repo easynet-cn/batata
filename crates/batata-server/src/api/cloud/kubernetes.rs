@@ -803,7 +803,7 @@ pub async fn k8s_status(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -> Http
     let status = StatusResponse {
         running: sync.is_running(),
         enabled: sync.config.enabled,
-        direction: sync.config.direction.clone(),
+        direction: sync.config.direction,
         namespace: sync.config.namespace.clone(),
     };
 

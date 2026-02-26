@@ -145,15 +145,15 @@ pub fn validate_tls_config(config: &GrpcTlsConfig) -> TlsValidationResult {
         }
 
         // Check if files exist
-        if let Some(ref path) = config.cert_path {
-            if !path.exists() {
-                result.add_error(&format!("Certificate file not found: {:?}", path));
-            }
+        if let Some(ref path) = config.cert_path
+            && !path.exists()
+        {
+            result.add_error(&format!("Certificate file not found: {:?}", path));
         }
-        if let Some(ref path) = config.key_path {
-            if !path.exists() {
-                result.add_error(&format!("Private key file not found: {:?}", path));
-            }
+        if let Some(ref path) = config.key_path
+            && !path.exists()
+        {
+            result.add_error(&format!("Private key file not found: {:?}", path));
         }
     }
 
@@ -165,10 +165,10 @@ pub fn validate_tls_config(config: &GrpcTlsConfig) -> TlsValidationResult {
         if config.ca_cert_path.is_none() {
             result.add_error("mTLS is enabled but CA certificate path is not configured");
         }
-        if let Some(ref path) = config.ca_cert_path {
-            if !path.exists() {
-                result.add_error(&format!("CA certificate file not found: {:?}", path));
-            }
+        if let Some(ref path) = config.ca_cert_path
+            && !path.exists()
+        {
+            result.add_error(&format!("CA certificate file not found: {:?}", path));
         }
     }
 
@@ -201,9 +201,11 @@ mod tests {
 
     #[test]
     fn test_should_use_tls() {
-        let mut config = GrpcTlsConfig::default();
-        config.cert_path = Some(PathBuf::from("/path/to/cert.pem"));
-        config.key_path = Some(PathBuf::from("/path/to/key.pem"));
+        let mut config = GrpcTlsConfig {
+            cert_path: Some(PathBuf::from("/path/to/cert.pem")),
+            key_path: Some(PathBuf::from("/path/to/key.pem")),
+            ..Default::default()
+        };
 
         assert!(!config.should_use_sdk_tls());
         assert!(!config.should_use_cluster_tls());
@@ -227,8 +229,10 @@ mod tests {
 
     #[test]
     fn test_validation_enabled_without_paths() {
-        let mut config = GrpcTlsConfig::default();
-        config.sdk_enabled = true;
+        let config = GrpcTlsConfig {
+            sdk_enabled: true,
+            ..Default::default()
+        };
 
         let result = validate_tls_config(&config);
         assert!(!result.valid);

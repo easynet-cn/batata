@@ -211,27 +211,26 @@ impl HttpHealthChecker {
                 let response_str = String::from_utf8_lossy(&response[..n]);
 
                 // Check HTTP status code
-                if let Some(status_line) = response_str.lines().next() {
-                    if let Some(status_code) = status_line.split_whitespace().nth(1) {
-                        if let Ok(code) = status_code.parse::<u16>() {
-                            if expected_codes.contains(&code) {
-                                debug!(
-                                    "HTTP health check passed for {}:{}{} with status {}",
-                                    ip, port, path, code
-                                );
-                                return HealthCheckResult {
-                                    success: true,
-                                    message: None,
-                                    response_time_ms: start.elapsed().as_millis() as u64,
-                                };
-                            } else {
-                                return HealthCheckResult {
-                                    success: false,
-                                    message: Some(format!("HTTP status code: {}", code)),
-                                    response_time_ms: start.elapsed().as_millis() as u64,
-                                };
-                            }
-                        }
+                if let Some(status_line) = response_str.lines().next()
+                    && let Some(status_code) = status_line.split_whitespace().nth(1)
+                    && let Ok(code) = status_code.parse::<u16>()
+                {
+                    if expected_codes.contains(&code) {
+                        debug!(
+                            "HTTP health check passed for {}:{}{} with status {}",
+                            ip, port, path, code
+                        );
+                        return HealthCheckResult {
+                            success: true,
+                            message: None,
+                            response_time_ms: start.elapsed().as_millis() as u64,
+                        };
+                    } else {
+                        return HealthCheckResult {
+                            success: false,
+                            message: Some(format!("HTTP status code: {}", code)),
+                            response_time_ms: start.elapsed().as_millis() as u64,
+                        };
                     }
                 }
 
@@ -289,9 +288,11 @@ mod tests {
     #[tokio::test]
     async fn test_tcp_checker_invalid_address() {
         let checker = TcpHealthChecker;
-        let mut instance = Instance::default();
-        instance.ip = "invalid".to_string();
-        instance.port = 8080;
+        let instance = Instance {
+            ip: "invalid".to_string(),
+            port: 8080,
+            ..Default::default()
+        };
 
         let config = HealthCheckerConfig::new("TCP");
         let result = checker.check(&instance, &config).await;
@@ -303,9 +304,11 @@ mod tests {
     #[tokio::test]
     async fn test_http_checker_invalid_address() {
         let checker = HttpHealthChecker;
-        let mut instance = Instance::default();
-        instance.ip = "invalid".to_string();
-        instance.port = 8080;
+        let instance = Instance {
+            ip: "invalid".to_string(),
+            port: 8080,
+            ..Default::default()
+        };
 
         let config = HealthCheckerConfig::new("HTTP");
         let result = checker.check(&instance, &config).await;
@@ -329,9 +332,11 @@ mod tests {
     async fn test_tcp_checker_port_override() {
         let checker = TcpHealthChecker;
 
-        let mut instance = Instance::default();
-        instance.ip = "127.0.0.1".to_string();
-        instance.port = 8080;
+        let instance = Instance {
+            ip: "127.0.0.1".to_string(),
+            port: 8080,
+            ..Default::default()
+        };
 
         // Test with custom port (use_instance_port = false)
         let mut data = std::collections::HashMap::new();

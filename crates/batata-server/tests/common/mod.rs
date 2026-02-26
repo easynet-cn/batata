@@ -5,13 +5,16 @@
 //! - TestClient: HTTP client for API testing
 //! - TestDatabase: Database connection management for persistence tests
 
+#[allow(dead_code, unused_imports)]
 pub mod client;
+#[allow(dead_code, unused_imports)]
 pub mod db;
+#[allow(dead_code, unused_imports)]
 pub mod server;
 
 pub use client::TestClient;
+#[allow(unused_imports)]
 pub use db::TestDatabase;
-pub use server::TestServer;
 
 /// Default test credentials
 pub const TEST_USERNAME: &str = "nacos";
@@ -24,11 +27,15 @@ pub const MAIN_BASE_URL: &str = "http://127.0.0.1:8848";
 pub const CONSOLE_BASE_URL: &str = "http://127.0.0.1:8081";
 
 /// Test namespaces
+#[allow(dead_code)]
 pub const TEST_NAMESPACE: &str = "public";
+#[allow(dead_code)]
 pub const TEST_NAMESPACE_CUSTOM: &str = "test-namespace";
 
 /// Test groups
+#[allow(dead_code)]
 pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
+#[allow(dead_code)]
 pub const TEST_GROUP: &str = "TEST_GROUP";
 
 /// Generate a unique test ID to avoid conflicts between tests
@@ -47,6 +54,7 @@ pub fn unique_data_id(prefix: &str) -> String {
 }
 
 /// Generate a unique service name for naming tests
+#[allow(dead_code)]
 pub fn unique_service_name(prefix: &str) -> String {
     format!("{}_{}", prefix, unique_test_id())
 }

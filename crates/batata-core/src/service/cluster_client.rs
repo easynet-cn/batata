@@ -88,7 +88,7 @@ impl ClusterClientTlsConfig {
         let mut tls_config = tonic::transport::ClientTlsConfig::new();
 
         // Set CA certificate for server verification
-        if let Some(_) = &self.ca_cert_path {
+        if self.ca_cert_path.is_some() {
             let ca_cert = self.load_ca_cert().await?;
             let ca = tonic::transport::Certificate::from_pem(ca_cert);
             tls_config = tls_config.ca_certificate(ca);

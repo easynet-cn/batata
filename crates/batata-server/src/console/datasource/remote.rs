@@ -39,17 +39,25 @@ use super::ConsoleDataSource;
 
 // ============== Type Conversions ==============
 
-/// Build MaintainerClientConfig from server Configuration
+/// Build MaintainerClientConfig from server Configuration.
+///
+/// Server discovery order (same as Nacos 3.x cluster member lookup):
+/// 1. `nacos.member.list` config property
+/// 2. `conf/cluster.conf` file
+/// 3. `nacos.console.remote.server_addr` (legacy fallback)
+///
+/// Authentication priority:
+/// 1. Server identity headers (no login needed, used for console-server trust)
+/// 2. JWT username/password (fallback for backward compatibility)
 fn build_maintainer_config(configuration: &Configuration) -> MaintainerClientConfig {
-    let server_addr = configuration.console_remote_server_addr();
-    let server_addrs: Vec<String> = server_addr
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let server_addrs = configuration.resolve_remote_server_addrs();
 
     MaintainerClientConfig {
         server_addrs,
+        // Server identity (primary auth, no login needed)
+        server_identity_key: configuration.server_identity_key(),
+        server_identity_value: configuration.server_identity_value(),
+        // JWT fallback (kept for backward compatibility)
         username: configuration.console_remote_username(),
         password: configuration.console_remote_password(),
         connect_timeout_ms: configuration.console_remote_connect_timeout_ms(),

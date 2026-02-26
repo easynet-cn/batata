@@ -107,7 +107,7 @@ impl LocalConfigInfoProcessor {
 
         Self::read_file(&file)
             .map(Some)
-            .map_err(|e| BatataClientError::Other(e.into()))
+            .map_err(BatataClientError::Other)
     }
 
     /// Save snapshot for a config
@@ -158,7 +158,7 @@ impl LocalConfigInfoProcessor {
 
         Self::read_file(&file)
             .map(Some)
-            .map_err(|e| BatataClientError::Other(e.into()))
+            .map_err(BatataClientError::Other)
     }
 
     /// Clean all snapshots for the current environment
@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn test_snapshot_save_and_get() {
         let temp_dir = TempDir::new().unwrap();
-        let base_path = temp_dir.path().to_path_buf();
+        let _base_path = temp_dir.path().to_path_buf();
 
         unsafe {
             // Use custom path via env var

@@ -71,18 +71,22 @@ impl DnsConfig {
 const DNS_FLAG_QR: u16 = 0x8000; // Query/Response flag
 const DNS_FLAG_AA: u16 = 0x0400; // Authoritative Answer
 const DNS_FLAG_RD: u16 = 0x0100; // Recursion Desired
+#[allow(dead_code)]
 const DNS_FLAG_RA: u16 = 0x0080; // Recursion Available
 
 /// DNS record types
 const DNS_TYPE_A: u16 = 1;
+#[allow(dead_code)]
 const DNS_TYPE_AAAA: u16 = 28;
 const DNS_TYPE_SRV: u16 = 33;
+#[allow(dead_code)]
 const DNS_TYPE_TXT: u16 = 16;
 
 /// DNS class
 const DNS_CLASS_IN: u16 = 1;
 
 /// DNS response codes
+#[allow(dead_code)]
 const DNS_RCODE_OK: u16 = 0;
 const DNS_RCODE_NXDOMAIN: u16 = 3;
 
@@ -129,10 +133,10 @@ impl DnsServer {
                         let cfg = config.clone();
 
                         tokio::spawn(async move {
-                            if let Some(response) = Self::handle_query(&query, &ns, &cfg).await {
-                                if let Err(e) = socket_clone.send_to(&response, src).await {
-                                    warn!("Failed to send DNS response: {}", e);
-                                }
+                            if let Some(response) = Self::handle_query(&query, &ns, &cfg).await
+                                && let Err(e) = socket_clone.send_to(&response, src).await
+                            {
+                                warn!("Failed to send DNS response: {}", e);
                             }
                         });
                     }
@@ -294,10 +298,8 @@ impl DnsServer {
         // QDCOUNT = 1
         response.extend_from_slice(&1u16.to_be_bytes());
 
-        // ANCOUNT = number of instances (for A records)
-        let answer_count = if qtype == DNS_TYPE_A {
-            instances.len() as u16
-        } else if qtype == DNS_TYPE_SRV {
+        // ANCOUNT = number of instances (for A or SRV records)
+        let answer_count = if qtype == DNS_TYPE_A || qtype == DNS_TYPE_SRV {
             instances.len() as u16
         } else {
             0u16
@@ -347,9 +349,7 @@ impl DnsServer {
                 response.extend_from_slice(&((6 + target_len) as u16).to_be_bytes());
 
                 // Priority (lower = higher priority)
-                response.extend_from_slice(
-                    &((100 - (instance.weight * 100.0) as u16).min(65535)).to_be_bytes(),
-                );
+                response.extend_from_slice(&(100 - (instance.weight * 100.0) as u16).to_be_bytes());
                 // Weight
                 response.extend_from_slice(&((instance.weight * 100.0) as u16).to_be_bytes());
                 // Port

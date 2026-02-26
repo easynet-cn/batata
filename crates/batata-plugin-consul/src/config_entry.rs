@@ -692,11 +692,11 @@ mod tests {
 
         // CAS with wrong index
         let result = service.apply_entry(req.clone(), Some(999));
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
 
         // CAS with correct index
         let result = service.apply_entry(req, Some(entry.modify_index));
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[test]
@@ -719,14 +719,14 @@ mod tests {
 
         // CAS with wrong index
         let result = service.delete_entry("mesh", "mesh", Some(999));
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
 
         // Entry should still exist
         assert!(service.get_entry("mesh", "mesh").is_some());
 
         // CAS with correct index
         let result = service.delete_entry("mesh", "mesh", Some(entry.modify_index));
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
         assert!(service.get_entry("mesh", "mesh").is_none());
     }
 }

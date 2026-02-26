@@ -90,7 +90,7 @@ impl Endpoint {
 
     /// Set the weight
     pub fn with_weight(mut self, weight: u32) -> Self {
-        self.weight = weight.min(128).max(1);
+        self.weight = weight.clamp(1, 128);
         self
     }
 
@@ -313,9 +313,10 @@ impl Default for HealthCheckConfig {
 }
 
 /// Health check type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum HealthCheckType {
     /// TCP health check
+    #[default]
     Tcp,
     /// HTTP health check
     Http {
@@ -324,12 +325,6 @@ pub enum HealthCheckType {
     },
     /// gRPC health check
     Grpc { service_name: Option<String> },
-}
-
-impl Default for HealthCheckType {
-    fn default() -> Self {
-        HealthCheckType::Tcp
-    }
 }
 
 /// Circuit breaker configuration
@@ -361,7 +356,7 @@ pub struct TlsContext {
 // =============================================================================
 
 /// Listener configuration (LDS)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Listener {
     /// Listener name
     pub name: String,
@@ -375,19 +370,6 @@ pub struct Listener {
     pub use_original_dst: bool,
     /// Metadata
     pub metadata: HashMap<String, String>,
-}
-
-impl Default for Listener {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            address: ListenerAddress::default(),
-            filter_chains: Vec::new(),
-            default_filter_chain: None,
-            use_original_dst: false,
-            metadata: HashMap::new(),
-        }
-    }
 }
 
 impl Listener {

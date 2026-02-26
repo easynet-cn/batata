@@ -25,9 +25,10 @@ use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{EnvFilter, Registry, fmt::MakeWriter, layer::SubscriberExt};
 
 /// Tracing exporter type
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TracingExporter {
     /// OTLP exporter (default) - works with Jaeger, Tempo, etc.
+    #[default]
     Otlp,
     /// Jaeger exporter via Thrift over HTTP
     Jaeger,
@@ -35,12 +36,6 @@ pub enum TracingExporter {
     Zipkin,
     /// Console exporter (for debugging)
     Console,
-}
-
-impl Default for TracingExporter {
-    fn default() -> Self {
-        Self::Otlp
-    }
 }
 
 impl std::str::FromStr for TracingExporter {
@@ -279,10 +274,10 @@ pub fn init_subscriber(
 
 /// Shutdown OpenTelemetry tracer provider gracefully
 pub fn shutdown_tracer_provider(provider: Option<SdkTracerProvider>) {
-    if let Some(provider) = provider {
-        if let Err(e) = provider.shutdown() {
-            tracing::warn!("Failed to shutdown OpenTelemetry tracer provider: {:?}", e);
-        }
+    if let Some(provider) = provider
+        && let Err(e) = provider.shutdown()
+    {
+        tracing::warn!("Failed to shutdown OpenTelemetry tracer provider: {:?}", e);
     }
 }
 
@@ -299,10 +294,10 @@ impl OtelGuard {
 
 impl Drop for OtelGuard {
     fn drop(&mut self) {
-        if let Some(provider) = self.provider.take() {
-            if let Err(e) = provider.shutdown() {
-                eprintln!("Failed to shutdown OpenTelemetry tracer provider: {:?}", e);
-            }
+        if let Some(provider) = self.provider.take()
+            && let Err(e) = provider.shutdown()
+        {
+            eprintln!("Failed to shutdown OpenTelemetry tracer provider: {:?}", e);
         }
     }
 }

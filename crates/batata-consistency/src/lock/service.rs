@@ -130,10 +130,11 @@ impl MemoryLockService {
 
         // Find expired locks
         for entry in locks.iter() {
-            if let Some(expires_at) = entry.expires_at {
-                if now >= expires_at && entry.state == LockState::Locked {
-                    expired_keys.push(entry.key.clone());
-                }
+            if let Some(expires_at) = entry.expires_at
+                && now >= expires_at
+                && entry.state == LockState::Locked
+            {
+                expired_keys.push(entry.key.clone());
             }
         }
 
@@ -241,10 +242,7 @@ impl DistributedLockService for MemoryLockService {
             request: request.clone(),
         };
 
-        self.waiters
-            .entry(key.clone())
-            .or_insert_with(Vec::new)
-            .push(waiter);
+        self.waiters.entry(key.clone()).or_default().push(waiter);
 
         // Wait with timeout
         let timeout = Duration::from_millis(request.wait_ms);
@@ -293,13 +291,13 @@ impl DistributedLockService for MemoryLockService {
         };
 
         // Check fence token if provided
-        if let Some(expected_token) = request.fence_token {
-            if lock.fence_token != expected_token {
-                return Ok(LockReleaseResult {
-                    released: false,
-                    error: Some("Fence token mismatch".to_string()),
-                });
-            }
+        if let Some(expected_token) = request.fence_token
+            && lock.fence_token != expected_token
+        {
+            return Ok(LockReleaseResult {
+                released: false,
+                error: Some("Fence token mismatch".to_string()),
+            });
         }
 
         // Calculate hold time
@@ -324,17 +322,15 @@ impl DistributedLockService for MemoryLockService {
         if let Some(mut waiters) = self.waiters.get_mut(&key) {
             while !waiters.is_empty() {
                 let waiter = waiters.remove(0);
-                if waiter.deadline > Instant::now() {
-                    if lock.acquire(&waiter.owner) {
-                        let result = LockAcquireResult {
-                            acquired: true,
-                            lock: Some(lock.clone()),
-                            fence_token: lock.fence_token,
-                            ..Default::default()
-                        };
-                        let _ = waiter.tx.try_send(result);
-                        break;
-                    }
+                if waiter.deadline > Instant::now() && lock.acquire(&waiter.owner) {
+                    let result = LockAcquireResult {
+                        acquired: true,
+                        lock: Some(lock.clone()),
+                        fence_token: lock.fence_token,
+                        ..Default::default()
+                    };
+                    let _ = waiter.tx.try_send(result);
+                    break;
                 }
             }
         }
@@ -401,24 +397,24 @@ impl DistributedLockService for MemoryLockService {
             }
 
             // Filter by name if specified
-            if let Some(ref name) = request.name {
-                if &lock.name != name {
-                    continue;
-                }
+            if let Some(ref name) = request.name
+                && &lock.name != name
+            {
+                continue;
             }
 
             // Filter by owner if specified
-            if let Some(ref owner) = request.owner {
-                if lock.owner.as_ref() != Some(owner) {
-                    continue;
-                }
+            if let Some(ref owner) = request.owner
+                && lock.owner.as_ref() != Some(owner)
+            {
+                continue;
             }
 
             // Filter by state if specified
-            if let Some(ref state) = request.state {
-                if &lock.state != state {
-                    continue;
-                }
+            if let Some(ref state) = request.state
+                && &lock.state != state
+            {
+                continue;
             }
 
             // Filter expired

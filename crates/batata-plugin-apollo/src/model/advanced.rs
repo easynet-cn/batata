@@ -276,6 +276,7 @@ impl ClientConnection {
 /// Client metrics summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct ClientMetrics {
     /// Total connected clients
     pub total_clients: u64,
@@ -285,17 +286,6 @@ pub struct ClientMetrics {
     pub clients_by_cluster: HashMap<String, u64>,
     /// Namespace watch counts
     pub namespace_watch_counts: HashMap<String, u64>,
-}
-
-impl Default for ClientMetrics {
-    fn default() -> Self {
-        Self {
-            total_clients: 0,
-            clients_by_app: HashMap::new(),
-            clients_by_cluster: HashMap::new(),
-            namespace_watch_counts: HashMap::new(),
-        }
-    }
 }
 
 #[cfg(test)]

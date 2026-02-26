@@ -45,7 +45,7 @@ use super::ConsoleDataSource;
 pub struct LocalDataSource {
     database_connection: DatabaseConnection,
     server_member_manager: Arc<ServerMemberManager>,
-    config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+    _config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     configuration: Configuration,
     naming_service: Option<Arc<NamingService>>,
 }
@@ -61,7 +61,7 @@ impl LocalDataSource {
         Self {
             database_connection,
             server_member_manager,
-            config_subscriber_manager,
+            _config_subscriber_manager: config_subscriber_manager,
             configuration,
             naming_service,
         }
@@ -454,7 +454,7 @@ impl ConsoleDataSource for LocalDataSource {
             })
             .collect();
 
-        Ok((total_count as i32, service_list))
+        Ok((total_count, service_list))
     }
 
     async fn service_get(
@@ -585,16 +585,15 @@ impl ConsoleDataSource for LocalDataSource {
             );
         }
 
-        if let Some(metadata_str) = metadata {
-            if let Ok(metadata_map) = serde_json::from_str::<HashMap<String, String>>(metadata_str)
-            {
-                naming.update_service_metadata_map(
-                    namespace_id,
-                    group_name,
-                    service_name,
-                    metadata_map,
-                );
-            }
+        if let Some(metadata_str) = metadata
+            && let Ok(metadata_map) = serde_json::from_str::<HashMap<String, String>>(metadata_str)
+        {
+            naming.update_service_metadata_map(
+                namespace_id,
+                group_name,
+                service_name,
+                metadata_map,
+            );
         }
 
         if let Some(selector_str) = selector {

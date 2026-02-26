@@ -227,7 +227,7 @@ static PERMISSION_CHECK_CACHE: LazyLock<Cache<String, bool>> = LazyLock::new(|| 
 
 /// gRPC Authentication Service
 /// Handles token validation and permission checking for gRPC requests
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct GrpcAuthService {
     /// Whether authentication is enabled
     auth_enabled: bool,
@@ -426,17 +426,6 @@ impl GrpcAuthService {
     /// Clear all permission cache
     pub fn clear_cache() {
         PERMISSION_CHECK_CACHE.invalidate_all();
-    }
-}
-
-impl Default for GrpcAuthService {
-    fn default() -> Self {
-        Self {
-            auth_enabled: false,
-            token_secret_key: String::new(),
-            server_identity_key: String::new(),
-            server_identity_value: String::new(),
-        }
     }
 }
 

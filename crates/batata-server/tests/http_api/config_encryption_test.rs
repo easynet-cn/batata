@@ -197,7 +197,7 @@ async fn test_encrypted_config_md5() {
     // Get MD5 from response
     assert_eq!(response["code"], 0, "Publish should succeed");
     // Note: MD5 may not be returned in publish response, check if it's present
-    let md5 = if response["data"].is_object() {
+    let _md5 = if response["data"].is_object() {
         response["data"]["md5"].as_str().unwrap_or("")
     } else {
         ""
@@ -360,6 +360,6 @@ async fn test_encryption_algorithms() {
                 ],
             )
             .await
-            .unwrap_or_else(|_| serde_json::json!(true)); // May fail if not supported
+            .unwrap_or(serde_json::json!(true)); // May fail if not supported
     }
 }

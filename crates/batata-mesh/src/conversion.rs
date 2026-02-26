@@ -95,10 +95,10 @@ pub fn service_to_cluster(service: &NacosService) -> Cluster {
     }
 
     // Set connect timeout from metadata
-    if let Some(timeout) = service.metadata.get("connect_timeout_ms") {
-        if let Ok(ms) = timeout.parse::<u64>() {
-            cluster.connect_timeout_ms = ms;
-        }
+    if let Some(timeout) = service.metadata.get("connect_timeout_ms")
+        && let Ok(ms) = timeout.parse::<u64>()
+    {
+        cluster.connect_timeout_ms = ms;
     }
 
     // Add health check if configured
@@ -238,10 +238,10 @@ fn instance_to_endpoint(instance: &NacosInstance) -> Option<Endpoint> {
     }
 
     // Set priority from metadata
-    if let Some(priority) = instance.metadata.get("priority") {
-        if let Ok(p) = priority.parse::<u32>() {
-            endpoint = endpoint.with_priority(p);
-        }
+    if let Some(priority) = instance.metadata.get("priority")
+        && let Ok(p) = priority.parse::<u32>()
+    {
+        endpoint = endpoint.with_priority(p);
     }
 
     Some(endpoint)

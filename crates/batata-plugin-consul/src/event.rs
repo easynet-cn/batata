@@ -552,7 +552,7 @@ mod tests {
 
         // Filter by tag — events with empty tag_filter also pass through
         let by_tag = service.list_events(None, None, None, Some("filter-v2"));
-        assert!(by_tag.len() >= 1);
+        assert!(!by_tag.is_empty());
         assert!(
             by_tag
                 .iter()
@@ -562,7 +562,7 @@ mod tests {
         // Combined filters
         let combined =
             service.list_events(Some("filter-deploy"), Some("filter-node-1"), None, None);
-        assert!(combined.len() >= 1);
+        assert!(!combined.is_empty());
         assert!(combined.iter().all(|e| e.name == "filter-deploy"
             && (e.node_filter.is_empty() || e.node_filter.contains("filter-node-1"))));
     }

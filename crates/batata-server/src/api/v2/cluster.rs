@@ -92,10 +92,10 @@ pub async fn get_node_list(
     let mut members: Vec<Member> = data.member_manager().all_members();
 
     // Filter by keyword if provided
-    if let Some(keyword) = &params.keyword {
-        if !keyword.is_empty() {
-            members.retain(|m| m.address.contains(keyword));
-        }
+    if let Some(keyword) = &params.keyword
+        && !keyword.is_empty()
+    {
+        members.retain(|m| m.address.contains(keyword));
     }
 
     // Convert to NodeResponse

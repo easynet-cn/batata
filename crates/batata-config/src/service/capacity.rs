@@ -231,14 +231,14 @@ pub async fn decrement_tenant_usage(
         .one(db)
         .await?;
 
-    if let Some(model) = existing {
-        if model.usage > 0 {
-            let now = chrono::Utc::now().naive_utc();
-            let mut active: tenant_capacity::ActiveModel = model.into();
-            active.usage = Set(active.usage.unwrap() - 1);
-            active.gmt_modified = Set(now);
-            active.update(db).await?;
-        }
+    if let Some(model) = existing
+        && model.usage > 0
+    {
+        let now = chrono::Utc::now().naive_utc();
+        let mut active: tenant_capacity::ActiveModel = model.into();
+        active.usage = Set(active.usage.unwrap() - 1);
+        active.gmt_modified = Set(now);
+        active.update(db).await?;
     }
 
     Ok(())
@@ -451,14 +451,14 @@ pub async fn decrement_group_usage(db: &DatabaseConnection, group_id: &str) -> a
         .one(db)
         .await?;
 
-    if let Some(model) = existing {
-        if model.usage > 0 {
-            let now = chrono::Utc::now().naive_utc();
-            let mut active: group_capacity::ActiveModel = model.into();
-            active.usage = Set(active.usage.unwrap() - 1);
-            active.gmt_modified = Set(now);
-            active.update(db).await?;
-        }
+    if let Some(model) = existing
+        && model.usage > 0
+    {
+        let now = chrono::Utc::now().naive_utc();
+        let mut active: group_capacity::ActiveModel = model.into();
+        active.usage = Set(active.usage.unwrap() - 1);
+        active.gmt_modified = Set(now);
+        active.update(db).await?;
     }
 
     Ok(())

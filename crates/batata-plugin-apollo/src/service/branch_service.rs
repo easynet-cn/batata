@@ -351,7 +351,7 @@ impl ApolloBranchService {
             let item_model = apollo_item::ActiveModel {
                 namespace_id: Set(parent_ns.id),
                 key: Set(item.key.clone()),
-                r#type: Set(item.r#type.clone()),
+                r#type: Set(item.r#type),
                 value: Set(item.value.clone()),
                 comment: Set(item.comment.clone()),
                 line_num: Set(item.line_num),

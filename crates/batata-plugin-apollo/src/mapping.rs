@@ -100,7 +100,7 @@ pub fn generate_release_key(md5: &str) -> String {
 
 /// Generate release key from content MD5 with a specific timestamp
 pub fn generate_release_key_with_time(md5: &str, timestamp: i64) -> String {
-    let dt = chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(|| Utc::now());
+    let dt = chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(Utc::now);
     let ts_str = dt.format("%Y%m%d%H%M%S").to_string();
     let md5_prefix = if md5.len() >= 8 { &md5[..8] } else { md5 };
     format!("{}-{}", ts_str, md5_prefix)
@@ -125,8 +125,8 @@ pub fn parse_properties(content: &str) -> HashMap<String, String> {
         // Handle continuation
         if continuation {
             let value_part = line.trim();
-            if value_part.ends_with('\\') {
-                current_value.push_str(&value_part[..value_part.len() - 1]);
+            if let Some(stripped) = value_part.strip_suffix('\\') {
+                current_value.push_str(stripped);
             } else {
                 current_value.push_str(value_part);
                 if let Some(key) = current_key.take() {
@@ -144,14 +144,14 @@ pub fn parse_properties(content: &str) -> HashMap<String, String> {
         }
 
         // Find separator (= or :)
-        let sep_pos = line.find(|c| c == '=' || c == ':');
+        let sep_pos = line.find(['=', ':']);
         if let Some(pos) = sep_pos {
             let key = line[..pos].trim().to_string();
             let value = line[pos + 1..].trim();
 
-            if value.ends_with('\\') {
+            if let Some(stripped) = value.strip_suffix('\\') {
                 current_key = Some(key);
-                current_value = value[..value.len() - 1].to_string();
+                current_value = stripped.to_string();
                 continuation = true;
             } else {
                 result.insert(key, value.to_string());
@@ -202,7 +202,7 @@ impl ApolloMappingContext {
             env: env.map(|s| s.to_string()),
             nacos_data_id: to_nacos_data_id(app_id, normalized_namespace),
             nacos_group: to_nacos_group(cluster),
-            nacos_namespace: env.map(|e| to_nacos_namespace(e)).unwrap_or_default(),
+            nacos_namespace: env.map(to_nacos_namespace).unwrap_or_default(),
         }
     }
 }

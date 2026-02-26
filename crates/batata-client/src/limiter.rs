@@ -42,7 +42,7 @@ impl RateLimiter {
 
         // Refill tokens based on elapsed time
         if elapsed >= self.rate {
-            let tokens_to_add = elapsed.as_secs_f64() / self.rate.as_secs_f64() as f64;
+            let tokens_to_add = elapsed.as_secs_f64() / self.rate.as_secs_f64();
             let current = self.tokens.load(Ordering::Relaxed);
             let new_tokens = (current as f64 + tokens_to_add).floor() as u64;
             self.tokens

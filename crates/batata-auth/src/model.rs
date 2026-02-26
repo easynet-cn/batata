@@ -329,9 +329,11 @@ mod tests {
 
     #[test]
     fn test_ldap_config_build_user_dn() {
-        let mut config = LdapConfig::default();
-        config.base_dn = "dc=example,dc=org".to_string();
-        config.filter_prefix = "uid".to_string();
+        let mut config = LdapConfig {
+            base_dn: "dc=example,dc=org".to_string(),
+            filter_prefix: "uid".to_string(),
+            ..Default::default()
+        };
 
         // Default pattern
         assert_eq!(config.build_user_dn("john"), "uid=john,dc=example,dc=org");
@@ -346,8 +348,10 @@ mod tests {
 
     #[test]
     fn test_ldap_config_build_search_filter() {
-        let mut config = LdapConfig::default();
-        config.filter_prefix = "uid".to_string();
+        let mut config = LdapConfig {
+            filter_prefix: "uid".to_string(),
+            ..Default::default()
+        };
 
         assert_eq!(config.build_search_filter("john"), "(uid=john)");
 

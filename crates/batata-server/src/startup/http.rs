@@ -348,7 +348,7 @@ pub fn main_server(
     let rate_limit_config = app_state.configuration.rate_limit_config();
 
     Ok(HttpServer::new(move || {
-        let mut app = App::new()
+        let app = App::new()
             .wrap(Logger::default())
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)

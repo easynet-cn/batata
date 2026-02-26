@@ -44,10 +44,7 @@ impl AgentRegistry {
         let name = &request.card.name;
 
         // Check if agent already exists
-        let ns_index = self
-            .name_index
-            .entry(namespace.clone())
-            .or_insert_with(DashMap::new);
+        let ns_index = self.name_index.entry(namespace.clone()).or_default();
 
         if ns_index.contains_key(name) {
             return Err(format!(
@@ -77,7 +74,7 @@ impl AgentRegistry {
         for skill in &request.card.skills {
             self.skill_index
                 .entry(skill.name.to_lowercase())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(id.clone());
         }
 
@@ -128,7 +125,7 @@ impl AgentRegistry {
         for skill in &request.card.skills {
             self.skill_index
                 .entry(skill.name.to_lowercase())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(id.clone());
         }
 
@@ -194,56 +191,55 @@ impl AgentRegistry {
             .map(|e| e.value().clone())
             .filter(|a| {
                 // Filter by namespace
-                if let Some(ref ns) = query.namespace {
-                    if &a.namespace != ns {
-                        return false;
-                    }
+                if let Some(ref ns) = query.namespace
+                    && &a.namespace != ns
+                {
+                    return false;
                 }
 
                 // Filter by name pattern
-                if let Some(ref pattern) = query.name_pattern {
-                    if !matches_pattern(&a.card.name, pattern) {
-                        return false;
-                    }
+                if let Some(ref pattern) = query.name_pattern
+                    && !matches_pattern(&a.card.name, pattern)
+                {
+                    return false;
                 }
 
                 // Filter by health status
-                if let Some(hs) = query.health_status {
-                    if a.health_status != hs {
-                        return false;
-                    }
+                if let Some(hs) = query.health_status
+                    && a.health_status != hs
+                {
+                    return false;
                 }
 
                 // Filter by tags
-                if let Some(ref tags) = query.tags {
-                    if !tags.iter().any(|t| a.card.tags.contains(t)) {
-                        return false;
-                    }
+                if let Some(ref tags) = query.tags
+                    && !tags.iter().any(|t| a.card.tags.contains(t))
+                {
+                    return false;
                 }
 
                 // Filter by skill
-                if let Some(ref skill) = query.skill {
-                    if !a
+                if let Some(ref skill) = query.skill
+                    && !a
                         .card
                         .skills
                         .iter()
                         .any(|s| s.name.to_lowercase() == skill.to_lowercase())
-                    {
-                        return false;
-                    }
+                {
+                    return false;
                 }
 
                 // Filter by capabilities
-                if let Some(streaming) = query.streaming {
-                    if a.card.capabilities.streaming != streaming {
-                        return false;
-                    }
+                if let Some(streaming) = query.streaming
+                    && a.card.capabilities.streaming != streaming
+                {
+                    return false;
                 }
 
-                if let Some(tool_use) = query.tool_use {
-                    if a.card.capabilities.tool_use != tool_use {
-                        return false;
-                    }
+                if let Some(tool_use) = query.tool_use
+                    && a.card.capabilities.tool_use != tool_use
+                {
+                    return false;
                 }
 
                 true
@@ -392,13 +388,11 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
         return name.contains(inner);
     }
 
-    if pattern.starts_with('*') {
-        let suffix = &pattern[1..];
+    if let Some(suffix) = pattern.strip_prefix('*') {
         return name.ends_with(suffix);
     }
 
-    if pattern.ends_with('*') {
-        let prefix = &pattern[..pattern.len() - 1];
+    if let Some(prefix) = pattern.strip_suffix('*') {
         return name.starts_with(prefix);
     }
 

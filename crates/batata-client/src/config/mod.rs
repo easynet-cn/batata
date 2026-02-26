@@ -119,18 +119,17 @@ impl BatataConfigService {
             Ok(content) => content,
             Err(e) => {
                 // Try failover if available
-                if let Some(processor) = &self.local_processor {
-                    if let Ok(Some(failover_content)) =
+                if let Some(processor) = &self.local_processor
+                    && let Ok(Some(failover_content)) =
                         processor.get_failover(data_id, group, tenant)
-                    {
-                        tracing::warn!(
-                            "Using failover config for dataId={}, group={}, tenant={}",
-                            data_id,
-                            group,
-                            tenant
-                        );
-                        return Ok(failover_content);
-                    }
+                {
+                    tracing::warn!(
+                        "Using failover config for dataId={}, group={}, tenant={}",
+                        data_id,
+                        group,
+                        tenant
+                    );
+                    return Ok(failover_content);
                 }
                 return Err(e);
             }
@@ -180,10 +179,10 @@ impl BatataConfigService {
             });
 
         // Save snapshot if available
-        if let Some(processor) = &self.local_processor {
-            if let Err(e) = processor.save_snapshot(data_id, group, tenant, Some(&content)) {
-                tracing::warn!("Failed to save snapshot: {}", e);
-            }
+        if let Some(processor) = &self.local_processor
+            && let Err(e) = processor.save_snapshot(data_id, group, tenant, Some(&content))
+        {
+            tracing::warn!("Failed to save snapshot: {}", e);
         }
 
         Ok(content)
@@ -285,12 +284,11 @@ impl BatataConfigService {
                 entry.update_content(&filter_req.content);
             }
 
-            if let Some(processor) = &self.local_processor {
-                if let Err(e) =
+            if let Some(processor) = &self.local_processor
+                && let Err(e) =
                     processor.save_snapshot(data_id, group, tenant, Some(&filter_req.content))
-                {
-                    tracing::warn!("Failed to save snapshot: {}", e);
-                }
+            {
+                tracing::warn!("Failed to save snapshot: {}", e);
             }
         }
 
@@ -313,10 +311,10 @@ impl BatataConfigService {
             self.cache_map.remove(&key);
 
             // Remove snapshot
-            if let Some(processor) = &self.local_processor {
-                if let Err(e) = processor.save_snapshot(data_id, group, tenant, None) {
-                    tracing::warn!("Failed to remove snapshot: {}", e);
-                }
+            if let Some(processor) = &self.local_processor
+                && let Err(e) = processor.save_snapshot(data_id, group, tenant, None)
+            {
+                tracing::warn!("Failed to remove snapshot: {}", e);
             }
         }
 

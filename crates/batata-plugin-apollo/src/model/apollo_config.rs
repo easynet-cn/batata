@@ -78,7 +78,9 @@ pub struct ApolloConfigExt {
 /// Configuration format types supported by Apollo
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ConfigFormat {
+    #[default]
     Properties,
     Xml,
     Json,
@@ -115,12 +117,6 @@ impl ConfigFormat {
             ConfigFormat::Yaml | ConfigFormat::Yml => "text/yaml;charset=UTF-8",
             ConfigFormat::Txt => "text/plain;charset=UTF-8",
         }
-    }
-}
-
-impl Default for ConfigFormat {
-    fn default() -> Self {
-        ConfigFormat::Properties
     }
 }
 

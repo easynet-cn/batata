@@ -177,6 +177,64 @@ impl Configuration {
             .unwrap_or("http://127.0.0.1:8848".to_string())
     }
 
+    /// Resolve remote server addresses for console remote mode.
+    ///
+    /// Resolution order (same as cluster member lookup):
+    /// 1. `nacos.member.list` config property (comma-separated `ip:port`)
+    /// 2. `conf/cluster.conf` file (one `ip:port` per line, skip `#` comments)
+    /// 3. Fall back to `nacos.console.remote.server_addr` (legacy config)
+    ///
+    /// Each address is normalized to `http://ip:port` format.
+    pub fn resolve_remote_server_addrs(&self) -> Vec<String> {
+        // 1. Try nacos.member.list
+        let mut addresses: Vec<String> = self
+            .config
+            .get_string("nacos.member.list")
+            .ok()
+            .map(|list| {
+                list.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // 2. Fall back to conf/cluster.conf
+        if addresses.is_empty() {
+            let path = std::path::Path::new("conf/cluster.conf");
+            if let Ok(content) = std::fs::read_to_string(path) {
+                addresses = content
+                    .lines()
+                    .map(|line| line.trim().to_string())
+                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                    .collect();
+            }
+        }
+
+        // 3. Fall back to nacos.console.remote.server_addr (legacy)
+        if addresses.is_empty() {
+            let server_addr = self.console_remote_server_addr();
+            return server_addr
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+
+        // Strip query parameters (e.g., ?raft_port=xxx) and convert ip:port → http://ip:port
+        addresses
+            .into_iter()
+            .map(|addr| {
+                let addr = addr.split('?').next().unwrap_or(&addr).to_string();
+                if addr.starts_with("http://") || addr.starts_with("https://") {
+                    addr
+                } else {
+                    format!("http://{}", addr)
+                }
+            })
+            .collect()
+    }
+
     pub fn console_remote_username(&self) -> String {
         self.config
             .get_string(NACOS_CONSOLE_REMOTE_USERNAME)
@@ -1264,5 +1322,66 @@ mod tests {
         assert_eq!(auth_rate_limit_cfg.max_attempts, 3);
         assert_eq!(auth_rate_limit_cfg.window_duration.as_secs(), 120);
         assert_eq!(auth_rate_limit_cfg.lockout_duration.as_secs(), 600);
+    }
+
+    // ========================================================================
+    // resolve_remote_server_addrs tests
+    // ========================================================================
+
+    #[test]
+    fn test_resolve_remote_server_addrs_from_member_list() {
+        let cfg = build_config(vec![(
+            "nacos.member.list",
+            "192.168.1.10:8848,192.168.1.11:8848".into(),
+        )]);
+        let addrs = cfg.resolve_remote_server_addrs();
+        assert_eq!(addrs.len(), 2);
+        assert_eq!(addrs[0], "http://192.168.1.10:8848");
+        assert_eq!(addrs[1], "http://192.168.1.11:8848");
+    }
+
+    #[test]
+    fn test_resolve_remote_server_addrs_strips_query_params() {
+        let cfg = build_config(vec![(
+            "nacos.member.list",
+            "192.168.1.10:8848?raft_port=8807,192.168.1.11:8848?raft_port=8808".into(),
+        )]);
+        let addrs = cfg.resolve_remote_server_addrs();
+        assert_eq!(addrs.len(), 2);
+        assert_eq!(addrs[0], "http://192.168.1.10:8848");
+        assert_eq!(addrs[1], "http://192.168.1.11:8848");
+    }
+
+    #[test]
+    fn test_resolve_remote_server_addrs_preserves_http_prefix() {
+        let cfg = build_config(vec![(
+            "nacos.member.list",
+            "http://10.0.0.1:8848,https://10.0.0.2:8848".into(),
+        )]);
+        let addrs = cfg.resolve_remote_server_addrs();
+        assert_eq!(addrs.len(), 2);
+        assert_eq!(addrs[0], "http://10.0.0.1:8848");
+        assert_eq!(addrs[1], "https://10.0.0.2:8848");
+    }
+
+    #[test]
+    fn test_resolve_remote_server_addrs_fallback_to_server_addr() {
+        // No member.list and no cluster.conf → falls back to console.remote.server_addr
+        let cfg = build_config(vec![(
+            "nacos.console.remote.server_addr",
+            "http://my-server:8848".into(),
+        )]);
+        let addrs = cfg.resolve_remote_server_addrs();
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0], "http://my-server:8848");
+    }
+
+    #[test]
+    fn test_resolve_remote_server_addrs_default_fallback() {
+        // No member.list, no cluster.conf, no server_addr → default
+        let cfg = build_config(vec![]);
+        let addrs = cfg.resolve_remote_server_addrs();
+        assert_eq!(addrs.len(), 1);
+        assert_eq!(addrs[0], "http://127.0.0.1:8848");
     }
 }

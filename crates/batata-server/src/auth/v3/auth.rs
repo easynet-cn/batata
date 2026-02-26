@@ -68,15 +68,15 @@ async fn internal_login(
         }
     }
     if let Some(form_data) = &form {
-        if let Some(v) = &form_data.username {
-            if !v.is_empty() {
-                username = v.to_string();
-            }
+        if let Some(v) = &form_data.username
+            && !v.is_empty()
+        {
+            username = v.to_string();
         }
-        if let Some(v) = &form_data.password {
-            if !v.is_empty() {
-                password = v.to_string();
-            }
+        if let Some(v) = &form_data.password
+            && !v.is_empty()
+        {
+            password = v.to_string();
         }
     }
 

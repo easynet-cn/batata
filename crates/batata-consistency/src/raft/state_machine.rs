@@ -1203,54 +1203,51 @@ impl RocksStateMachine {
         let expires_at = now + ttl_ms as i64;
 
         // Check if lock exists and is held
-        if let Ok(Some(bytes)) = self.db.get_cf(self.cf_locks(), key.as_bytes()) {
-            if let Ok(existing) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                // Check if lock is still valid (not expired)
-                if let Some(exp) = existing["expires_at"].as_i64() {
-                    if exp > now {
-                        // Lock is held, check if same owner
-                        if existing["owner"].as_str() == Some(owner) {
-                            // Same owner, renew the lock
-                            let value = serde_json::json!({
-                                "namespace": namespace,
-                                "name": name,
-                                "owner": owner,
-                                "state": "Locked",
-                                "fence_token": fence_token,
-                                "ttl_ms": ttl_ms,
-                                "acquired_at": existing["acquired_at"],
-                                "expires_at": expires_at,
-                                "renewal_count": existing["renewal_count"].as_u64().unwrap_or(0),
-                                "owner_metadata": owner_metadata,
-                            });
+        if let Ok(Some(bytes)) = self.db.get_cf(self.cf_locks(), key.as_bytes())
+            && let Ok(existing) = serde_json::from_slice::<serde_json::Value>(&bytes)
+        {
+            // Check if lock is still valid (not expired)
+            if let Some(exp) = existing["expires_at"].as_i64()
+                && exp > now
+            {
+                // Lock is held, check if same owner
+                if existing["owner"].as_str() == Some(owner) {
+                    // Same owner, renew the lock
+                    let value = serde_json::json!({
+                        "namespace": namespace,
+                        "name": name,
+                        "owner": owner,
+                        "state": "Locked",
+                        "fence_token": fence_token,
+                        "ttl_ms": ttl_ms,
+                        "acquired_at": existing["acquired_at"],
+                        "expires_at": expires_at,
+                        "renewal_count": existing["renewal_count"].as_u64().unwrap_or(0),
+                        "owner_metadata": owner_metadata,
+                    });
 
-                            match self.db.put_cf(
-                                self.cf_locks(),
-                                key.as_bytes(),
-                                value.to_string().as_bytes(),
-                            ) {
-                                Ok(_) => {
-                                    debug!("Lock re-acquired by same owner: {}", key);
-                                    return RaftResponse::success_with_data(
-                                        serde_json::to_vec(&value).unwrap_or_default(),
-                                    );
-                                }
-                                Err(e) => {
-                                    error!("Failed to acquire lock: {}", e);
-                                    return RaftResponse::failure(format!(
-                                        "Failed to acquire lock: {}",
-                                        e
-                                    ));
-                                }
-                            }
+                    match self.db.put_cf(
+                        self.cf_locks(),
+                        key.as_bytes(),
+                        value.to_string().as_bytes(),
+                    ) {
+                        Ok(_) => {
+                            debug!("Lock re-acquired by same owner: {}", key);
+                            return RaftResponse::success_with_data(
+                                serde_json::to_vec(&value).unwrap_or_default(),
+                            );
                         }
-                        // Lock is held by different owner
-                        return RaftResponse::failure(format!(
-                            "Lock is held by {}",
-                            existing["owner"].as_str().unwrap_or("unknown")
-                        ));
+                        Err(e) => {
+                            error!("Failed to acquire lock: {}", e);
+                            return RaftResponse::failure(format!("Failed to acquire lock: {}", e));
+                        }
                     }
                 }
+                // Lock is held by different owner
+                return RaftResponse::failure(format!(
+                    "Lock is held by {}",
+                    existing["owner"].as_str().unwrap_or("unknown")
+                ));
             }
         }
 
@@ -1309,10 +1306,10 @@ impl RocksStateMachine {
         }
 
         // Check fence token if provided
-        if let Some(expected_token) = fence_token {
-            if existing["fence_token"].as_u64() != Some(expected_token) {
-                return RaftResponse::failure("Fence token mismatch");
-            }
+        if let Some(expected_token) = fence_token
+            && existing["fence_token"].as_u64() != Some(expected_token)
+        {
+            return RaftResponse::failure("Fence token mismatch");
         }
 
         // Release the lock
@@ -1371,10 +1368,10 @@ impl RocksStateMachine {
         }
 
         // Check if lock is still valid
-        if let Some(exp) = existing["expires_at"].as_i64() {
-            if exp <= now {
-                return RaftResponse::failure("Lock has expired");
-            }
+        if let Some(exp) = existing["expires_at"].as_i64()
+            && exp <= now
+        {
+            return RaftResponse::failure("Lock has expired");
         }
 
         // Update TTL and expires_at

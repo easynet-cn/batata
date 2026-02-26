@@ -5,9 +5,9 @@
 pub struct MaintainerClientConfig {
     /// Server addresses (e.g. ["http://127.0.0.1:8848"])
     pub server_addrs: Vec<String>,
-    /// Username for authentication
+    /// Username for authentication (JWT fallback)
     pub username: String,
-    /// Password for authentication
+    /// Password for authentication (JWT fallback)
     pub password: String,
     /// Connection timeout in milliseconds (default: 5000)
     pub connect_timeout_ms: u64,
@@ -15,6 +15,10 @@ pub struct MaintainerClientConfig {
     pub read_timeout_ms: u64,
     /// Context path (default: "nacos")
     pub context_path: String,
+    /// Server identity header key (primary auth, bypasses JWT login)
+    pub server_identity_key: String,
+    /// Server identity header value
+    pub server_identity_value: String,
 }
 
 impl Default for MaintainerClientConfig {
@@ -26,6 +30,8 @@ impl Default for MaintainerClientConfig {
             connect_timeout_ms: 5000,
             read_timeout_ms: 30000,
             context_path: "nacos".to_string(),
+            server_identity_key: String::new(),
+            server_identity_value: String::new(),
         }
     }
 }

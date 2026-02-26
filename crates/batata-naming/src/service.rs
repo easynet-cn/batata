@@ -786,6 +786,7 @@ impl NamingService {
     }
 
     /// Update instance health status (for V2 Health API)
+    #[allow(clippy::too_many_arguments)]
     pub fn update_instance_health(
         &self,
         namespace: &str,
@@ -961,6 +962,7 @@ impl NamingService {
     }
 
     /// Update cluster health check configuration
+    #[allow(clippy::too_many_arguments)]
     pub fn update_cluster_health_check(
         &self,
         namespace: &str,
@@ -1021,6 +1023,7 @@ impl NamingService {
     }
 
     /// Create cluster configuration
+    #[allow(clippy::too_many_arguments)]
     pub fn create_cluster_config(
         &self,
         namespace: &str,
@@ -1078,7 +1081,7 @@ impl NamingService {
             for instance in instances {
                 cluster_map
                     .entry(instance.cluster_name.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(instance);
             }
 

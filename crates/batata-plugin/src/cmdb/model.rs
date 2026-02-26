@@ -6,8 +6,10 @@ use std::collections::HashMap;
 /// CMDB entity types
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CmdbEntityType {
     /// Service entity
+    #[default]
     Service,
     /// Instance entity
     Instance,
@@ -23,12 +25,6 @@ pub enum CmdbEntityType {
     Environment,
     /// Custom entity type
     Custom(String),
-}
-
-impl Default for CmdbEntityType {
-    fn default() -> Self {
-        Self::Service
-    }
 }
 
 impl std::fmt::Display for CmdbEntityType {

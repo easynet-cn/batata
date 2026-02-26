@@ -138,20 +138,15 @@ pub mod proto {
     }
 
     /// Value for struct fields
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub enum Value {
+        #[default]
         NullValue,
         BoolValue(bool),
         NumberValue(f64),
         StringValue(String),
         ListValue(Vec<Value>),
         StructValue(Box<Struct>),
-    }
-
-    impl Default for Value {
-        fn default() -> Self {
-            Value::NullValue
-        }
     }
 
     // Implement prost encoding/decoding for the proto types

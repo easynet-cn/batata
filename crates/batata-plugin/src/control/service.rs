@@ -279,23 +279,23 @@ impl ConnectionLimiter {
     pub fn release(&self, ip: Option<&str>, client_id: Option<&str>) {
         self.current.fetch_sub(1, Ordering::Relaxed);
 
-        if let Some(ip) = ip {
-            if let Some(counter) = self.per_ip.get(ip) {
-                let prev = counter.fetch_sub(1, Ordering::Relaxed);
-                if prev <= 1 {
-                    drop(counter);
-                    self.per_ip.remove(ip);
-                }
+        if let Some(ip) = ip
+            && let Some(counter) = self.per_ip.get(ip)
+        {
+            let prev = counter.fetch_sub(1, Ordering::Relaxed);
+            if prev <= 1 {
+                drop(counter);
+                self.per_ip.remove(ip);
             }
         }
 
-        if let Some(client_id) = client_id {
-            if let Some(counter) = self.per_client.get(client_id) {
-                let prev = counter.fetch_sub(1, Ordering::Relaxed);
-                if prev <= 1 {
-                    drop(counter);
-                    self.per_client.remove(client_id);
-                }
+        if let Some(client_id) = client_id
+            && let Some(counter) = self.per_client.get(client_id)
+        {
+            let prev = counter.fetch_sub(1, Ordering::Relaxed);
+            if prev <= 1 {
+                drop(counter);
+                self.per_client.remove(client_id);
             }
         }
     }
@@ -493,7 +493,7 @@ impl ControlPlugin for DefaultControlPlugin {
 
         let rules = self.cached_rate_rules.read().await;
 
-        let result = if let Some(rule) = self.find_matching_rate_rule(ctx, &rules) {
+        if let Some(rule) = self.find_matching_rate_rule(ctx, &rules) {
             let limiter = self.get_or_create_rate_limiter(rule);
             let allowed = limiter.try_acquire(1).await;
 
@@ -531,9 +531,7 @@ impl ControlPlugin for DefaultControlPlugin {
                 action: ExceedAction::Reject,
                 delay_ms: 0,
             }
-        };
-
-        result
+        }
     }
 
     async fn check_connection_limit(&self, ctx: &ControlContext) -> ConnectionLimitResult {

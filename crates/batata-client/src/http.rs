@@ -25,6 +25,10 @@ pub struct HttpClientConfig {
     pub context_path: String,
     /// Auth endpoint path (default: "/v1/auth/login")
     pub auth_endpoint: String,
+    /// Server identity header key (when non-empty, uses identity auth instead of JWT)
+    pub server_identity_key: String,
+    /// Server identity header value
+    pub server_identity_value: String,
 }
 
 impl Default for HttpClientConfig {
@@ -37,6 +41,8 @@ impl Default for HttpClientConfig {
             read_timeout_ms: 30000,
             context_path: String::new(),
             auth_endpoint: "/v1/auth/login".to_string(),
+            server_identity_key: String::new(),
+            server_identity_value: String::new(),
         }
     }
 }
@@ -83,6 +89,18 @@ impl HttpClientConfig {
         self.auth_endpoint = endpoint.to_string();
         self
     }
+
+    /// Set server identity for identity-based auth (bypasses JWT login)
+    pub fn with_server_identity(mut self, key: &str, value: &str) -> Self {
+        self.server_identity_key = key.to_string();
+        self.server_identity_value = value.to_string();
+        self
+    }
+
+    /// Check if identity-based auth is configured
+    pub fn has_server_identity(&self) -> bool {
+        !self.server_identity_key.is_empty()
+    }
 }
 
 /// Token info for authentication
@@ -108,6 +126,8 @@ impl BatataHttpClient {
             .timeout(Duration::from_millis(config.read_timeout_ms))
             .build()?;
 
+        let use_identity = config.has_server_identity();
+
         let instance = Self {
             client,
             config,
@@ -115,14 +135,19 @@ impl BatataHttpClient {
             token: RwLock::new(None),
         };
 
-        // Try to authenticate on startup, but don't fail if it doesn't work.
-        // The server may not be ready yet (e.g. self-connecting console datasource)
-        // or no admin user may exist yet. ensure_token() will retry on each request.
-        if let Err(e) = instance.authenticate().await {
-            warn!(
-                "Initial authentication failed (will retry on demand): {}",
-                e
-            );
+        // Skip JWT login when using server identity authentication
+        if !use_identity {
+            // Try to authenticate on startup, but don't fail if it doesn't work.
+            // The server may not be ready yet (e.g. self-connecting console datasource)
+            // or no admin user may exist yet. ensure_token() will retry on each request.
+            if let Err(e) = instance.authenticate().await {
+                warn!(
+                    "Initial authentication failed (will retry on demand): {}",
+                    e
+                );
+            }
+        } else {
+            debug!("Using server identity authentication, skipping JWT login");
         }
 
         Ok(instance)
@@ -239,6 +264,25 @@ impl BatataHttpClient {
         Err(anyhow::anyhow!("Authentication failed"))
     }
 
+    /// Check if using server identity authentication
+    fn use_identity_auth(&self) -> bool {
+        self.config.has_server_identity()
+    }
+
+    /// Get the auth header name and value for the current auth mode.
+    /// Returns (header_name, header_value).
+    async fn ensure_auth_header(&self) -> anyhow::Result<(String, String)> {
+        if self.use_identity_auth() {
+            Ok((
+                self.config.server_identity_key.clone(),
+                self.config.server_identity_value.clone(),
+            ))
+        } else {
+            let token = self.ensure_token().await?;
+            Ok(("accessToken".to_string(), token))
+        }
+    }
+
     /// Ensure we have a valid token, refreshing if needed
     async fn ensure_token(&self) -> anyhow::Result<String> {
         if let Some(token) = self.get_token() {
@@ -255,8 +299,12 @@ impl BatataHttpClient {
     /// Make a GET request
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, token| async move {
-                client.get(&url).header("accessToken", &token).send().await
+            |client, url, auth_header| async move {
+                client
+                    .get(&url)
+                    .header(&auth_header.0, &auth_header.1)
+                    .send()
+                    .await
             },
             path,
         )
@@ -270,10 +318,10 @@ impl BatataHttpClient {
         query: &Q,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, token| async move {
+            |client, url, auth_header| async move {
                 client
                     .get(&url)
-                    .header("accessToken", &token)
+                    .header(&auth_header.0, &auth_header.1)
                     .query(query)
                     .send()
                     .await
@@ -290,10 +338,10 @@ impl BatataHttpClient {
         form: &F,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, token| async move {
+            |client, url, auth_header| async move {
                 client
                     .post(&url)
-                    .header("accessToken", &token)
+                    .header(&auth_header.0, &auth_header.1)
                     .form(form)
                     .send()
                     .await
@@ -310,10 +358,10 @@ impl BatataHttpClient {
         body: &B,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, token| async move {
+            |client, url, auth_header| async move {
                 client
                     .post(&url)
-                    .header("accessToken", &token)
+                    .header(&auth_header.0, &auth_header.1)
                     .json(body)
                     .send()
                     .await
@@ -330,10 +378,10 @@ impl BatataHttpClient {
         query: &Q,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, token| async move {
+            |client, url, auth_header| async move {
                 client
                     .delete(&url)
-                    .header("accessToken", &token)
+                    .header(&auth_header.0, &auth_header.1)
                     .query(query)
                     .send()
                     .await
@@ -350,10 +398,10 @@ impl BatataHttpClient {
         query: &Q,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, token| async move {
+            |client, url, auth_header| async move {
                 client
                     .post(&url)
-                    .header("accessToken", &token)
+                    .header(&auth_header.0, &auth_header.1)
                     .query(query)
                     .send()
                     .await
@@ -370,10 +418,10 @@ impl BatataHttpClient {
         form: &F,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, token| async move {
+            |client, url, auth_header| async move {
                 client
                     .put(&url)
-                    .header("accessToken", &token)
+                    .header(&auth_header.0, &auth_header.1)
                     .form(form)
                     .send()
                     .await
@@ -390,10 +438,10 @@ impl BatataHttpClient {
         body: &B,
     ) -> anyhow::Result<T> {
         self.request_with_retry(
-            |client, url, token| async move {
+            |client, url, auth_header| async move {
                 client
                     .put(&url)
-                    .header("accessToken", &token)
+                    .header(&auth_header.0, &auth_header.1)
                     .json(body)
                     .send()
                     .await
@@ -410,19 +458,21 @@ impl BatataHttpClient {
 
         for _ in 0..max_retries {
             let url = self.build_url(path);
-            let token = self.ensure_token().await?;
+            let (auth_key, auth_val) = self.ensure_auth_header().await?;
 
             match self
                 .client
                 .get(&url)
-                .header("accessToken", &token)
+                .header(&auth_key, &auth_val)
                 .send()
                 .await
             {
                 Ok(response) => {
                     if response.status().is_success() {
                         return Ok(response.bytes().await?.to_vec());
-                    } else if response.status() == StatusCode::UNAUTHORIZED {
+                    } else if response.status() == StatusCode::UNAUTHORIZED
+                        && !self.use_identity_auth()
+                    {
                         warn!("Token expired, re-authenticating...");
                         self.authenticate().await?;
                         continue;
@@ -456,12 +506,12 @@ impl BatataHttpClient {
 
         for _ in 0..max_retries {
             let url = self.build_url(path);
-            let token = self.ensure_token().await?;
+            let (auth_key, auth_val) = self.ensure_auth_header().await?;
 
             match self
                 .client
                 .post(&url)
-                .header("accessToken", &token)
+                .header(&auth_key, &auth_val)
                 .header("Content-Type", "application/octet-stream")
                 .body(body.clone()) // Bytes clone is O(1)
                 .send()
@@ -470,7 +520,9 @@ impl BatataHttpClient {
                 Ok(response) => {
                     if response.status().is_success() {
                         return Ok(response.bytes().await?.to_vec());
-                    } else if response.status() == StatusCode::UNAUTHORIZED {
+                    } else if response.status() == StatusCode::UNAUTHORIZED
+                        && !self.use_identity_auth()
+                    {
                         warn!("Token expired, re-authenticating...");
                         self.authenticate().await?;
                         continue;
@@ -503,18 +555,18 @@ impl BatataHttpClient {
         form: reqwest::multipart::Form,
     ) -> anyhow::Result<T> {
         let url = self.build_url(path).clone();
-        let token = self.ensure_token().await?;
+        let (auth_key, auth_val) = self.ensure_auth_header().await?;
 
         match self
             .client
             .post(url)
-            .header("accessToken", &token)
+            .header(&auth_key, &auth_val)
             .multipart(form)
             .send()
             .await
         {
             Ok(response) => {
-                if response.status() == StatusCode::UNAUTHORIZED {
+                if response.status() == StatusCode::UNAUTHORIZED && !self.use_identity_auth() {
                     warn!("Token expired, re-authenticating...");
                     self.authenticate().await?;
                     // Token expired, caller should retry
@@ -537,12 +589,12 @@ impl BatataHttpClient {
         form: reqwest::multipart::Form,
     ) -> anyhow::Result<Vec<u8>> {
         let url = self.build_url(path);
-        let token = self.ensure_token().await?;
+        let (auth_key, auth_val) = self.ensure_auth_header().await?;
 
         match self
             .client
             .post(&url)
-            .header("accessToken", &token)
+            .header(&auth_key, &auth_val)
             .multipart(form)
             .send()
             .await
@@ -550,7 +602,8 @@ impl BatataHttpClient {
             Ok(response) => {
                 if response.status().is_success() {
                     Ok(response.bytes().await?.to_vec())
-                } else if response.status() == StatusCode::UNAUTHORIZED {
+                } else if response.status() == StatusCode::UNAUTHORIZED && !self.use_identity_auth()
+                {
                     warn!("Token expired, re-authenticating...");
                     self.authenticate().await?;
                     Err(anyhow::anyhow!("Token expired, please retry"))
@@ -575,7 +628,7 @@ impl BatataHttpClient {
     async fn request_with_retry<T, F, Fut>(&self, request_fn: F, path: &str) -> anyhow::Result<T>
     where
         T: DeserializeOwned,
-        F: Fn(Client, String, String) -> Fut,
+        F: Fn(Client, String, (String, String)) -> Fut,
         Fut: std::future::Future<Output = Result<Response, reqwest::Error>>,
     {
         let max_retries = self.config.server_addrs.len();
@@ -583,11 +636,11 @@ impl BatataHttpClient {
 
         for _ in 0..max_retries {
             let url = self.build_url(path);
-            let token = self.ensure_token().await?;
+            let auth_header = self.ensure_auth_header().await?;
 
-            match request_fn(self.client.clone(), url, token).await {
+            match request_fn(self.client.clone(), url, auth_header).await {
                 Ok(response) => {
-                    if response.status() == StatusCode::UNAUTHORIZED {
+                    if response.status() == StatusCode::UNAUTHORIZED && !self.use_identity_auth() {
                         warn!("Token expired, re-authenticating...");
                         self.authenticate().await?;
                         continue;
@@ -681,5 +734,38 @@ mod tests {
             client.build_url("/v1/test"),
             "http://localhost:8848/nacos/v1/test"
         );
+    }
+
+    #[test]
+    fn test_config_with_server_identity() {
+        let config = HttpClientConfig::new("http://localhost:8848")
+            .with_server_identity("serverIdentity", "cluster-node-1");
+
+        assert!(config.has_server_identity());
+        assert_eq!(config.server_identity_key, "serverIdentity");
+        assert_eq!(config.server_identity_value, "cluster-node-1");
+    }
+
+    #[test]
+    fn test_config_without_server_identity() {
+        let config = HttpClientConfig::default();
+        assert!(!config.has_server_identity());
+    }
+
+    #[test]
+    fn test_identity_auth_skips_jwt() {
+        let config = HttpClientConfig::new("http://localhost:8848")
+            .with_server_identity("serverIdentity", "cluster-node-1");
+        let client = BatataHttpClient::new_without_auth(config).unwrap();
+
+        assert!(client.use_identity_auth());
+    }
+
+    #[test]
+    fn test_jwt_auth_when_no_identity() {
+        let config = HttpClientConfig::new("http://localhost:8848");
+        let client = BatataHttpClient::new_without_auth(config).unwrap();
+
+        assert!(!client.use_identity_auth());
     }
 }

@@ -430,12 +430,12 @@ impl Clone for HealthCheckExecutor {
 /// Parse duration string (e.g., "10s", "30s", "1m") to seconds
 fn parse_duration(s: &str) -> Option<u64> {
     let s = s.trim();
-    if s.ends_with('s') {
-        s[..s.len() - 1].parse().ok()
-    } else if s.ends_with('m') {
-        s[..s.len() - 1].parse::<u64>().ok().map(|m| m * 60)
-    } else if s.ends_with('h') {
-        s[..s.len() - 1].parse::<u64>().ok().map(|h| h * 3600)
+    if let Some(stripped) = s.strip_suffix('s') {
+        stripped.parse().ok()
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        stripped.parse::<u64>().ok().map(|m| m * 60)
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        stripped.parse::<u64>().ok().map(|h| h * 3600)
     } else {
         s.parse().ok()
     }

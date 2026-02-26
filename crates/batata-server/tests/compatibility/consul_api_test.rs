@@ -2,7 +2,7 @@
 //!
 //! Tests for Consul API endpoints compatibility
 
-use crate::common::{TestClient, unique_service_name, unique_test_id};
+use crate::common::{TestClient, unique_test_id};
 
 /// Test service registration via Consul Agent API
 #[tokio::test]

@@ -133,7 +133,7 @@ async fn test_config_long_poll_timeout() {
     let result = tokio::time::timeout(Duration::from_secs(5), poll_handle).await;
 
     assert!(result.is_ok(), "Long poll should complete on timeout");
-    let response = result.unwrap().expect("Poll task failed");
+    let _response = result.unwrap().expect("Poll task failed");
     // Timeout returns with no changes
 }
 
@@ -272,8 +272,8 @@ async fn test_concurrent_long_polls() {
         .expect("Failed to update config");
 
     // Wait for both polls to complete
-    let _ = poll1.await.expect("Poll 1 failed");
-    let _ = poll2.await.expect("Poll 2 failed");
+    poll1.await.expect("Poll 1 failed");
+    poll2.await.expect("Poll 2 failed");
 }
 
 /// Test long poll removal

@@ -114,24 +114,24 @@ impl PrometheusServiceDiscovery {
 
         for service in services {
             // Filter by namespace
-            if let Some(ref ns) = query.namespace {
-                if &service.namespace != ns {
-                    continue;
-                }
+            if let Some(ref ns) = query.namespace
+                && &service.namespace != ns
+            {
+                continue;
             }
 
             // Filter by group
-            if let Some(ref group) = query.group {
-                if &service.group_name != group {
-                    continue;
-                }
+            if let Some(ref group) = query.group
+                && &service.group_name != group
+            {
+                continue;
             }
 
             // Filter by service name pattern
-            if let Some(ref pattern) = query.service_pattern {
-                if !matches_pattern(&service.service_name, pattern) {
-                    continue;
-                }
+            if let Some(ref pattern) = query.service_pattern
+                && !matches_pattern(&service.service_name, pattern)
+            {
+                continue;
             }
 
             // Generate targets from instances
@@ -143,10 +143,10 @@ impl PrometheusServiceDiscovery {
                 }
 
                 // Filter by cluster
-                if let Some(ref cluster) = query.cluster {
-                    if &instance.cluster_name != cluster {
-                        continue;
-                    }
+                if let Some(ref cluster) = query.cluster
+                    && &instance.cluster_name != cluster
+                {
+                    continue;
                 }
 
                 targets.push(format!("{}:{}", instance.ip, instance.port));
@@ -305,13 +305,11 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
         return name.contains(inner);
     }
 
-    if pattern.starts_with('*') {
-        let suffix = &pattern[1..];
+    if let Some(suffix) = pattern.strip_prefix('*') {
         return name.ends_with(suffix);
     }
 
-    if pattern.ends_with('*') {
-        let prefix = &pattern[..pattern.len() - 1];
+    if let Some(prefix) = pattern.strip_suffix('*') {
         return name.starts_with(prefix);
     }
 

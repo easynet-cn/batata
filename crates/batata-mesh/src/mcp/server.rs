@@ -262,7 +262,7 @@ impl McpServer {
                         Some(instance.cluster_name.clone())
                     };
 
-                let weight = Some((instance.weight as u32).max(1).min(128));
+                let weight = Some((instance.weight as u32).clamp(1, 128));
 
                 // Copy relevant labels
                 let labels: HashMap<String, String> = instance

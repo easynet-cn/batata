@@ -113,7 +113,7 @@ impl DefaultCmdbPlugin {
         let type_key = entity_type.to_string();
         self.type_index
             .entry(type_key)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(entity_id.to_string());
     }
 
@@ -129,7 +129,7 @@ impl DefaultCmdbPlugin {
             let label_key = format!("{}={}", key, value);
             self.label_index
                 .entry(label_key)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(entity_id.to_string());
         }
     }

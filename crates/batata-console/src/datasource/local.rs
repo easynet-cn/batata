@@ -739,7 +739,7 @@ impl ConsoleDataSource for LocalDataSource {
             .collect();
 
         let pages_available = if page_size > 0 {
-            (total as u64 + page_size as u64 - 1) / page_size as u64
+            (total as u64).div_ceil(page_size as u64)
         } else {
             1
         };
@@ -778,7 +778,7 @@ impl ConsoleDataSource for LocalDataSource {
             .collect();
 
         let pages_available = if page_size > 0 {
-            (total + page_size as u64 - 1) / page_size as u64
+            total.div_ceil(page_size as u64)
         } else {
             1
         };

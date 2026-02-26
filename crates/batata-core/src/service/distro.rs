@@ -472,26 +472,21 @@ impl DistroProtocol {
                         handles.push(tokio::spawn(async move {
                             match cm.send_request(&addr, request).await {
                                 Ok(response) => {
-                                    if let Some(body) = response.body {
-                                        if let Ok(verify_response) =
+                                    if let Some(body) = response.body
+                                        && let Ok(verify_response) =
                                             serde_json::from_slice::<DistroDataVerifyResponse>(
                                                 &body.value,
                                             )
-                                        {
-                                            if !verify_response.keys_need_sync.is_empty() {
-                                                debug!(
-                                                    "Verify: {} needs {} keys synced for type {}",
-                                                    addr,
-                                                    verify_response.keys_need_sync.len(),
-                                                    dt
-                                                );
-                                            }
-                                            return Some((
+                                    {
+                                        if !verify_response.keys_need_sync.is_empty() {
+                                            debug!(
+                                                "Verify: {} needs {} keys synced for type {}",
                                                 addr,
-                                                dt,
-                                                verify_response.keys_need_sync,
-                                            ));
+                                                verify_response.keys_need_sync.len(),
+                                                dt
+                                            );
                                         }
+                                        return Some((addr, dt, verify_response.keys_need_sync));
                                     }
                                     None
                                 }
@@ -598,46 +593,43 @@ impl DistroProtocol {
                         .await
                     {
                         Ok(response) => {
-                            if let Some(body) = response.body {
-                                if let Ok(snapshot_response) =
+                            if let Some(body) = response.body
+                                && let Ok(snapshot_response) =
                                     serde_json::from_slice::<DistroDataSnapshotResponse>(
                                         &body.value,
                                     )
-                                {
-                                    let item_count = snapshot_response.snapshot.len();
-                                    for item in snapshot_response.snapshot {
-                                        let internal_data_type = match item.data_type {
-                                            batata_api::distro::DistroDataType::NamingInstance => {
-                                                DistroDataType::NamingInstance
-                                            }
-                                            batata_api::distro::DistroDataType::Custom => {
-                                                DistroDataType::Custom(
-                                                    item.custom_type_name
-                                                        .clone()
-                                                        .unwrap_or_default(),
-                                                )
-                                            }
-                                        };
-
-                                        let data = DistroData::new(
-                                            internal_data_type,
-                                            item.key,
-                                            item.content.into_bytes(),
-                                            item.source,
-                                        );
-
-                                        if let Err(e) = handler.process_sync_data(data).await {
-                                            warn!("Failed to process snapshot data: {}", e);
+                            {
+                                let item_count = snapshot_response.snapshot.len();
+                                for item in snapshot_response.snapshot {
+                                    let internal_data_type = match item.data_type {
+                                        batata_api::distro::DistroDataType::NamingInstance => {
+                                            DistroDataType::NamingInstance
                                         }
-                                    }
+                                        batata_api::distro::DistroDataType::Custom => {
+                                            DistroDataType::Custom(
+                                                item.custom_type_name.clone().unwrap_or_default(),
+                                            )
+                                        }
+                                    };
 
-                                    info!(
-                                        "Loaded {} items for type {} from {}",
-                                        item_count, data_type, member_address
+                                    let data = DistroData::new(
+                                        internal_data_type,
+                                        item.key,
+                                        item.content.into_bytes(),
+                                        item.source,
                                     );
-                                    loaded = true;
-                                    break;
+
+                                    if let Err(e) = handler.process_sync_data(data).await {
+                                        warn!("Failed to process snapshot data: {}", e);
+                                    }
                                 }
+
+                                info!(
+                                    "Loaded {} items for type {} from {}",
+                                    item_count, data_type, member_address
+                                );
+                                loaded = true;
+                                break;
                             }
                         }
                         Err(e) => {
@@ -715,19 +707,18 @@ impl DistroProtocol {
         match client_manager.send_request(target, request).await {
             Ok(response) => {
                 // Parse response to check if it's successful
-                if let Some(body) = response.body {
-                    if let Ok(sync_response) =
+                if let Some(body) = response.body
+                    && let Ok(sync_response) =
                         serde_json::from_slice::<DistroDataSyncResponse>(&body.value)
-                    {
-                        if sync_response.result_code() == 200 {
-                            debug!("Distro sync successful for key={} to {}", data.key, target);
-                            return Ok(());
-                        } else {
-                            return Err(format!(
-                                "Distro sync failed: {}",
-                                sync_response.response.message
-                            ));
-                        }
+                {
+                    if sync_response.result_code() == 200 {
+                        debug!("Distro sync successful for key={} to {}", data.key, target);
+                        return Ok(());
+                    } else {
+                        return Err(format!(
+                            "Distro sync failed: {}",
+                            sync_response.response.message
+                        ));
                     }
                 }
                 // If we can't parse the response, assume success

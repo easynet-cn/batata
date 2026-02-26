@@ -2,6 +2,7 @@
 //!
 //! Tests for gRPC connection management handlers
 
+#[allow(unused_imports)]
 use std::collections::HashMap;
 
 /// Test health check handler

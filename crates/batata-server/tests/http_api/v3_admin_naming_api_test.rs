@@ -174,10 +174,10 @@ async fn test_v3_admin_create_duplicate_service() {
         .await;
 
     // May return HTTP 400 or response with non-zero code
-    match result {
-        Ok(response) => assert_ne!(response["code"], 0, "Duplicate create should fail"),
-        Err(_) => {} // HTTP error is also acceptable
+    if let Ok(response) = result {
+        assert_ne!(response["code"], 0, "Duplicate create should fail");
     }
+    // HTTP error is also acceptable
 }
 
 // ========== Instance CRUD ==========

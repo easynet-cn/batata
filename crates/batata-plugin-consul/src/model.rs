@@ -416,18 +416,18 @@ impl AgentServiceCheck {
         }
 
         // Validate status if provided
-        if let Some(ref status) = self.status {
-            if !["passing", "warning", "critical"].contains(&status.as_str()) {
-                return Err(format!(
-                    "Invalid status '{}': must be 'passing', 'warning', or 'critical'",
-                    status
-                ));
-            }
+        if let Some(ref status) = self.status
+            && !["passing", "warning", "critical"].contains(&status.as_str())
+        {
+            return Err(format!(
+                "Invalid status '{}': must be 'passing', 'warning', or 'critical'",
+                status
+            ));
         }
 
         // Interval is required for all check types except TTL
         // Matches Consul's logic: if intervalCheck && c.Interval <= 0
-        if !self.ttl.is_some() && self.interval.is_none() {
+        if self.ttl.is_none() && self.interval.is_none() {
             return Err("Interval is required for HTTP, TCP, and GRPC checks".to_string());
         }
 
@@ -437,10 +437,10 @@ impl AgentServiceCheck {
     /// Generate check ID following Consul's logic
     /// If check_id is not provided, generate as: "service:{service_id}" or "service:{service_id}:{index}"
     pub fn generate_check_id(&self, service_id: &str, index: usize, total_checks: usize) -> String {
-        if let Some(ref id) = self.check_id {
-            if !id.is_empty() {
-                return id.clone();
-            }
+        if let Some(ref id) = self.check_id
+            && !id.is_empty()
+        {
+            return id.clone();
         }
 
         // Consul's auto-generation logic

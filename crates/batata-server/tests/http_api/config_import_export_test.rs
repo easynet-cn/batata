@@ -218,13 +218,13 @@ async fn test_batch_import() {
     let client = authenticated_client().await;
 
     // Import multiple configs
-    let configs = vec![
+    let configs = [
         ("batch_import1", "value1"),
         ("batch_import2", "value2"),
         ("batch_import3", "value3"),
     ];
 
-    for (i, (data_id_prefix, value)) in configs.iter().enumerate() {
+    for (data_id_prefix, value) in configs.iter() {
         let data_id = format!("{}_{}", data_id_prefix, unique_test_timestamp());
         let _: serde_json::Value = client
             .post_form(

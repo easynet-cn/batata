@@ -14,19 +14,15 @@ use crate::Instance;
 /// Selector type for filtering instances
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub enum SelectorType {
     /// No filtering (return all instances)
+    #[default]
     None,
     /// Filter by label equality
     Label,
     /// Filter by expression (more complex queries)
     Expression,
-}
-
-impl Default for SelectorType {
-    fn default() -> Self {
-        SelectorType::None
-    }
 }
 
 /// Label requirement for selector
@@ -111,11 +107,11 @@ impl LabelRequirement {
         match &self.operator {
             LabelOperator::Equals => metadata
                 .get(&self.key)
-                .map(|v| self.values.first().map_or(false, |expected| v == expected))
+                .map(|v| self.values.first() == Some(v))
                 .unwrap_or(false),
             LabelOperator::NotEquals => metadata
                 .get(&self.key)
-                .map(|v| self.values.first().map_or(true, |expected| v != expected))
+                .map(|v| self.values.first() != Some(v))
                 .unwrap_or(true),
             LabelOperator::In => metadata
                 .get(&self.key)
@@ -144,7 +140,7 @@ impl LabelRequirement {
             }
             LabelOperator::GreaterThan => {
                 if let Some(expected) = self.values.first() {
-                    metadata.get(&self.key).map_or(false, |v| {
+                    metadata.get(&self.key).is_some_and(|v| {
                         v.parse::<f64>()
                             .ok()
                             .and_then(|val| expected.parse::<f64>().ok().map(|exp| val > exp))
@@ -156,7 +152,7 @@ impl LabelRequirement {
             }
             LabelOperator::LessThan => {
                 if let Some(expected) = self.values.first() {
-                    metadata.get(&self.key).map_or(false, |v| {
+                    metadata.get(&self.key).is_some_and(|v| {
                         v.parse::<f64>()
                             .ok()
                             .and_then(|val| expected.parse::<f64>().ok().map(|exp| val < exp))
@@ -292,8 +288,8 @@ impl ServiceSelector {
                 // Check if there's more after the closing paren
                 if end_idx + 1 < expression.len() {
                     let rest = expression[end_idx + 1..].trim();
-                    if rest.starts_with(',') {
-                        let more = Self::parse_expression(&rest[1..])?;
+                    if let Some(stripped) = rest.strip_prefix(',') {
+                        let more = Self::parse_expression(stripped)?;
                         requirements.extend(more);
                     }
                 }
@@ -317,8 +313,8 @@ impl ServiceSelector {
                 // Check if there's more after the closing paren
                 if end_idx + 1 < expression.len() {
                     let rest = expression[end_idx + 1..].trim();
-                    if rest.starts_with(',') {
-                        let more = Self::parse_expression(&rest[1..])?;
+                    if let Some(stripped) = rest.strip_prefix(',') {
+                        let more = Self::parse_expression(stripped)?;
                         requirements.extend(more);
                     }
                 }
@@ -350,8 +346,8 @@ impl ServiceSelector {
             }
 
             // Parse "!key" format (does not exist)
-            if part.starts_with('!') {
-                let key = part[1..].trim();
+            if let Some(stripped) = part.strip_prefix('!') {
+                let key = stripped.trim();
                 requirements.push(LabelRequirement::does_not_exist(key));
                 continue;
             }
@@ -375,12 +371,13 @@ impl ServiceSelector {
             }
             SelectorType::Expression => {
                 // Parse expression on-demand if requirements are empty
-                if self.requirements.is_empty() && !self.expression.is_empty() {
-                    if let Ok(requirements) = Self::parse_expression(&self.expression) {
-                        return requirements
-                            .iter()
-                            .all(|req| req.matches(&instance.metadata));
-                    }
+                if self.requirements.is_empty()
+                    && !self.expression.is_empty()
+                    && let Ok(requirements) = Self::parse_expression(&self.expression)
+                {
+                    return requirements
+                        .iter()
+                        .all(|req| req.matches(&instance.metadata));
                 }
                 self.requirements
                     .iter()

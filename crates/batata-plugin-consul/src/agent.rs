@@ -149,7 +149,7 @@ pub async fn register_service(
         Ok(checks) => checks,
         Err(e) => {
             return HttpResponse::BadRequest()
-                .json(ConsulError::new(&format!("Validation failed: {}", e)));
+                .json(ConsulError::new(format!("Validation failed: {}", e)));
         }
     };
 
@@ -476,10 +476,10 @@ pub async fn set_service_maintenance(
             notes: Some(reason),
             ..Default::default()
         };
-        let _ = health_service.register_check(registration);
+        let _ = health_service.register_check(registration).await;
     } else {
         // Remove the maintenance check
-        let _ = health_service.deregister_check(&check_id);
+        let _ = health_service.deregister_check(&check_id).await;
     }
 
     HttpResponse::Ok().finish()
@@ -989,10 +989,10 @@ pub async fn agent_maintenance(
             notes: Some(reason.clone()),
             ..Default::default()
         };
-        let _ = health_service.register_check(registration);
+        let _ = health_service.register_check(registration).await;
     } else {
         // Remove the maintenance check
-        let _ = health_service.deregister_check(&check_id);
+        let _ = health_service.deregister_check(&check_id).await;
     }
 
     tracing::info!(

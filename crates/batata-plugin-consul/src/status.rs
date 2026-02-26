@@ -128,7 +128,6 @@ mod tests {
     #[test]
     fn test_status_endpoints_exist() {
         // Basic test to ensure the module compiles
-        assert!(true);
     }
 
     #[test]

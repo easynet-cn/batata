@@ -173,6 +173,7 @@ pub async fn get_all_versions(
 }
 
 /// Search history with advanced filters
+#[allow(clippy::too_many_arguments)]
 pub async fn search_with_filters(
     db: &DatabaseConnection,
     data_id: &str,

@@ -266,8 +266,10 @@ mod tests {
 
     #[test]
     fn test_ldap_auth_service_configured() {
-        let mut config = LdapConfig::default();
-        config.url = "ldap://localhost:389".to_string();
+        let config = LdapConfig {
+            url: "ldap://localhost:389".to_string(),
+            ..Default::default()
+        };
         let service = LdapAuthService::new(config);
         assert!(service.is_configured());
     }

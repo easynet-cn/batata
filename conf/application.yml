@@ -262,9 +262,12 @@ nacos.console.contextPath:
 nacos.console.remote.server.context-path: /nacos
 
 ### Remote Server configurations (used when deployment type is `console`)
-### Server address for remote console mode
+### Server addresses are resolved in order: nacos.member.list → conf/cluster.conf → server_addr below.
+### Typically, cluster.conf or nacos.member.list is already configured for cluster mode,
+### so no extra configuration is needed for console remote mode.
 #nacos.console.remote.server_addr: http://127.0.0.1:8848
-### Authentication credentials for remote server
+### Authentication: primary auth uses server identity headers (nacos.core.auth.server.identity.key/value).
+### JWT username/password is used as fallback when server identity is not configured.
 #nacos.console.remote.username: nacos
 #nacos.console.remote.password: nacos
 
@@ -307,7 +310,10 @@ nacos.core.auth.console.enabled: true
 nacos.core.auth.caching.enabled: true
 
 ### worked when nacos.core.auth.enabled=true
-### The two properties is the white list for auth and used by identity the request from other server.
+### Server identity key/value for trusted server-to-server communication.
+### Used by: (1) InnerApi auth bypass, (2) Console remote mode → Server trust (no JWT login needed).
+### When console is deployed separately (-d console), it sends these headers to the server,
+### and the server's AdminApi endpoints accept them as proof of identity (bypassing JWT).
 nacos.core.auth.server.identity.key: nacos-server-key
 nacos.core.auth.server.identity.value: nacos-server-value
 
