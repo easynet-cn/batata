@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
-    api::config::model::{ConfigBasicInfo, ConfigDetailInfo},
+    api::config::model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo},
     auth::model::AuthContext,
     config::{
         export_model::{ExportRequest, ImportRequest, ImportResult},
@@ -657,6 +657,242 @@ async fn import_with_persistence(
     Ok(result)
 }
 
+// ============================================================================
+// Config Beta (Gray Release) Admin Endpoints
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BetaQueryParam {
+    pub data_id: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct BetaPublishForm {
+    pub data_id: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+    pub content: String,
+    #[serde(default)]
+    pub beta_ips: String,
+    #[serde(default)]
+    pub app_name: String,
+    #[serde(default)]
+    pub src_user: String,
+    #[serde(default)]
+    pub config_tags: String,
+    #[serde(default)]
+    pub desc: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub encrypted_data_key: String,
+}
+
+/// GET /v3/admin/cs/config/beta
+#[get("beta")]
+async fn get_beta_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BetaQueryParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let result = match data
+        .persistence()
+        .config_find_gray_one(&params.data_id, &params.group_name, &namespace_id)
+        .await
+    {
+        Ok(config) => config.map(|gray| ConfigGrayInfo {
+            config_detail_info: ConfigDetailInfo {
+                config_basic_info: ConfigBasicInfo {
+                    id: 0,
+                    namespace_id: gray.tenant.clone(),
+                    group_name: gray.group.clone(),
+                    data_id: gray.data_id.clone(),
+                    md5: gray.md5.clone(),
+                    r#type: String::new(),
+                    app_name: gray.app_name.clone(),
+                    create_time: gray.created_time,
+                    modify_time: gray.modified_time,
+                },
+                content: gray.content.clone(),
+                desc: String::new(),
+                encrypted_data_key: gray.encrypted_data_key.clone(),
+                create_user: gray.src_user.clone(),
+                create_ip: gray.src_ip.clone(),
+                config_tags: String::new(),
+            },
+            gray_name: gray.gray_name,
+            gray_rule: gray.gray_rule,
+        }),
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
+}
+
+/// POST /v3/admin/cs/config/beta
+#[post("beta")]
+async fn publish_beta_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<BetaPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    if form.data_id.is_empty() || form.content.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameters 'dataId' and 'content' must be present",
+        );
+    }
+
+    let namespace_id = if form.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        form.namespace_id.clone()
+    };
+
+    let group_name = if form.group_name.is_empty() {
+        "DEFAULT_GROUP".to_string()
+    } else {
+        form.group_name.clone()
+    };
+
+    let src_user = if form.src_user.is_empty() {
+        req.extensions()
+            .get::<AuthContext>()
+            .map(|ctx| ctx.username.clone())
+            .unwrap_or_default()
+    } else {
+        form.src_user.clone()
+    };
+
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    // Build gray rule from betaIps
+    let gray_rule_info = batata_config::model::gray_rule::GrayRulePersistInfo::new_beta(
+        &form.beta_ips,
+        batata_config::model::gray_rule::BetaGrayRule::PRIORITY,
+    );
+    let gray_rule = match gray_rule_info.to_json() {
+        Ok(json) => json,
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                error::SERVER_ERROR.code,
+                error::SERVER_ERROR.message.to_string(),
+                format!("Failed to serialize gray rule: {}", e),
+            );
+        }
+    };
+
+    if let Err(e) = data
+        .persistence()
+        .config_create_or_update_gray(
+            &form.data_id,
+            &group_name,
+            &namespace_id,
+            &form.content,
+            "beta",
+            &gray_rule,
+            &src_user,
+            &src_ip,
+            &form.app_name,
+            &form.encrypted_data_key,
+        )
+        .await
+    {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+
+    model::common::Result::<bool>::http_success(true)
+}
+
+/// DELETE /v3/admin/cs/config/beta
+#[delete("beta")]
+async fn stop_beta_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BetaQueryParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    let src_user = req
+        .extensions()
+        .get::<AuthContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
+
+    if let Err(e) = data
+        .persistence()
+        .config_delete_gray(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            "beta",
+            &client_ip,
+            &src_user,
+        )
+        .await
+    {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+
+    model::common::Result::<bool>::http_success(true)
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/config")
         .service(get_config)
@@ -666,4 +902,7 @@ pub fn routes() -> actix_web::Scope {
         .service(delete_config)
         .service(import_config)
         .service(export_config)
+        .service(get_beta_config)
+        .service(publish_beta_config)
+        .service(stop_beta_config)
 }

@@ -1,6 +1,7 @@
 // Config module gRPC handlers
 // Implements handlers for configuration management requests
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tonic::Status;
@@ -13,6 +14,7 @@ use batata_core::{
         remote::ConnectionManager,
     },
 };
+use batata_persistence::PersistenceService;
 
 use crate::{
     api::{
@@ -35,6 +37,79 @@ use crate::{
         rpc::{AuthRequirement, PayloadHandler},
     },
 };
+
+/// Build client labels from the connection metadata for gray rule matching.
+fn build_client_labels(connection: &Connection) -> HashMap<String, String> {
+    let mut labels = connection.meta_info.get_app_labels();
+    // Add client IP as a label for beta (IP-based) gray rules
+    let client_ip = if !connection.meta_info.client_ip.is_empty() {
+        &connection.meta_info.client_ip
+    } else {
+        &connection.meta_info.remote_ip
+    };
+    labels.insert(
+        batata_config::model::gray_rule::labels::CLIENT_IP.to_string(),
+        client_ip.to_string(),
+    );
+    labels
+}
+
+/// Find a matching gray config for the given connection and config key.
+/// Returns (content, md5, encrypted_data_key, last_modified) if a gray config matches.
+async fn find_matching_gray_config(
+    persistence: &dyn PersistenceService,
+    data_id: &str,
+    group: &str,
+    tenant: &str,
+    labels: &HashMap<String, String>,
+) -> Option<(String, String, String, i64)> {
+    let grays = match persistence
+        .config_find_all_grays(data_id, group, tenant)
+        .await
+    {
+        Ok(g) => g,
+        Err(e) => {
+            debug!(
+                "Failed to find gray configs for {}/{}/{}: {}",
+                data_id, group, tenant, e
+            );
+            return None;
+        }
+    };
+
+    if grays.is_empty() {
+        return None;
+    }
+
+    // Parse and sort by priority (higher priority first)
+    let mut candidates: Vec<_> = grays
+        .iter()
+        .filter_map(|gray| {
+            let rule = batata_config::model::gray_rule::parse_gray_rule(&gray.gray_rule)?;
+            Some((gray, rule))
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| b.1.priority().cmp(&a.1.priority()));
+
+    // Return the first matching gray config
+    for (gray, rule) in candidates {
+        if rule.matches(labels) {
+            debug!(
+                "Gray config matched: data_id={}, group={}, tenant={}, gray_name={}",
+                data_id, group, tenant, gray.gray_name
+            );
+            return Some((
+                gray.content.clone(),
+                gray.md5.clone(),
+                gray.encrypted_data_key.clone(),
+                gray.modified_time,
+            ));
+        }
+    }
+
+    None
+}
 
 // Handler for ConfigQueryRequest - queries configuration by dataId, group, tenant
 #[derive(Clone)]
@@ -63,6 +138,21 @@ impl PayloadHandler for ConfigQueryHandler {
 
         let persistence = self.app_state.persistence();
 
+        // Check for matching gray config first
+        let labels = build_client_labels(__connection);
+        if let Some((content, md5, encrypted_data_key, last_modified)) =
+            find_matching_gray_config(persistence, data_id, group, tenant, &labels).await
+        {
+            let mut response = ConfigQueryResponse::new();
+            response.response.request_id = request_id;
+            response.content = content;
+            response.md5 = md5;
+            response.encrypted_data_key = encrypted_data_key;
+            response.last_modified = last_modified;
+            return Ok(response.build_payload());
+        }
+
+        // Fall through to formal config query
         match persistence.config_find_one(data_id, group, tenant).await {
             Ok(Some(config)) => {
                 let mut response = ConfigQueryResponse::new();
@@ -167,6 +257,8 @@ impl PayloadHandler for ConfigPublishHandler {
         let mut schema = "";
         let mut encrypted_data_key = "";
         let mut src_user = "";
+        let mut beta_ips = "";
+        let mut tag = "";
 
         for (key, value) in &request.addition_map {
             match key.as_str() {
@@ -179,6 +271,8 @@ impl PayloadHandler for ConfigPublishHandler {
                 "schema" => schema = value.as_str(),
                 "encryptedDataKey" => encrypted_data_key = value.as_str(),
                 "src_user" => src_user = value.as_str(),
+                "betaIps" => beta_ips = value.as_str(),
+                "tag" => tag = value.as_str(),
                 _ => {}
             }
         }
@@ -196,6 +290,109 @@ impl PayloadHandler for ConfigPublishHandler {
 
         let persistence = self.app_state.persistence();
 
+        // Handle gray (beta/tag) publish
+        if !beta_ips.is_empty() {
+            let gray_rule_info = batata_config::model::gray_rule::GrayRulePersistInfo::new_beta(
+                beta_ips,
+                batata_config::model::gray_rule::BetaGrayRule::PRIORITY,
+            );
+            let gray_rule = match gray_rule_info.to_json() {
+                Ok(json) => json,
+                Err(e) => {
+                    let mut response = ConfigPublishResponse::new();
+                    response.response.request_id = request_id;
+                    response.response.result_code = ResponseCode::Fail.code();
+                    response.response.error_code = ResponseCode::Fail.code();
+                    response.response.success = false;
+                    response.response.message = format!("Failed to serialize gray rule: {}", e);
+                    return Ok(response.build_payload());
+                }
+            };
+
+            match persistence
+                .config_create_or_update_gray(
+                    data_id,
+                    group,
+                    tenant,
+                    content,
+                    "beta",
+                    &gray_rule,
+                    src_user,
+                    src_ip,
+                    app_name,
+                    encrypted_data_key,
+                )
+                .await
+            {
+                Ok(_) => {
+                    let mut response = ConfigPublishResponse::new();
+                    response.response.request_id = request_id;
+                    return Ok(response.build_payload());
+                }
+                Err(e) => {
+                    let mut response = ConfigPublishResponse::new();
+                    response.response.request_id = request_id;
+                    response.response.result_code = ResponseCode::Fail.code();
+                    response.response.error_code = ResponseCode::Fail.code();
+                    response.response.success = false;
+                    response.response.message = e.to_string();
+                    return Ok(response.build_payload());
+                }
+            }
+        }
+
+        if !tag.is_empty() {
+            let gray_rule_info = batata_config::model::gray_rule::GrayRulePersistInfo::new_tag(
+                tag,
+                batata_config::model::gray_rule::TagGrayRule::PRIORITY,
+            );
+            let gray_rule = match gray_rule_info.to_json() {
+                Ok(json) => json,
+                Err(e) => {
+                    let mut response = ConfigPublishResponse::new();
+                    response.response.request_id = request_id;
+                    response.response.result_code = ResponseCode::Fail.code();
+                    response.response.error_code = ResponseCode::Fail.code();
+                    response.response.success = false;
+                    response.response.message = format!("Failed to serialize gray rule: {}", e);
+                    return Ok(response.build_payload());
+                }
+            };
+
+            let gray_name = format!("tag_{}", tag);
+            match persistence
+                .config_create_or_update_gray(
+                    data_id,
+                    group,
+                    tenant,
+                    content,
+                    &gray_name,
+                    &gray_rule,
+                    src_user,
+                    src_ip,
+                    app_name,
+                    encrypted_data_key,
+                )
+                .await
+            {
+                Ok(_) => {
+                    let mut response = ConfigPublishResponse::new();
+                    response.response.request_id = request_id;
+                    return Ok(response.build_payload());
+                }
+                Err(e) => {
+                    let mut response = ConfigPublishResponse::new();
+                    response.response.request_id = request_id;
+                    response.response.result_code = ResponseCode::Fail.code();
+                    response.response.error_code = ResponseCode::Fail.code();
+                    response.response.success = false;
+                    response.response.message = e.to_string();
+                    return Ok(response.build_payload());
+                }
+            }
+        }
+
+        // Normal (formal) config publish
         match persistence
             .config_create_or_update(
                 data_id,
@@ -616,6 +813,9 @@ impl PayloadHandler for ConfigBatchListenHandler {
         let connection_id = &_connection.meta_info.connection_id;
         let client_ip = &_connection.meta_info.remote_ip;
 
+        // Build client labels once for gray matching
+        let labels = build_client_labels(_connection);
+
         let mut changed_configs = Vec::new();
 
         // Check each config in the listen list for changes
@@ -635,7 +835,21 @@ impl PayloadHandler for ConfigBatchListenHandler {
                 subscriber_manager.unsubscribe(connection_id, &config_key);
             }
 
-            // Query current config and compare MD5
+            // First check for matching gray config
+            if let Some((_, gray_md5, _, _)) =
+                find_matching_gray_config(persistence, data_id, group, tenant, &labels).await
+            {
+                if client_md5 != &gray_md5 {
+                    changed_configs.push(ConfigContext {
+                        data_id: data_id.clone(),
+                        group: group.clone(),
+                        tenant: tenant.clone(),
+                    });
+                }
+                continue;
+            }
+
+            // Fall through to formal config comparison
             if let Ok(Some(config)) = persistence.config_find_one(data_id, group, tenant).await {
                 let server_md5 = &config.md5;
 

@@ -82,6 +82,60 @@ pub async fn get_config(
 
     // Get config from persistence service
     let persistence = data.persistence();
+
+    // Check for matching gray config by client IP
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+    let mut labels = std::collections::HashMap::new();
+    labels.insert(
+        batata_config::model::gray_rule::labels::CLIENT_IP.to_string(),
+        client_ip,
+    );
+
+    if let Ok(grays) = persistence
+        .config_find_all_grays(&params.data_id, &params.group, namespace_id)
+        .await
+    {
+        // Parse and sort by priority (higher priority first)
+        let mut candidates: Vec<_> = grays
+            .iter()
+            .filter_map(|gray| {
+                let rule = batata_config::model::gray_rule::parse_gray_rule(&gray.gray_rule)?;
+                Some((gray, rule))
+            })
+            .collect();
+        candidates.sort_by(|a, b| b.1.priority().cmp(&a.1.priority()));
+
+        for (gray, rule) in candidates {
+            if rule.matches(&labels) {
+                let response = ConfigResponse {
+                    id: "0".to_string(),
+                    data_id: gray.data_id.clone(),
+                    group: gray.group.clone(),
+                    content: gray.content.clone(),
+                    md5: gray.md5.clone(),
+                    encrypted_data_key: if gray.encrypted_data_key.is_empty() {
+                        None
+                    } else {
+                        Some(gray.encrypted_data_key.clone())
+                    },
+                    tenant: gray.tenant.clone(),
+                    app_name: if gray.app_name.is_empty() {
+                        None
+                    } else {
+                        Some(gray.app_name.clone())
+                    },
+                    r#type: None,
+                };
+                return Result::<ConfigResponse>::http_success(response);
+            }
+        }
+    }
+
+    // Fall through to formal config query
     match persistence
         .config_find_one(&params.data_id, &params.group, namespace_id)
         .await
@@ -188,8 +242,60 @@ pub async fn publish_config(
 
     let src_user = form.src_user.clone().unwrap_or_default();
 
-    // Publish config using persistence service
     let persistence = data.persistence();
+
+    // Handle gray (beta) publish if betaIps is provided
+    if let Some(ref beta_ips) = form.beta_ips
+        && !beta_ips.is_empty()
+    {
+        let gray_rule_info = batata_config::model::gray_rule::GrayRulePersistInfo::new_beta(
+            beta_ips,
+            batata_config::model::gray_rule::BetaGrayRule::PRIORITY,
+        );
+        let gray_rule = match gray_rule_info.to_json() {
+            Ok(json) => json,
+            Err(e) => {
+                return Result::<bool>::http_response(
+                    500,
+                    500,
+                    format!("Failed to serialize gray rule: {}", e),
+                    false,
+                );
+            }
+        };
+
+        match persistence
+            .config_create_or_update_gray(
+                &form.data_id,
+                &form.group,
+                namespace_id,
+                &form.content,
+                "beta",
+                &gray_rule,
+                &src_user,
+                &src_ip,
+                form.app_name.as_deref().unwrap_or(""),
+                "",
+            )
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    data_id = %form.data_id,
+                    group = %form.group,
+                    namespace_id = %namespace_id,
+                    "Beta config published successfully"
+                );
+                return Result::<bool>::http_success(true);
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to publish beta config");
+                return Result::<bool>::http_response(500, 500, e.to_string(), false);
+            }
+        }
+    }
+
+    // Normal (formal) config publish
     match persistence
         .config_create_or_update(
             &form.data_id,

@@ -101,11 +101,14 @@ pub enum RaftRequest {
         src_ip: Option<String>,
     },
 
-    /// Remove gray (beta) configs for a data_id/group/tenant
+    /// Remove gray (beta) configs for a data_id/group/tenant (optionally by gray_name)
     ConfigGrayRemove {
         data_id: String,
         group: String,
         tenant: String,
+        /// If non-empty, only delete the specific gray config with this name
+        #[serde(default)]
+        gray_name: String,
     },
 
     // ==================== Config History Operations ====================

@@ -135,6 +135,34 @@ pub trait ConsoleDataSource: Send + Sync {
         namespace_id: &str,
     ) -> anyhow::Result<Option<ConfigGrayInfo>>;
 
+    /// Create or update a gray/beta config
+    #[allow(clippy::too_many_arguments)]
+    async fn config_create_or_update_gray(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        content: &str,
+        gray_name: &str,
+        gray_rule: &str,
+        src_user: &str,
+        src_ip: &str,
+        app_name: &str,
+        encrypted_data_key: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Delete a gray/beta config
+    #[allow(clippy::too_many_arguments)]
+    async fn config_delete_gray(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        gray_name: &str,
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<()>;
+
     /// Export configs
     async fn config_export(
         &self,

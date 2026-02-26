@@ -80,6 +80,9 @@ pub struct ConfigPublishParam {
     /// Schema for config validation (optional)
     #[serde(default)]
     pub schema: Option<String>,
+    /// Beta IPs for gray release (optional)
+    #[serde(default, alias = "betaIps")]
+    pub beta_ips: Option<String>,
 }
 
 impl ConfigPublishParam {

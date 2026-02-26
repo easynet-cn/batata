@@ -401,15 +401,46 @@ impl ConfigPersistence for EmbeddedPersistService {
         Ok(true)
     }
 
+    async fn config_find_all_grays(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigGrayStorageData>> {
+        let jsons = self
+            .reader
+            .get_all_config_grays(data_id, group, namespace_id)?;
+        Ok(jsons.iter().map(Self::json_to_gray).collect())
+    }
+
     async fn config_delete_gray(
         &self,
         data_id: &str,
         group: &str,
         namespace_id: &str,
+        gray_name: &str,
         _client_ip: &str,
         _src_user: &str,
     ) -> anyhow::Result<bool> {
-        // Scan and delete all gray configs for this data_id/group/namespace
+        if !gray_name.is_empty() {
+            // Delete a specific gray config by name
+            let key = RocksStateMachine::config_gray_key(data_id, group, namespace_id, gray_name);
+            let cf = self.cf(CF_CONFIG_GRAY)?;
+            let exists = self
+                .db
+                .get_cf(cf, key.as_bytes())
+                .map_err(|e| anyhow::anyhow!("RocksDB get error: {}", e))?
+                .is_some();
+            if exists {
+                self.db
+                    .delete_cf(cf, key.as_bytes())
+                    .map_err(|e| anyhow::anyhow!("RocksDB delete error: {}", e))?;
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+
+        // Delete all gray configs for this data_id/group/namespace
         let prefix = format!("{}@@{}@@{}@@", namespace_id, group, data_id);
         let cf = self.cf(CF_CONFIG_GRAY)?;
         let mut keys_to_delete = Vec::new();
@@ -1490,7 +1521,7 @@ mod tests {
 
         // Delete gray config
         let deleted = svc
-            .config_delete_gray("gray-test", "G", "T", "127.0.0.1", "admin")
+            .config_delete_gray("gray-test", "G", "T", "", "127.0.0.1", "admin")
             .await
             .unwrap();
         assert!(deleted);

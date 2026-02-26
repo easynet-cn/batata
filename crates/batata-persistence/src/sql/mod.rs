@@ -620,20 +620,58 @@ impl ConfigPersistence for ExternalDbPersistService {
         Ok(true)
     }
 
+    async fn config_find_all_grays(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigGrayStorageData>> {
+        let results = config_info_gray::Entity::find()
+            .filter(config_info_gray::Column::DataId.eq(data_id))
+            .filter(config_info_gray::Column::GroupId.eq(group))
+            .filter(config_info_gray::Column::TenantId.eq(namespace_id))
+            .all(&self.db)
+            .await?;
+
+        Ok(results
+            .into_iter()
+            .map(|m| ConfigGrayStorageData {
+                data_id: m.data_id,
+                group: m.group_id,
+                tenant: m.tenant_id.unwrap_or_default(),
+                content: m.content,
+                md5: m.md5.unwrap_or_default(),
+                app_name: m.app_name.unwrap_or_default(),
+                gray_name: m.gray_name,
+                gray_rule: m.gray_rule,
+                encrypted_data_key: m.encrypted_data_key,
+                src_user: m.src_user.unwrap_or_default(),
+                src_ip: m.src_ip.unwrap_or_default(),
+                created_time: m.gmt_create.and_utc().timestamp_millis(),
+                modified_time: m.gmt_modified.and_utc().timestamp_millis(),
+            })
+            .collect())
+    }
+
     async fn config_delete_gray(
         &self,
         data_id: &str,
         group: &str,
         namespace_id: &str,
+        gray_name: &str,
         client_ip: &str,
         src_user: &str,
     ) -> anyhow::Result<bool> {
-        let result = config_info_gray::Entity::delete_many()
+        let mut query = config_info_gray::Entity::delete_many()
             .filter(config_info_gray::Column::DataId.eq(data_id))
             .filter(config_info_gray::Column::GroupId.eq(group))
-            .filter(config_info_gray::Column::TenantId.eq(namespace_id))
-            .exec(&self.db)
-            .await?;
+            .filter(config_info_gray::Column::TenantId.eq(namespace_id));
+
+        if !gray_name.is_empty() {
+            query = query.filter(config_info_gray::Column::GrayName.eq(gray_name));
+        }
+
+        let result = query.exec(&self.db).await?;
 
         let _ = (client_ip, src_user); // Used in history if needed
 

@@ -88,12 +88,21 @@ pub trait ConfigPersistence: Send + Sync {
         encrypted_data_key: &str,
     ) -> anyhow::Result<bool>;
 
-    /// Delete gray/beta config
+    /// Find all gray configs for a given data_id/group/namespace
+    async fn config_find_all_grays(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigGrayStorageData>>;
+
+    /// Delete gray/beta config (optionally filtered by gray_name)
     async fn config_delete_gray(
         &self,
         data_id: &str,
         group: &str,
         namespace_id: &str,
+        gray_name: &str,
         client_ip: &str,
         src_user: &str,
     ) -> anyhow::Result<bool>;

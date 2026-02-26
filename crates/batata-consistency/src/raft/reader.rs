@@ -219,6 +219,17 @@ impl RocksDbReader {
         Ok(None)
     }
 
+    /// Get all gray configs for a data_id/group/tenant
+    pub fn get_all_config_grays(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let prefix = format!("{}@@{}@@{}@@", tenant, group, data_id);
+        self.iterate_cf_values_with_prefix(CF_CONFIG_GRAY, &prefix)
+    }
+
     // ==================== Config History Operations ====================
 
     /// Get a config history entry by ID

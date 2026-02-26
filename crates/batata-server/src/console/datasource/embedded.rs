@@ -272,6 +272,58 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
         }))
     }
 
+    async fn config_create_or_update_gray(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        content: &str,
+        gray_name: &str,
+        gray_rule: &str,
+        src_user: &str,
+        src_ip: &str,
+        app_name: &str,
+        encrypted_data_key: &str,
+    ) -> anyhow::Result<()> {
+        self.persistence
+            .config_create_or_update_gray(
+                data_id,
+                group_name,
+                namespace_id,
+                content,
+                gray_name,
+                gray_rule,
+                src_user,
+                src_ip,
+                app_name,
+                encrypted_data_key,
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn config_delete_gray(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        gray_name: &str,
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<()> {
+        self.persistence
+            .config_delete_gray(
+                data_id,
+                group_name,
+                namespace_id,
+                gray_name,
+                client_ip,
+                src_user,
+            )
+            .await?;
+        Ok(())
+    }
+
     async fn config_export(
         &self,
         namespace_id: &str,

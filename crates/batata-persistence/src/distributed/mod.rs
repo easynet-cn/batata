@@ -234,11 +234,28 @@ impl ConfigPersistence for DistributedPersistService {
         Ok(true)
     }
 
+    async fn config_find_all_grays(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigGrayStorageData>> {
+        self.ensure_consistent_read().await?;
+        let jsons = self
+            .reader
+            .get_all_config_grays(data_id, group, namespace_id)?;
+        Ok(jsons
+            .iter()
+            .map(EmbeddedPersistService::json_to_gray)
+            .collect())
+    }
+
     async fn config_delete_gray(
         &self,
         data_id: &str,
         group: &str,
         namespace_id: &str,
+        gray_name: &str,
         _client_ip: &str,
         _src_user: &str,
     ) -> anyhow::Result<bool> {
@@ -246,6 +263,7 @@ impl ConfigPersistence for DistributedPersistService {
             data_id: data_id.to_string(),
             group: group.to_string(),
             tenant: namespace_id.to_string(),
+            gray_name: gray_name.to_string(),
         };
         self.raft_write(request).await?;
         Ok(true)

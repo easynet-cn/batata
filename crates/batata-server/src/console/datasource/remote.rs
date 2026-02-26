@@ -626,6 +626,53 @@ impl ConsoleDataSource for RemoteDataSource {
         Ok(result.map(convert_config_gray_info))
     }
 
+    async fn config_create_or_update_gray(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        content: &str,
+        _gray_name: &str,
+        _gray_rule: &str,
+        src_user: &str,
+        _src_ip: &str,
+        app_name: &str,
+        _encrypted_data_key: &str,
+    ) -> anyhow::Result<()> {
+        // Remote mode delegates to MaintainerClient which calls the admin API
+        // The admin API builds gray_rule from betaIps on the server side
+        self.client
+            .config_publish_beta(
+                data_id,
+                group_name,
+                namespace_id,
+                content,
+                app_name,
+                src_user,
+                "", // config_tags
+                "", // desc
+                "", // type
+                "", // beta_ips - the admin server reconstructs from gray_rule
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn config_delete_gray(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        _gray_name: &str,
+        _client_ip: &str,
+        _src_user: &str,
+    ) -> anyhow::Result<()> {
+        self.client
+            .config_stop_beta(data_id, group_name, namespace_id)
+            .await?;
+        Ok(())
+    }
+
     async fn config_export(
         &self,
         namespace_id: &str,

@@ -339,6 +339,191 @@ async fn find_beta_one(
     model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct BetaPublishForm {
+    pub data_id: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+    pub content: String,
+    #[serde(default)]
+    pub beta_ips: String,
+    #[serde(default)]
+    pub app_name: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub encrypted_data_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BetaQueryParam {
+    pub data_id: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+    #[serde(default)]
+    pub tenant: String,
+}
+
+#[post("beta")]
+async fn publish_beta(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<BetaPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    if form.data_id.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'dataId' type String is not present",
+        );
+    }
+
+    if form.content.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'content' type String is not present",
+        );
+    }
+
+    if form.beta_ips.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'betaIps' type String is not present",
+        );
+    }
+
+    let mut namespace_id = form.namespace_id.clone();
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let group_name = if form.group_name.is_empty() {
+        "DEFAULT_GROUP".to_string()
+    } else {
+        form.group_name.clone()
+    };
+
+    let auth_context = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
+    let src_user = auth_context.username;
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    // Build gray rule from betaIps
+    let gray_rule_info = batata_config::model::gray_rule::GrayRulePersistInfo::new_beta(
+        &form.beta_ips,
+        batata_config::model::gray_rule::BetaGrayRule::PRIORITY,
+    );
+    let gray_rule = match gray_rule_info.to_json() {
+        Ok(json) => json,
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                error::SERVER_ERROR.code,
+                error::SERVER_ERROR.message.to_string(),
+                format!("Failed to serialize gray rule: {}", e),
+            );
+        }
+    };
+
+    if let Err(e) = data
+        .console_datasource
+        .config_create_or_update_gray(
+            &form.data_id,
+            &group_name,
+            &namespace_id,
+            &form.content,
+            "beta",
+            &gray_rule,
+            &src_user,
+            &src_ip,
+            &form.app_name,
+            &form.encrypted_data_key,
+        )
+        .await
+    {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+
+    model::common::Result::<bool>::http_success(true)
+}
+
+#[delete("beta")]
+async fn delete_beta(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BetaQueryParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let mut namespace_id = params.namespace_id.clone();
+    if namespace_id.is_empty() {
+        namespace_id = params.tenant.clone();
+    }
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    let src_user = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.username.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
+
+    if let Err(e) = data
+        .console_datasource
+        .config_delete_gray(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            "beta",
+            &client_ip,
+            &src_user,
+        )
+        .await
+    {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+
+    model::common::Result::<bool>::http_success(true)
+}
+
 #[get("listener")]
 async fn find_listeners(
     req: HttpRequest,
@@ -510,6 +695,8 @@ pub fn routes() -> Scope {
         .service(create_or_update)
         .service(delete)
         .service(find_beta_one)
+        .service(publish_beta)
+        .service(delete_beta)
         .service(find_listeners)
         .service(export_configs)
         .service(import_configs)

@@ -335,7 +335,8 @@ impl RocksStateMachine {
                 data_id,
                 group,
                 tenant,
-            } => self.apply_config_gray_remove(&data_id, &group, &tenant),
+                gray_name,
+            } => self.apply_config_gray_remove(&data_id, &group, &tenant, &gray_name),
 
             RaftRequest::NamespaceCreate {
                 namespace_id,
@@ -638,10 +639,32 @@ impl RocksStateMachine {
         }
     }
 
-    fn apply_config_gray_remove(&self, data_id: &str, group: &str, tenant: &str) -> RaftResponse {
+    fn apply_config_gray_remove(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        gray_name: &str,
+    ) -> RaftResponse {
+        let cf = self.cf_config_gray();
+
+        // If gray_name is specified, delete only that specific gray config
+        if !gray_name.is_empty() {
+            let key = Self::config_gray_key(data_id, group, tenant, gray_name);
+            match self.db.delete_cf(cf, key.as_bytes()) {
+                Ok(_) => {
+                    debug!("Gray config removed: {}", key);
+                    return RaftResponse::success();
+                }
+                Err(e) => {
+                    error!("Failed to remove gray config: {}", e);
+                    return RaftResponse::failure(format!("Failed to remove gray config: {}", e));
+                }
+            }
+        }
+
         // Scan and delete all gray configs for this data_id/group/tenant
         let prefix = format!("{}@@{}@@{}@@", tenant, group, data_id);
-        let cf = self.cf_config_gray();
 
         let mut keys_to_delete = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, prefix.as_bytes());
