@@ -12,8 +12,8 @@ use batata_config::model::config::ConfigBasicInfo;
 use tracing::{info, warn};
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
-    secured,
+    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
+    model::response::Result, secured,
 };
 
 use super::model::{
@@ -177,7 +177,12 @@ pub async fn get_config(
         ),
         Err(e) => {
             warn!(error = %e, "Failed to get config");
-            Result::<String>::http_response(500, 500, e.to_string(), String::new())
+            Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -290,7 +295,12 @@ pub async fn publish_config(
             }
             Err(e) => {
                 warn!(error = %e, "Failed to publish beta config");
-                return Result::<bool>::http_response(500, 500, e.to_string(), false);
+                return Result::<bool>::http_response(
+                    500,
+                    error::SERVER_ERROR.code,
+                    e.to_string(),
+                    false,
+                );
             }
         }
     }
@@ -326,7 +336,7 @@ pub async fn publish_config(
         }
         Err(e) => {
             warn!(error = %e, "Failed to publish config");
-            Result::<bool>::http_response(500, 500, e.to_string(), false)
+            Result::<bool>::http_response(500, error::SERVER_ERROR.code, e.to_string(), false)
         }
     }
 }
@@ -419,7 +429,7 @@ pub async fn delete_config(
         }
         Err(e) => {
             warn!(error = %e, "Failed to delete config");
-            Result::<bool>::http_response(500, 500, e.to_string(), false)
+            Result::<bool>::http_response(500, error::SERVER_ERROR.code, e.to_string(), false)
         }
     }
 }

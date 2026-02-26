@@ -121,6 +121,7 @@ fn build_ext_info(tags: &[config_tags_relation::Model], entity: &config_info::Mo
 
 fn config_entity_to_storage(model: config_info::Model, tags: String) -> ConfigStorageData {
     ConfigStorageData {
+        id: model.id,
         data_id: model.data_id.clone(),
         group: model.group_id.clone().unwrap_or_default(),
         tenant: model.tenant_id.clone().unwrap_or_default(),
@@ -151,7 +152,7 @@ fn config_entity_to_storage(model: config_info::Model, tags: String) -> ConfigSt
 
 fn history_entity_to_storage(model: his_config_info::Model) -> ConfigHistoryStorageData {
     ConfigHistoryStorageData {
-        id: model.id,
+        id: model.nid,
         data_id: model.data_id,
         group: model.group_id,
         tenant: model.tenant_id.unwrap_or_default(),
@@ -991,6 +992,85 @@ impl ConfigPersistence for ExternalDbPersistService {
             .collect();
 
         Ok(result)
+    }
+
+    async fn config_find_by_ids(&self, ids: &[i64]) -> anyhow::Result<Vec<ConfigStorageData>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let models = config_info::Entity::find()
+            .filter(config_info::Column::Id.is_in(ids.iter().copied()))
+            .all(&self.db)
+            .await?;
+
+        let mut result = Vec::with_capacity(models.len());
+        for model in models {
+            let data_id = model.data_id.clone();
+            let group_id = model.group_id.clone().unwrap_or_default();
+            let tenant_id = model.tenant_id.clone().unwrap_or_default();
+            let tag_names = config_tags_relation::Entity::find()
+                .select_only()
+                .column(config_tags_relation::Column::TagName)
+                .filter(config_tags_relation::Column::DataId.eq(&data_id))
+                .filter(config_tags_relation::Column::GroupId.eq(&group_id))
+                .filter(config_tags_relation::Column::TenantId.eq(&tenant_id))
+                .order_by_asc(config_tags_relation::Column::Nid)
+                .into_tuple::<String>()
+                .all(&self.db)
+                .await?;
+            let tags = tag_names.join(",");
+            result.push(config_entity_to_storage(model, tags));
+        }
+        Ok(result)
+    }
+
+    async fn config_update_metadata(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        config_tags: &str,
+        desc: &str,
+    ) -> anyhow::Result<bool> {
+        // Update the config_info record
+        let result = config_info::Entity::update_many()
+            .filter(config_info::Column::DataId.eq(data_id))
+            .filter(config_info::Column::GroupId.eq(group))
+            .filter(config_info::Column::TenantId.eq(namespace_id))
+            .col_expr(config_info::Column::CDesc, Expr::value(desc))
+            .exec(&self.db)
+            .await?;
+
+        // Update tags: first delete existing tags
+        config_tags_relation::Entity::delete_many()
+            .filter(config_tags_relation::Column::DataId.eq(data_id))
+            .filter(config_tags_relation::Column::GroupId.eq(group))
+            .filter(config_tags_relation::Column::TenantId.eq(namespace_id))
+            .exec(&self.db)
+            .await?;
+
+        // Then insert new tags
+        if !config_tags.is_empty() {
+            let tags: Vec<&str> = config_tags
+                .split(',')
+                .filter(|t| !t.trim().is_empty())
+                .collect();
+            for tag in tags {
+                let tag_model = config_tags_relation::ActiveModel {
+                    tag_name: Set(tag.trim().to_string()),
+                    tag_type: Set(None),
+                    data_id: Set(data_id.to_string()),
+                    group_id: Set(group.to_string()),
+                    tenant_id: Set(Some(namespace_id.to_string())),
+                    ..Default::default()
+                };
+                config_tags_relation::Entity::insert(tag_model)
+                    .exec(&self.db)
+                    .await?;
+            }
+        }
+
+        Ok(result.rows_affected > 0)
     }
 }
 

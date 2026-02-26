@@ -80,6 +80,7 @@ impl EmbeddedPersistService {
     /// Convert a JSON value from RocksDB to ConfigStorageData
     pub fn json_to_config(v: &serde_json::Value) -> ConfigStorageData {
         ConfigStorageData {
+            id: 0,
             data_id: v["data_id"].as_str().unwrap_or("").to_string(),
             group: v["group"].as_str().unwrap_or("").to_string(),
             tenant: v["tenant"].as_str().unwrap_or("").to_string(),
@@ -684,6 +685,48 @@ impl ConfigPersistence for EmbeddedPersistService {
         }
 
         Ok(results)
+    }
+
+    async fn config_find_by_ids(&self, _ids: &[i64]) -> anyhow::Result<Vec<ConfigStorageData>> {
+        // Embedded backend doesn't support integer IDs
+        Ok(Vec::new())
+    }
+
+    async fn config_update_metadata(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        config_tags: &str,
+        desc: &str,
+    ) -> anyhow::Result<bool> {
+        // Get existing config
+        let existing = self.reader.get_config(data_id, group, namespace_id)?;
+        if let Some(json) = existing {
+            let mut config = Self::json_to_config(&json);
+            config.config_tags = config_tags.to_string();
+            config.desc = desc.to_string();
+            // Re-save with updated metadata
+            self.config_create_or_update(
+                data_id,
+                group,
+                namespace_id,
+                &config.content,
+                &config.app_name,
+                &config.src_user,
+                &config.src_ip,
+                config_tags,
+                desc,
+                &config.r#use,
+                &config.effect,
+                &config.config_type,
+                &config.schema,
+                &config.encrypted_data_key,
+            )
+            .await
+        } else {
+            Ok(false)
+        }
     }
 }
 

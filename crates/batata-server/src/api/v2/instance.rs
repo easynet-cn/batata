@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, api::naming::model::Instance, model::common::AppState,
-    model::response::Result, secured, service::naming::NamingService,
+    ActionTypes, ApiType, Secured, SignType, api::naming::model::Instance, error,
+    model::common::AppState, model::response::Result, secured, service::naming::NamingService,
 };
 
 use super::model::{
@@ -140,7 +140,12 @@ pub async fn register_instance(
         );
         Result::<bool>::http_success(true)
     } else {
-        Result::<bool>::http_response(500, 500, "Failed to register instance".to_string(), false)
+        Result::<bool>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            "Failed to register instance".to_string(),
+            false,
+        )
     }
 }
 
@@ -244,7 +249,12 @@ pub async fn deregister_instance(
 
         Result::<bool>::http_success(true)
     } else {
-        Result::<bool>::http_response(404, 404, "Instance not found".to_string(), false)
+        Result::<bool>::http_response(
+            404,
+            error::INSTANCE_NOT_FOUND.code,
+            "Instance not found".to_string(),
+            false,
+        )
     }
 }
 
@@ -345,7 +355,12 @@ pub async fn update_instance(
         );
         Result::<bool>::http_success(true)
     } else {
-        Result::<bool>::http_response(500, 500, "Failed to update instance".to_string(), false)
+        Result::<bool>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            "Failed to update instance".to_string(),
+            false,
+        )
     }
 }
 
@@ -859,7 +874,12 @@ pub async fn patch_instance(
         if result {
             Result::<bool>::http_success(true)
         } else {
-            Result::<bool>::http_response(500, 500, "Failed to patch instance".to_string(), false)
+            Result::<bool>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                "Failed to patch instance".to_string(),
+                false,
+            )
         }
     } else {
         Result::<bool>::http_response(

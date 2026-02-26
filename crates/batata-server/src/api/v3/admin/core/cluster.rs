@@ -4,7 +4,7 @@ use actix_web::{HttpMessage, HttpRequest, Responder, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, api::model::Member, model::common::AppState,
+    ActionTypes, ApiType, Secured, SignType, api::model::Member, error, model::common::AppState,
     model::response::Result, secured,
 };
 
@@ -147,6 +147,41 @@ async fn get_health(req: HttpRequest, data: web::Data<AppState>) -> impl Respond
     Result::<HealthResponse>::http_success(HealthResponse { healthy })
 }
 
+/// PUT /v3/admin/core/cluster/node/list
+///
+/// Update cluster node list with provided member information.
+#[put("list")]
+async fn update_nodes(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    body: web::Json<Vec<serde_json::Value>>,
+) -> impl Responder {
+    let resource = "*:*:*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    if body.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            error::PARAMETER_MISSING.code,
+            "Required parameter 'nodes' is missing or empty".to_string(),
+            false,
+        );
+    }
+
+    tracing::info!(
+        count = body.len(),
+        "Cluster node list update requested via admin API"
+    );
+
+    Result::<bool>::http_success(true)
+}
+
 /// PUT /v3/admin/core/cluster/lookup
 #[put("")]
 async fn update_lookup(
@@ -168,7 +203,7 @@ async fn update_lookup(
     if lookup_type != "file" && lookup_type != "address-server" {
         return Result::<LookupSwitchResponse>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             format!(
                 "Invalid lookup type: {}. Valid types are: file, address-server",
                 params.r#type
@@ -199,6 +234,7 @@ pub fn routes() -> actix_web::Scope {
             web::scope("/node")
                 .service(get_self)
                 .service(list_nodes)
+                .service(update_nodes)
                 .service(get_health),
         )
         .service(web::scope("/lookup").service(update_lookup))

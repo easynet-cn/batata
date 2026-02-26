@@ -60,12 +60,18 @@ impl actix_web::error::ResponseError for AppError {
     fn error_response(&self) -> HttpResponse {
         if let Some(e) = self.downcast_ref::<BatataError>() {
             match e {
-                BatataError::IllegalArgument(message) => {
-                    HttpResponse::BadRequest().body(message.to_string())
-                }
-                BatataError::UserNotExist(message) => {
-                    HttpResponse::BadRequest().body(message.to_string())
-                }
+                BatataError::IllegalArgument(message) => common::Result::<String>::http_response(
+                    400,
+                    PARAMETER_VALIDATE_ERROR.code,
+                    message.to_string(),
+                    String::new(),
+                ),
+                BatataError::UserNotExist(message) => common::Result::<String>::http_response(
+                    400,
+                    RESOURCE_NOT_FOUND.code,
+                    message.to_string(),
+                    String::new(),
+                ),
                 BatataError::ApiError(status, code, message, data) => {
                     common::Result::<String>::http_response(
                         *status as u16,
@@ -74,30 +80,58 @@ impl actix_web::error::ResponseError for AppError {
                         data.to_string(),
                     )
                 }
-                BatataError::NetworkError(message) => {
-                    HttpResponse::ServiceUnavailable().body(message.to_string())
-                }
-                BatataError::DatabaseError(message) => {
-                    HttpResponse::InternalServerError().body(message.to_string())
-                }
-                BatataError::AuthError(message) => {
-                    HttpResponse::Unauthorized().body(message.to_string())
-                }
-                BatataError::ConfigError(message) => {
-                    HttpResponse::BadRequest().body(message.to_string())
-                }
-                BatataError::InternalError(message) => {
-                    HttpResponse::InternalServerError().body(message.to_string())
-                }
-                BatataError::NamespaceNotExist(message) => {
-                    HttpResponse::NotFound().body(message.to_string())
-                }
+                BatataError::NetworkError(message) => common::Result::<String>::http_response(
+                    503,
+                    SERVER_ERROR.code,
+                    message.to_string(),
+                    String::new(),
+                ),
+                BatataError::DatabaseError(message) => common::Result::<String>::http_response(
+                    500,
+                    DATA_ACCESS_ERROR.code,
+                    message.to_string(),
+                    String::new(),
+                ),
+                BatataError::AuthError(message) => common::Result::<String>::http_response(
+                    401,
+                    ACCESS_DENIED.code,
+                    message.to_string(),
+                    String::new(),
+                ),
+                BatataError::ConfigError(message) => common::Result::<String>::http_response(
+                    400,
+                    PARAMETER_VALIDATE_ERROR.code,
+                    message.to_string(),
+                    String::new(),
+                ),
+                BatataError::InternalError(message) => common::Result::<String>::http_response(
+                    500,
+                    SERVER_ERROR.code,
+                    message.to_string(),
+                    String::new(),
+                ),
+                BatataError::NamespaceNotExist(message) => common::Result::<String>::http_response(
+                    404,
+                    NAMESPACE_NOT_EXIST.code,
+                    message.to_string(),
+                    String::new(),
+                ),
                 BatataError::NamespaceAlreadyExist(message) => {
-                    HttpResponse::Conflict().body(message.to_string())
+                    common::Result::<String>::http_response(
+                        409,
+                        NAMESPACE_ALREADY_EXIST.code,
+                        message.to_string(),
+                        String::new(),
+                    )
                 }
             }
         } else {
-            HttpResponse::InternalServerError().body(self.inner.to_string())
+            common::Result::<String>::http_response(
+                500,
+                SERVER_ERROR.code,
+                self.inner.to_string(),
+                String::new(),
+            )
         }
     }
 }

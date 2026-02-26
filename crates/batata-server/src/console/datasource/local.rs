@@ -351,6 +351,54 @@ impl ConsoleDataSource for LocalDataSource {
         .await
     }
 
+    async fn config_batch_delete(
+        &self,
+        ids: &[i64],
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<()> {
+        service::config::batch_delete(&self.database_connection, ids, client_ip, src_user).await?;
+        Ok(())
+    }
+
+    async fn config_clone(
+        &self,
+        ids: &[i64],
+        target_namespace_id: &str,
+        policy: &str,
+        src_user: &str,
+        src_ip: &str,
+    ) -> anyhow::Result<ImportResult> {
+        let clone_result = service::config::clone_configs(
+            &self.database_connection,
+            ids,
+            target_namespace_id,
+            policy,
+            src_user,
+            src_ip,
+        )
+        .await?;
+
+        Ok(ImportResult {
+            success_count: clone_result.succeeded as u32,
+            skip_count: clone_result.skipped as u32,
+            fail_count: clone_result.failed as u32,
+            fail_data: vec![],
+        })
+    }
+
+    async fn config_listener_list_by_ip(
+        &self,
+        _ip: &str,
+        _all: bool,
+        _namespace_id: &str,
+    ) -> anyhow::Result<ConfigListenerInfo> {
+        Ok(ConfigListenerInfo {
+            query_type: ConfigListenerInfo::QUERY_TYPE_IP.to_string(),
+            listeners_status: HashMap::new(),
+        })
+    }
+
     // ============== History Operations ==============
 
     async fn history_find_by_id(
@@ -400,6 +448,24 @@ impl ConsoleDataSource for LocalDataSource {
                 .await?;
 
         Ok(result.into_iter().map(ConfigBasicInfo::from).collect())
+    }
+
+    async fn history_find_previous(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        id: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
+        let result = service::history::get_previous_version(
+            &self.database_connection,
+            data_id,
+            group_name,
+            namespace_id,
+            id as i64,
+        )
+        .await?;
+        Ok(result.map(ConfigHistoryDetailInfo::from))
     }
 
     // ============== History Operations (Advanced) ==============

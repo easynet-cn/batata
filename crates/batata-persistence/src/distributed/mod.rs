@@ -427,6 +427,48 @@ impl ConfigPersistence for DistributedPersistService {
 
         Ok(filtered)
     }
+
+    async fn config_find_by_ids(&self, _ids: &[i64]) -> anyhow::Result<Vec<ConfigStorageData>> {
+        // Embedded backend doesn't support integer IDs
+        Ok(Vec::new())
+    }
+
+    async fn config_update_metadata(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        config_tags: &str,
+        desc: &str,
+    ) -> anyhow::Result<bool> {
+        // Get existing config
+        let existing = self.reader.get_config(data_id, group, namespace_id)?;
+        if let Some(json) = existing {
+            let mut config = EmbeddedPersistService::json_to_config(&json);
+            config.config_tags = config_tags.to_string();
+            config.desc = desc.to_string();
+            // Re-save with updated metadata
+            self.config_create_or_update(
+                data_id,
+                group,
+                namespace_id,
+                &config.content,
+                &config.app_name,
+                &config.src_user,
+                &config.src_ip,
+                config_tags,
+                desc,
+                &config.r#use,
+                &config.effect,
+                &config.config_type,
+                &config.schema,
+                &config.encrypted_data_key,
+            )
+            .await
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 #[async_trait]

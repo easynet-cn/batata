@@ -1,5 +1,6 @@
 //! V3 Admin config management endpoints
 
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use actix_multipart::Multipart;
@@ -7,6 +8,7 @@ use actix_web::{
     HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, http::StatusCode, post, put,
     web,
 };
+use batata_api::config::ConfigCloneInfo;
 use chrono::Utc;
 use futures::StreamExt;
 use serde::Deserialize;
@@ -893,6 +895,267 @@ async fn stop_beta_config(
     model::common::Result::<bool>::http_success(true)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchDeleteParam {
+    pub ids: String,
+}
+
+/// DELETE /v3/admin/cs/config/batch
+#[delete("batch")]
+async fn batch_delete_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BatchDeleteParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let ids: Vec<i64> = params
+        .ids
+        .split(',')
+        .filter_map(|s| s.trim().parse::<i64>().ok())
+        .collect();
+
+    if ids.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'ids' is missing or invalid",
+        );
+    }
+
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+    let src_user = req
+        .extensions()
+        .get::<AuthContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
+
+    match data
+        .persistence()
+        .config_batch_delete(&ids, &client_ip, &src_user)
+        .await
+    {
+        Ok(_) => model::common::Result::<bool>::http_success(true),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to batch delete configs");
+            HttpResponse::InternalServerError().body(e.to_string())
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MetadataForm {
+    pub data_id: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+    #[serde(default)]
+    pub config_tags: String,
+    #[serde(default)]
+    pub desc: String,
+}
+
+/// PUT /v3/admin/cs/config/metadata
+#[put("metadata")]
+async fn update_metadata(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<MetadataForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    if form.data_id.is_empty() || form.group_name.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameters 'dataId' and 'groupName' must be present",
+        );
+    }
+
+    let namespace_id = if form.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        form.namespace_id.clone()
+    };
+
+    match data
+        .persistence()
+        .config_update_metadata(
+            &form.data_id,
+            &form.group_name,
+            &namespace_id,
+            &form.config_tags,
+            &form.desc,
+        )
+        .await
+    {
+        Ok(_) => model::common::Result::<bool>::http_success(true),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to update config metadata");
+            HttpResponse::InternalServerError().body(e.to_string())
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloneParam {
+    pub namespace_id: String,
+    #[serde(default = "default_clone_policy")]
+    pub policy: String,
+    #[serde(default)]
+    pub src_user: Option<String>,
+}
+
+fn default_clone_policy() -> String {
+    "ABORT".to_string()
+}
+
+/// POST /v3/admin/cs/config/clone
+#[post("clone")]
+async fn clone_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<CloneParam>,
+    body: web::Json<Vec<ConfigCloneInfo>>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let clone_infos = body.into_inner();
+    if clone_infos.is_empty() {
+        return model::common::Result::<ImportResult>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::NO_SELECTED_CONFIG.code,
+            error::NO_SELECTED_CONFIG.message.to_string(),
+            "No configuration selected",
+        );
+    }
+
+    let mut namespace_id = params.namespace_id.trim().to_string();
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let src_user = params.src_user.clone().unwrap_or_else(|| {
+        req.extensions()
+            .get::<AuthContext>()
+            .map(|ctx| ctx.username.clone())
+            .unwrap_or_default()
+    });
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    // Collect source config IDs
+    let ids: Vec<i64> = clone_infos.iter().map(|c| c.config_id).collect();
+    let id_map: HashMap<i64, &ConfigCloneInfo> =
+        clone_infos.iter().map(|c| (c.config_id, c)).collect();
+
+    // Fetch source configs by IDs
+    let persistence = data.persistence();
+    let source_configs = match persistence.config_find_by_ids(&ids).await {
+        Ok(c) => c,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    if source_configs.is_empty() {
+        return model::common::Result::<ImportResult>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::DATA_EMPTY.code,
+            error::DATA_EMPTY.message.to_string(),
+            "No configurations found for the given IDs",
+        );
+    }
+
+    let policy = params
+        .policy
+        .parse::<crate::config::export_model::SameConfigPolicy>()
+        .unwrap_or_default();
+
+    // Build import items from source configs with clone overrides
+    let config_items: Vec<crate::config::export_model::ConfigImportItem> = source_configs
+        .into_iter()
+        .map(|config| {
+            let clone_info = id_map.get(&config.id);
+            let target_data_id = clone_info
+                .and_then(|c| {
+                    if c.target_data_id.is_empty() {
+                        None
+                    } else {
+                        Some(c.target_data_id.clone())
+                    }
+                })
+                .unwrap_or(config.data_id.clone());
+            let target_group = clone_info
+                .and_then(|c| {
+                    if c.target_group_name.is_empty() {
+                        None
+                    } else {
+                        Some(c.target_group_name.clone())
+                    }
+                })
+                .unwrap_or(config.group.clone());
+
+            crate::config::export_model::ConfigImportItem {
+                data_id: target_data_id,
+                group: target_group,
+                namespace_id: String::new(), // will be overridden by target_namespace_id
+                content: config.content,
+                config_type: config.config_type,
+                app_name: config.app_name,
+                desc: config.desc,
+                config_tags: config.config_tags,
+                encrypted_data_key: config.encrypted_data_key,
+            }
+        })
+        .collect();
+
+    let result = match import_with_persistence(
+        persistence,
+        config_items,
+        &namespace_id,
+        policy,
+        &src_user,
+        &src_ip,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    model::common::Result::<ImportResult>::http_success(result)
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/config")
         .service(get_config)
@@ -900,6 +1163,9 @@ pub fn routes() -> actix_web::Scope {
         .service(create_config)
         .service(update_config)
         .service(delete_config)
+        .service(batch_delete_config)
+        .service(update_metadata)
+        .service(clone_config)
         .service(import_config)
         .service(export_config)
         .service(get_beta_config)

@@ -4,8 +4,8 @@ use actix_web::{HttpMessage, HttpRequest, Responder, get, web};
 use tracing::warn;
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
-    secured,
+    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
+    model::response::Result, secured,
 };
 
 use crate::api::v2::model::{ConfigGetParam, ConfigResponse};
@@ -91,7 +91,12 @@ async fn get_config(
         ),
         Err(e) => {
             warn!(error = %e, "Failed to get config");
-            Result::<String>::http_response(500, 500, e.to_string(), String::new())
+            Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }

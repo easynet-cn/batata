@@ -479,11 +479,72 @@ async fn advanced_search(
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviousParam {
+    data_id: String,
+    group_name: String,
+    #[serde(default)]
+    namespace_id: Option<String>,
+    id: u64,
+}
+
+#[get("previous")]
+async fn find_previous(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<PreviousParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let namespace_id = params
+        .namespace_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_NAMESPACE_ID)
+        .to_string();
+
+    match data
+        .console_datasource
+        .history_find_previous(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            params.id,
+        )
+        .await
+    {
+        Ok(Some(detail)) => model::common::Result::<ConfigHistoryDetailInfo>::http_success(detail),
+        Ok(None) => model::common::Result::<String>::http_response(
+            404,
+            404,
+            "previous config history not found".to_string(),
+            String::new(),
+        ),
+        Err(e) => {
+            tracing::error!("Failed to find previous history: {}", e);
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find previous history: {}", e),
+                String::new(),
+            )
+        }
+    }
+}
+
 pub fn routes() -> Scope {
     web::scope("/cs/history")
         .service(find_one)
         .service(search)
         .service(find_configs_by_namespace_id)
+        .service(find_previous)
         .service(diff)
         .service(rollback)
         .service(advanced_search)

@@ -363,6 +363,69 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
             .await
     }
 
+    async fn config_batch_delete(
+        &self,
+        ids: &[i64],
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<()> {
+        self.persistence
+            .config_batch_delete(ids, client_ip, src_user)
+            .await?;
+        Ok(())
+    }
+
+    async fn config_clone(
+        &self,
+        ids: &[i64],
+        target_namespace_id: &str,
+        _policy: &str,
+        src_user: &str,
+        src_ip: &str,
+    ) -> anyhow::Result<ImportResult> {
+        let source_configs = self.persistence.config_find_by_ids(ids).await?;
+
+        let mut result = ImportResult::default();
+        for config in source_configs {
+            match self
+                .persistence
+                .config_create_or_update(
+                    &config.data_id,
+                    &config.group,
+                    target_namespace_id,
+                    &config.content,
+                    &config.app_name,
+                    src_user,
+                    src_ip,
+                    &config.config_tags,
+                    &config.desc,
+                    &config.r#use,
+                    &config.effect,
+                    &config.config_type,
+                    &config.schema,
+                    &config.encrypted_data_key,
+                )
+                .await
+            {
+                Ok(_) => result.success_count += 1,
+                Err(_) => result.fail_count += 1,
+            }
+        }
+        Ok(result)
+    }
+
+    async fn config_listener_list_by_ip(
+        &self,
+        _ip: &str,
+        _all: bool,
+        _namespace_id: &str,
+    ) -> anyhow::Result<ConfigListenerInfo> {
+        Ok(ConfigListenerInfo {
+            query_type: ConfigListenerInfo::QUERY_TYPE_IP.to_string(),
+            listeners_status: HashMap::new(),
+        })
+    }
+
     // ============== History Operations ==============
 
     async fn history_find_by_id(
@@ -408,6 +471,20 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
             .config_find_by_namespace(namespace_id)
             .await?;
         Ok(configs.into_iter().map(ConfigBasicInfo::from).collect())
+    }
+
+    async fn history_find_previous(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        id: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
+        let result = self
+            .persistence
+            .config_history_get_previous(data_id, group_name, namespace_id, id)
+            .await?;
+        Ok(result.map(ConfigHistoryDetailInfo::from))
     }
 
     // ============== History Operations (Advanced) ==============

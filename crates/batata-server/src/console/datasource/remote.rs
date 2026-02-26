@@ -701,6 +701,40 @@ impl ConsoleDataSource for RemoteDataSource {
         Ok(convert_import_result(result))
     }
 
+    async fn config_batch_delete(
+        &self,
+        _ids: &[i64],
+        _client_ip: &str,
+        _src_user: &str,
+    ) -> anyhow::Result<()> {
+        // Remote mode: not yet supported via client API
+        Ok(())
+    }
+
+    async fn config_clone(
+        &self,
+        _ids: &[i64],
+        _target_namespace_id: &str,
+        _policy: &str,
+        _src_user: &str,
+        _src_ip: &str,
+    ) -> anyhow::Result<ImportResult> {
+        // Remote mode: not yet supported via client API
+        Ok(ImportResult::default())
+    }
+
+    async fn config_listener_list_by_ip(
+        &self,
+        _ip: &str,
+        _all: bool,
+        _namespace_id: &str,
+    ) -> anyhow::Result<ConfigListenerInfo> {
+        Ok(ConfigListenerInfo {
+            query_type: ConfigListenerInfo::QUERY_TYPE_IP.to_string(),
+            listeners_status: std::collections::HashMap::new(),
+        })
+    }
+
     // ============== History Operations ==============
 
     async fn history_find_by_id(
@@ -735,6 +769,17 @@ impl ConsoleDataSource for RemoteDataSource {
             .history_configs_by_namespace(namespace_id)
             .await?;
         Ok(items.into_iter().map(convert_config_basic_info).collect())
+    }
+
+    async fn history_find_previous(
+        &self,
+        _data_id: &str,
+        _group_name: &str,
+        _namespace_id: &str,
+        _id: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
+        // Remote mode: not yet supported via client API
+        Ok(None)
     }
 
     // ============== History Operations (Advanced) ==============

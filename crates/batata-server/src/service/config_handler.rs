@@ -31,6 +31,7 @@ use crate::{
         grpc::Payload,
         remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
+    error,
     model::common::AppState,
     service::{
         config_fuzzy_watch::{ConfigFuzzyWatchManager, ConfigFuzzyWatchPattern},
@@ -177,7 +178,7 @@ impl PayloadHandler for ConfigQueryHandler {
                 let mut response = ConfigQueryResponse::new();
                 response.response.request_id = request_id;
                 response.response.result_code = ResponseCode::Fail.code();
-                response.response.error_code = ResponseCode::Fail.code();
+                response.response.error_code = error::SERVER_ERROR.code;
                 response.response.success = false;
                 response.response.message = e.to_string();
 
@@ -241,7 +242,7 @@ impl PayloadHandler for ConfigPublishHandler {
             let mut response = ConfigPublishResponse::new();
             response.response.request_id = request_id;
             response.response.result_code = ResponseCode::Fail.code();
-            response.response.error_code = ResponseCode::Fail.code();
+            response.response.error_code = error::PARAMETER_VALIDATE_ERROR.code;
             response.response.success = false;
             response.response.message = "data_id, group, and content are required".to_string();
             return Ok(response.build_payload());
@@ -302,7 +303,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     let mut response = ConfigPublishResponse::new();
                     response.response.request_id = request_id;
                     response.response.result_code = ResponseCode::Fail.code();
-                    response.response.error_code = ResponseCode::Fail.code();
+                    response.response.error_code = error::SERVER_ERROR.code;
                     response.response.success = false;
                     response.response.message = format!("Failed to serialize gray rule: {}", e);
                     return Ok(response.build_payload());
@@ -333,7 +334,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     let mut response = ConfigPublishResponse::new();
                     response.response.request_id = request_id;
                     response.response.result_code = ResponseCode::Fail.code();
-                    response.response.error_code = ResponseCode::Fail.code();
+                    response.response.error_code = error::SERVER_ERROR.code;
                     response.response.success = false;
                     response.response.message = e.to_string();
                     return Ok(response.build_payload());
@@ -352,7 +353,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     let mut response = ConfigPublishResponse::new();
                     response.response.request_id = request_id;
                     response.response.result_code = ResponseCode::Fail.code();
-                    response.response.error_code = ResponseCode::Fail.code();
+                    response.response.error_code = error::SERVER_ERROR.code;
                     response.response.success = false;
                     response.response.message = format!("Failed to serialize gray rule: {}", e);
                     return Ok(response.build_payload());
@@ -384,7 +385,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     let mut response = ConfigPublishResponse::new();
                     response.response.request_id = request_id;
                     response.response.result_code = ResponseCode::Fail.code();
-                    response.response.error_code = ResponseCode::Fail.code();
+                    response.response.error_code = error::SERVER_ERROR.code;
                     response.response.success = false;
                     response.response.message = e.to_string();
                     return Ok(response.build_payload());
@@ -454,7 +455,7 @@ impl PayloadHandler for ConfigPublishHandler {
                 let mut response = ConfigPublishResponse::new();
                 response.response.request_id = request_id;
                 response.response.result_code = ResponseCode::Fail.code();
-                response.response.error_code = ResponseCode::Fail.code();
+                response.response.error_code = error::SERVER_ERROR.code;
                 response.response.success = false;
                 response.response.message = e.to_string();
 
@@ -663,7 +664,7 @@ impl PayloadHandler for ConfigRemoveHandler {
                 let mut response = ConfigRemoveResponse::new();
                 response.response.request_id = request_id;
                 response.response.result_code = ResponseCode::Fail.code();
-                response.response.error_code = ResponseCode::Fail.code();
+                response.response.error_code = error::SERVER_ERROR.code;
                 response.response.success = false;
                 response.response.message = e.to_string();
 

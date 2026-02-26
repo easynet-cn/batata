@@ -129,7 +129,7 @@ impl From<batata_persistence::ConfigStorageData> for ConfigAllInfo {
         Self {
             config_info: ConfigInfo {
                 config_info_base: ConfigInfoBase {
-                    id: 0,
+                    id: value.id,
                     data_id: value.data_id,
                     group: value.group,
                     content: value.content,
@@ -227,7 +227,7 @@ pub struct ConfigHistoryInfo {
 impl From<entity::his_config_info::Model> for ConfigHistoryInfo {
     fn from(value: entity::his_config_info::Model) -> Self {
         Self {
-            id: value.id,
+            id: value.nid,
             last_id: -1,
             data_id: value.data_id,
             group: value.group_id,
@@ -251,7 +251,7 @@ impl From<entity::his_config_info::Model> for ConfigHistoryInfo {
 impl From<&entity::his_config_info::Model> for ConfigHistoryInfo {
     fn from(value: &entity::his_config_info::Model) -> Self {
         Self {
-            id: value.id,
+            id: value.nid,
             last_id: -1,
             data_id: value.data_id.to_string(),
             group: value.group_id.to_string(),

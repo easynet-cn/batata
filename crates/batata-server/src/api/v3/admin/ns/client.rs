@@ -244,10 +244,222 @@ fn parse_service_key(key: &str) -> Option<ClientServiceInfo> {
     }
 }
 
+const DEFAULT_NAMESPACE_ID: &str = "public";
+const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct ServiceClientQuery {
+    #[serde(default)]
+    namespace_id: Option<String>,
+    #[serde(default)]
+    group_name: Option<String>,
+    service_name: String,
+    #[serde(default)]
+    ip: Option<String>,
+    #[serde(default)]
+    port: Option<i32>,
+}
+
+impl ServiceClientQuery {
+    fn namespace_id_or_default(&self) -> &str {
+        self.namespace_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_NAMESPACE_ID)
+    }
+
+    fn group_name_or_default(&self) -> &str {
+        self.group_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_GROUP)
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceClientInfo {
+    client_id: String,
+    client_ip: String,
+    client_port: u16,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceClientListResponse {
+    count: i32,
+    clients: Vec<ServiceClientInfo>,
+}
+
+/// GET /v3/admin/ns/client/service/publisher/list
+///
+/// Returns clients that published (registered instances to) a specific service.
+#[get("service/publisher/list")]
+async fn get_service_publishers(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    connection_manager: web::Data<Arc<ConnectionManager>>,
+    naming_service: web::Data<Arc<NamingService>>,
+    params: web::Query<ServiceClientQuery>,
+) -> impl Responder {
+    if params.service_name.is_empty() {
+        return Result::<Option<ServiceClientListResponse>>::http_response(
+            400,
+            400,
+            "Required parameter 'serviceName' is missing".to_string(),
+            None::<ServiceClientListResponse>,
+        );
+    }
+
+    let namespace_id = params.namespace_id_or_default();
+    let group_name = params.group_name_or_default();
+
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, params.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let publisher_ids =
+        naming_service.get_publishers(namespace_id, group_name, &params.service_name);
+
+    let clients: Vec<ServiceClientInfo> = publisher_ids
+        .iter()
+        .filter_map(|client_id| {
+            connection_manager.get_client(client_id).map(|client| {
+                let meta = &client.connection.meta_info;
+                ServiceClientInfo {
+                    client_id: client_id.clone(),
+                    client_ip: meta.client_ip.clone(),
+                    client_port: meta.remote_port,
+                }
+            })
+        })
+        .collect();
+
+    let response = ServiceClientListResponse {
+        count: clients.len() as i32,
+        clients,
+    };
+
+    Result::<ServiceClientListResponse>::http_success(response)
+}
+
+/// GET /v3/admin/ns/client/service/subscriber/list
+///
+/// Returns clients that subscribed to a specific service.
+#[get("service/subscriber/list")]
+async fn get_service_subscribers(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    connection_manager: web::Data<Arc<ConnectionManager>>,
+    naming_service: web::Data<Arc<NamingService>>,
+    params: web::Query<ServiceClientQuery>,
+) -> impl Responder {
+    if params.service_name.is_empty() {
+        return Result::<Option<ServiceClientListResponse>>::http_response(
+            400,
+            400,
+            "Required parameter 'serviceName' is missing".to_string(),
+            None::<ServiceClientListResponse>,
+        );
+    }
+
+    let namespace_id = params.namespace_id_or_default();
+    let group_name = params.group_name_or_default();
+
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, params.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let subscriber_ids =
+        naming_service.get_subscribers(namespace_id, group_name, &params.service_name);
+
+    let clients: Vec<ServiceClientInfo> = subscriber_ids
+        .iter()
+        .filter_map(|client_id| {
+            connection_manager.get_client(client_id).map(|client| {
+                let meta = &client.connection.meta_info;
+                ServiceClientInfo {
+                    client_id: client_id.clone(),
+                    client_ip: meta.client_ip.clone(),
+                    client_port: meta.remote_port,
+                }
+            })
+        })
+        .collect();
+
+    let response = ServiceClientListResponse {
+        count: clients.len() as i32,
+        clients,
+    };
+
+    Result::<ServiceClientListResponse>::http_success(response)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct DistroQuery {
+    ip: String,
+    port: String,
+}
+
+/// GET /v3/admin/ns/client/distro
+///
+/// Returns the responsible server address for a given client IP:port.
+#[get("distro")]
+async fn get_distro(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    _params: web::Query<DistroQuery>,
+) -> impl Responder {
+    let resource = "*:*:naming/*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    // In standalone/embedded mode, the responsible server is always self
+    let self_addr = data
+        .server_member_manager
+        .as_ref()
+        .map(|smm| smm.local_address().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let response = serde_json::json!({
+        "responsibleServer": self_addr,
+    });
+
+    Result::<serde_json::Value>::http_success(response)
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/client")
         .service(list_clients)
         .service(get_client)
         .service(get_published)
         .service(get_subscribed)
+        .service(get_service_publishers)
+        .service(get_service_subscribers)
+        .service(get_distro)
 }

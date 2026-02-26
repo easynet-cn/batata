@@ -14,6 +14,7 @@ use crate::{
         McpServerConfig, McpServerImportRequest, McpServerListResponse, McpServerRegistration,
     },
     api::ai::{McpRegistryStats, McpServerRegistry},
+    error,
     model::{self, common::AppState},
     secured,
 };
@@ -86,7 +87,12 @@ async fn register_server(
 
     match registry.register(body.into_inner()) {
         Ok(server) => model::common::Result::<McpServer>::http_success(server),
-        Err(e) => model::common::Result::<String>::http_response(400, 400, e, String::new()),
+        Err(e) => model::common::Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            e,
+            String::new(),
+        ),
     }
 }
 
@@ -115,7 +121,12 @@ async fn update_server(
 
     match registry.update(&namespace, &name, body.into_inner()) {
         Ok(server) => model::common::Result::<McpServer>::http_success(server),
-        Err(e) => model::common::Result::<String>::http_response(404, 404, e, String::new()),
+        Err(e) => model::common::Result::<String>::http_response(
+            404,
+            error::MCP_SERVER_NOT_FOUND.code,
+            e,
+            String::new(),
+        ),
     }
 }
 
@@ -138,7 +149,12 @@ async fn delete_server(
 
     match registry.delete_by_query(&query.into_inner()) {
         Ok(()) => model::common::Result::<bool>::http_success(true),
-        Err(e) => model::common::Result::<String>::http_response(404, 404, e, String::new()),
+        Err(e) => model::common::Result::<String>::http_response(
+            404,
+            error::MCP_SERVER_NOT_FOUND.code,
+            e,
+            String::new(),
+        ),
     }
 }
 

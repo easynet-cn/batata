@@ -175,4 +175,17 @@ pub trait ConfigPersistence: Send + Sync {
         data_ids: Option<Vec<String>>,
         app_name: Option<&str>,
     ) -> anyhow::Result<Vec<ConfigStorageData>>;
+
+    /// Find configs by their database IDs (for clone operations)
+    async fn config_find_by_ids(&self, ids: &[i64]) -> anyhow::Result<Vec<ConfigStorageData>>;
+
+    /// Update only config metadata (tags and description) without changing content
+    async fn config_update_metadata(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        config_tags: &str,
+        desc: &str,
+    ) -> anyhow::Result<bool>;
 }

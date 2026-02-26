@@ -13,8 +13,8 @@ use batata_api::Page;
 use batata_persistence::ConfigHistoryStorageData;
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
-    secured,
+    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
+    model::response::Result, secured,
 };
 
 use super::model::{
@@ -198,7 +198,12 @@ pub async fn get_history_list(
         }
         Err(e) => {
             warn!(error = %e, "Failed to get history list");
-            Result::<String>::http_response(500, 500, e.to_string(), String::new())
+            Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -276,7 +281,12 @@ pub async fn get_history(
         ),
         Err(e) => {
             warn!(error = %e, "Failed to get history entry");
-            Result::<String>::http_response(500, 500, e.to_string(), String::new())
+            Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -344,7 +354,12 @@ pub async fn get_previous_history(
         ),
         Err(e) => {
             warn!(error = %e, "Failed to get previous history entry");
-            Result::<String>::http_response(500, 500, e.to_string(), String::new())
+            Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -400,7 +415,12 @@ pub async fn get_namespace_configs(
         }
         Err(e) => {
             warn!(error = %e, "Failed to get namespace configs");
-            Result::<String>::http_response(500, 500, e.to_string(), String::new())
+            Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }

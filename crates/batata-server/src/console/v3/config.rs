@@ -688,16 +688,268 @@ async fn import_configs(
     model::common::Result::<ImportResult>::http_success(result)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchDeleteParam {
+    pub ids: String,
+}
+
+#[delete("batchDelete")]
+async fn batch_delete(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BatchDeleteParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let ids: Vec<i64> = params
+        .ids
+        .split(',')
+        .filter_map(|s| s.trim().parse::<i64>().ok())
+        .collect();
+
+    if ids.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'ids' is missing or invalid",
+        );
+    }
+
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    let src_user = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.username.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
+
+    match data
+        .console_datasource
+        .config_batch_delete(&ids, &client_ip, &src_user)
+        .await
+    {
+        Ok(_) => model::common::Result::<bool>::http_success(true),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct SearchDetailParam {
+    #[serde(flatten)]
+    config_form: ConfigForm,
+    pub page_no: u64,
+    pub page_size: u64,
+    #[serde(default)]
+    pub config_detail: String,
+    #[serde(default = "default_search_type")]
+    pub search: String,
+}
+
+fn default_search_type() -> String {
+    "blur".to_string()
+}
+
+#[get("searchDetail")]
+async fn search_detail(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<SearchDetailParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let tags = params
+        .config_form
+        .config_tags
+        .split(',')
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
+    let types = params
+        .config_form
+        .r#type
+        .split(',')
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
+
+    let content = if params.config_detail.is_empty() {
+        &params.config_form.content
+    } else {
+        &params.config_detail
+    };
+
+    match data
+        .console_datasource
+        .config_search_page(
+            params.page_no,
+            params.page_size,
+            &params.config_form.namespace_id,
+            &params.config_form.data_id,
+            &params.config_form.group_name,
+            &params.config_form.app_name,
+            tags,
+            types,
+            content,
+        )
+        .await
+    {
+        Ok(page_result) => {
+            model::common::Result::<Page<ConfigBasicInfo>>::http_success(page_result)
+        }
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListenerByIpParam {
+    pub ip: String,
+    #[serde(default)]
+    pub all: bool,
+    #[serde(default)]
+    pub namespace_id: Option<String>,
+}
+
+#[get("listener/ip")]
+async fn find_listener_by_ip(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ListenerByIpParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let namespace_id = params.namespace_id.as_deref().unwrap_or("").to_string();
+
+    match data
+        .console_datasource
+        .config_listener_list_by_ip(&params.ip, params.all, &namespace_id)
+        .await
+    {
+        Ok(listener_info) => {
+            model::common::Result::<ConfigListenerInfo>::http_success(listener_info)
+        }
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConsoleCloneParam {
+    pub target_namespace_id: String,
+    #[serde(default = "default_clone_policy")]
+    pub policy: String,
+    #[serde(default)]
+    pub src_user: Option<String>,
+}
+
+fn default_clone_policy() -> String {
+    "ABORT".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct CloneConfigBean {
+    pub cfg_id: i64,
+    #[serde(default)]
+    pub data_id: String,
+    #[serde(default)]
+    pub group: String,
+}
+
+#[post("clone")]
+async fn clone_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ConsoleCloneParam>,
+    body: web::Json<Vec<CloneConfigBean>>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let clone_beans = body.into_inner();
+    if clone_beans.is_empty() {
+        return model::common::Result::<ImportResult>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::NO_SELECTED_CONFIG.code,
+            error::NO_SELECTED_CONFIG.message.to_string(),
+            "No configuration selected",
+        );
+    }
+
+    let mut namespace_id = params.target_namespace_id.trim().to_string();
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let src_user = params.src_user.clone().unwrap_or_else(|| {
+        req.extensions()
+            .get::<AuthContext>()
+            .map(|ctx| ctx.username.clone())
+            .unwrap_or_default()
+    });
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    let ids: Vec<i64> = clone_beans.iter().map(|c| c.cfg_id).collect();
+
+    match data
+        .console_datasource
+        .config_clone(&ids, &namespace_id, &params.policy, &src_user, &src_ip)
+        .await
+    {
+        Ok(import_result) => model::common::Result::<ImportResult>::http_success(import_result),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
 pub fn routes() -> Scope {
     web::scope("/cs/config")
         .service(find_one)
         .service(search)
+        .service(search_detail)
         .service(create_or_update)
         .service(delete)
+        .service(batch_delete)
         .service(find_beta_one)
         .service(publish_beta)
         .service(delete_beta)
+        .service(find_listener_by_ip)
         .service(find_listeners)
         .service(export_configs)
         .service(import_configs)
+        .service(clone_config)
 }

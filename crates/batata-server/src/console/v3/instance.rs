@@ -8,8 +8,8 @@ use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, api::naming::model::Instance, model::common::AppState,
-    model::response::Result, secured,
+    ActionTypes, ApiType, Secured, SignType, api::naming::model::Instance, error,
+    model::common::AppState, model::response::Result, secured,
 };
 
 const DEFAULT_NAMESPACE_ID: &str = "public";
@@ -130,7 +130,14 @@ async fn list_instances(
         .await
     {
         Ok(i) => i,
-        Err(e) => return Result::<String>::http_response(500, 500, e.to_string(), String::new()),
+        Err(e) => {
+            return Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     let response = InstanceListResponse { hosts: instances };
@@ -182,7 +189,12 @@ async fn update_instance(
         .instance_update(namespace_id, group_name, &form.service_name, instance)
         .await
     {
-        return Result::<String>::http_response(500, 500, e.to_string(), String::new());
+        return Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
     }
 
     Result::<bool>::http_success(true)

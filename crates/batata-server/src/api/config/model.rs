@@ -71,7 +71,7 @@ impl From<batata_config::ConfigBasicInfo> for ConfigBasicInfo {
 impl From<batata_persistence::ConfigStorageData> for ConfigBasicInfo {
     fn from(value: batata_persistence::ConfigStorageData) -> Self {
         Self {
-            id: 0,
+            id: value.id,
             namespace_id: value.tenant,
             group_name: value.group,
             data_id: value.data_id,
@@ -125,7 +125,7 @@ impl From<batata_persistence::ConfigStorageData> for ConfigDetailInfo {
     fn from(value: batata_persistence::ConfigStorageData) -> Self {
         Self {
             config_basic_info: ConfigBasicInfo {
-                id: 0,
+                id: value.id,
                 namespace_id: value.tenant,
                 group_name: value.group,
                 data_id: value.data_id,

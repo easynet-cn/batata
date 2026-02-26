@@ -8,7 +8,7 @@ use batata_api::Page;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
-    api::config::model::{ConfigHistoryBasicInfo, ConfigHistoryDetailInfo},
+    api::config::model::{ConfigBasicInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo},
     model::{
         self,
         common::{AppState, DEFAULT_NAMESPACE_ID},
@@ -48,6 +48,22 @@ struct HistoryDetailParam {
     #[serde(default)]
     namespace_id: Option<String>,
     nid: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HistoryPreviousParam {
+    data_id: String,
+    group_name: String,
+    #[serde(default)]
+    namespace_id: Option<String>,
+    id: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NamespaceConfigsParam {
+    namespace_id: String,
 }
 
 /// GET /v3/admin/cs/history/list
@@ -145,8 +161,107 @@ async fn get_detail(
     }
 }
 
+/// GET /v3/admin/cs/history/previous
+#[get("previous")]
+async fn get_previous(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<HistoryPreviousParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let namespace_id = params
+        .namespace_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_NAMESPACE_ID)
+        .to_string();
+
+    match data
+        .persistence()
+        .config_history_get_previous(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            params.id,
+        )
+        .await
+    {
+        Ok(Some(item)) => {
+            let detail = ConfigHistoryDetailInfo::from(item);
+            model::common::Result::<ConfigHistoryDetailInfo>::http_success(detail)
+        }
+        Ok(None) => model::common::Result::<String>::http_response(
+            404,
+            404,
+            "previous config history not found".to_string(),
+            String::new(),
+        ),
+        Err(e) => {
+            warn!(error = %e, "Failed to get previous history");
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to get previous history: {}", e),
+                String::new(),
+            )
+        }
+    }
+}
+
+/// GET /v3/admin/cs/history/configs
+#[get("configs")]
+async fn get_configs_by_namespace(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<NamespaceConfigsParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    match data
+        .persistence()
+        .config_find_by_namespace(&namespace_id)
+        .await
+    {
+        Ok(configs) => {
+            let result: Vec<ConfigBasicInfo> =
+                configs.into_iter().map(ConfigBasicInfo::from).collect();
+            model::common::Result::<Vec<ConfigBasicInfo>>::http_success(result)
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to get configs by namespace");
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to get configs: {}", e),
+                String::new(),
+            )
+        }
+    }
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/history")
         .service(list_history)
         .service(get_detail)
+        .service(get_previous)
+        .service(get_configs_by_namespace)
 }

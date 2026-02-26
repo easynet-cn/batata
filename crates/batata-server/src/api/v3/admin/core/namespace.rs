@@ -244,6 +244,36 @@ async fn delete_namespace(
     common::Result::<bool>::http_success(res.unwrap_or_default())
 }
 
+/// GET /v3/admin/core/namespace/check
+///
+/// Check if a namespace exists. Returns the count of tenant_info records (0 or 1).
+#[get("check")]
+async fn check_namespace(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<GetParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console/namespaces")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    match data
+        .persistence()
+        .namespace_check(&params.namespace_id)
+        .await
+    {
+        Ok(exists) => common::Result::<i32>::http_success(if exists { 1 } else { 0 }),
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to check namespace");
+            HttpResponse::InternalServerError().body(e.to_string())
+        }
+    }
+}
+
 fn namespace_name_check(namespace_name: &str) -> bool {
     static RE: LazyLock<regex::Regex> =
         LazyLock::new(|| regex::Regex::new(r"^[^@#$%^&*]+$").expect("Invalid regex pattern"));
@@ -254,6 +284,7 @@ fn namespace_name_check(namespace_name: &str) -> bool {
 pub fn routes() -> actix_web::Scope {
     web::scope("/namespace")
         .service(list_namespaces)
+        .service(check_namespace)
         .service(get_namespace)
         .service(create_namespace)
         .service(update_namespace)

@@ -5,8 +5,6 @@
 use actix_web::{HttpResponse, HttpResponseBuilder, http::StatusCode};
 use serde::{Deserialize, Serialize};
 
-use super::constants::NACOS_SERVER_VERSION_V2;
-
 /// Generic result wrapper for API responses
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Result<T> {
@@ -132,27 +130,38 @@ pub struct ConsoleException {}
 
 impl ConsoleException {
     pub fn handle_access_exception(message: String) -> HttpResponse {
-        HttpResponse::Forbidden().body(message)
+        Result::<String>::http_response(
+            403,
+            crate::error::ACCESS_DENIED.code,
+            message,
+            String::new(),
+        )
     }
 
     pub fn handle_illegal_argument_exception(message: String) -> HttpResponse {
-        HttpResponse::BadRequest().body(format!("caused: {}", message))
+        Result::<String>::http_response(
+            400,
+            crate::error::PARAMETER_VALIDATE_ERROR.code,
+            format!("caused: {}", message),
+            String::new(),
+        )
     }
 
     pub fn handle_runtime_exception(code: u16, message: String) -> HttpResponse {
-        HttpResponseBuilder::new(StatusCode::from_u16(code).unwrap_or_default())
-            .body(format!("caused: {}", message))
+        Result::<String>::http_response(
+            code,
+            crate::error::SERVER_ERROR.code,
+            format!("caused: {}", message),
+            String::new(),
+        )
     }
 
-    pub fn handle_exception(uri: String, message: String) -> HttpResponse {
-        if uri.contains(NACOS_SERVER_VERSION_V2) {
-            HttpResponse::InternalServerError().json(Result::new(
-                500,
-                htmlescape::encode_minimal(format!("caused: {}", message).as_str()),
-                "",
-            ))
-        } else {
-            HttpResponse::InternalServerError().body(format!("caused: {}", message))
-        }
+    pub fn handle_exception(_uri: String, message: String) -> HttpResponse {
+        Result::<String>::http_response(
+            500,
+            crate::error::SERVER_ERROR.code,
+            htmlescape::encode_minimal(format!("caused: {}", message).as_str()),
+            String::new(),
+        )
     }
 }

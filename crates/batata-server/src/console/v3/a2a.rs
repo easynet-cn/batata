@@ -13,6 +13,7 @@ use crate::{
         BatchRegistrationResponse, RegisteredAgent,
     },
     api::ai::{AgentRegistry, AgentRegistryStats},
+    error,
     model::{self, common::AppState},
     secured,
 };
@@ -85,7 +86,12 @@ async fn register_agent(
 
     match registry.register(body.into_inner()) {
         Ok(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
-        Err(e) => model::common::Result::<String>::http_response(400, 400, e, String::new()),
+        Err(e) => model::common::Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            e,
+            String::new(),
+        ),
     }
 }
 
@@ -114,7 +120,12 @@ async fn update_agent(
 
     match registry.update(&namespace, &name, body.into_inner()) {
         Ok(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
-        Err(e) => model::common::Result::<String>::http_response(404, 404, e, String::new()),
+        Err(e) => model::common::Result::<String>::http_response(
+            404,
+            error::RESOURCE_NOT_FOUND.code,
+            e,
+            String::new(),
+        ),
     }
 }
 
@@ -137,7 +148,12 @@ async fn delete_agent(
 
     match registry.delete_by_query(&query.into_inner()) {
         Ok(()) => model::common::Result::<bool>::http_success(true),
-        Err(e) => model::common::Result::<String>::http_response(404, 404, e, String::new()),
+        Err(e) => model::common::Result::<String>::http_response(
+            404,
+            error::RESOURCE_NOT_FOUND.code,
+            e,
+            String::new(),
+        ),
     }
 }
 

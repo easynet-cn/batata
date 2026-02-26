@@ -25,6 +25,7 @@ use crate::{
         },
         remote::model::{RequestTrait, ResponseCode, ResponseTrait},
     },
+    error,
     service::{
         naming::NamingService,
         naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern},
@@ -121,7 +122,7 @@ impl PayloadHandler for InstanceRequestHandler {
 
         if !result {
             response.response.result_code = ResponseCode::Fail.code();
-            response.response.error_code = ResponseCode::Fail.code();
+            response.response.error_code = error::INSTANCE_ERROR.code;
             response.response.success = false;
             response.response.message = "Operation failed".to_string();
         }
@@ -359,7 +360,7 @@ impl PayloadHandler for BatchInstanceRequestHandler {
 
         if !result {
             response.response.result_code = ResponseCode::Fail.code();
-            response.response.error_code = ResponseCode::Fail.code();
+            response.response.error_code = error::INSTANCE_ERROR.code;
             response.response.success = false;
             response.response.message = "Operation failed".to_string();
         }
@@ -659,7 +660,7 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
 
         if !result {
             response.response.result_code = ResponseCode::Fail.code();
-            response.response.error_code = ResponseCode::Fail.code();
+            response.response.error_code = error::INSTANCE_ERROR.code;
             response.response.success = false;
             response.response.message = "Operation failed".to_string();
         }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use batata_console::model::Member as ConsoleMember;
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType,
+    ActionTypes, ApiType, Secured, SignType, error,
     model::{self, common::AppState},
     secured,
 };
@@ -251,9 +251,12 @@ async fn update_member_state(
             };
             model::common::Result::<UpdateMemberStateResponse>::http_success(response)
         }
-        Err(e) => {
-            model::common::Result::<String>::http_response(400, 400, e.to_string(), String::new())
-        }
+        Err(e) => model::common::Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 

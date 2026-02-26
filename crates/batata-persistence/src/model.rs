@@ -112,6 +112,7 @@ pub struct NamespaceInfo {
 /// Config information stored in embedded backends
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConfigStorageData {
+    pub id: i64,
     pub data_id: String,
     pub group: String,
     pub tenant: String,

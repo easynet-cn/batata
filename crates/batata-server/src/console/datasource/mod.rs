@@ -183,6 +183,33 @@ pub trait ConsoleDataSource: Send + Sync {
         src_ip: &str,
     ) -> anyhow::Result<ImportResult>;
 
+    /// Batch delete configs by IDs
+    async fn config_batch_delete(
+        &self,
+        ids: &[i64],
+        client_ip: &str,
+        src_user: &str,
+    ) -> anyhow::Result<()>;
+
+    /// Clone configs to another namespace
+    #[allow(clippy::too_many_arguments)]
+    async fn config_clone(
+        &self,
+        ids: &[i64],
+        target_namespace_id: &str,
+        policy: &str,
+        src_user: &str,
+        src_ip: &str,
+    ) -> anyhow::Result<ImportResult>;
+
+    /// Get config listener info by IP address
+    async fn config_listener_list_by_ip(
+        &self,
+        ip: &str,
+        all: bool,
+        namespace_id: &str,
+    ) -> anyhow::Result<ConfigListenerInfo>;
+
     // ============== History Operations ==============
 
     /// Find history by ID
@@ -204,6 +231,15 @@ pub trait ConsoleDataSource: Send + Sync {
         &self,
         namespace_id: &str,
     ) -> anyhow::Result<Vec<ConfigBasicInfo>>;
+
+    /// Find the previous history version before a given history ID
+    async fn history_find_previous(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        id: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>>;
 
     // ============== Service Operations ==============
 

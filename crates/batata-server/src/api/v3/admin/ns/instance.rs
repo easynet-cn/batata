@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, api::naming::model::Instance, model::common::AppState,
-    model::response::Result, secured, service::naming::NamingService,
+    ActionTypes, ApiType, Secured, SignType, api::naming::model::Instance, error,
+    model::common::AppState, model::response::Result, secured, service::naming::NamingService,
 };
 
 const DEFAULT_NAMESPACE_ID: &str = "public";
@@ -307,7 +307,12 @@ async fn register_instance(
         );
         Result::<bool>::http_success(true)
     } else {
-        Result::<bool>::http_response(500, 500, "Failed to register instance".to_string(), false)
+        Result::<bool>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            "Failed to register instance".to_string(),
+            false,
+        )
     }
 }
 
@@ -364,7 +369,12 @@ async fn deregister_instance(
     if result {
         Result::<bool>::http_success(true)
     } else {
-        Result::<bool>::http_response(404, 404, "Instance not found".to_string(), false)
+        Result::<bool>::http_response(
+            404,
+            error::INSTANCE_NOT_FOUND.code,
+            "Instance not found".to_string(),
+            false,
+        )
     }
 }
 
@@ -636,12 +646,202 @@ async fn update_metadata(
     Result::<bool>::http_success(true)
 }
 
+/// PUT /v3/admin/ns/instance/partial
+///
+/// Partially updates an instance. Only provided fields are updated.
+#[put("partial")]
+async fn partial_update_instance(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    naming_service: web::Data<Arc<NamingService>>,
+    form: web::Json<InstanceRegisterForm>,
+) -> impl Responder {
+    if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
+            false,
+        );
+    }
+
+    let namespace_id = form.namespace_id_or_default();
+    let group_name = form.group_name_or_default();
+    let cluster_name = form.cluster_name_or_default();
+
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, form.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let instances = naming_service.get_instances(
+        namespace_id,
+        group_name,
+        &form.service_name,
+        cluster_name,
+        false,
+    );
+
+    let instance_key = format!("{}#{}#{}", form.ip, form.port, cluster_name);
+
+    if let Some(mut existing) = instances.into_iter().find(|i| i.key() == instance_key) {
+        if let Some(weight) = form.weight {
+            existing.weight = weight;
+        }
+        if let Some(healthy) = form.healthy {
+            existing.healthy = healthy;
+        }
+        if let Some(enabled) = form.enabled {
+            existing.enabled = enabled;
+        }
+        if let Some(ephemeral) = form.ephemeral {
+            existing.ephemeral = ephemeral;
+        }
+        if let Some(ref metadata_str) = form.metadata
+            && let Ok(metadata) = serde_json::from_str::<HashMap<String, String>>(metadata_str)
+        {
+            for (k, v) in metadata {
+                existing.metadata.insert(k, v);
+            }
+        }
+
+        let result = naming_service.register_instance(
+            namespace_id,
+            group_name,
+            &form.service_name,
+            existing,
+        );
+
+        if result {
+            Result::<bool>::http_success(true)
+        } else {
+            Result::<bool>::http_response(
+                500,
+                500,
+                "Failed to partial update instance".to_string(),
+                false,
+            )
+        }
+    } else {
+        Result::<bool>::http_response(
+            404,
+            404,
+            format!(
+                "instance not found, ip={}, port={}, cluster={}",
+                form.ip, form.port, cluster_name
+            ),
+            false,
+        )
+    }
+}
+
+/// DELETE /v3/admin/ns/instance/metadata/batch
+///
+/// Batch delete metadata keys from multiple instances.
+#[delete("metadata/batch")]
+async fn delete_metadata_batch(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    naming_service: web::Data<Arc<NamingService>>,
+    params: web::Query<MetadataUpdateForm>,
+) -> impl Responder {
+    if params.service_name.is_empty() || params.instances.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Required parameters 'serviceName' and 'instances' are missing".to_string(),
+            false,
+        );
+    }
+
+    let namespace_id = params.namespace_id_or_default();
+    let group_name = params.group_name_or_default();
+
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, params.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let keys_to_delete: Vec<String> = serde_json::from_str(&params.metadata).unwrap_or_default();
+
+    if keys_to_delete.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Invalid metadata format. Expected JSON array of keys".to_string(),
+            false,
+        );
+    }
+
+    let instance_keys: Vec<(&str, &str)> = params
+        .instances
+        .split(',')
+        .filter_map(|s| {
+            let parts: Vec<&str> = s.trim().split(':').collect();
+            if parts.len() == 2 {
+                Some((parts[0], parts[1]))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if instance_keys.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Invalid instances format".to_string(),
+            false,
+        );
+    }
+
+    let instances =
+        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+
+    for instance in instances {
+        let matches = instance_keys
+            .iter()
+            .any(|(ip, port)| instance.ip == *ip && instance.port.to_string() == *port);
+
+        if matches {
+            let mut updated_instance = instance.clone();
+            for key in &keys_to_delete {
+                updated_instance.metadata.remove(key);
+            }
+            naming_service.register_instance(
+                namespace_id,
+                group_name,
+                &params.service_name,
+                updated_instance,
+            );
+        }
+    }
+
+    Result::<bool>::http_success(true)
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/instance")
         .service(register_instance)
         .service(deregister_instance)
         .service(update_instance)
+        .service(partial_update_instance)
         .service(get_instance)
         .service(list_instances)
         .service(update_metadata)
+        .service(delete_metadata_batch)
 }

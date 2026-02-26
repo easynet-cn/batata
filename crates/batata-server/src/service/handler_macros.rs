@@ -156,6 +156,15 @@ macro_rules! error_response {
         response.response.message = $message.to_string();
         response
     }};
+    ($response_type:ty, $request_id:expr, $error_code:expr, $message:expr) => {{
+        let mut response = <$response_type>::new();
+        response.response.request_id = $request_id;
+        response.response.result_code = $crate::api::remote::model::ResponseCode::Fail.code();
+        response.response.error_code = $error_code;
+        response.response.success = false;
+        response.response.message = $message.to_string();
+        response
+    }};
 }
 
 /// Macro for creating a success payload response

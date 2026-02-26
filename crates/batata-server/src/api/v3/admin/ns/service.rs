@@ -516,6 +516,117 @@ async fn delete_service(
     Result::<bool>::http_success(true)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubscriberQuery {
+    #[serde(default)]
+    namespace_id: Option<String>,
+    #[serde(default)]
+    group_name: Option<String>,
+    service_name: String,
+    #[serde(default = "default_page_no")]
+    page_no: u64,
+    #[serde(default = "default_page_size")]
+    page_size: u64,
+}
+
+impl SubscriberQuery {
+    fn namespace_id_or_default(&self) -> &str {
+        self.namespace_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_NAMESPACE_ID)
+    }
+
+    fn group_name_or_default(&self) -> &str {
+        self.group_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_GROUP)
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SubscriberInfoResponse {
+    addr_str: String,
+    agent: String,
+}
+
+/// GET /v3/admin/ns/service/subscribers
+#[get("subscribers")]
+async fn get_subscribers(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    naming_service: web::Data<Arc<NamingService>>,
+    params: web::Query<SubscriberQuery>,
+) -> impl Responder {
+    if params.service_name.is_empty() {
+        return Result::<String>::http_response(
+            400,
+            400,
+            "Required parameter 'serviceName' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    let namespace_id = params.namespace_id_or_default();
+    let group_name = params.group_name_or_default();
+
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, params.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let subscriber_ids =
+        naming_service.get_subscribers(namespace_id, group_name, &params.service_name);
+
+    let total = subscriber_ids.len() as i32;
+    let start = ((params.page_no - 1) * params.page_size) as usize;
+    let end = (start + params.page_size as usize).min(subscriber_ids.len());
+    let page_items: Vec<SubscriberInfoResponse> = subscriber_ids
+        .get(start..end)
+        .unwrap_or_default()
+        .iter()
+        .map(|s| SubscriberInfoResponse {
+            addr_str: s.clone(),
+            agent: s.clone(),
+        })
+        .collect();
+
+    let response = serde_json::json!({
+        "totalCount": total,
+        "pageNumber": params.page_no,
+        "pagesAvailable": (total as f64 / params.page_size as f64).ceil() as i32,
+        "pageItems": page_items,
+    });
+
+    Result::<serde_json::Value>::http_success(response)
+}
+
+/// GET /v3/admin/ns/service/selector/types
+#[get("selector/types")]
+async fn get_selector_types(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
+    let resource = "*:*:naming/*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let types = vec!["none".to_string(), "label".to_string()];
+    Result::<Vec<String>>::http_success(types)
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/service")
         .service(create_service)
@@ -523,4 +634,6 @@ pub fn routes() -> actix_web::Scope {
         .service(update_service)
         .service(get_service)
         .service(list_services)
+        .service(get_subscribers)
+        .service(get_selector_types)
 }
