@@ -39,26 +39,11 @@ struct InstanceRegisterForm {
 }
 
 impl InstanceRegisterForm {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 
-    fn cluster_name_or_default(&self) -> &str {
-        self.cluster_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_CLUSTER)
-    }
+    impl_or_default!(cluster_name_or_default, cluster_name, DEFAULT_CLUSTER);
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,26 +63,11 @@ struct InstanceDeregisterQuery {
 }
 
 impl InstanceDeregisterQuery {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 
-    fn cluster_name_or_default(&self) -> &str {
-        self.cluster_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_CLUSTER)
-    }
+    impl_or_default!(cluster_name_or_default, cluster_name, DEFAULT_CLUSTER);
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,19 +85,9 @@ struct InstanceListQuery {
 }
 
 impl InstanceListQuery {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 #[derive(Debug, Serialize)]
@@ -200,7 +160,12 @@ async fn register_or_beat(
         .unwrap_or_default();
 
     let instance = Instance {
-        instance_id: format!("{}#{}#{}", form.ip, form.port, cluster_name),
+        instance_id: batata_api::naming::model::generate_instance_id(
+            &form.ip,
+            form.port,
+            cluster_name,
+            &form.service_name,
+        ),
         ip: form.ip.clone(),
         port: form.port,
         weight: form.weight.unwrap_or(1.0),
@@ -210,10 +175,6 @@ async fn register_or_beat(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
-        instance_heart_beat_interval: 5000,
-        instance_heart_beat_time_out: 15000,
-        ip_delete_timeout: 30000,
-        instance_id_generator: String::new(),
     };
 
     naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
@@ -255,7 +216,12 @@ async fn deregister(
     );
 
     let instance = Instance {
-        instance_id: format!("{}#{}#{}", params.ip, params.port, cluster_name),
+        instance_id: batata_api::naming::model::generate_instance_id(
+            &params.ip,
+            params.port,
+            cluster_name,
+            &params.service_name,
+        ),
         ip: params.ip.clone(),
         port: params.port,
         cluster_name: cluster_name.to_string(),

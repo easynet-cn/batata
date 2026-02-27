@@ -60,7 +60,6 @@ impl ConsulAgentService {
                 meta.insert("node_name".to_string(), node_name);
                 meta
             },
-            ..Instance::default()
         };
 
         let success = self.naming_service.register_instance(

@@ -95,7 +95,12 @@ pub async fn register_instance(
 
     // Build instance
     let instance = Instance {
-        instance_id: format!("{}#{}#{}", form.ip, form.port, cluster_name),
+        instance_id: batata_api::naming::model::generate_instance_id(
+            &form.ip,
+            form.port,
+            cluster_name,
+            &form.service_name,
+        ),
         ip: form.ip.clone(),
         port: form.port,
         weight: form.weight.unwrap_or(1.0),
@@ -105,10 +110,6 @@ pub async fn register_instance(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
-        instance_heart_beat_interval: 5000,
-        instance_heart_beat_time_out: 15000,
-        ip_delete_timeout: 30000,
-        instance_id_generator: String::new(),
     };
 
     // Record heartbeat for health check tracking
@@ -120,8 +121,8 @@ pub async fn register_instance(
             &form.ip,
             form.port,
             cluster_name,
-            instance.instance_heart_beat_time_out,
-            instance.ip_delete_timeout,
+            instance.get_heartbeat_timeout(),
+            instance.get_ip_delete_timeout(),
         );
     }
 
@@ -208,7 +209,12 @@ pub async fn deregister_instance(
 
     // Build instance for deregistration
     let instance = Instance {
-        instance_id: format!("{}#{}#{}", params.ip, params.port, cluster_name),
+        instance_id: batata_api::naming::model::generate_instance_id(
+            &params.ip,
+            params.port,
+            cluster_name,
+            &params.service_name,
+        ),
         ip: params.ip.clone(),
         port: params.port,
         cluster_name: cluster_name.to_string(),
@@ -324,7 +330,12 @@ pub async fn update_instance(
 
     // Build updated instance
     let instance = Instance {
-        instance_id: format!("{}#{}#{}", form.ip, form.port, cluster_name),
+        instance_id: batata_api::naming::model::generate_instance_id(
+            &form.ip,
+            form.port,
+            cluster_name,
+            &form.service_name,
+        ),
         ip: form.ip.clone(),
         port: form.port,
         weight: form.weight.unwrap_or(1.0),
@@ -334,10 +345,6 @@ pub async fn update_instance(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
-        instance_heart_beat_interval: 5000,
-        instance_heart_beat_time_out: 15000,
-        ip_delete_timeout: 30000,
-        instance_id_generator: String::new(),
     };
 
     // Update by re-registering (which updates if exists)
@@ -1083,19 +1090,9 @@ pub struct InstanceBeatParam {
 }
 
 impl InstanceBeatParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("public")
-    }
+    impl_or_default!(pub, namespace_id_or_default, namespace_id, "public");
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("DEFAULT_GROUP")
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, "DEFAULT_GROUP");
 }
 
 /// Beat response

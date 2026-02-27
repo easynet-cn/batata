@@ -1,65 +1,65 @@
 [package]
 name = "batata-plugin-consul"
-version = "0.1.0"
-authors = ["Tianyu Liang <124244236@qq.com>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Consul compatibility plugin for Batata"
-license = "Apache-2.0"
-repository = "https://github.com/easynet-cn/batata"
 
 [dependencies]
-batata-common = { path = "../batata-common" }
-batata-plugin = { path = "../batata-plugin" }
-batata-api = { path = "../batata-api" }
-batata-naming = { path = "../batata-naming" }
-batata-config = { path = "../batata-config" }
-batata-core = { path = "../batata-core" }
-batata-consistency = { path = "../batata-consistency" }
+batata-common = { workspace = true }
+batata-plugin = { workspace = true }
+batata-api = { workspace = true }
+batata-naming = { workspace = true }
+batata-config = { workspace = true }
+batata-core = { workspace = true }
+batata-consistency = { workspace = true }
 
 # Web framework
-actix-web = "4"
+actix-web = { workspace = true }
 
 # Concurrency
-dashmap = "6.1"
+dashmap = { workspace = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-base64 = "0.22"
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
 
 # Async
-async-trait = "0.1"
-tokio = { version = "1.49", features = ["full"] }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 # Logging
-tracing = "0.1"
+tracing = { workspace = true }
 
 # Error handling
-anyhow = "1.0"
+anyhow = { workspace = true }
 
 # Database
-sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+sea-orm = { workspace = true }
 
 # Storage
-rocksdb = "0.24"
+rocksdb = { workspace = true }
 
 # Caching
-moka = { version = "0.12", features = ["sync"] }
+moka = { workspace = true }
 
 # Time
-chrono = "0.4"
+chrono = { workspace = true }
 
 # UUID
-uuid = { version = "1.20", features = ["v4"] }
+uuid = { workspace = true }
 
 # System info
-sysinfo = "0.33"
+sysinfo = { workspace = true }
 
 # Hostname
-hostname = "0.4"
+hostname = { workspace = true }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 
 [dev-dependencies]
-actix-http = "3"
+actix-http = { workspace = true }

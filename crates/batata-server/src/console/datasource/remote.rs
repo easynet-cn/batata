@@ -249,7 +249,6 @@ fn convert_instance(v: batata_maintainer_client::model::Instance) -> Instance {
         cluster_name: v.cluster_name,
         service_name: v.service_name,
         metadata: v.metadata,
-        ..Default::default()
     }
 }
 

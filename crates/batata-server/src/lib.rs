@@ -11,6 +11,8 @@ use crate::{
 };
 
 // Module declarations
+#[macro_use]
+mod macros; // Internal macros
 pub mod api; // API handlers and models
 pub mod auth; // Authentication and authorization
 pub mod config; // Configuration management

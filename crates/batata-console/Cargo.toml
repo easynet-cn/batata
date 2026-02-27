@@ -1,51 +1,51 @@
 [package]
 name = "batata-console"
-version = "0.1.0"
-authors = ["Tianyu Liang <124244236@qq.com>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Management console for Batata"
-license = "Apache-2.0"
-repository = "https://github.com/easynet-cn/batata"
 
 [dependencies]
-batata-common = { path = "../batata-common" }
-batata-api = { path = "../batata-api" }
-batata-persistence = { path = "../batata-persistence" }
-batata-core = { path = "../batata-core" }
-batata-config = { path = "../batata-config" }
-batata-naming = { path = "../batata-naming" }
-batata-client = { path = "../batata-client" }
+batata-common = { workspace = true }
+batata-api = { workspace = true }
+batata-persistence = { workspace = true }
+batata-core = { workspace = true }
+batata-config = { workspace = true }
+batata-naming = { workspace = true }
+batata-client = { workspace = true }
 
 # Web framework
-actix-web = "4"
-actix-multipart = "0.7"
+actix-web = { workspace = true }
+actix-multipart = { workspace = true }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 
 # Database
-sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+sea-orm = { workspace = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Async
-async-trait = "0.1"
-tokio = { version = "1.49", features = ["full"] }
-futures = "0.3"
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+futures = { workspace = true }
 
 # Logging
-tracing = "0.1"
+tracing = { workspace = true }
 
 # Error handling
-anyhow = "1.0"
+anyhow = { workspace = true }
 
 # Time
-chrono = "0.4"
+chrono = { workspace = true }
 
 # UUID
-uuid = { version = "1.20", features = ["v4"] }
+uuid = { workspace = true }
 
 # Regex
-regex = "1.11"
+regex = { workspace = true }

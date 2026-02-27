@@ -24,6 +24,10 @@ pub struct ServiceMetadata {
     pub selector_type: String,
     /// Service selector expression
     pub selector_expression: String,
+    /// Whether this service's instances are ephemeral by default
+    pub ephemeral: bool,
+    /// Revision counter for change detection / cache invalidation
+    pub revision: u64,
 }
 
 /// Protection threshold information
@@ -104,10 +108,14 @@ impl ClusterStatistics {
 pub struct ClusterConfig {
     /// Cluster name
     pub name: String,
+    /// Parent service name
+    pub service_name: String,
     /// Health checker type (e.g., "TCP", "HTTP", "NONE")
     pub health_check_type: String,
     /// Health check port
     pub check_port: i32,
+    /// Default port for instances in this cluster
+    pub default_port: i32,
     /// Use instance port for health check
     pub use_instance_port: bool,
     /// Cluster metadata
@@ -118,8 +126,10 @@ impl Default for ClusterConfig {
     fn default() -> Self {
         Self {
             name: "DEFAULT".to_string(),
+            service_name: String::new(),
             health_check_type: "TCP".to_string(),
             check_port: 80,
+            default_port: 80,
             use_instance_port: true,
             metadata: HashMap::new(),
         }
@@ -188,6 +198,10 @@ pub struct NamingService {
     fuzzy_watchers: Arc<DashMap<String, Vec<FuzzyWatchPattern>>>,
     /// Key: connection_id, Value: set of published service keys (for V2 Client API)
     publishers: Arc<DashMap<String, HashSet<String>>>,
+    /// Key: connection_id, Value: set of (service_key, instance_key) tuples
+    /// Tracks which instances were registered by which gRPC connection,
+    /// enabling automatic deregistration when a connection disconnects.
+    connection_instances: Arc<DashMap<String, HashSet<(String, String)>>>,
 }
 
 /// Build cluster config key format: service_key##clusterName
@@ -204,6 +218,7 @@ impl NamingService {
             subscribers: Arc::new(DashMap::new()),
             fuzzy_watchers: Arc::new(DashMap::new()),
             publishers: Arc::new(DashMap::new()),
+            connection_instances: Arc::new(DashMap::new()),
         }
     }
 
@@ -218,9 +233,7 @@ impl NamingService {
         let service_key = build_service_key(namespace, group_name, service_name);
 
         // Normalize defaults BEFORE building instance key for consistent storage
-        if instance.weight < 0.0 {
-            instance.weight = 1.0;
-        }
+        instance.weight = batata_api::naming::model::clamp_weight(instance.weight);
         if instance.cluster_name.is_empty() {
             instance.cluster_name = "DEFAULT".to_string();
         }
@@ -229,8 +242,11 @@ impl NamingService {
         let instance_key = build_instance_key(&instance);
 
         // Get or create service entry
-        let instances = self.services.entry(service_key).or_default();
+        let instances = self.services.entry(service_key.clone()).or_default();
         instances.insert(instance_key, instance);
+
+        // Increment service revision for change detection
+        self.increment_service_revision(&service_key);
         true
     }
 
@@ -544,6 +560,57 @@ impl NamingService {
         self.publishers.remove(connection_id);
     }
 
+    // ============== Connection Instance Tracking ==============
+
+    /// Track that a connection registered a specific instance.
+    /// Called when an ephemeral instance is registered via gRPC.
+    pub fn add_connection_instance(
+        &self,
+        connection_id: &str,
+        service_key: &str,
+        instance_key: &str,
+    ) {
+        self.connection_instances
+            .entry(connection_id.to_string())
+            .or_default()
+            .insert((service_key.to_string(), instance_key.to_string()));
+    }
+
+    /// Untrack a connection's instance.
+    /// Called when an ephemeral instance is deregistered via gRPC.
+    pub fn remove_connection_instance(
+        &self,
+        connection_id: &str,
+        service_key: &str,
+        instance_key: &str,
+    ) {
+        if let Some(mut instances) = self.connection_instances.get_mut(connection_id) {
+            instances.remove(&(service_key.to_string(), instance_key.to_string()));
+        }
+    }
+
+    /// Deregister all instances associated with a connection.
+    /// Called when a gRPC connection disconnects to clean up orphan ephemeral instances.
+    /// Returns the set of affected service keys (for subscriber notification).
+    pub fn deregister_all_by_connection(&self, connection_id: &str) -> Vec<String> {
+        let mut affected_service_keys = HashSet::new();
+
+        if let Some((_, instances)) = self.connection_instances.remove(connection_id) {
+            for (service_key, instance_key) in instances {
+                if let Some(service_instances) = self.services.get(&service_key)
+                    && service_instances.remove(&instance_key).is_some()
+                {
+                    affected_service_keys.insert(service_key);
+                }
+            }
+        }
+
+        // Also clean up publisher tracking
+        self.publishers.remove(connection_id);
+
+        affected_service_keys.into_iter().collect()
+    }
+
     // ============== Publisher Tracking (for V2 Client API) ==============
 
     /// Track that a connection published a service
@@ -731,14 +798,12 @@ impl NamingService {
         let service_key = build_service_key(namespace, group_name, service_name);
 
         // Clear existing instances for this service, then register the new ones
-        let entry = self.services.entry(service_key).or_default();
+        let entry = self.services.entry(service_key.clone()).or_default();
         entry.clear();
 
         for instance in instances {
             let mut instance = instance;
-            if instance.weight < 0.0 {
-                instance.weight = 1.0;
-            }
+            instance.weight = batata_api::naming::model::clamp_weight(instance.weight);
             if instance.cluster_name.is_empty() {
                 instance.cluster_name = "DEFAULT".to_string();
             }
@@ -746,6 +811,9 @@ impl NamingService {
             let instance_key = build_instance_key(&instance);
             entry.insert(instance_key, instance);
         }
+
+        // Increment service revision for change detection
+        self.increment_service_revision(&service_key);
         true
     }
 
@@ -1055,6 +1123,7 @@ impl NamingService {
             check_port,
             use_instance_port,
             metadata,
+            ..Default::default()
         };
 
         self.cluster_configs.insert(cluster_key, cluster_config);
@@ -1108,6 +1177,13 @@ impl NamingService {
         stats.into_iter().find(|s| s.cluster_name == cluster_name)
     }
 
+    /// Increment the revision counter for a service (for change detection / cache invalidation)
+    fn increment_service_revision(&self, service_key: &str) {
+        if let Some(mut meta) = self.service_metadata.get_mut(service_key) {
+            meta.revision = meta.revision.wrapping_add(1);
+        }
+    }
+
     /// Check if a service exists (has metadata or instances)
     pub fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool {
         let service_key = build_service_key(namespace, group_name, service_name);
@@ -1131,7 +1207,7 @@ mod tests {
 
     fn create_test_instance(ip: &str, port: i32) -> Instance {
         Instance {
-            instance_id: format!("{}#{}#DEFAULT", ip, port),
+            instance_id: format!("{}#{}#DEFAULT#test-service", ip, port),
             ip: ip.to_string(),
             port,
             weight: 1.0,
@@ -1141,10 +1217,6 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: "test-service".to_string(),
             metadata: std::collections::HashMap::new(),
-            instance_heart_beat_interval: 5000,
-            instance_heart_beat_time_out: 15000,
-            ip_delete_timeout: 30000,
-            instance_id_generator: String::new(),
         }
     }
 

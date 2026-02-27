@@ -391,6 +391,7 @@ pub struct GrpcBiRequestStreamService {
     handler_registry: Arc<HandlerRegistry>,
     connection_manager: Arc<ConnectionManager>,
     config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+    naming_service: Option<Arc<crate::service::naming::NamingService>>,
 }
 
 impl GrpcBiRequestStreamService {
@@ -398,22 +399,26 @@ impl GrpcBiRequestStreamService {
         handler_registry: HandlerRegistry,
         connection_manager: ConnectionManager,
         config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+        naming_service: Option<Arc<crate::service::naming::NamingService>>,
     ) -> Self {
         Self {
             handler_registry: Arc::new(handler_registry),
             connection_manager: Arc::new(connection_manager),
             config_subscriber_manager,
+            naming_service,
         }
     }
     pub fn from_arc(
         handler_registry: Arc<HandlerRegistry>,
         connection_manager: Arc<ConnectionManager>,
         config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+        naming_service: Option<Arc<crate::service::naming::NamingService>>,
     ) -> Self {
         Self {
             handler_registry,
             connection_manager,
             config_subscriber_manager,
+            naming_service,
         }
     }
 }
@@ -440,6 +445,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
         let handler_registry = self.handler_registry.clone();
         let connection_manager = self.connection_manager.clone();
         let config_subscriber_manager = self.config_subscriber_manager.clone();
+        let naming_service = self.naming_service.clone();
 
         tokio::spawn(async move {
             while let Some(message) = inbound_stream.next().await {
@@ -570,7 +576,18 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                 }
             }
 
-            // 连接断开时清理资源
+            // Clean up resources when connection disconnects
+            if let Some(ref naming) = naming_service {
+                let affected = naming.deregister_all_by_connection(&connection_id);
+                if !affected.is_empty() {
+                    info!(
+                        "Deregistered ephemeral instances for disconnected connection {}: {} services affected",
+                        connection_id,
+                        affected.len()
+                    );
+                }
+                naming.remove_subscriber(&connection_id);
+            }
             config_subscriber_manager.unsubscribe_all(&connection_id);
             connection_manager.unregister(&connection_id);
         });

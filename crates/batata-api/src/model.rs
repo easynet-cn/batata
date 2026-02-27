@@ -107,6 +107,12 @@ pub const LINE_BREAK: &str = "\n";
 pub const POUND: &str = "#";
 pub const DOT: &str = ".";
 
+// Weight validation constants
+pub const MAX_WEIGHT_VALUE: f64 = 10000.0;
+pub const MIN_POSITIVE_WEIGHT_VALUE: f64 = 0.01;
+pub const MIN_WEIGHT_VALUE: f64 = 0.0;
+pub const DEFAULT_INSTANCE_WEIGHT: f64 = 1.0;
+
 // Default values
 pub const DEFAULT_CLUSTER_NAME: &str = "DEFAULT";
 pub const DEFAULT_NAMESPACE_ID: &str = "public";

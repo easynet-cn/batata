@@ -596,10 +596,6 @@ impl ConsulCatalogService {
                 cluster_name: "DEFAULT".to_string(),
                 service_name: service.service.clone(),
                 metadata,
-                instance_heart_beat_interval: 5000,
-                instance_heart_beat_time_out: 15000,
-                ip_delete_timeout: 30000,
-                instance_id_generator: "simple".to_string(),
             };
 
             self.naming_service.register_instance(
@@ -1050,7 +1046,7 @@ mod tests {
 
     fn create_test_instance(name: &str, ip: &str, port: i32) -> NacosInstance {
         NacosInstance {
-            instance_id: format!("{}#{}#{}", ip, port, "DEFAULT"),
+            instance_id: format!("{}#{}#DEFAULT#{}", ip, port, name),
             ip: ip.to_string(),
             port,
             weight: 1.0,
@@ -1060,10 +1056,6 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: name.to_string(),
             metadata: HashMap::new(),
-            instance_heart_beat_interval: 5000,
-            instance_heart_beat_time_out: 15000,
-            ip_delete_timeout: 30000,
-            instance_id_generator: "simple".to_string(),
         }
     }
 
@@ -1211,10 +1203,6 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: "web".to_string(),
             metadata: metadata.clone(),
-            instance_heart_beat_interval: 5000,
-            instance_heart_beat_time_out: 15000,
-            ip_delete_timeout: 30000,
-            instance_id_generator: "simple".to_string(),
         };
 
         // Register an unhealthy service
@@ -1230,10 +1218,6 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: "db".to_string(),
             metadata,
-            instance_heart_beat_interval: 5000,
-            instance_heart_beat_time_out: 15000,
-            ip_delete_timeout: 30000,
-            instance_id_generator: "simple".to_string(),
         };
 
         naming_service.register_instance("public", "DEFAULT_GROUP", "web", instance1);

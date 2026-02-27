@@ -31,6 +31,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize configuration and logging
     let configuration = model::common::Configuration::new();
 
+    // Validate JWT secret key when auth is enabled
+    if configuration.auth_enabled() && configuration.token_secret_key().is_empty() {
+        eprintln!(
+            "FATAL: Authentication is enabled (nacos.core.auth.enabled=true) but no JWT secret key is configured."
+        );
+        eprintln!(
+            "Set 'nacos.core.auth.plugin.nacos.token.secret.key' to a non-empty Base64-encoded secret."
+        );
+        std::process::exit(1);
+    }
+
     // Initialize multi-file logging with optional OpenTelemetry support
     let logging_config = configuration.logging_config();
     let otel_config = OtelConfig::from_config(
@@ -59,6 +70,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let deployment_type = configuration.deployment_type();
     let is_console_remote = deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE;
 
+    if is_console_remote
+        && configuration.console_remote_username() == "nacos"
+        && configuration.console_remote_password() == "nacos"
+    {
+        tracing::warn!(
+            "Console remote mode is using default credentials (nacos/nacos). \
+             This is insecure for production environments. \
+             Set 'nacos.console.remote.username' and 'nacos.console.remote.password'."
+        );
+    }
+
     let server_address = configuration.server_address();
     let console_server_address = server_address.clone();
     let console_server_port = configuration.console_server_port();
@@ -74,6 +96,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let apollo_enabled = configuration.apollo_enabled();
     let apollo_server_port = configuration.apollo_server_port();
     let apollo_server_address = server_address.clone();
+    let mcp_registry_enabled = configuration.mcp_registry_enabled()
+        || deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP;
+    let mcp_registry_port = configuration.mcp_registry_port();
+    let mcp_registry_address = server_address.clone();
 
     // Initialize database, persistence service, and server member manager based on deployment mode
     let storage_mode = configuration.persistence_mode();
@@ -239,7 +265,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let graceful_shutdown = GracefulShutdown::new(shutdown_signal.clone(), Duration::from_secs(30));
 
     // Create shared AI services (used by both main and console servers)
-    let ai_services = AIServices::new();
+    // Use config-backed persistence when available
+    let ai_services = match (&app_state.persistence, &naming_service) {
+        (Some(persist), Some(ns)) => {
+            info!("AI services using config-backed persistence");
+            AIServices::with_persistence(persist.clone(), ns.clone())
+        }
+        _ => {
+            info!("AI services using in-memory storage (no persistence)");
+            AIServices::new()
+        }
+    };
 
     // For console remote mode, only start console server
     if is_console_remote {
@@ -275,6 +311,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let grpc_servers = startup::start_grpc_servers(
         app_state.clone(),
         naming_service.clone(),
+        &ai_services,
         sdk_server_port,
         cluster_server_port,
     )?;
@@ -295,6 +332,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         info!("Health check manager started (unhealthy/expired instance checkers)");
+    }
+
+    // Start periodic MCP index refresh task if persistence is available
+    if let Some(ref mcp_index) = ai_services.mcp_index
+        && let Some(ref persist) = app_state.persistence
+    {
+        let index = mcp_index.clone();
+        let persist = persist.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                index.refresh(persist.as_ref()).await;
+            }
+        });
+        info!("MCP index periodic refresh task started (every 30s)");
     }
 
     // Start cluster manager if in cluster mode
@@ -484,7 +536,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        model::common::NACOS_DEPLOYMENT_TYPE_SERVER => {
+        model::common::NACOS_DEPLOYMENT_TYPE_SERVER
+        | model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP => {
             let naming_service = grpc_servers.naming_service.clone();
 
             info!(
@@ -532,12 +585,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .transpose()?;
 
+            let mcp_registry_opt = if mcp_registry_enabled {
+                info!(
+                    "Starting MCP Registry server on {}:{}",
+                    mcp_registry_address, mcp_registry_port
+                );
+                Some(startup::mcp_registry_server(
+                    ai_services.mcp_registry.clone(),
+                    mcp_registry_address,
+                    mcp_registry_port,
+                )?)
+            } else {
+                None
+            };
+
             tokio::select! {
                 result = async {
                     tokio::try_join!(
                         main,
                         async { match consul_opt { Some(s) => s.await, None => std::future::pending().await } },
-                        async { match apollo_opt { Some(s) => s.await, None => std::future::pending().await } }
+                        async { match apollo_opt { Some(s) => s.await, None => std::future::pending().await } },
+                        async { match mcp_registry_opt { Some(s) => s.await, None => std::future::pending().await } }
                     )
                 } => {
                     if let Err(e) = result {
@@ -551,6 +619,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             let naming_service = grpc_servers.naming_service.clone();
+            let mcp_registry_for_server = ai_services.mcp_registry.clone();
 
             // Start console, main, and optionally Consul/Apollo servers
             info!(
@@ -611,13 +680,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .transpose()?;
 
+            let mcp_registry_opt = if mcp_registry_enabled {
+                info!(
+                    "Starting MCP Registry server on {}:{}",
+                    mcp_registry_address, mcp_registry_port
+                );
+                Some(startup::mcp_registry_server(
+                    mcp_registry_for_server,
+                    mcp_registry_address,
+                    mcp_registry_port,
+                )?)
+            } else {
+                None
+            };
+
             tokio::select! {
                 result = async {
                     tokio::try_join!(
                         console,
                         main,
                         async { match consul_opt { Some(s) => s.await, None => std::future::pending().await } },
-                        async { match apollo_opt { Some(s) => s.await, None => std::future::pending().await } }
+                        async { match apollo_opt { Some(s) => s.await, None => std::future::pending().await } },
+                        async { match mcp_registry_opt { Some(s) => s.await, None => std::future::pending().await } }
                     )
                 } => {
                     if let Err(e) = result {

@@ -45,7 +45,7 @@ pub struct InstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for InstanceRequestHandler {
-    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = InstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -54,6 +54,7 @@ impl PayloadHandler for InstanceRequestHandler {
         let service_name = &request.naming_request.service_name;
         let instance = request.instance;
         let req_type = &request.r#type;
+        let connection_id = &connection.meta_info.connection_id;
 
         let src_ip = payload
             .metadata
@@ -74,12 +75,57 @@ impl PayloadHandler for InstanceRequestHandler {
             "Received InstanceRequest"
         );
 
+        // Build keys for tracking before the instance is moved
+        let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
+        let cluster_name = if instance.cluster_name.is_empty() {
+            "DEFAULT"
+        } else {
+            &instance.cluster_name
+        };
+        let instance_key = format!("{}#{}#{}", instance.ip, instance.port, cluster_name);
+
         let result = if req_type == REGISTER_INSTANCE {
-            self.naming_service
-                .register_instance(namespace, group_name, service_name, instance)
+            let ok = self.naming_service.register_instance(
+                namespace,
+                group_name,
+                service_name,
+                instance,
+            );
+            if ok {
+                self.naming_service.add_publisher(
+                    connection_id,
+                    namespace,
+                    group_name,
+                    service_name,
+                );
+                self.naming_service.add_connection_instance(
+                    connection_id,
+                    &service_key,
+                    &instance_key,
+                );
+            }
+            ok
         } else if req_type == DE_REGISTER_INSTANCE {
-            self.naming_service
-                .deregister_instance(namespace, group_name, service_name, &instance)
+            let ok = self.naming_service.deregister_instance(
+                namespace,
+                group_name,
+                service_name,
+                &instance,
+            );
+            if ok {
+                self.naming_service.remove_publisher(
+                    connection_id,
+                    namespace,
+                    group_name,
+                    service_name,
+                );
+                self.naming_service.remove_connection_instance(
+                    connection_id,
+                    &service_key,
+                    &instance_key,
+                );
+            }
+            ok
         } else {
             false
         };
@@ -296,11 +342,7 @@ pub struct BatchInstanceRequestHandler {
 
 #[tonic::async_trait]
 impl PayloadHandler for BatchInstanceRequestHandler {
-    async fn handle(
-        &self,
-        __connection: &Connection,
-        payload: &Payload,
-    ) -> Result<Payload, Status> {
+    async fn handle(&self, connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let request = BatchInstanceRequest::from(payload);
         let request_id = request.request_id();
 
@@ -309,6 +351,7 @@ impl PayloadHandler for BatchInstanceRequestHandler {
         let service_name = &request.naming_request.service_name;
         let instances = request.instances;
         let req_type = &request.r#type;
+        let connection_id = &connection.meta_info.connection_id;
 
         debug!(
             "BatchInstanceRequest: type='{}', namespace='{}', group='{}', service='{}', instances_count={}",
@@ -319,20 +362,74 @@ impl PayloadHandler for BatchInstanceRequestHandler {
             instances.len()
         );
 
+        let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
+
         let result = if req_type == REGISTER_INSTANCE || req_type == BATCH_REGISTER_INSTANCE {
-            self.naming_service.batch_register_instances(
+            // Build instance keys before instances are moved
+            let instance_keys: Vec<String> = instances
+                .iter()
+                .map(|inst| {
+                    let cluster = if inst.cluster_name.is_empty() {
+                        "DEFAULT"
+                    } else {
+                        &inst.cluster_name
+                    };
+                    format!("{}#{}#{}", inst.ip, inst.port, cluster)
+                })
+                .collect();
+
+            let ok = self.naming_service.batch_register_instances(
                 namespace,
                 group_name,
                 service_name,
                 instances,
-            )
+            );
+            if ok {
+                self.naming_service.add_publisher(
+                    connection_id,
+                    namespace,
+                    group_name,
+                    service_name,
+                );
+                for ik in &instance_keys {
+                    self.naming_service
+                        .add_connection_instance(connection_id, &service_key, ik);
+                }
+            }
+            ok
         } else if req_type == DE_REGISTER_INSTANCE || req_type == BATCH_DE_REGISTER_INSTANCE {
-            self.naming_service.batch_deregister_instances(
+            // Build instance keys before deregistering
+            let instance_keys: Vec<String> = instances
+                .iter()
+                .map(|inst| {
+                    let cluster = if inst.cluster_name.is_empty() {
+                        "DEFAULT"
+                    } else {
+                        &inst.cluster_name
+                    };
+                    format!("{}#{}#{}", inst.ip, inst.port, cluster)
+                })
+                .collect();
+
+            let ok = self.naming_service.batch_deregister_instances(
                 namespace,
                 group_name,
                 service_name,
                 &instances,
-            )
+            );
+            if ok {
+                self.naming_service.remove_publisher(
+                    connection_id,
+                    namespace,
+                    group_name,
+                    service_name,
+                );
+                for ik in &instance_keys {
+                    self.naming_service
+                        .remove_connection_instance(connection_id, &service_key, ik);
+                }
+            }
+            ok
         } else {
             false
         };

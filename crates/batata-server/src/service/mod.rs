@@ -17,6 +17,9 @@ pub mod config_fuzzy_watch;
 // Naming fuzzy watch manager
 pub mod naming_fuzzy_watch;
 
+// AI persistent operation services
+pub mod ai;
+
 // Local implementations (gRPC handlers and RPC)
 pub mod ai_handler; // AI module gRPC handlers (MCP + A2A)
 pub mod cluster_handler; // Cluster module gRPC handlers

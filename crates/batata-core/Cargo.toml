@@ -1,56 +1,56 @@
 [package]
 name = "batata-core"
-version = "0.1.0"
-authors = ["Tianyu Liang <124244236@qq.com>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Core cluster and connection management for Batata"
-license = "Apache-2.0"
-repository = "https://github.com/easynet-cn/batata"
 
 [dependencies]
-batata-common = { path = "../batata-common" }
-batata-api = { path = "../batata-api" }
-batata-consistency = { path = "../batata-consistency" }
-batata-naming = { path = "../batata-naming" }
+batata-common = { workspace = true }
+batata-api = { workspace = true }
+batata-consistency = { workspace = true }
+batata-naming = { workspace = true }
 
 # Concurrency
-dashmap = "6.1"
-tokio = { version = "1.49", features = ["full"] }
+dashmap = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "net"] }
 
 # gRPC
-tonic = { version = "0.14", features = ["transport", "tls-native-roots"] }
-prost-types = "0.14"
+tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
+prost-types = { workspace = true }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Async
-async-trait = "0.1"
-futures = "0.3"
+async-trait = { workspace = true }
+futures = { workspace = true }
 
 # Logging
-tracing = "0.1"
+tracing = { workspace = true }
 
 # Error handling
-anyhow = "1.0"
-thiserror = "2.0"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 
 # Configuration
-config = "0.15"
+config = { workspace = true }
 
 # Encoding
-base64 = "0.22"
-md5 = "0.8"
+base64 = { workspace = true }
+md5 = { workspace = true }
 
 # Time
-chrono = "0.4"
+chrono = { workspace = true }
 
 # Caching
-moka = { version = "0.12", features = ["sync"] }
+moka = { workspace = true }
 
 # JWT
-jsonwebtoken = "9.3"
+jsonwebtoken = { workspace = true }

@@ -418,6 +418,13 @@ nacos.plugin.apollo.enabled: false
 ### Apollo compatibility server port (default: 8080)
 nacos.plugin.apollo.port: 8080
 
+#*************** MCP Registry Configurations ***************#
+### Enable MCP Registry server (official MCP Registry OpenAPI on separate port)
+### Automatically enabled when deployment type is 'serverWithMcp'
+nacos.ai.mcp.registry.enabled: false
+### MCP Registry server port (default: 9080)
+nacos.ai.mcp.registry.port: 9080
+
 #*************** Service Mesh / xDS Configurations ***************#
 ### Enable xDS server for Envoy/Istio integration
 nacos.mesh.xds.enabled: false

@@ -403,33 +403,3 @@ pub const NACOS_HOME_KEY: &str = "nacos.home";
 
 pub const SERVER_PORT_PROPERTY: &str = "nacos.server.main.port";
 pub const DEFAULT_SERVER_PORT: i32 = 8849;
-
-// Reserved configuration constants for Nacos compatibility
-#[allow(dead_code)]
-pub(crate) const FILE_PREFIX: &str = "file:";
-#[allow(dead_code)]
-pub(crate) const DEFAULT_WEB_CONTEXT_PATH: &str = "/nacos";
-#[allow(dead_code)]
-pub(crate) const MEMBER_LIST_PROPERTY: &str = "nacos.member.list";
-#[allow(dead_code)]
-pub(crate) const NACOS_HOME_PROPERTY: &str = "user.home";
-#[allow(dead_code)]
-pub(crate) const CUSTOM_CONFIG_LOCATION_PROPERTY: &str = "spring.config.additional-location";
-#[allow(dead_code)]
-pub(crate) const DEFAULT_CONFIG_LOCATION: &str = "application.properties";
-#[allow(dead_code)]
-pub(crate) const DEFAULT_RESOURCE_PATH: &str = "/application.properties";
-#[allow(dead_code)]
-pub(crate) const DEFAULT_ADDITIONAL_PATH: &str = "conf";
-#[allow(dead_code)]
-pub(crate) const DEFAULT_ADDITIONAL_FILE: &str = "cluster.conf";
-#[allow(dead_code)]
-pub(crate) const NACOS_HOME_ADDITIONAL_FILEPATH: &str = "nacos";
-#[allow(dead_code)]
-pub(crate) const NACOS_TEMP_DIR_1: &str = "data";
-#[allow(dead_code)]
-pub(crate) const NACOS_TEMP_DIR_2: &str = "tmp";
-#[allow(dead_code)]
-pub(crate) const NACOS_CUSTOM_ENVIRONMENT_ENABLED: &str = "nacos.custom.environment.enabled";
-#[allow(dead_code)]
-pub(crate) const NACOS_CUSTOM_CONFIG_NAME: &str = "customFirstNacosConfig";

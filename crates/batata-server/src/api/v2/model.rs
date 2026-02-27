@@ -31,13 +31,12 @@ pub struct ConfigGetParam {
 }
 
 impl ConfigGetParam {
-    /// Get namespace ID with default fallback
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 }
 
 /// Request parameters for publishing a config
@@ -86,13 +85,12 @@ pub struct ConfigPublishParam {
 }
 
 impl ConfigPublishParam {
-    /// Get namespace ID with default fallback
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 }
 
 /// Request parameters for deleting a config
@@ -112,13 +110,12 @@ pub struct ConfigDeleteParam {
 }
 
 impl ConfigDeleteParam {
-    /// Get namespace ID with default fallback
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 }
 
 /// Response data for config retrieval
@@ -182,12 +179,12 @@ pub struct ConfigSearchDetailParam {
 }
 
 impl ConfigSearchDetailParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 }
 
 // =============================================================================
@@ -222,13 +219,12 @@ fn default_page_size() -> u64 {
 }
 
 impl HistoryListParam {
-    /// Get namespace ID with default fallback
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 }
 
 /// Request parameters for getting a specific history entry
@@ -247,13 +243,12 @@ pub struct HistoryDetailParam {
 }
 
 impl HistoryDetailParam {
-    /// Get namespace ID with default fallback
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 }
 
 /// Request parameters for getting the previous history entry
@@ -272,13 +267,12 @@ pub struct HistoryPreviousParam {
 }
 
 impl HistoryPreviousParam {
-    /// Get namespace ID with default fallback
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 }
 
 /// Request parameters for getting configs in a namespace
@@ -291,13 +285,12 @@ pub struct NamespaceConfigsParam {
 }
 
 impl NamespaceConfigsParam {
-    /// Get namespace ID with default fallback
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 }
 
 /// Response data for history entry
@@ -414,26 +407,16 @@ pub struct InstanceRegisterParam {
 }
 
 impl InstanceRegisterParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 
-    pub fn cluster_name_or_default(&self) -> &str {
-        self.cluster_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("DEFAULT")
-    }
+    impl_or_default!(pub, cluster_name_or_default, cluster_name, "DEFAULT");
 }
 
 /// Request parameters for deregistering an instance
@@ -461,26 +444,16 @@ pub struct InstanceDeregisterParam {
 }
 
 impl InstanceDeregisterParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 
-    pub fn cluster_name_or_default(&self) -> &str {
-        self.cluster_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("DEFAULT")
-    }
+    impl_or_default!(pub, cluster_name_or_default, cluster_name, "DEFAULT");
 }
 
 /// Request parameters for updating an instance
@@ -520,26 +493,16 @@ pub struct InstanceUpdateParam {
 }
 
 impl InstanceUpdateParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 
-    pub fn cluster_name_or_default(&self) -> &str {
-        self.cluster_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("DEFAULT")
-    }
+    impl_or_default!(pub, cluster_name_or_default, cluster_name, "DEFAULT");
 }
 
 /// Request parameters for getting instance detail
@@ -564,26 +527,16 @@ pub struct InstanceDetailParam {
 }
 
 impl InstanceDetailParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 
-    pub fn cluster_name_or_default(&self) -> &str {
-        self.cluster_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("DEFAULT")
-    }
+    impl_or_default!(pub, cluster_name_or_default, cluster_name, "DEFAULT");
 }
 
 /// Request parameters for getting instance list
@@ -607,19 +560,14 @@ pub struct InstanceListParam {
 }
 
 impl InstanceListParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 /// Request parameters for batch metadata update
@@ -644,19 +592,14 @@ pub struct BatchMetadataParam {
 }
 
 impl BatchMetadataParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 /// Response data for instance
@@ -722,19 +665,14 @@ pub struct ServiceCreateParam {
 }
 
 impl ServiceCreateParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 /// Request parameters for deleting a service
@@ -752,19 +690,14 @@ pub struct ServiceDeleteParam {
 }
 
 impl ServiceDeleteParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 /// Request parameters for updating a service
@@ -791,19 +724,14 @@ pub struct ServiceUpdateParam {
 }
 
 impl ServiceUpdateParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 /// Request parameters for getting service detail
@@ -821,19 +749,14 @@ pub struct ServiceDetailParam {
 }
 
 impl ServiceDetailParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 /// Request parameters for getting service list
@@ -862,19 +785,14 @@ fn default_service_page_size() -> u64 {
 }
 
 impl ServiceListParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 /// Response data for service detail
@@ -956,19 +874,14 @@ pub struct ServiceClientListParam {
 }
 
 impl ServiceClientListParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 /// Response data for client list
@@ -1148,26 +1061,16 @@ pub struct InstanceHealthParam {
 }
 
 impl InstanceHealthParam {
-    pub fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(
+        pub,
+        namespace_id_or_default,
+        namespace_id,
+        DEFAULT_NAMESPACE_ID
+    );
 
-    pub fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(pub, group_name_or_default, group_name, DEFAULT_GROUP);
 
-    pub fn cluster_name_or_default(&self) -> &str {
-        self.cluster_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("DEFAULT")
-    }
+    impl_or_default!(pub, cluster_name_or_default, cluster_name, "DEFAULT");
 }
 
 // =============================================================================

@@ -18,12 +18,10 @@ use batata_core::{
 };
 
 use crate::model::tls::validate_tls_config;
+use crate::startup::AIServices;
 
 use crate::{
-    api::{
-        ai::{AgentRegistry, McpServerRegistry},
-        grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
-    },
+    api::grpc::{bi_request_stream_server::BiRequestStreamServer, request_server::RequestServer},
     model::common::AppState,
     service::{
         ai_handler::{
@@ -63,11 +61,9 @@ use crate::{
 /// gRPC server configuration and state.
 pub struct GrpcServers {
     /// Handle for the SDK gRPC server task (kept for potential graceful shutdown).
-    #[allow(dead_code)]
-    sdk_server: tokio::task::JoinHandle<()>,
+    _sdk_server: tokio::task::JoinHandle<()>,
     /// Handle for the cluster gRPC server task (kept for potential graceful shutdown).
-    #[allow(dead_code)]
-    cluster_server: tokio::task::JoinHandle<()>,
+    _cluster_server: tokio::task::JoinHandle<()>,
     /// The naming service used by handlers.
     pub naming_service: Arc<NamingService>,
     /// The connection manager for tracking client connections.
@@ -231,32 +227,39 @@ fn register_lock_handlers(
 /// Registers all AI handlers (MCP + A2A).
 fn register_ai_handlers(
     registry: &mut HandlerRegistry,
-    mcp_registry: Arc<McpServerRegistry>,
-    agent_registry: Arc<AgentRegistry>,
+    ai_services: &AIServices,
     auth_service: Arc<GrpcAuthService>,
 ) {
     registry.register_handler(Arc::new(McpServerEndpointHandler {
-        mcp_registry: mcp_registry.clone(),
+        mcp_registry: ai_services.mcp_registry.clone(),
+        mcp_service: ai_services.mcp_service.clone(),
+        endpoint_service: ai_services.endpoint_service.clone(),
         auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(QueryMcpServerHandler {
-        mcp_registry: mcp_registry.clone(),
+        mcp_registry: ai_services.mcp_registry.clone(),
+        mcp_service: ai_services.mcp_service.clone(),
         auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(ReleaseMcpServerHandler {
-        mcp_registry,
+        mcp_registry: ai_services.mcp_registry.clone(),
+        mcp_service: ai_services.mcp_service.clone(),
         auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(AgentEndpointHandler {
-        agent_registry: agent_registry.clone(),
+        agent_registry: ai_services.agent_registry.clone(),
+        a2a_service: ai_services.a2a_service.clone(),
+        endpoint_service: ai_services.endpoint_service.clone(),
         auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(QueryAgentCardHandler {
-        agent_registry: agent_registry.clone(),
+        agent_registry: ai_services.agent_registry.clone(),
+        a2a_service: ai_services.a2a_service.clone(),
         auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(ReleaseAgentCardHandler {
-        agent_registry,
+        agent_registry: ai_services.agent_registry.clone(),
+        a2a_service: ai_services.a2a_service.clone(),
         auth_service,
     }));
 }
@@ -297,6 +300,7 @@ fn create_distro_protocol(
 pub fn start_grpc_servers(
     app_state: Arc<AppState>,
     naming_service: Option<Arc<NamingService>>,
+    ai_services: &AIServices,
     sdk_server_port: u16,
     cluster_server_port: u16,
 ) -> Result<GrpcServers, Box<dyn std::error::Error>> {
@@ -434,12 +438,9 @@ pub fn start_grpc_servers(
     );
 
     // Register AI handlers (MCP + A2A)
-    let mcp_registry = Arc::new(McpServerRegistry::new());
-    let agent_registry = Arc::new(AgentRegistry::new());
     register_ai_handlers(
         &mut handler_registry,
-        mcp_registry,
-        agent_registry,
+        ai_services,
         grpc_auth_service_arc,
     );
 
@@ -451,6 +452,7 @@ pub fn start_grpc_servers(
         handler_registry_arc,
         connection_manager,
         app_state.config_subscriber_manager.clone(),
+        Some(naming_service.clone()),
     );
 
     // Start SDK gRPC server
@@ -531,8 +533,8 @@ pub fn start_grpc_servers(
     });
 
     Ok(GrpcServers {
-        sdk_server,
-        cluster_server,
+        _sdk_server: sdk_server,
+        _cluster_server: cluster_server,
         naming_service,
         connection_manager: connection_manager_for_http,
         distro_protocol,

@@ -412,10 +412,16 @@ impl GrpcAuthService {
 
     /// Invalidate permission cache for a user
     pub fn invalidate_cache_for_user(username: &str) {
+        let prefix = format!("{}:", username);
         let keys_to_invalidate: Vec<String> = PERMISSION_CHECK_CACHE
             .iter()
-            .filter(|(key, _)| key.starts_with(&format!("{}:", username)))
-            .map(|(key, _)| (*key).clone())
+            .filter_map(|(key, _)| {
+                if key.starts_with(&prefix) {
+                    Some((*key).clone())
+                } else {
+                    None
+                }
+            })
             .collect();
 
         for key in keys_to_invalidate {

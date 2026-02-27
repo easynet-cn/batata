@@ -1,37 +1,37 @@
 [package]
 name = "batata-common"
-version = "0.1.0"
-authors = ["Tianyu Liang <124244236@qq.com>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Common types, traits, and utilities for Batata"
-license = "Apache-2.0"
-repository = "https://github.com/easynet-cn/batata"
 
 [dependencies]
 # Error handling
-thiserror = "2.0"
-anyhow = "1.0"
+thiserror = { workspace = true }
+anyhow = { workspace = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Async traits
-async-trait = "0.1"
+async-trait = { workspace = true }
 
 # Validation
-regex = "1.11"
+regex = { workspace = true }
 
 # Caching
-moka = { version = "0.12", features = ["sync"] }
+moka = { workspace = true }
 
 # Network
-if-addrs = "0.14"
+if-addrs = { workspace = true }
 
 # Encryption
-aes-gcm = "0.10"
-rand = "0.8"
-base64 = "0.22"
+aes-gcm = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.49", features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros"] }

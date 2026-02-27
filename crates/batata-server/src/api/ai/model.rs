@@ -966,6 +966,257 @@ pub struct RegistrationError {
     pub error: String,
 }
 
+// =============================================================================
+// Config-Backed Storage Models (Nacos 3.x aligned)
+// =============================================================================
+
+/// Version detail for a single version entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionDetail {
+    /// Version string (e.g., "1.0.0")
+    pub version: String,
+
+    /// Release date (ISO 8601)
+    #[serde(default)]
+    pub release_date: String,
+
+    /// Whether this is the latest published version
+    #[serde(default)]
+    pub is_latest: bool,
+}
+
+/// MCP server version index (stored in config group `mcp-server-versions`)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerVersionInfo {
+    /// Server ID (UUID)
+    pub id: String,
+
+    /// Server name (unique within namespace)
+    pub name: String,
+
+    /// Protocol type (e.g., "mcp")
+    #[serde(default = "default_mcp_protocol")]
+    pub protocol: String,
+
+    /// Server description
+    #[serde(default)]
+    pub description: String,
+
+    /// Server capabilities summary
+    #[serde(default)]
+    pub capabilities: McpCapabilities,
+
+    /// Latest published version string
+    #[serde(default)]
+    pub latest_published_version: String,
+
+    /// All known version details
+    #[serde(default)]
+    pub version_details: Vec<VersionDetail>,
+}
+
+fn default_mcp_protocol() -> String {
+    "mcp".to_string()
+}
+
+/// MCP server per-version spec (stored in config group `mcp-server`)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerStorageInfo {
+    /// Server ID
+    pub id: String,
+
+    /// Server name
+    pub name: String,
+
+    /// Protocol type
+    #[serde(default = "default_mcp_protocol")]
+    pub protocol: String,
+
+    /// Whether this version is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Remote server configuration
+    #[serde(default)]
+    pub remote_server_config: Option<RemoteServerConfig>,
+
+    /// Reference to the tools data ID
+    #[serde(default)]
+    pub tools_description_ref: String,
+
+    /// Version detail for this specific version
+    #[serde(default)]
+    pub version_detail: Option<VersionDetail>,
+
+    /// Full server registration data (Batata extension)
+    #[serde(default)]
+    pub server_data: Option<McpServerRegistration>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Remote server configuration for NamingService integration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteServerConfig {
+    /// Service reference for NamingService lookup
+    #[serde(default)]
+    pub service_ref: Option<ServiceRef>,
+
+    /// Front endpoint configuration list
+    #[serde(default)]
+    pub front_endpoint_config_list: Vec<FrontEndpointConfig>,
+}
+
+/// Reference to a naming service entry
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceRef {
+    /// Namespace ID
+    #[serde(default)]
+    pub namespace_id: String,
+
+    /// Group name
+    #[serde(default)]
+    pub group_name: String,
+
+    /// Service name
+    #[serde(default)]
+    pub service_name: String,
+
+    /// Transport protocol
+    #[serde(default)]
+    pub transport_protocol: String,
+}
+
+/// Front endpoint configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontEndpointConfig {
+    /// Endpoint address
+    #[serde(default)]
+    pub address: String,
+
+    /// Endpoint port
+    #[serde(default)]
+    pub port: u16,
+
+    /// Whether TLS is supported
+    #[serde(default)]
+    pub support_tls: bool,
+
+    /// URL path
+    #[serde(default)]
+    pub path: String,
+}
+
+/// A2A agent version index (stored in config group `agent`)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCardVersionInfo {
+    /// Agent ID
+    pub id: String,
+
+    /// Agent name
+    pub name: String,
+
+    /// Latest published version string
+    #[serde(default)]
+    pub latest_published_version: String,
+
+    /// Registration type (e.g., "manual", "sdk")
+    #[serde(default = "default_registration_type")]
+    pub registration_type: String,
+
+    /// All known version details
+    #[serde(default)]
+    pub version_details: Vec<VersionDetail>,
+}
+
+fn default_registration_type() -> String {
+    "manual".to_string()
+}
+
+/// A2A agent per-version detail (stored in config group `agent-version`)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCardDetailInfo {
+    /// Agent ID
+    pub id: String,
+
+    /// Agent name
+    pub name: String,
+
+    /// Version string
+    #[serde(default)]
+    pub version: String,
+
+    /// Registration type
+    #[serde(default = "default_registration_type")]
+    pub registration_type: String,
+
+    /// Description
+    #[serde(default)]
+    pub description: String,
+
+    /// Agent endpoint URL
+    #[serde(default)]
+    pub url: String,
+
+    /// Agent capabilities
+    #[serde(default)]
+    pub capabilities: AgentCapabilities,
+
+    /// Agent skills
+    #[serde(default)]
+    pub skills: Vec<AgentSkill>,
+
+    /// Provider information
+    #[serde(default)]
+    pub provider: String,
+
+    /// Full agent card data (Batata extension)
+    #[serde(default)]
+    pub agent_card: Option<AgentCard>,
+}
+
+/// MCP server basic info returned from list queries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpServerBasicInfo {
+    /// Server ID
+    pub id: String,
+
+    /// Server name
+    pub name: String,
+
+    /// Protocol type
+    pub protocol: String,
+
+    /// Description
+    pub description: String,
+
+    /// Latest published version
+    pub latest_published_version: String,
+
+    /// Number of versions
+    pub version_count: usize,
+
+    /// Namespace
+    pub namespace: String,
+
+    /// Creation time (milliseconds)
+    pub create_time: i64,
+
+    /// Modification time (milliseconds)
+    pub modify_time: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

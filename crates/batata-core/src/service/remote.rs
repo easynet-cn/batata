@@ -104,11 +104,18 @@ impl ConnectionManager {
         connection_ids: &[String],
         payload: batata_api::grpc::Payload,
     ) -> usize {
+        if connection_ids.is_empty() {
+            return 0;
+        }
         let mut success_count = 0;
-        for connection_id in connection_ids {
+        let (last, rest) = connection_ids.split_last().unwrap();
+        for connection_id in rest {
             if self.push_message(connection_id, payload.clone()).await {
                 success_count += 1;
             }
+        }
+        if self.push_message(last, payload).await {
+            success_count += 1;
         }
         success_count
     }

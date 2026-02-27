@@ -30,6 +30,13 @@ where
 pub const INSTANCE_TYPE_EPHEMERAL: &str = "ephemeral";
 pub const INSTANCE_TYPE_PERSISTENT: &str = "persistent";
 
+// Preserved metadata keys (Nacos stores heartbeat timeouts as metadata, not top-level fields)
+pub const PRESERVED_HEART_BEAT_INTERVAL: &str = "preserved.heart.beat.interval";
+pub const PRESERVED_HEART_BEAT_TIMEOUT: &str = "preserved.heart.beat.timeout";
+pub const PRESERVED_IP_DELETE_TIMEOUT: &str = "preserved.ip.delete.timeout";
+pub const PRESERVED_INSTANCE_ID_GENERATOR: &str = "preserved.instance.id.generator";
+pub const PRESERVED_REGISTER_SOURCE: &str = "preserved.register.source";
+
 // Request type constants
 pub const REGISTER_INSTANCE: &str = "registerInstance";
 pub const DE_REGISTER_INSTANCE: &str = "deregisterInstance";
@@ -50,10 +57,22 @@ pub struct Instance {
     pub cluster_name: String,
     pub service_name: String,
     pub metadata: HashMap<String, String>,
-    pub instance_heart_beat_interval: i64,
-    pub instance_heart_beat_time_out: i64,
-    pub ip_delete_timeout: i64,
-    pub instance_id_generator: String,
+}
+
+/// Clamp weight to valid range [0.0, 10000.0], defaulting to 1.0 for negative values
+pub fn clamp_weight(weight: f64) -> f64 {
+    if weight < crate::model::MIN_WEIGHT_VALUE {
+        crate::model::DEFAULT_INSTANCE_WEIGHT
+    } else if weight > crate::model::MAX_WEIGHT_VALUE {
+        crate::model::MAX_WEIGHT_VALUE
+    } else {
+        weight
+    }
+}
+
+/// Generate the client-facing instance ID: ip#port#clusterName#serviceName
+pub fn generate_instance_id(ip: &str, port: i32, cluster_name: &str, service_name: &str) -> String {
+    format!("{}#{}#{}#{}", ip, port, cluster_name, service_name)
 }
 
 impl Instance {
@@ -65,17 +84,52 @@ impl Instance {
             healthy: true,
             enabled: true,
             ephemeral: true,
-            instance_heart_beat_interval: 5000,
-            instance_heart_beat_time_out: 15000,
-            ip_delete_timeout: 30000,
-            instance_id_generator: "simple".to_string(),
             ..Default::default()
         }
     }
 
-    /// Generate instance key for map storage
+    /// Generate instance key for internal map storage (service-scoped)
     pub fn key(&self) -> String {
         format!("{}#{}#{}", self.ip, self.port, self.cluster_name)
+    }
+
+    /// Get heartbeat interval from preserved metadata (default 5000ms)
+    pub fn get_heartbeat_interval(&self) -> i64 {
+        self.get_metadata_i64(
+            PRESERVED_HEART_BEAT_INTERVAL,
+            crate::model::DEFAULT_HEART_BEAT_INTERVAL,
+        )
+    }
+
+    /// Get heartbeat timeout from preserved metadata (default 15000ms)
+    pub fn get_heartbeat_timeout(&self) -> i64 {
+        self.get_metadata_i64(
+            PRESERVED_HEART_BEAT_TIMEOUT,
+            crate::model::DEFAULT_HEART_BEAT_TIMEOUT,
+        )
+    }
+
+    /// Get IP delete timeout from preserved metadata (default 30000ms)
+    pub fn get_ip_delete_timeout(&self) -> i64 {
+        self.get_metadata_i64(
+            PRESERVED_IP_DELETE_TIMEOUT,
+            crate::model::DEFAULT_IP_DELETE_TIMEOUT,
+        )
+    }
+
+    /// Get instance ID generator from preserved metadata (default "simple")
+    pub fn get_instance_id_generator(&self) -> String {
+        self.metadata
+            .get(PRESERVED_INSTANCE_ID_GENERATOR)
+            .cloned()
+            .unwrap_or_else(|| crate::model::DEFAULT_INSTANCE_ID_GENERATOR.to_string())
+    }
+
+    fn get_metadata_i64(&self, key: &str, default: i64) -> i64 {
+        self.metadata
+            .get(key)
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
     }
 }
 
@@ -1089,25 +1143,28 @@ impl InstanceRegisterForm {
             .and_then(|m| serde_json::from_str(m).ok())
             .unwrap_or_default();
 
+        let cluster_name = if self.cluster_name.is_empty() {
+            "DEFAULT".to_string()
+        } else {
+            self.cluster_name.clone()
+        };
+
         Instance {
+            instance_id: generate_instance_id(
+                &self.ip,
+                self.port,
+                &cluster_name,
+                &self.service_name,
+            ),
             ip: self.ip.clone(),
             port: self.port,
             weight: if self.weight <= 0.0 { 1.0 } else { self.weight },
             enabled: self.enabled,
             healthy: self.healthy,
             ephemeral: self.ephemeral,
-            cluster_name: if self.cluster_name.is_empty() {
-                "DEFAULT".to_string()
-            } else {
-                self.cluster_name.clone()
-            },
+            cluster_name,
             service_name: self.service_name.clone(),
             metadata,
-            instance_heart_beat_interval: 5000,
-            instance_heart_beat_time_out: 15000,
-            ip_delete_timeout: 30000,
-            instance_id_generator: "simple".to_string(),
-            ..Default::default()
         }
     }
 }

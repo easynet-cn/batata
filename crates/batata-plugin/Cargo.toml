@@ -1,45 +1,45 @@
 [package]
 name = "batata-plugin"
-version = "0.1.0"
-authors = ["Tianyu Liang <124244236@qq.com>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Plugin SPI definitions for Batata"
-license = "Apache-2.0"
-repository = "https://github.com/easynet-cn/batata"
 
 [dependencies]
-batata-common = { path = "../batata-common" }
+batata-common = { workspace = true }
 
 # Async
-async-trait = "0.1"
-tokio = { version = "1", features = ["full"] }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 # Concurrency
-dashmap = "6"
+dashmap = { workspace = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # UUID
-uuid = { version = "1.0", features = ["v4"] }
+uuid = { workspace = true }
 
 # Regex
-regex = "1.0"
+regex = { workspace = true }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 
 # Crypto for webhooks
-hmac = "0.12"
-sha2 = "0.10"
-hex = "0.4"
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
-# Random for jitter
+# Random for jitter (uses rand 0.9, different from workspace rand 0.8)
 rand = "0.9"
 
 # Logging
-tracing = "0.1"
+tracing = { workspace = true }
 
 # Error handling
-anyhow = "1.0"
+anyhow = { workspace = true }

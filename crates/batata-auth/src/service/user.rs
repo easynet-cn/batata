@@ -86,9 +86,11 @@ pub async fn search(db: &DatabaseConnection, username: &str) -> anyhow::Result<V
 }
 
 pub async fn create(db: &DatabaseConnection, username: &str, password: &str) -> anyhow::Result<()> {
+    let hashed_password = bcrypt::hash(password, 10u32)
+        .map_err(|e| anyhow::anyhow!("Failed to hash password: {}", e))?;
     let entity = users::ActiveModel {
         username: Set(username.to_string()),
-        password: Set(password.to_string()),
+        password: Set(hashed_password),
         enabled: Set(1),
     };
 

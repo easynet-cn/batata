@@ -1,46 +1,46 @@
 [package]
 name = "batata-auth"
-version = "0.1.0"
-authors = ["Tianyu Liang <124244236@qq.com>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Authentication and authorization for Batata"
-license = "Apache-2.0"
-repository = "https://github.com/easynet-cn/batata"
 
 [dependencies]
-batata-common = { path = "../batata-common" }
-batata-api = { path = "../batata-api" }
-batata-persistence = { path = "../batata-persistence" }
+batata-common = { workspace = true }
+batata-api = { workspace = true }
+batata-persistence = { workspace = true }
 
 # Auth
-jsonwebtoken = "9"
-bcrypt = "0.17"
-ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"] }
+jsonwebtoken = { workspace = true }
+bcrypt = { workspace = true }
+ldap3 = { workspace = true }
 
 # OAuth2/OIDC
-reqwest = { version = "0.12", features = ["json"] }
-url = "2.5"
-base64 = "0.22"
+reqwest = { workspace = true }
+url = { workspace = true }
+base64 = { workspace = true }
 
 # Database
-sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+sea-orm = { workspace = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Async
-async-trait = "0.1"
-tokio = { version = "1.49", features = ["rt"] }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
 
 # Caching
-moka = { version = "0.12", features = ["future", "sync"] }
+moka = { workspace = true }
 
 # Time
-chrono = "0.4"
+chrono = { workspace = true }
 
 # Error handling
-anyhow = "1.0"
+anyhow = { workspace = true }
 
 # Tracing
-tracing = "0.1"
+tracing = { workspace = true }

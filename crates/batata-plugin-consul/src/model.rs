@@ -950,10 +950,6 @@ impl From<&AgentServiceRegistration> for NacosInstance {
             cluster_name: "DEFAULT".to_string(),
             service_name: reg.name.clone(),
             metadata,
-            instance_heart_beat_interval: 5000,
-            instance_heart_beat_time_out: 15000,
-            ip_delete_timeout: 30000,
-            instance_id_generator: "simple".to_string(),
         }
     }
 }

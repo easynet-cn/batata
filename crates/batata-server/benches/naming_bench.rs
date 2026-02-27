@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 fn create_test_instance(ip: &str, port: i32) -> Instance {
     Instance {
-        instance_id: format!("{}#{}#DEFAULT", ip, port),
+        instance_id: format!("{}#{}#DEFAULT#bench-service", ip, port),
         ip: ip.to_string(),
         port,
         weight: 1.0,
@@ -18,10 +18,6 @@ fn create_test_instance(ip: &str, port: i32) -> Instance {
         cluster_name: "DEFAULT".to_string(),
         service_name: String::new(),
         metadata: HashMap::new(),
-        instance_heart_beat_interval: 5000,
-        instance_heart_beat_time_out: 15000,
-        ip_delete_timeout: 30000,
-        instance_id_generator: String::new(),
     }
 }
 

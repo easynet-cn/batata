@@ -1,5 +1,6 @@
 // Console A2A agent management API endpoints
 // Aligned with Nacos V3 Console API contract
+// Uses config-backed A2aServerOperationService when available, falls back to in-memory AgentRegistry
 
 use std::sync::Arc;
 
@@ -10,12 +11,13 @@ use crate::{
     api::ai::model::{
         AgentDeleteQuery, AgentDetailQuery, AgentListQuery, AgentListResponse,
         AgentRegistrationRequest, AgentVersionListQuery, BatchAgentRegistrationRequest,
-        BatchRegistrationResponse, RegisteredAgent,
+        BatchRegistrationResponse, RegisteredAgent, VersionDetail,
     },
     api::ai::{AgentRegistry, AgentRegistryStats},
     error,
     model::{self, common::AppState},
     secured,
+    service::ai::A2aServerOperationService,
 };
 
 /// List agents
@@ -25,6 +27,7 @@ async fn list_agents(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
+    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
     params: web::Query<AgentListQuery>,
 ) -> impl Responder {
     secured!(
@@ -35,8 +38,28 @@ async fn list_agents(
             .build()
     );
 
-    let result = registry.list_with_search(&params.into_inner());
-    model::common::Result::<AgentListResponse>::http_success(result)
+    let q = params.into_inner();
+    if let Some(svc) = a2a_service {
+        let namespace = q.namespace_id.as_deref().unwrap_or("public");
+        let search_type = q.search.as_deref().unwrap_or("blur");
+        let page_no = q.page_no.unwrap_or(1);
+        let page_size = q.page_size.unwrap_or(20);
+        match svc
+            .list_agents(namespace, q.agent_name.as_deref(), search_type, page_no, page_size)
+            .await
+        {
+            Ok(result) => model::common::Result::<AgentListResponse>::http_success(result),
+            Err(e) => model::common::Result::<String>::http_response(
+                500,
+                500,
+                e.to_string(),
+                String::new(),
+            ),
+        }
+    } else {
+        let result = registry.list_with_search(&q);
+        model::common::Result::<AgentListResponse>::http_success(result)
+    }
 }
 
 /// Get agent by query params
@@ -46,6 +69,7 @@ async fn get_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
+    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
     query: web::Query<AgentDetailQuery>,
 ) -> impl Responder {
     secured!(
@@ -56,14 +80,43 @@ async fn get_agent(
             .build()
     );
 
-    match registry.get_by_query(&query.into_inner()) {
-        Some(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
-        None => model::common::Result::<String>::http_response(
-            404,
-            404,
-            "Agent not found".to_string(),
-            String::new(),
-        ),
+    let q = query.into_inner();
+    if let Some(svc) = a2a_service {
+        let namespace = q.namespace_id.as_deref().unwrap_or("public");
+        if let Some(ref name) = q.agent_name {
+            match svc.get_agent_card(namespace, name, q.version.as_deref()).await {
+                Ok(Some(agent)) => model::common::Result::<RegisteredAgent>::http_success(agent),
+                Ok(None) => model::common::Result::<String>::http_response(
+                    404,
+                    404,
+                    "Agent not found".to_string(),
+                    String::new(),
+                ),
+                Err(e) => model::common::Result::<String>::http_response(
+                    500,
+                    500,
+                    e.to_string(),
+                    String::new(),
+                ),
+            }
+        } else {
+            model::common::Result::<String>::http_response(
+                400,
+                400,
+                "agentName is required".to_string(),
+                String::new(),
+            )
+        }
+    } else {
+        match registry.get_by_query(&q) {
+            Some(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
+            None => model::common::Result::<String>::http_response(
+                404,
+                404,
+                "Agent not found".to_string(),
+                String::new(),
+            ),
+        }
     }
 }
 
@@ -74,6 +127,7 @@ async fn register_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
+    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
     body: web::Json<AgentRegistrationRequest>,
 ) -> impl Responder {
     secured!(
@@ -84,14 +138,42 @@ async fn register_agent(
             .build()
     );
 
-    match registry.register(body.into_inner()) {
-        Ok(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
-        Err(e) => model::common::Result::<String>::http_response(
-            400,
-            error::PARAMETER_VALIDATE_ERROR.code,
-            e,
-            String::new(),
-        ),
+    let req_body = body.into_inner();
+    if let Some(svc) = a2a_service {
+        match svc
+            .register_agent(&req_body.card, &req_body.namespace, "manual")
+            .await
+        {
+            Ok(_id) => {
+                // Also register in in-memory for backward compat
+                let _ = registry.register(req_body.clone());
+                match svc
+                    .get_agent_card(&req_body.namespace, &req_body.card.name, None)
+                    .await
+                {
+                    Ok(Some(agent)) => {
+                        model::common::Result::<RegisteredAgent>::http_success(agent)
+                    }
+                    _ => model::common::Result::<bool>::http_success(true),
+                }
+            }
+            Err(e) => model::common::Result::<String>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                e.to_string(),
+                String::new(),
+            ),
+        }
+    } else {
+        match registry.register(req_body) {
+            Ok(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
+            Err(e) => model::common::Result::<String>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                e,
+                String::new(),
+            ),
+        }
     }
 }
 
@@ -102,6 +184,7 @@ async fn update_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
+    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
     query: web::Query<AgentDetailQuery>,
     body: web::Json<AgentRegistrationRequest>,
 ) -> impl Responder {
@@ -115,17 +198,40 @@ async fn update_agent(
 
     let q = query.into_inner();
     let namespace = q.namespace_id.as_deref().unwrap_or("public").to_string();
-    let fallback_name = body.card.name.clone();
+    let req_body = body.into_inner();
+    let fallback_name = req_body.card.name.clone();
     let name = q.agent_name.unwrap_or(fallback_name);
 
-    match registry.update(&namespace, &name, body.into_inner()) {
-        Ok(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
-        Err(e) => model::common::Result::<String>::http_response(
-            404,
-            error::RESOURCE_NOT_FOUND.code,
-            e,
-            String::new(),
-        ),
+    if let Some(svc) = a2a_service {
+        let mut card = req_body.card.clone();
+        card.name = name.clone();
+        match svc.update_agent_card(&card, &namespace, "manual").await {
+            Ok(()) => {
+                let _ = registry.update(&namespace, &name, req_body.clone());
+                match svc.get_agent_card(&namespace, &name, None).await {
+                    Ok(Some(agent)) => {
+                        model::common::Result::<RegisteredAgent>::http_success(agent)
+                    }
+                    _ => model::common::Result::<bool>::http_success(true),
+                }
+            }
+            Err(e) => model::common::Result::<String>::http_response(
+                404,
+                error::RESOURCE_NOT_FOUND.code,
+                e.to_string(),
+                String::new(),
+            ),
+        }
+    } else {
+        match registry.update(&namespace, &name, req_body) {
+            Ok(agent) => model::common::Result::<RegisteredAgent>::http_success(agent),
+            Err(e) => model::common::Result::<String>::http_response(
+                404,
+                error::RESOURCE_NOT_FOUND.code,
+                e,
+                String::new(),
+            ),
+        }
     }
 }
 
@@ -136,6 +242,7 @@ async fn delete_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
+    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
     query: web::Query<AgentDeleteQuery>,
 ) -> impl Responder {
     secured!(
@@ -146,14 +253,47 @@ async fn delete_agent(
             .build()
     );
 
-    match registry.delete_by_query(&query.into_inner()) {
-        Ok(()) => model::common::Result::<bool>::http_success(true),
-        Err(e) => model::common::Result::<String>::http_response(
-            404,
-            error::RESOURCE_NOT_FOUND.code,
-            e,
-            String::new(),
-        ),
+    let q = query.into_inner();
+    if let Some(svc) = a2a_service {
+        let namespace = q.namespace_id.as_deref().unwrap_or("public");
+        if let Some(ref name) = q.agent_name {
+            match svc
+                .delete_agent(namespace, name, q.version.as_deref())
+                .await
+            {
+                Ok(()) => {
+                    let _ = registry.delete_by_query(&AgentDeleteQuery {
+                        namespace_id: Some(namespace.to_string()),
+                        agent_name: Some(name.clone()),
+                        version: q.version.clone(),
+                    });
+                    model::common::Result::<bool>::http_success(true)
+                }
+                Err(e) => model::common::Result::<String>::http_response(
+                    404,
+                    error::RESOURCE_NOT_FOUND.code,
+                    e.to_string(),
+                    String::new(),
+                ),
+            }
+        } else {
+            model::common::Result::<String>::http_response(
+                400,
+                400,
+                "agentName is required".to_string(),
+                String::new(),
+            )
+        }
+    } else {
+        match registry.delete_by_query(&q) {
+            Ok(()) => model::common::Result::<bool>::http_success(true),
+            Err(e) => model::common::Result::<String>::http_response(
+                404,
+                error::RESOURCE_NOT_FOUND.code,
+                e,
+                String::new(),
+            ),
+        }
     }
 }
 
@@ -164,6 +304,7 @@ async fn list_versions(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
+    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
     query: web::Query<AgentVersionListQuery>,
 ) -> impl Responder {
     secured!(
@@ -178,8 +319,22 @@ async fn list_versions(
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
     let name = q.agent_name.as_deref().unwrap_or("");
 
-    let versions = registry.list_versions(namespace, name);
-    model::common::Result::<Vec<RegisteredAgent>>::http_success(versions)
+    if let Some(svc) = a2a_service {
+        match svc.list_versions(namespace, name).await {
+            Ok(versions) => {
+                model::common::Result::<Vec<VersionDetail>>::http_success(versions)
+            }
+            Err(e) => model::common::Result::<String>::http_response(
+                500,
+                500,
+                e.to_string(),
+                String::new(),
+            ),
+        }
+    } else {
+        let versions = registry.list_versions(namespace, name);
+        model::common::Result::<Vec<RegisteredAgent>>::http_success(versions)
+    }
 }
 
 /// Find agents by skill (Batata extension)

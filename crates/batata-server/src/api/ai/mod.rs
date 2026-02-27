@@ -6,6 +6,7 @@
 
 pub mod a2a;
 pub mod mcp;
+pub mod mcp_registry;
 pub mod model;
 
 // Re-export registry types
@@ -15,3 +16,4 @@ pub use mcp::{McpRegistryStats, McpServerRegistry};
 // Re-export configure functions for route setup
 pub use a2a::configure as configure_a2a;
 pub use mcp::configure as configure_mcp;
+pub use mcp_registry::configure_mcp_registry;

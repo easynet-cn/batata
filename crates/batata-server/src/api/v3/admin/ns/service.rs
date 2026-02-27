@@ -43,19 +43,9 @@ fn default_page_size() -> u64 {
 }
 
 impl ServiceListQuery {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,19 +59,9 @@ struct ServiceDetailQuery {
 }
 
 impl ServiceDetailQuery {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,19 +81,9 @@ struct ServiceForm {
 }
 
 impl ServiceForm {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 #[derive(Debug, Serialize)]
@@ -374,6 +344,7 @@ async fn create_service(
         metadata,
         selector_type,
         selector_expression,
+        ..Default::default()
     };
 
     naming_service.set_service_metadata(
@@ -531,19 +502,9 @@ struct SubscriberQuery {
 }
 
 impl SubscriberQuery {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 #[derive(Debug, Serialize)]

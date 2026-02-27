@@ -8,7 +8,9 @@ use batata_core::service::remote::ConnectionManager;
 use rocksdb::DB;
 
 use crate::{
-    api::ai::{AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp},
+    api::ai::{
+        AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp, configure_mcp_registry,
+    },
     api::apollo::{
         ApolloAdvancedService, ApolloBranchService, ApolloNotificationService,
         ApolloOpenApiService, apollo_config_routes, apollo_openapi_routes,
@@ -154,6 +156,17 @@ pub fn console_server(
             .app_data(web::Data::new(ai_services.mcp_registry.clone()))
             .app_data(web::Data::new(ai_services.agent_registry.clone()));
 
+        // Inject persistent AI operation services if available
+        if let Some(ref svc) = ai_services.mcp_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.a2a_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.endpoint_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+
         // Inject NamingService if available (not available in console-remote mode)
         if let Some(ref ns) = naming_service {
             app = app.app_data(web::Data::new(ns.clone()));
@@ -259,19 +272,74 @@ pub fn apollo_server(
     .run())
 }
 
+/// Creates and binds the MCP Registry HTTP server.
+///
+/// The MCP Registry server implements the official MCP Registry OpenAPI spec
+/// (`GET /v0/servers`, `GET /v0/servers/{id}`), exposing registered MCP servers
+/// in the standardized format. It runs on a separate port (default 9080).
+pub fn mcp_registry_server(
+    mcp_registry: Arc<McpServerRegistry>,
+    address: String,
+    port: u16,
+) -> Result<Server, std::io::Error> {
+    Ok(HttpServer::new(move || {
+        App::new()
+            .wrap(Logger::default())
+            .app_data(web::Data::from(mcp_registry.clone()))
+            .configure(configure_mcp_registry)
+    })
+    .bind((address, port))?
+    .run())
+}
+
 /// AI services for MCP and A2A APIs.
 #[derive(Clone)]
 pub struct AIServices {
     pub mcp_registry: Arc<McpServerRegistry>,
     pub agent_registry: Arc<AgentRegistry>,
+    pub mcp_service: Option<Arc<crate::service::ai::McpServerOperationService>>,
+    pub a2a_service: Option<Arc<crate::service::ai::A2aServerOperationService>>,
+    pub endpoint_service: Option<Arc<crate::service::ai::AiEndpointService>>,
+    pub mcp_index: Option<Arc<crate::service::ai::McpServerIndex>>,
 }
 
 impl AIServices {
-    /// Creates AI service adapters with default registries.
+    /// Creates AI service adapters with default in-memory registries (no persistence).
     pub fn new() -> Self {
         Self {
             mcp_registry: Arc::new(McpServerRegistry::new()),
             agent_registry: Arc::new(AgentRegistry::new()),
+            mcp_service: None,
+            a2a_service: None,
+            endpoint_service: None,
+            mcp_index: None,
+        }
+    }
+
+    /// Creates AI service adapters with config-backed persistence.
+    pub fn with_persistence(
+        persistence: Arc<dyn batata_persistence::PersistenceService>,
+        naming_service: Arc<NamingService>,
+    ) -> Self {
+        let mcp_index = Arc::new(crate::service::ai::McpServerIndex::new());
+        let mcp_service = Arc::new(crate::service::ai::McpServerOperationService::new(
+            persistence.clone(),
+            mcp_index.clone(),
+        ));
+        let a2a_service = Arc::new(crate::service::ai::A2aServerOperationService::new(
+            persistence,
+        ));
+        let endpoint_service = Arc::new(crate::service::ai::AiEndpointService::new(
+            naming_service,
+        ));
+
+        Self {
+            mcp_registry: Arc::new(McpServerRegistry::new()),
+            agent_registry: Arc::new(AgentRegistry::new()),
+            mcp_service: Some(mcp_service),
+            a2a_service: Some(a2a_service),
+            endpoint_service: Some(endpoint_service),
+            mcp_index: Some(mcp_index),
         }
     }
 }
@@ -348,7 +416,7 @@ pub fn main_server(
     let rate_limit_config = app_state.configuration.rate_limit_config();
 
     Ok(HttpServer::new(move || {
-        let app = App::new()
+        let mut app = App::new()
             .wrap(Logger::default())
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
@@ -361,6 +429,17 @@ pub fn main_server(
             // Cloud services (Prometheus SD, Kubernetes Sync)
             .app_data(web::Data::new(cloud_services.prometheus_sd.clone()))
             .app_data(web::Data::new(cloud_services.k8s_sync.clone()));
+
+        // Inject persistent AI operation services if available
+        if let Some(ref svc) = ai_services.mcp_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.a2a_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.endpoint_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
 
         app.service(
             web::scope(&context_path)

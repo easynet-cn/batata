@@ -101,6 +101,7 @@ pub async fn create_service(
         metadata,
         selector_type,
         selector_expression,
+        ..Default::default()
     };
 
     // Set service metadata (this creates the service)

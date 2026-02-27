@@ -689,6 +689,7 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
             metadata: metadata_map,
             selector_type,
             selector_expression,
+            ..Default::default()
         };
 
         naming.set_service_metadata(namespace_id, group_name, service_name, service_metadata);

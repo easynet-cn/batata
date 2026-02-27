@@ -1,5 +1,6 @@
 // AI module gRPC handlers for MCP and A2A
 // Implements handlers for MCP server and A2A agent management via gRPC
+// Uses config-backed operation services when available, falls back to in-memory registries
 
 use std::sync::Arc;
 
@@ -21,8 +22,11 @@ use crate::{
             RequestTrait, ResponseTrait,
         },
     },
-    service::rpc::{
-        AuthRequirement, PayloadHandler, check_authority, extract_auth_context_from_payload,
+    service::{
+        ai::{A2aServerOperationService, AiEndpointService, McpServerOperationService},
+        rpc::{
+            AuthRequirement, PayloadHandler, check_authority, extract_auth_context_from_payload,
+        },
     },
 };
 
@@ -34,6 +38,8 @@ use crate::{
 #[derive(Clone)]
 pub struct McpServerEndpointHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
+    pub mcp_service: Option<Arc<McpServerOperationService>>,
+    pub endpoint_service: Option<Arc<AiEndpointService>>,
     pub auth_service: Arc<GrpcAuthService>,
 }
 
@@ -68,6 +74,18 @@ impl PayloadHandler for McpServerEndpointHandler {
 
         match operation.as_str() {
             "register" => {
+                // Register endpoint via endpoint service if available
+                if let Some(ref ep_svc) = self.endpoint_service {
+                    ep_svc.create_mcp_endpoint(
+                        &request.namespace_id,
+                        &request.mcp_name,
+                        &request.version,
+                        &request.address,
+                        request.port,
+                    );
+                }
+
+                // Also register in in-memory registry
                 let endpoint = format!("{}:{}", request.address, request.port);
                 let registration = McpServerRegistration {
                     name: request.mcp_name.clone(),
@@ -77,37 +95,33 @@ impl PayloadHandler for McpServerEndpointHandler {
                     ..default_mcp_registration()
                 };
 
-                match self.mcp_registry.register(registration) {
-                    Ok(_server) => {
-                        let mut response = McpServerEndpointResponse::new();
-                        response.response.request_id = request_id;
-                        response.operation_type = "register".to_string();
-                        Ok(response.build_payload())
-                    }
-                    Err(e) => {
-                        let response =
-                            crate::error_response!(McpServerEndpointResponse, request_id, e);
-                        Ok(response.build_payload())
-                    }
-                }
+                let _ = self.mcp_registry.register(registration);
+
+                let mut response = McpServerEndpointResponse::new();
+                response.response.request_id = request_id;
+                response.operation_type = "register".to_string();
+                Ok(response.build_payload())
             }
             "deregister" => {
-                match self
-                    .mcp_registry
-                    .deregister(&request.namespace_id, &request.mcp_name)
-                {
-                    Ok(()) => {
-                        let mut response = McpServerEndpointResponse::new();
-                        response.response.request_id = request_id;
-                        response.operation_type = "deregister".to_string();
-                        Ok(response.build_payload())
-                    }
-                    Err(e) => {
-                        let response =
-                            crate::error_response!(McpServerEndpointResponse, request_id, e);
-                        Ok(response.build_payload())
-                    }
+                // Deregister endpoint via endpoint service if available
+                if let Some(ref ep_svc) = self.endpoint_service {
+                    ep_svc.delete_mcp_endpoint(
+                        &request.namespace_id,
+                        &request.mcp_name,
+                        &request.version,
+                        &request.address,
+                        request.port,
+                    );
                 }
+
+                let _ = self
+                    .mcp_registry
+                    .deregister(&request.namespace_id, &request.mcp_name);
+
+                let mut response = McpServerEndpointResponse::new();
+                response.response.request_id = request_id;
+                response.operation_type = "deregister".to_string();
+                Ok(response.build_payload())
             }
             _ => {
                 warn!(operation = %operation, "Unknown MCP endpoint operation type");
@@ -134,6 +148,7 @@ impl PayloadHandler for McpServerEndpointHandler {
 #[derive(Clone)]
 pub struct QueryMcpServerHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
+    pub mcp_service: Option<Arc<McpServerOperationService>>,
     pub auth_service: Arc<GrpcAuthService>,
 }
 
@@ -164,6 +179,30 @@ impl PayloadHandler for QueryMcpServerHandler {
             "Querying MCP server"
         );
 
+        // Try operation service first
+        if let Some(ref svc) = self.mcp_service {
+            match svc
+                .get_mcp_server_detail(
+                    &request.namespace_id,
+                    None,
+                    Some(&request.mcp_name),
+                    None,
+                )
+                .await
+            {
+                Ok(Some(server)) => {
+                    let detail = serde_json::to_value(&server).unwrap_or_default();
+                    let mut response = QueryMcpServerResponse::new();
+                    response.response.request_id = request_id;
+                    response.detail = detail;
+                    return Ok(response.build_payload());
+                }
+                Ok(None) => {}
+                Err(_) => {}
+            }
+        }
+
+        // Fall back to in-memory registry
         match self
             .mcp_registry
             .get(&request.namespace_id, &request.mcp_name)
@@ -202,6 +241,7 @@ impl PayloadHandler for QueryMcpServerHandler {
 #[derive(Clone)]
 pub struct ReleaseMcpServerHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
+    pub mcp_service: Option<Arc<McpServerOperationService>>,
     pub auth_service: Arc<GrpcAuthService>,
 }
 
@@ -244,30 +284,63 @@ impl PayloadHandler for ReleaseMcpServerHandler {
         registration.name = request.mcp_name.clone();
         registration.namespace = request.namespace_id.clone();
 
-        match self.mcp_registry.register(registration) {
+        // Try operation service first
+        if let Some(ref svc) = self.mcp_service {
+            // Try create, then update on conflict
+            match svc
+                .create_mcp_server(&request.namespace_id, &registration)
+                .await
+            {
+                Ok(id) => {
+                    let _ = self.mcp_registry.register(registration);
+                    let mut response = ReleaseMcpServerResponse::new();
+                    response.response.request_id = request_id;
+                    response.mcp_id = id;
+                    return Ok(response.build_payload());
+                }
+                Err(_) => {
+                    // Already exists, try update
+                    match svc
+                        .update_mcp_server(&request.namespace_id, &registration)
+                        .await
+                    {
+                        Ok(()) => {
+                            let _ = self.mcp_registry.update(
+                                &request.namespace_id,
+                                &request.mcp_name,
+                                registration,
+                            );
+                            let mut response = ReleaseMcpServerResponse::new();
+                            response.response.request_id = request_id;
+                            return Ok(response.build_payload());
+                        }
+                        Err(e) => {
+                            let response = crate::error_response!(
+                                ReleaseMcpServerResponse,
+                                request_id,
+                                format!("Failed to release MCP server: {}", e)
+                            );
+                            return Ok(response.build_payload());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to in-memory registry
+        match self.mcp_registry.register(registration.clone()) {
             Ok(server) => {
                 let mut response = ReleaseMcpServerResponse::new();
                 response.response.request_id = request_id;
                 response.mcp_id = server.id;
                 Ok(response.build_payload())
             }
-            Err(e) => {
-                // If already exists, try update
-                let mut registration2: McpServerRegistration =
-                    serde_json::from_value(request.server_specification).unwrap_or_else(|_| {
-                        McpServerRegistration {
-                            name: request.mcp_name.clone(),
-                            namespace: request.namespace_id.clone(),
-                            ..default_mcp_registration()
-                        }
-                    });
-                registration2.name = request.mcp_name.clone();
-                registration2.namespace = request.namespace_id.clone();
-
+            Err(_) => {
+                // Try update
                 match self.mcp_registry.update(
                     &request.namespace_id,
                     &request.mcp_name,
-                    registration2,
+                    registration,
                 ) {
                     Ok(server) => {
                         let mut response = ReleaseMcpServerResponse::new();
@@ -275,11 +348,11 @@ impl PayloadHandler for ReleaseMcpServerHandler {
                         response.mcp_id = server.id;
                         Ok(response.build_payload())
                     }
-                    Err(e2) => {
+                    Err(e) => {
                         let response = crate::error_response!(
                             ReleaseMcpServerResponse,
                             request_id,
-                            format!("Failed to release MCP server: {}, {}", e, e2)
+                            format!("Failed to release MCP server: {}", e)
                         );
                         Ok(response.build_payload())
                     }
@@ -305,6 +378,8 @@ impl PayloadHandler for ReleaseMcpServerHandler {
 #[derive(Clone)]
 pub struct AgentEndpointHandler {
     pub agent_registry: Arc<AgentRegistry>,
+    pub a2a_service: Option<Arc<A2aServerOperationService>>,
+    pub endpoint_service: Option<Arc<AiEndpointService>>,
     pub auth_service: Arc<GrpcAuthService>,
 }
 
@@ -355,6 +430,19 @@ impl PayloadHandler for AgentEndpointHandler {
                     .map(|ep| ep.version.clone())
                     .unwrap_or_default();
 
+                // Register endpoint via endpoint service if available
+                if let (Some(ep_svc), Some(ep_info)) =
+                    (&self.endpoint_service, &request.endpoint)
+                {
+                    ep_svc.create_agent_endpoint(
+                        &request.namespace_id,
+                        &request.agent_name,
+                        &ep_info.version,
+                        &ep_info.address,
+                        ep_info.port,
+                    );
+                }
+
                 let card = AgentCard {
                     name: request.agent_name.clone(),
                     endpoint: endpoint_url,
@@ -367,35 +455,35 @@ impl PayloadHandler for AgentEndpointHandler {
                     namespace: request.namespace_id.clone(),
                 };
 
-                match self.agent_registry.register(reg_request) {
-                    Ok(_agent) => {
-                        let mut response = AgentEndpointResponse::new();
-                        response.response.request_id = request_id;
-                        response.operation_type = "register".to_string();
-                        Ok(response.build_payload())
-                    }
-                    Err(e) => {
-                        let response = crate::error_response!(AgentEndpointResponse, request_id, e);
-                        Ok(response.build_payload())
-                    }
-                }
+                let _ = self.agent_registry.register(reg_request);
+
+                let mut response = AgentEndpointResponse::new();
+                response.response.request_id = request_id;
+                response.operation_type = "register".to_string();
+                Ok(response.build_payload())
             }
             "deregister" => {
-                match self
-                    .agent_registry
-                    .deregister(&request.namespace_id, &request.agent_name)
+                // Deregister endpoint via endpoint service if available
+                if let (Some(ep_svc), Some(ep_info)) =
+                    (&self.endpoint_service, &request.endpoint)
                 {
-                    Ok(()) => {
-                        let mut response = AgentEndpointResponse::new();
-                        response.response.request_id = request_id;
-                        response.operation_type = "deregister".to_string();
-                        Ok(response.build_payload())
-                    }
-                    Err(e) => {
-                        let response = crate::error_response!(AgentEndpointResponse, request_id, e);
-                        Ok(response.build_payload())
-                    }
+                    ep_svc.delete_agent_endpoint(
+                        &request.namespace_id,
+                        &request.agent_name,
+                        &ep_info.version,
+                        &ep_info.address,
+                        ep_info.port,
+                    );
                 }
+
+                let _ = self
+                    .agent_registry
+                    .deregister(&request.namespace_id, &request.agent_name);
+
+                let mut response = AgentEndpointResponse::new();
+                response.response.request_id = request_id;
+                response.operation_type = "deregister".to_string();
+                Ok(response.build_payload())
             }
             _ => {
                 warn!(operation = %operation, "Unknown agent endpoint operation type");
@@ -422,6 +510,7 @@ impl PayloadHandler for AgentEndpointHandler {
 #[derive(Clone)]
 pub struct QueryAgentCardHandler {
     pub agent_registry: Arc<AgentRegistry>,
+    pub a2a_service: Option<Arc<A2aServerOperationService>>,
     pub auth_service: Arc<GrpcAuthService>,
 }
 
@@ -452,6 +541,25 @@ impl PayloadHandler for QueryAgentCardHandler {
             "Querying agent card"
         );
 
+        // Try operation service first
+        if let Some(ref svc) = self.a2a_service {
+            match svc
+                .get_agent_card(&request.namespace_id, &request.agent_name, None)
+                .await
+            {
+                Ok(Some(agent)) => {
+                    let detail = serde_json::to_value(&agent).unwrap_or_default();
+                    let mut response = QueryAgentCardResponse::new();
+                    response.response.request_id = request_id;
+                    response.detail = detail;
+                    return Ok(response.build_payload());
+                }
+                Ok(None) => {}
+                Err(_) => {}
+            }
+        }
+
+        // Fall back to in-memory registry
         match self
             .agent_registry
             .get(&request.namespace_id, &request.agent_name)
@@ -490,6 +598,7 @@ impl PayloadHandler for QueryAgentCardHandler {
 #[derive(Clone)]
 pub struct ReleaseAgentCardHandler {
     pub agent_registry: Arc<AgentRegistry>,
+    pub a2a_service: Option<Arc<A2aServerOperationService>>,
     pub auth_service: Arc<GrpcAuthService>,
 }
 
@@ -528,6 +637,56 @@ impl PayloadHandler for ReleaseAgentCardHandler {
             });
         card.name = request.agent_name.clone();
 
+        // Try operation service first
+        if let Some(ref svc) = self.a2a_service {
+            // Try register, then update on conflict
+            match svc
+                .register_agent(&card, &request.namespace_id, "sdk")
+                .await
+            {
+                Ok(_) => {
+                    let reg = AgentRegistrationRequest {
+                        card,
+                        namespace: request.namespace_id.clone(),
+                    };
+                    let _ = self.agent_registry.register(reg);
+                    let mut response = ReleaseAgentCardResponse::new();
+                    response.response.request_id = request_id;
+                    return Ok(response.build_payload());
+                }
+                Err(_) => {
+                    match svc
+                        .update_agent_card(&card, &request.namespace_id, "sdk")
+                        .await
+                    {
+                        Ok(()) => {
+                            let reg = AgentRegistrationRequest {
+                                card,
+                                namespace: request.namespace_id.clone(),
+                            };
+                            let _ = self.agent_registry.update(
+                                &request.namespace_id,
+                                &request.agent_name,
+                                reg,
+                            );
+                            let mut response = ReleaseAgentCardResponse::new();
+                            response.response.request_id = request_id;
+                            return Ok(response.build_payload());
+                        }
+                        Err(e) => {
+                            let response = crate::error_response!(
+                                ReleaseAgentCardResponse,
+                                request_id,
+                                format!("Failed to release agent card: {}", e)
+                            );
+                            return Ok(response.build_payload());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to in-memory registry
         let reg_request = AgentRegistrationRequest {
             card,
             namespace: request.namespace_id.clone(),
@@ -540,7 +699,6 @@ impl PayloadHandler for ReleaseAgentCardHandler {
                 Ok(response.build_payload())
             }
             Err(_) => {
-                // If already exists, try update
                 match self.agent_registry.update(
                     &request.namespace_id,
                     &request.agent_name,
@@ -637,6 +795,8 @@ mod tests {
     fn test_mcp_server_endpoint_handler_can_handle() {
         let handler = McpServerEndpointHandler {
             mcp_registry: test_mcp_registry(),
+            mcp_service: None,
+            endpoint_service: None,
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "McpServerEndpointRequest");
@@ -647,6 +807,7 @@ mod tests {
     fn test_query_mcp_server_handler_can_handle() {
         let handler = QueryMcpServerHandler {
             mcp_registry: test_mcp_registry(),
+            mcp_service: None,
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "QueryMcpServerRequest");
@@ -657,6 +818,7 @@ mod tests {
     fn test_release_mcp_server_handler_can_handle() {
         let handler = ReleaseMcpServerHandler {
             mcp_registry: test_mcp_registry(),
+            mcp_service: None,
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "ReleaseMcpServerRequest");
@@ -667,6 +829,8 @@ mod tests {
     fn test_agent_endpoint_handler_can_handle() {
         let handler = AgentEndpointHandler {
             agent_registry: test_agent_registry(),
+            a2a_service: None,
+            endpoint_service: None,
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "AgentEndpointRequest");
@@ -677,6 +841,7 @@ mod tests {
     fn test_query_agent_card_handler_can_handle() {
         let handler = QueryAgentCardHandler {
             agent_registry: test_agent_registry(),
+            a2a_service: None,
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "QueryAgentCardRequest");
@@ -687,6 +852,7 @@ mod tests {
     fn test_release_agent_card_handler_can_handle() {
         let handler = ReleaseAgentCardHandler {
             agent_registry: test_agent_registry(),
+            a2a_service: None,
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "ReleaseAgentCardRequest");

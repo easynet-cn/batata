@@ -15,7 +15,7 @@ batata-config = { workspace = true }
 batata-persistence = { workspace = true }
 
 # Async runtime
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 async-trait = { workspace = true }
 futures = { workspace = true }
 

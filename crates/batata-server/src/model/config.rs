@@ -991,6 +991,24 @@ impl Configuration {
     }
 
     // ========================================================================
+    // MCP Registry Configuration
+    // ========================================================================
+
+    /// Check if MCP Registry server is enabled (default: false)
+    pub fn mcp_registry_enabled(&self) -> bool {
+        self.config
+            .get_bool("nacos.ai.mcp.registry.enabled")
+            .unwrap_or(false)
+    }
+
+    /// Get MCP Registry server port (default: 9080)
+    pub fn mcp_registry_port(&self) -> u16 {
+        self.config
+            .get_int("nacos.ai.mcp.registry.port")
+            .unwrap_or(9080) as u16
+    }
+
+    // ========================================================================
     // Logging Configuration
     // ========================================================================
 

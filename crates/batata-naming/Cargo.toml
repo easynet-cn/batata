@@ -1,44 +1,44 @@
 [package]
 name = "batata-naming"
-version = "0.1.0"
-authors = ["Tianyu Liang <124244236@qq.com>"]
-edition = "2024"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Service discovery for Batata"
-license = "Apache-2.0"
-repository = "https://github.com/easynet-cn/batata"
 
 [dependencies]
-batata-common = { path = "../batata-common" }
-batata-api = { path = "../batata-api" }
-batata-persistence = { path = "../batata-persistence" }
-batata-consistency = { path = "../batata-consistency" }
+batata-common = { workspace = true }
+batata-api = { workspace = true }
+batata-persistence = { workspace = true }
+batata-consistency = { workspace = true }
 
 # Concurrency
-dashmap = "6.1"
+dashmap = { workspace = true }
 
 # Random
-fastrand = "2.3"
+fastrand = { workspace = true }
 
 # Database
-sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+sea-orm = { workspace = true }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-serde_yaml = "0.9"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 
 # Async
-async-trait = "0.1"
-tokio = { version = "1.49", features = ["full"] }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 # Logging
-tracing = "0.1"
+tracing = { workspace = true }
 
 # Error handling
-anyhow = "1.0"
+anyhow = { workspace = true }
 
 # Time
-chrono = "0.4"
+chrono = { workspace = true }
 
 # Pattern matching
-regex = "1.11"
+regex = { workspace = true }

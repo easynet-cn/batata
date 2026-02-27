@@ -518,6 +518,7 @@ impl ConsoleDataSource for LocalDataSource {
             metadata: metadata_map,
             selector_type,
             selector_expression,
+            ..Default::default()
         };
 
         // Store service metadata (this creates the service)
@@ -600,6 +601,7 @@ impl ConsoleDataSource for LocalDataSource {
             metadata: metadata_map,
             selector_type,
             selector_expression,
+            ..Default::default()
         };
 
         self.naming_service.set_service_metadata(
@@ -815,6 +817,7 @@ impl ConsoleDataSource for LocalDataSource {
             check_port,
             use_instance_port,
             metadata: metadata_map,
+            ..Default::default()
         };
 
         // Store cluster configuration
@@ -861,9 +864,9 @@ impl ConsoleDataSource for LocalDataSource {
                 cluster_name: inst.cluster_name.clone(),
                 service_name: inst.service_name.clone(),
                 metadata: inst.metadata.clone(),
-                instance_heart_beat_interval: inst.instance_heart_beat_interval,
-                instance_heart_beat_timeout: inst.instance_heart_beat_time_out,
-                ip_delete_timeout: inst.ip_delete_timeout,
+                instance_heart_beat_interval: inst.get_heartbeat_interval(),
+                instance_heart_beat_timeout: inst.get_heartbeat_timeout(),
+                ip_delete_timeout: inst.get_ip_delete_timeout(),
             })
             .collect();
 

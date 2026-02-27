@@ -1,5 +1,6 @@
 // Console MCP server management API endpoints
 // Aligned with Nacos V3 Console API contract
+// Uses config-backed McpServerOperationService when available, falls back to in-memory McpServerRegistry
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use crate::{
     error,
     model::{self, common::AppState},
     secured,
+    service::ai::McpServerOperationService,
 };
 
 /// List MCP servers
@@ -26,6 +28,7 @@ async fn list_servers(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
+    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
     params: web::Query<McpListQuery>,
 ) -> impl Responder {
     secured!(
@@ -36,8 +39,19 @@ async fn list_servers(
             .build()
     );
 
-    let result = registry.list_with_search(&params.into_inner());
-    model::common::Result::<McpServerListResponse>::http_success(result)
+    let q = params.into_inner();
+    if let Some(svc) = mcp_service {
+        let namespace = q.namespace_id.as_deref().unwrap_or("public");
+        let search_type = q.search.as_deref().unwrap_or("blur");
+        let page_no = q.page_no.unwrap_or(1);
+        let page_size = q.page_size.unwrap_or(20);
+        let result =
+            svc.list_mcp_servers(namespace, q.mcp_name.as_deref(), search_type, page_no, page_size);
+        model::common::Result::<McpServerListResponse>::http_success(result)
+    } else {
+        let result = registry.list_with_search(&q);
+        model::common::Result::<McpServerListResponse>::http_success(result)
+    }
 }
 
 /// Get MCP server by query params
@@ -47,6 +61,7 @@ async fn get_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
+    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
     query: web::Query<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
@@ -57,14 +72,42 @@ async fn get_server(
             .build()
     );
 
-    match registry.get_by_query(&query.into_inner()) {
-        Some(server) => model::common::Result::<McpServer>::http_success(server),
-        None => model::common::Result::<String>::http_response(
-            404,
-            404,
-            "MCP server not found".to_string(),
-            String::new(),
-        ),
+    let q = query.into_inner();
+    if let Some(svc) = mcp_service {
+        let namespace = q.namespace_id.as_deref().unwrap_or("public");
+        match svc
+            .get_mcp_server_detail(
+                namespace,
+                q.mcp_id.as_deref(),
+                q.mcp_name.as_deref(),
+                q.version.as_deref(),
+            )
+            .await
+        {
+            Ok(Some(server)) => model::common::Result::<McpServer>::http_success(server),
+            Ok(None) => model::common::Result::<String>::http_response(
+                404,
+                404,
+                "MCP server not found".to_string(),
+                String::new(),
+            ),
+            Err(e) => model::common::Result::<String>::http_response(
+                500,
+                500,
+                e.to_string(),
+                String::new(),
+            ),
+        }
+    } else {
+        match registry.get_by_query(&q) {
+            Some(server) => model::common::Result::<McpServer>::http_success(server),
+            None => model::common::Result::<String>::http_response(
+                404,
+                404,
+                "MCP server not found".to_string(),
+                String::new(),
+            ),
+        }
     }
 }
 
@@ -75,6 +118,7 @@ async fn register_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
+    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
     body: web::Json<McpServerRegistration>,
 ) -> impl Responder {
     secured!(
@@ -85,14 +129,39 @@ async fn register_server(
             .build()
     );
 
-    match registry.register(body.into_inner()) {
-        Ok(server) => model::common::Result::<McpServer>::http_success(server),
-        Err(e) => model::common::Result::<String>::http_response(
-            400,
-            error::PARAMETER_VALIDATE_ERROR.code,
-            e,
-            String::new(),
-        ),
+    let reg = body.into_inner();
+    if let Some(svc) = mcp_service {
+        let namespace = reg.namespace.clone();
+        match svc.create_mcp_server(&namespace, &reg).await {
+            Ok(id) => {
+                // Also register in in-memory for backward compat
+                let _ = registry.register(reg.clone());
+                // Fetch the full server from operation service
+                match svc
+                    .get_mcp_server_detail(&namespace, Some(&id), None, None)
+                    .await
+                {
+                    Ok(Some(server)) => model::common::Result::<McpServer>::http_success(server),
+                    _ => model::common::Result::<String>::http_success(id),
+                }
+            }
+            Err(e) => model::common::Result::<String>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                e.to_string(),
+                String::new(),
+            ),
+        }
+    } else {
+        match registry.register(reg) {
+            Ok(server) => model::common::Result::<McpServer>::http_success(server),
+            Err(e) => model::common::Result::<String>::http_response(
+                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
+                e,
+                String::new(),
+            ),
+        }
     }
 }
 
@@ -103,6 +172,7 @@ async fn update_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
+    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
     query: web::Query<McpDetailQuery>,
     body: web::Json<McpServerRegistration>,
 ) -> impl Responder {
@@ -116,17 +186,43 @@ async fn update_server(
 
     let q = query.into_inner();
     let namespace = q.namespace_id.as_deref().unwrap_or("public").to_string();
-    let fallback_name = body.name.clone();
-    let name = q.mcp_name.unwrap_or(fallback_name);
+    let mut reg = body.into_inner();
+    if let Some(ref name) = q.mcp_name {
+        reg.name = name.clone();
+    }
+    reg.namespace = namespace.clone();
 
-    match registry.update(&namespace, &name, body.into_inner()) {
-        Ok(server) => model::common::Result::<McpServer>::http_success(server),
-        Err(e) => model::common::Result::<String>::http_response(
-            404,
-            error::MCP_SERVER_NOT_FOUND.code,
-            e,
-            String::new(),
-        ),
+    if let Some(svc) = mcp_service {
+        match svc.update_mcp_server(&namespace, &reg).await {
+            Ok(()) => {
+                // Also update in-memory
+                let _ = registry.update(&namespace, &reg.name, reg.clone());
+                match svc
+                    .get_mcp_server_detail(&namespace, None, Some(&reg.name), None)
+                    .await
+                {
+                    Ok(Some(server)) => model::common::Result::<McpServer>::http_success(server),
+                    _ => model::common::Result::<bool>::http_success(true),
+                }
+            }
+            Err(e) => model::common::Result::<String>::http_response(
+                404,
+                error::MCP_SERVER_NOT_FOUND.code,
+                e.to_string(),
+                String::new(),
+            ),
+        }
+    } else {
+        let name = reg.name.clone();
+        match registry.update(&namespace, &name, reg) {
+            Ok(server) => model::common::Result::<McpServer>::http_success(server),
+            Err(e) => model::common::Result::<String>::http_response(
+                404,
+                error::MCP_SERVER_NOT_FOUND.code,
+                e,
+                String::new(),
+            ),
+        }
     }
 }
 
@@ -137,6 +233,7 @@ async fn delete_server(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
+    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
     query: web::Query<McpDeleteQuery>,
 ) -> impl Responder {
     secured!(
@@ -147,14 +244,45 @@ async fn delete_server(
             .build()
     );
 
-    match registry.delete_by_query(&query.into_inner()) {
-        Ok(()) => model::common::Result::<bool>::http_success(true),
-        Err(e) => model::common::Result::<String>::http_response(
-            404,
-            error::MCP_SERVER_NOT_FOUND.code,
-            e,
-            String::new(),
-        ),
+    let q = query.into_inner();
+    if let Some(svc) = mcp_service {
+        let namespace = q.namespace_id.as_deref().unwrap_or("public");
+        match svc
+            .delete_mcp_server(
+                namespace,
+                q.mcp_name.as_deref(),
+                q.mcp_id.as_deref(),
+                q.version.as_deref(),
+            )
+            .await
+        {
+            Ok(()) => {
+                // Also remove from in-memory
+                let _ = registry.delete_by_query(&McpDeleteQuery {
+                    namespace_id: Some(namespace.to_string()),
+                    mcp_name: q.mcp_name.clone(),
+                    mcp_id: q.mcp_id.clone(),
+                    version: q.version.clone(),
+                });
+                model::common::Result::<bool>::http_success(true)
+            }
+            Err(e) => model::common::Result::<String>::http_response(
+                404,
+                error::MCP_SERVER_NOT_FOUND.code,
+                e.to_string(),
+                String::new(),
+            ),
+        }
+    } else {
+        match registry.delete_by_query(&q) {
+            Ok(()) => model::common::Result::<bool>::http_success(true),
+            Err(e) => model::common::Result::<String>::http_response(
+                404,
+                error::MCP_SERVER_NOT_FOUND.code,
+                e,
+                String::new(),
+            ),
+        }
     }
 }
 

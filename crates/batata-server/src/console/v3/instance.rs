@@ -26,22 +26,24 @@ struct InstanceListQuery {
     service_name: String,
     #[serde(default)]
     cluster_name: Option<String>,
+    #[serde(default = "default_page_no")]
+    page_no: u64,
+    #[serde(default = "default_page_size")]
+    page_size: u64,
+}
+
+fn default_page_no() -> u64 {
+    1
+}
+
+fn default_page_size() -> u64 {
+    10
 }
 
 impl InstanceListQuery {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,32 +75,20 @@ fn default_true() -> bool {
 }
 
 impl InstanceUpdateForm {
-    fn namespace_id_or_default(&self) -> &str {
-        self.namespace_id
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_NAMESPACE_ID)
-    }
+    impl_or_default!(namespace_id_or_default, namespace_id, DEFAULT_NAMESPACE_ID);
 
-    fn group_name_or_default(&self) -> &str {
-        self.group_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_GROUP)
-    }
+    impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 
-    fn cluster_name_or_default(&self) -> &str {
-        self.cluster_name
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(DEFAULT_CLUSTER)
-    }
+    impl_or_default!(cluster_name_or_default, cluster_name, DEFAULT_CLUSTER);
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceListResponse {
-    hosts: Vec<Instance>,
+    total_count: usize,
+    page_number: u64,
+    pages_available: u64,
+    list: Vec<Instance>,
 }
 
 /// GET /ns/instance/list
@@ -124,7 +114,7 @@ async fn list_instances(
             .build()
     );
 
-    let instances = match data
+    let all_instances = match data
         .console_datasource
         .instance_list(namespace_id, group_name, &params.service_name, cluster)
         .await
@@ -140,7 +130,27 @@ async fn list_instances(
         }
     };
 
-    let response = InstanceListResponse { hosts: instances };
+    let total_count = all_instances.len();
+    let page_no = params.page_no.max(1);
+    let page_size = params.page_size.max(1);
+    let start = ((page_no - 1) * page_size) as usize;
+    let list: Vec<Instance> = all_instances
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .collect();
+    let pages_available = if total_count == 0 {
+        0
+    } else {
+        (total_count as u64).div_ceil(page_size)
+    };
+
+    let response = InstanceListResponse {
+        total_count,
+        page_number: page_no,
+        pages_available,
+        list,
+    };
 
     Result::<InstanceListResponse>::http_success(response)
 }
@@ -168,10 +178,15 @@ async fn update_instance(
             .build()
     );
 
-    let weight = if form.weight <= 0.0 { 1.0 } else { form.weight };
+    let weight = batata_api::naming::model::clamp_weight(form.weight);
 
     let instance = Instance {
-        instance_id: format!("{}#{}#{}", form.ip, form.port, cluster_name),
+        instance_id: batata_api::naming::model::generate_instance_id(
+            &form.ip,
+            form.port,
+            cluster_name,
+            &form.service_name,
+        ),
         ip: form.ip.clone(),
         port: form.port,
         weight,
@@ -181,7 +196,6 @@ async fn update_instance(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata: form.metadata.clone().unwrap_or_default(),
-        ..Default::default()
     };
 
     if let Err(e) = data
