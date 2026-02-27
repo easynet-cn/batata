@@ -126,6 +126,10 @@ pub struct ClusterClientConfig {
     pub idle_timeout: Duration,
     /// TLS configuration
     pub tls_config: ClusterClientTlsConfig,
+    /// Server identity key for cluster authentication
+    pub server_identity_key: String,
+    /// Server identity value for cluster authentication
+    pub server_identity_value: String,
 }
 
 impl Default for ClusterClientConfig {
@@ -137,6 +141,8 @@ impl Default for ClusterClientConfig {
             retry_delay: Duration::from_millis(500),
             idle_timeout: Duration::from_secs(300), // 5 minutes default
             tls_config: ClusterClientTlsConfig::default(),
+            server_identity_key: String::new(),
+            server_identity_value: String::new(),
         }
     }
 }
@@ -157,6 +163,8 @@ impl ClusterClientConfig {
                 ca_cert_path: config.cluster_client_tls_ca_cert_path().map(PathBuf::from),
                 domain: config.cluster_client_tls_domain(),
             },
+            server_identity_key: config.server_identity_key(),
+            server_identity_value: config.server_identity_value(),
         }
     }
 }
@@ -344,6 +352,15 @@ impl ClusterClientManager {
         metadata
             .headers
             .insert(LABEL_SOURCE.to_string(), LABEL_SOURCE_CLUSTER.to_string());
+
+        // Inject server identity headers for cluster authentication
+        // (equivalent to Nacos ClusterRpcClientProxy.injectorServerIdentity)
+        if !self.config.server_identity_key.is_empty() {
+            metadata.headers.insert(
+                self.config.server_identity_key.clone(),
+                self.config.server_identity_value.clone(),
+            );
+        }
 
         // Create payload manually since RequestTrait doesn't have into_payload
         let body = request.body();

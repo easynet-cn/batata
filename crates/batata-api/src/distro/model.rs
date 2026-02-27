@@ -5,27 +5,12 @@
 use std::collections::HashMap;
 
 use prost_types::Any;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     grpc::Payload,
-    model::NAMING_MODULE,
     remote::model::{InternalRequest, RequestTrait, Response, ResponseTrait},
 };
-
-fn serialize_naming_module<S>(_: &str, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(NAMING_MODULE)
-}
-
-fn deserialize_naming_module<'de, D>(_: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(NAMING_MODULE.to_string())
-}
 
 /// Distro data type for synchronization
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -115,11 +100,6 @@ pub struct DistroDataSyncRequest {
     pub internal_request: InternalRequest,
     /// The distro data to sync
     pub distro_data: DistroDataItem,
-    #[serde(
-        serialize_with = "serialize_naming_module",
-        deserialize_with = "deserialize_naming_module"
-    )]
-    module: String,
 }
 
 impl DistroDataSyncRequest {
@@ -127,7 +107,6 @@ impl DistroDataSyncRequest {
         Self {
             internal_request: InternalRequest::new(),
             distro_data: DistroDataItem::default(),
-            module: NAMING_MODULE.to_string(),
         }
     }
 
@@ -135,7 +114,6 @@ impl DistroDataSyncRequest {
         Self {
             internal_request: InternalRequest::new(),
             distro_data: data,
-            module: NAMING_MODULE.to_string(),
         }
     }
 }
@@ -177,11 +155,6 @@ pub struct DistroDataVerifyRequest {
     pub custom_type_name: Option<String>,
     /// Keys and their versions to verify
     pub verify_data: HashMap<String, i64>,
-    #[serde(
-        serialize_with = "serialize_naming_module",
-        deserialize_with = "deserialize_naming_module"
-    )]
-    module: String,
 }
 
 impl DistroDataVerifyRequest {
@@ -191,7 +164,6 @@ impl DistroDataVerifyRequest {
             data_type: DistroDataType::NamingInstance,
             custom_type_name: None,
             verify_data: HashMap::new(),
-            module: NAMING_MODULE.to_string(),
         }
     }
 
@@ -202,7 +174,6 @@ impl DistroDataVerifyRequest {
             data_type: DistroDataType::Custom,
             custom_type_name: Some(custom_type_name.to_string()),
             verify_data: HashMap::new(),
-            module: NAMING_MODULE.to_string(),
         }
     }
 
@@ -253,11 +224,6 @@ pub struct DistroDataSnapshotRequest {
     /// Custom type name (only used when data_type is Custom)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_type_name: Option<String>,
-    #[serde(
-        serialize_with = "serialize_naming_module",
-        deserialize_with = "deserialize_naming_module"
-    )]
-    module: String,
 }
 
 impl DistroDataSnapshotRequest {
@@ -266,7 +232,6 @@ impl DistroDataSnapshotRequest {
             internal_request: InternalRequest::new(),
             data_type,
             custom_type_name: None,
-            module: NAMING_MODULE.to_string(),
         }
     }
 
@@ -276,7 +241,6 @@ impl DistroDataSnapshotRequest {
             internal_request: InternalRequest::new(),
             data_type: DistroDataType::Custom,
             custom_type_name: Some(custom_type_name.to_string()),
-            module: NAMING_MODULE.to_string(),
         }
     }
 

@@ -359,8 +359,8 @@ async fn delete_service(
     }
 }
 
-/// GET /ns/subscriber/list
-#[get("list")]
+/// GET /ns/service/subscribers
+#[get("subscribers")]
 async fn list_subscribers(
     req: HttpRequest,
     data: web::Data<AppState>,
@@ -470,8 +470,9 @@ pub fn routes() -> Scope {
                 .service(update_service)
                 .service(get_service)
                 .service(list_services)
+                .service(list_subscribers)
                 .service(get_selector_types)
                 .service(update_cluster),
         )
-        .service(web::scope("/subscriber").service(list_subscribers))
+        .service(super::instance::routes())
 }

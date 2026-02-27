@@ -189,16 +189,67 @@ impl RaftNode {
         Ok(())
     }
 
-    /// Write data through Raft consensus
+    /// Write data through Raft consensus.
+    ///
+    /// If this node is the leader, applies the write locally.
+    /// If this node is a follower, forwards the write to the Raft leader
+    /// via the RaftManagementService gRPC endpoint, matching Nacos's
+    /// JRaft write-forwarding behavior.
     pub async fn write(
         &self,
         request: RaftRequest,
     ) -> Result<RaftResponse, Box<dyn std::error::Error + Send + Sync>> {
         debug!("Writing through Raft: {}", request.op_type());
 
-        let result = self.raft.client_write(request).await?;
+        match self.raft.client_write(request.clone()).await {
+            Ok(result) => Ok(result.data),
+            Err(e) => {
+                // Check if we need to forward to the leader
+                if let Some(leader_addr) = self.leader_addr() {
+                    debug!(
+                        "Forwarding write to Raft leader at {}: {}",
+                        leader_addr,
+                        request.op_type()
+                    );
+                    self.forward_write_to_leader(&leader_addr, request).await
+                } else {
+                    Err(Box::new(e))
+                }
+            }
+        }
+    }
 
-        Ok(result.data)
+    /// Forward a write request to the Raft leader via gRPC
+    async fn forward_write_to_leader(
+        &self,
+        leader_addr: &str,
+        request: RaftRequest,
+    ) -> Result<RaftResponse, Box<dyn std::error::Error + Send + Sync>> {
+        use batata_api::raft::ClientWriteRequest;
+        use batata_api::raft::raft_management_service_client::RaftManagementServiceClient;
+
+        let endpoint = format!("http://{}", leader_addr);
+        let mut client = RaftManagementServiceClient::connect(endpoint).await?;
+
+        let data = serde_json::to_vec(&request)?;
+        let response = client
+            .write(ClientWriteRequest { data })
+            .await?
+            .into_inner();
+
+        if response.success {
+            Ok(RaftResponse {
+                success: true,
+                data: if response.data.is_empty() {
+                    None
+                } else {
+                    Some(response.data)
+                },
+                message: None,
+            })
+        } else {
+            Err(response.message.into())
+        }
     }
 
     /// Perform a linearizable read

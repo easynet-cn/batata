@@ -105,14 +105,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_mode = configuration.persistence_mode();
     info!("Persistence mode: {}", storage_mode);
 
-    let (database_connection, server_member_manager, persistence, _rocks_db): (
+    let (database_connection, server_member_manager, persistence, _rocks_db, raft_node): (
         Option<sea_orm::DatabaseConnection>,
         Option<Arc<ServerMemberManager>>,
         Option<Arc<dyn PersistenceService>>,
         Option<Arc<rocksdb::DB>>,
+        Option<Arc<batata_consistency::RaftNode>>,
     ) = if is_console_remote {
         info!("Starting in console remote mode - connecting to remote server");
-        (None, None, None, None)
+        (None, None, None, None, None)
     } else {
         match storage_mode {
             StorageMode::ExternalDb => {
@@ -122,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let persist: Arc<dyn PersistenceService> = Arc::new(
                     batata_persistence::ExternalDbPersistService::new(db.clone()),
                 );
-                (Some(db), Some(smm), Some(persist), None)
+                (Some(db), Some(smm), Some(persist), None, None)
             }
             StorageMode::StandaloneEmbedded => {
                 let data_dir = configuration.embedded_data_dir();
@@ -135,15 +136,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Arc::new(batata_persistence::EmbeddedPersistService::from_state_machine(&sm));
                 let core_config = configuration.to_core_config();
                 let smm = Arc::new(ServerMemberManager::new(&core_config));
-                (None, Some(smm), Some(persist), Some(rdb))
+                (None, Some(smm), Some(persist), Some(rdb), None)
             }
             StorageMode::DistributedEmbedded => {
                 let data_dir = configuration.embedded_data_dir();
-                let node_addr = format!(
-                    "{}:{}",
-                    configuration.server_address(),
-                    configuration.server_main_port()
-                );
+                let main_port = configuration.server_main_port();
+
+                // Determine this node's Raft address from cluster.conf.
+                // All nodes must agree on the SAME set of member addresses
+                // (using the SAME IPs from cluster.conf), so we find our own
+                // entry by matching the port, and derive the raft port from it.
+                let local_ip = batata_common::local_ip();
+                let node_addr = {
+                    let cluster_addrs = configuration.cluster_member_addresses();
+                    let mut matched_ip = local_ip.clone();
+                    for addr_str in &cluster_addrs {
+                        // Strip query params (e.g., ?raft_port=xxx)
+                        let addr_part = addr_str.split('?').next().unwrap_or(addr_str);
+                        if let Some((ip, port_str)) = addr_part.rsplit_once(':')
+                            && let Ok(port) = port_str.parse::<u16>()
+                            && port == main_port
+                        {
+                            matched_ip = ip.to_string();
+                            break;
+                        }
+                    }
+                    let raft_port = main_port - batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT;
+                    format!("{}:{}", matched_ip, raft_port)
+                };
                 let node_id = batata_consistency::calculate_node_id(&node_addr);
                 info!(
                     "Initializing distributed embedded storage: node_id={}, addr={}, data_dir={}",
@@ -186,7 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let core_config = configuration.to_core_config();
                 let smm = Arc::new(ServerMemberManager::new(&core_config));
-                (None, Some(smm), Some(persist), Some(rdb))
+                (None, Some(smm), Some(persist), Some(rdb), Some(raft_node))
             }
         }
     };
@@ -258,6 +278,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         oauth_service,
         persistence,
         health_check_manager,
+        raft_node: raft_node.clone(),
     });
 
     // Initialize graceful shutdown handler
@@ -307,13 +328,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // Start gRPC servers
+    // Start gRPC servers (including Raft gRPC if in distributed embedded mode)
     let grpc_servers = startup::start_grpc_servers(
         app_state.clone(),
         naming_service.clone(),
         &ai_services,
         sdk_server_port,
         cluster_server_port,
+        raft_node,
     )?;
 
     // Start health check manager (unhealthy and expired instance checkers)
@@ -366,6 +388,117 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(e.to_string().into());
             }
             info!("Cluster management started successfully");
+
+            // Initialize Raft cluster with discovered members (distributed embedded mode)
+            if let Some(ref raft_node) = app_state.raft_node {
+                info!(
+                    "Initializing Raft cluster (self: node_id={}, addr={})",
+                    raft_node.node_id(),
+                    raft_node.addr()
+                );
+
+                // Build Raft member list directly from cluster.conf (not the
+                // SMM server_list which may have duplicates when the local IP
+                // differs from cluster.conf entries). All nodes read the same
+                // cluster.conf so they agree on the exact same member set.
+                let cluster_addrs = app_state.configuration.cluster_member_addresses();
+                let default_port = app_state.configuration.server_main_port();
+                let raft_offset = batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT;
+                let mut members = std::collections::BTreeMap::new();
+
+                for addr_str in &cluster_addrs {
+                    // Parse ip:port (strip ?raft_port=xxx query params)
+                    let addr_part = addr_str.split('?').next().unwrap_or(addr_str);
+                    let (ip, main_port) = if let Some((ip, port_str)) = addr_part.rsplit_once(':') {
+                        (
+                            ip.to_string(),
+                            port_str.parse::<u16>().unwrap_or(default_port),
+                        )
+                    } else {
+                        (addr_part.to_string(), default_port)
+                    };
+
+                    // Check for explicit raft_port in query params
+                    let member_raft_port = addr_str
+                        .split('?')
+                        .nth(1)
+                        .and_then(|params| {
+                            params.split('&').find_map(|kv| {
+                                let (k, v) = kv.split_once('=')?;
+                                if k.trim() == "raft_port" {
+                                    v.trim().parse::<u16>().ok()
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .unwrap_or_else(|| main_port - raft_offset);
+
+                    let raft_addr = format!("{}:{}", ip, member_raft_port);
+                    let node_id = batata_consistency::calculate_node_id(&raft_addr);
+                    info!("Raft member: node_id={}, addr={}", node_id, raft_addr);
+                    members.insert(node_id, openraft::BasicNode { addr: raft_addr });
+                }
+
+                info!("Raft cluster: {} members from cluster.conf", members.len());
+                if !members.is_empty() {
+                    // Wait for all peer Raft gRPC servers to be reachable before
+                    // initializing the cluster. This prevents premature leader
+                    // election when some peers haven't bound their ports yet.
+                    // Matches Nacos's approach of ensuring RPC server readiness
+                    // before Raft group creation.
+                    let self_raft_addr = raft_node.addr().to_string();
+                    let peer_addrs: Vec<String> = members
+                        .values()
+                        .filter(|n| n.addr != self_raft_addr)
+                        .map(|n| n.addr.clone())
+                        .collect();
+
+                    if !peer_addrs.is_empty() {
+                        info!(
+                            "Waiting for {} Raft peer(s) to become reachable...",
+                            peer_addrs.len()
+                        );
+                        let deadline =
+                            std::time::Instant::now() + Duration::from_secs(30);
+
+                        for addr in &peer_addrs {
+                            loop {
+                                match tokio::net::TcpStream::connect(addr).await {
+                                    Ok(_) => {
+                                        info!("Raft peer {} is reachable", addr);
+                                        break;
+                                    }
+                                    Err(_) => {
+                                        if std::time::Instant::now() >= deadline {
+                                            tracing::warn!(
+                                                "Timeout waiting for Raft peer {} - proceeding anyway",
+                                                addr
+                                            );
+                                            break;
+                                        }
+                                        tokio::time::sleep(Duration::from_millis(500))
+                                            .await;
+                                    }
+                                }
+                            }
+                        }
+                        info!("All Raft peers checked, proceeding with initialization");
+                    }
+
+                    if let Err(e) = raft_node.initialize(members).await {
+                        // Already initialized is OK (e.g. on restart)
+                        info!(
+                            "Raft cluster init result: {} (already initialized is OK)",
+                            e
+                        );
+                    } else {
+                        info!("Raft cluster initialized successfully");
+                    }
+                } else {
+                    error!("No cluster members in cluster.conf for Raft initialization");
+                }
+            }
         }
     }
 
@@ -513,6 +646,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Prepare distro protocol for HTTP server (only in cluster mode for distro sync)
+    let distro_for_http = if !app_state.configuration.is_standalone() {
+        Some(grpc_servers.distro_protocol.clone())
+    } else {
+        None
+    };
+
     // Start HTTP servers based on deployment type with graceful shutdown support
     match deployment_type.as_str() {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
@@ -549,6 +689,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.naming_service,
                 grpc_servers.connection_manager,
                 ai_services.clone(),
+                distro_for_http.clone(),
                 server_context_path,
                 server_address,
                 server_main_port,
@@ -644,6 +785,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.naming_service,
                 grpc_servers.connection_manager,
                 ai_services,
+                distro_for_http,
                 server_context_path,
                 server_address,
                 server_main_port,

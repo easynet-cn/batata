@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, patch, post, put, web};
+use batata_core::service::distro::{DistroDataType, DistroProtocol};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -39,6 +40,7 @@ pub async fn register_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<NamingService>>,
+    distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     form: web::Form<InstanceRegisterParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -139,6 +141,18 @@ pub async fn register_instance(
             port = %form.port,
             "Instance registered successfully"
         );
+
+        // Trigger distro sync to other cluster nodes (ephemeral instances only)
+        if let Some(ref distro) = distro_protocol {
+            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
+            let distro = distro.get_ref().clone();
+            tokio::spawn(async move {
+                distro
+                    .sync_data(DistroDataType::NamingInstance, &service_key)
+                    .await;
+            });
+        }
+
         Result::<bool>::http_success(true)
     } else {
         Result::<bool>::http_response(
@@ -160,6 +174,7 @@ pub async fn deregister_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<NamingService>>,
+    distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     params: web::Query<InstanceDeregisterParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -253,6 +268,17 @@ pub async fn deregister_instance(
             );
         }
 
+        // Trigger distro sync to other cluster nodes (ephemeral instances only)
+        if let Some(ref distro) = distro_protocol {
+            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, params.service_name);
+            let distro = distro.get_ref().clone();
+            tokio::spawn(async move {
+                distro
+                    .sync_data(DistroDataType::NamingInstance, &service_key)
+                    .await;
+            });
+        }
+
         Result::<bool>::http_success(true)
     } else {
         Result::<bool>::http_response(
@@ -274,6 +300,7 @@ pub async fn update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<NamingService>>,
+    distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     form: web::Form<InstanceUpdateParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -360,6 +387,18 @@ pub async fn update_instance(
             port = %form.port,
             "Instance updated successfully"
         );
+
+        // Trigger distro sync to other cluster nodes (ephemeral instances only)
+        if let Some(ref distro) = distro_protocol {
+            let service_key = format!("{}@@{}@@{}", namespace_id, group_name, form.service_name);
+            let distro = distro.get_ref().clone();
+            tokio::spawn(async move {
+                distro
+                    .sync_data(DistroDataType::NamingInstance, &service_key)
+                    .await;
+            });
+        }
+
         Result::<bool>::http_success(true)
     } else {
         Result::<bool>::http_response(

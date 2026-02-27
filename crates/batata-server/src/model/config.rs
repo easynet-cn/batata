@@ -80,6 +80,7 @@ fn preprocess_yaml(yaml_content: &str) -> String {
         serde_yaml::from_str(yaml_content).expect("Failed to parse YAML configuration file");
 
     if let YamlValue::Mapping(ref mut map) = root {
+        // 1. Handle nested `nacos:` top-level key → rename to `batata:`
         let nacos_key = YamlValue::String("nacos".to_string());
         let batata_key = YamlValue::String("batata".to_string());
 
@@ -90,6 +91,27 @@ fn preprocess_yaml(yaml_content: &str) -> String {
                 None => nacos_val,
             };
             map.insert(batata_key, merged);
+        }
+
+        // 2. Handle flat dotted keys: "nacos.xxx.yyy" → "batata.xxx.yyy"
+        let prefix = "nacos.";
+        let renames: Vec<(YamlValue, YamlValue, YamlValue)> = map
+            .iter()
+            .filter_map(|(k, v)| {
+                if let YamlValue::String(key_str) = k
+                    && let Some(suffix) = key_str.strip_prefix(prefix)
+                {
+                    let new_key = format!("batata.{suffix}");
+                    return Some((k.clone(), YamlValue::String(new_key), v.clone()));
+                }
+                None
+            })
+            .collect();
+
+        for (old_key, new_key, val) in renames {
+            map.remove(&old_key);
+            // If there's already a `batata.xxx.yyy` key, it takes priority (don't overwrite)
+            map.entry(new_key).or_insert(val);
         }
     }
 
@@ -302,6 +324,44 @@ impl Configuration {
 
     pub fn cluster_server_port(&self) -> u16 {
         self.server_main_port() + CLUSTER_GRPC_PORT_DEFAULT_OFFSET
+    }
+
+    pub fn raft_port(&self) -> u16 {
+        self.server_main_port() - batata_api::model::Member::DEFAULT_RAFT_OFFSET_PORT
+    }
+
+    /// Read raw cluster member addresses from config or cluster.conf.
+    /// Returns addresses in `ip:port` format (with optional `?raft_port=xxx` params).
+    pub fn cluster_member_addresses(&self) -> Vec<String> {
+        // 1. Try nacos.member.list / batata.member.list
+        let addresses: Vec<String> = self
+            .config
+            .get_string("batata.member.list")
+            .ok()
+            .or_else(|| self.config.get_string("nacos.member.list").ok())
+            .map(|list| {
+                list.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if !addresses.is_empty() {
+            return addresses;
+        }
+
+        // 2. Fall back to conf/cluster.conf
+        let path = std::path::Path::new("conf/cluster.conf");
+        if let Ok(content) = std::fs::read_to_string(path) {
+            return content
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .collect();
+        }
+
+        Vec::new()
     }
 
     // ========================================================================
@@ -1600,7 +1660,10 @@ mod tests {
         );
         assert_eq!(
             overrides[1],
-            ("batata.db.url".to_string(), "mysql://localhost/db".to_string())
+            (
+                "batata.db.url".to_string(),
+                "mysql://localhost/db".to_string()
+            )
         );
 
         // Filtered args should NOT contain the property overrides
@@ -1694,5 +1757,51 @@ mod tests {
         let custom_path = Some("/etc/batata/app.yml".to_string());
         let resolved = custom_path.as_deref().unwrap_or("conf/application.yml");
         assert_eq!(resolved, "/etc/batata/app.yml");
+    }
+
+    #[test]
+    fn test_preprocess_yaml_flat_dotted_keys() {
+        // Flat dotted keys like "nacos.server.main.port: 8848" should be renamed
+        let yaml = "nacos.server.main.port: 8848\nnacos.console.port: 8081\n";
+        let result = preprocess_yaml(yaml);
+        assert!(result.contains("batata.server.main.port"));
+        assert!(result.contains("batata.console.port"));
+        assert!(!result.contains("nacos.server.main.port"));
+        assert!(!result.contains("nacos.console.port"));
+    }
+
+    #[test]
+    fn test_preprocess_yaml_nested_key() {
+        // Nested nacos: key should be renamed to batata:
+        let yaml = "nacos:\n  standalone: true\n";
+        let result = preprocess_yaml(yaml);
+        assert!(result.contains("batata"));
+        assert!(!result.contains("nacos"));
+    }
+
+    #[test]
+    fn test_preprocess_yaml_batata_keys_not_overwritten() {
+        // If both nacos.x and batata.x exist, batata.x wins (not overwritten)
+        let yaml = "nacos.server.main.port: 8848\nbatata.server.main.port: 9090\n";
+        let result = preprocess_yaml(yaml);
+        // batata key should keep its value (9090), nacos key removed
+        let config = Config::builder()
+            .add_source(config::File::from_str(&result, config::FileFormat::Yaml))
+            .build()
+            .unwrap();
+        assert_eq!(
+            config.get_int("batata.server.main.port").unwrap(),
+            9090,
+            "Existing batata key should not be overwritten by nacos key"
+        );
+    }
+
+    #[test]
+    fn test_preprocess_yaml_non_nacos_keys_untouched() {
+        // Keys that don't start with nacos. should be left alone
+        let yaml = "batata.db.url: mysql://localhost\nother.key: value\n";
+        let result = preprocess_yaml(yaml);
+        assert!(result.contains("batata.db.url"));
+        assert!(result.contains("other.key"));
     }
 }

@@ -5,6 +5,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use batata_auth::service::oauth::OAuthService;
+use batata_consistency::RaftNode;
 use batata_core::cluster::ServerMemberManager;
 use batata_naming::healthcheck::HealthCheckManager;
 use batata_persistence::PersistenceService;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub persistence: Option<Arc<dyn PersistenceService>>,
     /// Health check manager for tracking instance heartbeats and expiration
     pub health_check_manager: Option<Arc<HealthCheckManager>>,
+    /// Raft consensus node (only in DistributedEmbedded mode)
+    pub raft_node: Option<Arc<RaftNode>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -59,6 +62,7 @@ impl std::fmt::Debug for AppState {
             .field("oauth_service", &self.oauth_service.is_some())
             .field("persistence", &self.persistence.is_some())
             .field("health_check_manager", &self.health_check_manager.is_some())
+            .field("raft_node", &self.raft_node.is_some())
             .finish()
     }
 }
@@ -73,6 +77,7 @@ impl Clone for AppState {
             oauth_service: self.oauth_service.clone(),
             persistence: self.persistence.clone(),
             health_check_manager: self.health_check_manager.clone(),
+            raft_node: self.raft_node.clone(),
         }
     }
 }

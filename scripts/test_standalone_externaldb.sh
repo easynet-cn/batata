@@ -4,7 +4,7 @@
 #
 # Storage: External database (MySQL or PostgreSQL)
 # Start:   cargo run -p batata-server -- -m standalone --db-url "mysql://user:pass@localhost:3306/batata"
-#          (spring.sql.init.platform must be "mysql" or "postgresql" in config)
+#          (batata.sql.init.platform must be "mysql" or "postgresql" in config)
 #
 # Prerequisites:
 #   - Server running in standalone mode with external database
@@ -34,8 +34,8 @@ log_section "Authentication"
 
 do_login "$CONSOLE_URL" || exit 1
 
-# Test login on main server port too
-do_login "$MAIN_URL" || log_fail "Login on main server port failed"
+# Test login on main server port too (main server uses /nacos context path)
+do_login "$MAIN_URL/nacos" || log_fail "Login on main server port failed"
 
 # Re-login on console
 do_login "$CONSOLE_URL"
@@ -182,9 +182,9 @@ console_get "/v3/console/cs/history/list?pageNo=1&pageSize=10&dataId=${DATA_ID}&
 assert_success "Search config history"
 
 # Get history detail if available
-HISTORY_ID=$(echo "$HTTP_BODY" | jq -r '.data.pageItems[0].id // .data[0].id // empty' 2>/dev/null)
+HISTORY_ID=$(echo "$HTTP_BODY" | jq -r '.data.pageItems[0].id // .data[0].id // empty' 2>/dev/null) || true
 if [ -n "$HISTORY_ID" ] && [ "$HISTORY_ID" != "null" ]; then
-    console_get "/v3/console/cs/history?nid=${HISTORY_ID}"
+    console_get "/v3/console/cs/history?nid=${HISTORY_ID}&dataId=${DATA_ID}&groupName=${GROUP}&namespaceId="
     assert_success "Get history detail: ${HISTORY_ID}"
 
     # Get previous version

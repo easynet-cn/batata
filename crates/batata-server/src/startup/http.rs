@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 
+use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;
 use rocksdb::DB;
 
@@ -400,11 +401,13 @@ impl ApolloServices {
 /// including config management, service discovery, AI capabilities,
 /// cloud native integrations, and metrics.
 /// Consul and Apollo compatibility are served on dedicated ports.
+#[allow(clippy::too_many_arguments)]
 pub fn main_server(
     app_state: Arc<AppState>,
     naming_service: Arc<NamingService>,
     connection_manager: Arc<ConnectionManager>,
     ai_services: AIServices,
+    distro_protocol: Option<Arc<DistroProtocol>>,
     context_path: String,
     address: String,
     port: u16,
@@ -427,6 +430,11 @@ pub fn main_server(
             // Cloud services (Prometheus SD, Kubernetes Sync)
             .app_data(web::Data::new(cloud_services.prometheus_sd.clone()))
             .app_data(web::Data::new(cloud_services.k8s_sync.clone()));
+
+        // Inject distro protocol for cluster data synchronization (cluster mode only)
+        if let Some(ref distro) = distro_protocol {
+            app = app.app_data(web::Data::new(distro.clone()));
+        }
 
         // Inject persistent AI operation services if available
         if let Some(ref svc) = ai_services.mcp_service {

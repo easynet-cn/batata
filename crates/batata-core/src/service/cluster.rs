@@ -90,7 +90,12 @@ impl ServerMemberManager {
     }
 
     pub fn with_config(config: &Configuration, manager_config: ServerMemberManagerConfig) -> Self {
-        let ip = local_ip();
+        // Use cluster.conf IP when available to avoid duplicate member entries
+        let ip = if config.is_standalone() {
+            local_ip()
+        } else {
+            config.resolve_local_ip()
+        };
         let port = config.server_main_port();
         let local_address = format!("{}:{}", ip, port);
         let is_standalone = config.is_standalone();

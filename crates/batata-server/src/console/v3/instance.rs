@@ -215,7 +215,7 @@ async fn update_instance(
 }
 
 pub fn routes() -> Scope {
-    web::scope("/ns/instance")
+    web::scope("/instance")
         .service(list_instances)
         .service(update_instance)
 }

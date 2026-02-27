@@ -45,20 +45,20 @@ log_info() {
 
 log_pass() {
     echo -e "${GREEN}[PASS]${NC} $*"
-    ((PASS_COUNT++))
-    ((TOTAL_COUNT++))
+    PASS_COUNT=$((PASS_COUNT + 1))
+    TOTAL_COUNT=$((TOTAL_COUNT + 1))
 }
 
 log_fail() {
     echo -e "${RED}[FAIL]${NC} $*"
-    ((FAIL_COUNT++))
-    ((TOTAL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    TOTAL_COUNT=$((TOTAL_COUNT + 1))
 }
 
 log_skip() {
     echo -e "${YELLOW}[SKIP]${NC} $*"
-    ((SKIP_COUNT++))
-    ((TOTAL_COUNT++))
+    SKIP_COUNT=$((SKIP_COUNT + 1))
+    TOTAL_COUNT=$((TOTAL_COUNT + 1))
 }
 
 log_section() {
@@ -110,7 +110,7 @@ HTTP_BODY=""
 http_request() {
     local method="$1"
     local url="$2"
-    local data="$3"
+    local data="${3:-}"
     local content_type="${4:-application/x-www-form-urlencoded}"
 
     local auth_param=""
@@ -202,7 +202,8 @@ assert_success() {
     local code
     code=$(echo "$HTTP_BODY" | jq -r '.code // empty' 2>/dev/null)
 
-    if [ "$HTTP_CODE" = "200" ] && [ "$code" = "0" ]; then
+    # Accept HTTP 200 with either code=0 (standard API) or no code field (health endpoints)
+    if [ "$HTTP_CODE" = "200" ] && { [ "$code" = "0" ] || [ -z "$code" ]; }; then
         log_pass "$test_name"
         return 0
     else
@@ -220,7 +221,7 @@ assert_data_equals() {
     local jq_path="${3:-.data}"
 
     local actual
-    actual=$(echo "$HTTP_BODY" | jq -r "${jq_path} // empty" 2>/dev/null)
+    actual=$(echo "$HTTP_BODY" | jq -r "${jq_path}" 2>/dev/null)
 
     if [ "$actual" = "$expected" ]; then
         log_pass "$test_name"

@@ -1,8 +1,7 @@
 use actix_web::{Scope, web};
 
 use super::{
-    a2a, cluster, config, health, history, instance, mcp, metrics, namespace, plugin, server_state,
-    service,
+    a2a, cluster, config, health, history, mcp, metrics, namespace, plugin, server_state, service,
 };
 
 pub fn routes() -> Scope {
@@ -15,7 +14,6 @@ pub fn routes() -> Scope {
         .service(history::routes())
         .service(namespace::routes())
         .service(service::routes())
-        .service(instance::routes())
         .service(mcp::routes())
         .service(a2a::routes())
         .service(plugin::routes())

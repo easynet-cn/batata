@@ -8,6 +8,7 @@ use tower::ServiceBuilder;
 use tracing::info;
 
 use batata_api::model::Member;
+use batata_consistency::RaftNode;
 use batata_core::{
     GrpcAuthService,
     service::{
@@ -64,6 +65,8 @@ pub struct GrpcServers {
     _sdk_server: tokio::task::JoinHandle<()>,
     /// Handle for the cluster gRPC server task (kept for potential graceful shutdown).
     _cluster_server: tokio::task::JoinHandle<()>,
+    /// Handle for the Raft gRPC server task (only in distributed embedded mode).
+    _raft_server: Option<tokio::task::JoinHandle<()>>,
     /// The naming service used by handlers.
     pub naming_service: Arc<NamingService>,
     /// The connection manager for tracking client connections.
@@ -303,6 +306,7 @@ pub fn start_grpc_servers(
     ai_services: &AIServices,
     sdk_server_port: u16,
     cluster_server_port: u16,
+    raft_node: Option<Arc<RaftNode>>,
 ) -> Result<GrpcServers, Box<dyn std::error::Error>> {
     // Get TLS configuration
     let tls_config = app_state.configuration.grpc_tls_config();
@@ -370,6 +374,8 @@ pub fn start_grpc_servers(
     let local_address = format!("{}:{}", local_ip, main_port);
 
     // Get the real cluster members map and create a shared ClusterClientManager
+    let core_config = app_state.configuration.to_core_config();
+    let cluster_client_config = ClusterClientConfig::from_configuration(&core_config);
     let (members, cluster_client_manager) = if !is_standalone {
         let members = app_state
             .server_member_manager
@@ -378,7 +384,7 @@ pub fn start_grpc_servers(
             .unwrap_or_else(|| Arc::new(DashMap::new()));
         let ccm = Arc::new(ClusterClientManager::new(
             local_address.clone(),
-            ClusterClientConfig::default(),
+            cluster_client_config.clone(),
         ));
         (members, Some(ccm))
     } else {
@@ -403,7 +409,7 @@ pub fn start_grpc_servers(
         cluster_client_manager.clone().unwrap_or_else(|| {
             Arc::new(ClusterClientManager::new(
                 local_address.clone(),
-                ClusterClientConfig::default(),
+                cluster_client_config.clone(),
             ))
         }),
     );
@@ -528,9 +534,61 @@ pub fn start_grpc_servers(
         }
     });
 
+    // Start dedicated Raft gRPC server (only in distributed embedded mode)
+    // Pre-bind the TCP port synchronously so it is listening BEFORE this
+    // function returns. This prevents a race condition where
+    // `raft_node.initialize()` (called later in main.rs) triggers leader
+    // election before peer Raft gRPC servers have bound their ports.
+    let raft_server_handle = if let Some(raft_node) = raft_node {
+        let raft_port = app_state.configuration.raft_port();
+        let grpc_raft_addr: std::net::SocketAddr = format!("0.0.0.0:{}", raft_port).parse()?;
+        info!("Starting Raft gRPC server on {}", grpc_raft_addr);
+
+        // Pre-bind the port synchronously to guarantee it is listening
+        let std_listener = std::net::TcpListener::bind(grpc_raft_addr)?;
+        std_listener.set_nonblocking(true)?;
+        info!("Raft gRPC port {} bound and listening", raft_port);
+
+        // Wrap in Arc<RwLock<Option<...>>> as required by the Raft gRPC services
+        let raft_holder = Arc::new(tokio::sync::RwLock::new(Some(raft_node)));
+
+        let raft_service = batata_consistency::raft::RaftGrpcService::new(raft_holder.clone());
+        let raft_mgmt_service =
+            batata_consistency::raft::RaftManagementGrpcService::new(raft_holder);
+
+        let handle = tokio::spawn(async move {
+            let tokio_listener = match tokio::net::TcpListener::from_std(std_listener) {
+                Ok(l) => l,
+                Err(e) => {
+                    tracing::error!("Failed to convert Raft TCP listener: {}", e);
+                    return;
+                }
+            };
+            let incoming = tokio_stream::wrappers::TcpListenerStream::new(tokio_listener);
+            let result = tonic::transport::Server::builder()
+                .add_service(
+                    batata_api::raft::raft_service_server::RaftServiceServer::new(raft_service),
+                )
+                .add_service(
+                    batata_api::raft::raft_management_service_server::RaftManagementServiceServer::new(
+                        raft_mgmt_service,
+                    ),
+                )
+                .serve_with_incoming(incoming)
+                .await;
+            if let Err(e) = result {
+                tracing::error!("Raft gRPC server error: {}", e);
+            }
+        });
+        Some(handle)
+    } else {
+        None
+    };
+
     Ok(GrpcServers {
         _sdk_server: sdk_server,
         _cluster_server: cluster_server,
+        _raft_server: raft_server_handle,
         naming_service,
         connection_manager: connection_manager_for_http,
         distro_protocol,

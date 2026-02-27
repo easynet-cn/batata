@@ -43,12 +43,7 @@ struct SearchPageParam {
 struct DeleteParam {
     pub data_id: String,
     pub group_name: String,
-    pub tenant: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeleteForm {
+    #[serde(default)]
     pub namespace_id: String,
 }
 
@@ -66,9 +61,15 @@ async fn find_one(
             .build()
     );
 
+    let namespace_id = if params.namespace_id.is_empty() {
+        model::common::DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
     let result = match data
         .console_datasource
-        .config_find_one(&params.data_id, &params.group_name, &params.namespace_id)
+        .config_find_one(&params.data_id, &params.group_name, &namespace_id)
         .await
     {
         Ok(config) => config.map(ConfigDetailInfo::from),
@@ -108,12 +109,18 @@ async fn search(
         .map(|e| e.to_string())
         .collect::<Vec<String>>();
 
+    let search_ns = if search_param.config_form.namespace_id.is_empty() {
+        model::common::DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        search_param.config_form.namespace_id.clone()
+    };
+
     let result = data
         .console_datasource
         .config_search_page(
             search_param.page_no,
             search_param.page_size,
-            &search_param.config_form.namespace_id,
+            &search_ns,
             &search_param.config_form.data_id,
             &search_param.config_form.group_name,
             &search_param.config_form.app_name,
@@ -257,7 +264,6 @@ async fn delete(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<DeleteParam>,
-    form: Option<web::Form<DeleteForm>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -267,19 +273,11 @@ async fn delete(
             .build()
     );
 
-    let mut tenant = params.tenant.to_string();
-
-    if let Some(delete_form) = form
-        && let namespace_id = delete_form.namespace_id.to_string()
-        && !namespace_id.is_empty()
-        && tenant.is_empty()
-    {
-        tenant = namespace_id;
-    }
-
-    if tenant.is_empty() {
-        tenant = DEFAULT_NAMESPACE_ID.to_string();
-    }
+    let tenant = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.to_string()
+    };
 
     let client_ip = req
         .connection_info()
@@ -327,9 +325,15 @@ async fn find_beta_one(
             .build()
     );
 
+    let beta_ns = if params.namespace_id.is_empty() {
+        model::common::DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
     let result = match data
         .console_datasource
-        .config_find_gray_one(&params.data_id, &params.group_name, &params.namespace_id)
+        .config_find_gray_one(&params.data_id, &params.group_name, &beta_ns)
         .await
     {
         Ok(config) => config,

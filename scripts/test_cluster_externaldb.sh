@@ -3,15 +3,18 @@
 # Test: Cluster + ExternalDb (MySQL/PostgreSQL) Mode
 #
 # Storage: External database (shared across all nodes)
-# Start 3 nodes:
+# Start 3 nodes (each node should use its own log directory):
 #   Node 1: cargo run -p batata-server -- -m cluster --db-url "mysql://..." \
-#           --main-port 8848 --console-port 8081
+#           --batata.server.main.port=8848 --batata.console.port=8081 \
+#           --batata.logs.path=logs/node1
 #   Node 2: cargo run -p batata-server -- -m cluster --db-url "mysql://..." \
-#           --main-port 8858 --console-port 8082
+#           --batata.server.main.port=8858 --batata.console.port=8082 \
+#           --batata.logs.path=logs/node2
 #   Node 3: cargo run -p batata-server -- -m cluster --db-url "mysql://..." \
-#           --main-port 8868 --console-port 8083
+#           --batata.server.main.port=8868 --batata.console.port=8083 \
+#           --batata.logs.path=logs/node3
 #
-# Cluster member discovery via conf/cluster.conf or nacos.member.list config
+# Cluster member discovery via conf/cluster.conf or batata.member.list config
 #
 # Prerequisites:
 #   - 3-node cluster running with shared external database

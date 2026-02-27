@@ -3,14 +3,24 @@
 # Test: Cluster + Embedded (Raft + RocksDB) Mode
 #
 # Storage: Distributed RocksDB with Raft consensus
-# Start 3 nodes (spring.sql.init.platform must be empty):
-#   Node 1: cargo run -p batata-server -- -m cluster --main-port 8848 --console-port 8081
-#   Node 2: cargo run -p batata-server -- -m cluster --main-port 8858 --console-port 8082
-#   Node 3: cargo run -p batata-server -- -m cluster --main-port 8868 --console-port 8083
+# Start 3 nodes (batata.sql.init.platform must be empty, each node needs its own data_dir and logs):
+#   Node 1: cargo run -p batata-server -- -m cluster \
+#           --batata.server.main.port=8848 --batata.console.port=8081 \
+#           --batata.persistence.embedded.data_dir=data/node1 \
+#           --batata.logs.path=logs/node1
+#   Node 2: cargo run -p batata-server -- -m cluster \
+#           --batata.server.main.port=8858 --batata.console.port=8082 \
+#           --batata.persistence.embedded.data_dir=data/node2 \
+#           --batata.logs.path=logs/node2
+#   Node 3: cargo run -p batata-server -- -m cluster \
+#           --batata.server.main.port=8868 --batata.console.port=8083 \
+#           --batata.persistence.embedded.data_dir=data/node3 \
+#           --batata.logs.path=logs/node3
 #
 # Prerequisites:
-#   - 3-node cluster running with embedded storage (no db.url)
-#   - conf/cluster.conf or nacos.member.list configured with all 3 nodes
+#   - 3-node cluster running with embedded storage (no batata.db.url)
+#   - conf/cluster.conf or batata.member.list configured with all 3 nodes
+#   - Each node MUST use a different data_dir and logs path to avoid conflicts
 #   - Or pass NODE*_MAIN_PORT / NODE*_CONSOLE_PORT env vars
 # ==============================================================================
 
@@ -64,13 +74,15 @@ login_node() {
 node_get() {
     local url="$1"
     local token="$2"
+    local sep="?"
+    if [[ "$url" == *"?"* ]]; then sep="&"; fi
     local response
-    response=$(curl -s -w "\n%{http_code}" -X GET "${url}?accessToken=${token}" 2>/dev/null)
+    response=$(curl -s -w "\n%{http_code}" -X GET "${url}${sep}accessToken=${token}" 2>/dev/null)
     HTTP_CODE=$(echo "$response" | tail -1)
     HTTP_BODY=$(echo "$response" | sed '$d')
 }
 
-# Helper: POST form with specific token
+# Helper: POST form with specific token (token in query string for console middleware)
 node_post_form() {
     local url="$1"
     local data="$2"
@@ -78,13 +90,13 @@ node_post_form() {
     local response
     response=$(curl -s -w "\n%{http_code}" -X POST \
         -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "${data}&accessToken=${token}" \
-        "$url" 2>/dev/null)
+        -d "$data" \
+        "${url}?accessToken=${token}" 2>/dev/null)
     HTTP_CODE=$(echo "$response" | tail -1)
     HTTP_BODY=$(echo "$response" | sed '$d')
 }
 
-# Helper: PUT form with specific token
+# Helper: PUT form with specific token (token in query string for console middleware)
 node_put_form() {
     local url="$1"
     local data="$2"
@@ -92,8 +104,8 @@ node_put_form() {
     local response
     response=$(curl -s -w "\n%{http_code}" -X PUT \
         -H "Content-Type: application/x-www-form-urlencoded" \
-        -d "${data}&accessToken=${token}" \
-        "$url" 2>/dev/null)
+        -d "$data" \
+        "${url}?accessToken=${token}" 2>/dev/null)
     HTTP_CODE=$(echo "$response" | tail -1)
     HTTP_BODY=$(echo "$response" | sed '$d')
 }
@@ -102,8 +114,11 @@ node_put_form() {
 node_delete() {
     local url="$1"
     local token="$2"
+    local sep="&"
+    # Use ? if URL doesn't already have query params
+    if [[ "$url" != *"?"* ]]; then sep="?"; fi
     local response
-    response=$(curl -s -w "\n%{http_code}" -X DELETE "${url}&accessToken=${token}" 2>/dev/null)
+    response=$(curl -s -w "\n%{http_code}" -X DELETE "${url}${sep}accessToken=${token}" 2>/dev/null)
     HTTP_CODE=$(echo "$response" | tail -1)
     HTTP_BODY=$(echo "$response" | sed '$d')
 }

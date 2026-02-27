@@ -207,6 +207,62 @@ impl Configuration {
             .unwrap_or_default()
     }
 
+    // ===================== Cluster Membership =====================
+
+    /// Get cluster member addresses from config or cluster.conf.
+    ///
+    /// Returns addresses like `["127.0.0.1:8848", "127.0.0.1:8858"]`.
+    pub fn cluster_member_addresses(&self) -> Vec<String> {
+        // 1. Try batata.member.list / nacos.member.list
+        let addresses: Vec<String> = self
+            .config
+            .get_string("batata.member.list")
+            .ok()
+            .or_else(|| self.config.get_string("nacos.member.list").ok())
+            .map(|list| {
+                list.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if !addresses.is_empty() {
+            return addresses;
+        }
+
+        // 2. Fall back to conf/cluster.conf
+        let path = std::path::Path::new("conf/cluster.conf");
+        if let Ok(content) = std::fs::read_to_string(path) {
+            return content
+                .lines()
+                .map(|line| line.trim().to_string())
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .collect();
+        }
+
+        Vec::new()
+    }
+
+    /// Resolve the local IP for this node by matching the main port against
+    /// cluster member addresses. Falls back to `local_ip()` if no match is found.
+    ///
+    /// This ensures the self-registered member uses the same IP as in cluster.conf,
+    /// avoiding duplicate member entries (e.g. 192.168.x.x vs 127.0.0.1).
+    pub fn resolve_local_ip(&self) -> String {
+        let main_port = self.server_main_port();
+        for addr_str in &self.cluster_member_addresses() {
+            let addr_part = addr_str.split('?').next().unwrap_or(addr_str);
+            if let Some((ip, port_str)) = addr_part.rsplit_once(':')
+                && let Ok(port) = port_str.parse::<u16>()
+                && port == main_port
+            {
+                return ip.to_string();
+            }
+        }
+        batata_common::local_ip()
+    }
+
     // ===================== Cluster Client Configuration =====================
 
     /// Get cluster client connect timeout in milliseconds (default: 5000ms)
@@ -302,5 +358,21 @@ impl Configuration {
         self.config
             .get_string("batata.remote.client.grpc.cluster.tls.domain")
             .ok()
+    }
+
+    // ===================== Auth Server Identity =====================
+
+    /// Get server identity key for cluster node authentication
+    pub fn server_identity_key(&self) -> String {
+        self.config
+            .get_string("batata.core.auth.server.identity.key")
+            .unwrap_or_default()
+    }
+
+    /// Get server identity value for cluster node authentication
+    pub fn server_identity_value(&self) -> String {
+        self.config
+            .get_string("batata.core.auth.server.identity.value")
+            .unwrap_or_default()
     }
 }

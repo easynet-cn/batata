@@ -121,7 +121,28 @@ impl ConsoleDataSource for LocalDataSource {
     }
 
     async fn namespace_check(&self, namespace_id: &str) -> anyhow::Result<bool> {
-        service::namespace::check(&self.database_connection, namespace_id).await
+        // service::namespace::check() is designed for creation validation:
+        // - Ok(false) means namespace does NOT exist (can be created)
+        // - Err(NamespaceAlreadyExist) means namespace exists
+        // We convert this to a simple existence check: Ok(true) = exists, Ok(false) = not exists
+        match service::namespace::check(&self.database_connection, namespace_id).await {
+            Ok(false) => Ok(false),
+            Err(e) => {
+                if e.downcast_ref::<batata_common::error::BatataError>()
+                    .is_some_and(|be| {
+                        matches!(
+                            be,
+                            batata_common::error::BatataError::NamespaceAlreadyExist(_)
+                        )
+                    })
+                {
+                    Ok(true)
+                } else {
+                    Err(e)
+                }
+            }
+            Ok(true) => Ok(true),
+        }
     }
 
     // ============== Config Operations ==============

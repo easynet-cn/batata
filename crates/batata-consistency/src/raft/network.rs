@@ -119,23 +119,34 @@ impl RaftNetworkConnection {
     }
 
     /// Convert openraft Entry to proto Entry
+    ///
+    /// Serializes just the inner payload data (not the EntryPayload enum wrapper),
+    /// matching the deserialization in grpc_service.rs which deserializes by payload_type.
     fn to_proto_entry(entry: &openraft::Entry<TypeConfig>) -> ProtoEntry {
-        let payload = match serde_json::to_vec(&entry.payload) {
-            Ok(data) => data,
-            Err(e) => {
-                // Log serialization failures at error level - this could cause data inconsistency
-                error!(
-                    error = %e,
-                    log_id = ?entry.log_id,
-                    "Failed to serialize Raft entry payload, using empty payload"
-                );
-                Vec::new()
+        let (payload_type, payload) = match &entry.payload {
+            openraft::EntryPayload::Blank => (0u32, Vec::new()),
+            openraft::EntryPayload::Normal(req) => {
+                let data = serde_json::to_vec(req).unwrap_or_else(|e| {
+                    error!(
+                        error = %e,
+                        log_id = ?entry.log_id,
+                        "Failed to serialize Raft Normal entry payload"
+                    );
+                    Vec::new()
+                });
+                (1, data)
             }
-        };
-        let payload_type = match &entry.payload {
-            openraft::EntryPayload::Blank => 0,
-            openraft::EntryPayload::Normal(_) => 1,
-            openraft::EntryPayload::Membership(_) => 2,
+            openraft::EntryPayload::Membership(membership) => {
+                let data = serde_json::to_vec(membership).unwrap_or_else(|e| {
+                    error!(
+                        error = %e,
+                        log_id = ?entry.log_id,
+                        "Failed to serialize Raft Membership entry payload"
+                    );
+                    Vec::new()
+                });
+                (2, data)
+            }
         };
 
         ProtoEntry {

@@ -36,10 +36,31 @@
 #   ./scripts/run_console_tests.sh standalone-externaldb
 #
 #   # Test 3-node cluster with external DB
-#   cargo run -p batata-server -- -m cluster --db-url "mysql://..." --main-port 8848 --console-port 8081 &
-#   cargo run -p batata-server -- -m cluster --db-url "mysql://..." --main-port 8858 --console-port 8082 &
-#   cargo run -p batata-server -- -m cluster --db-url "mysql://..." --main-port 8868 --console-port 8083 &
+#   cargo run -p batata-server -- -m cluster --db-url "mysql://..." \
+#       --batata.server.main.port=8848 --batata.console.port=8081 \
+#       --batata.logs.path=logs/node1 &
+#   cargo run -p batata-server -- -m cluster --db-url "mysql://..." \
+#       --batata.server.main.port=8858 --batata.console.port=8082 \
+#       --batata.logs.path=logs/node2 &
+#   cargo run -p batata-server -- -m cluster --db-url "mysql://..." \
+#       --batata.server.main.port=8868 --batata.console.port=8083 \
+#       --batata.logs.path=logs/node3 &
 #   ./scripts/run_console_tests.sh cluster-externaldb
+#
+#   # Test 3-node cluster with embedded storage (each node needs its own data_dir and logs)
+#   cargo run -p batata-server -- -m cluster \
+#       --batata.server.main.port=8848 --batata.console.port=8081 \
+#       --batata.persistence.embedded.data_dir=data/node1 \
+#       --batata.logs.path=logs/node1 &
+#   cargo run -p batata-server -- -m cluster \
+#       --batata.server.main.port=8858 --batata.console.port=8082 \
+#       --batata.persistence.embedded.data_dir=data/node2 \
+#       --batata.logs.path=logs/node2 &
+#   cargo run -p batata-server -- -m cluster \
+#       --batata.server.main.port=8868 --batata.console.port=8083 \
+#       --batata.persistence.embedded.data_dir=data/node3 \
+#       --batata.logs.path=logs/node3 &
+#   ./scripts/run_console_tests.sh cluster-embedded
 #
 #   # Test with custom ports
 #   MAIN_PORT=9848 CONSOLE_PORT=9081 ./scripts/run_console_tests.sh standalone-embedded
