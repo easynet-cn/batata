@@ -116,7 +116,7 @@ impl FileMemberLookup {
 
     /// Parse member list from configuration
     fn parse_member_list(&self) -> Vec<String> {
-        if let Ok(member_list) = self.config.config.get_string("nacos.member.list") {
+        if let Ok(member_list) = self.config.config.get_string("batata.member.list") {
             member_list
                 .split(',')
                 .map(|s| s.trim().to_string())
@@ -432,7 +432,7 @@ impl MemberLookup for AddressServerMemberLookup {
         let max_retries = self
             .config
             .config
-            .get_int("nacos.core.address-server.retry")
+            .get_int("batata.core.address-server.retry")
             .unwrap_or(5) as u32;
 
         let mut last_error = None;
@@ -491,7 +491,7 @@ impl MemberLookup for AddressServerMemberLookup {
 pub fn create_member_lookup(config: &Configuration) -> Box<dyn MemberLookup> {
     let lookup_type = config
         .config
-        .get_string("nacos.core.member.lookup.type")
+        .get_string("batata.core.member.lookup.type")
         .map(|s| LookupType::from(s.as_str()))
         .unwrap_or(LookupType::File);
 

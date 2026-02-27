@@ -123,11 +123,11 @@ pub use batata_api::model::{
 
 pub const SYS_MODULE: &str = "sys";
 pub const STANDALONE_SPRING_PROFILE: &str = "standalone";
-pub const STANDALONE_MODE_PROPERTY_NAME: &str = "nacos.standalone";
+pub const STANDALONE_MODE_PROPERTY_NAME: &str = "batata.standalone";
 pub const STARTUP_MODE_STATE: &str = "startup_mode";
-pub const FUNCTION_MODE_PROPERTY_NAME: &str = "nacos.functionMode";
+pub const FUNCTION_MODE_PROPERTY_NAME: &str = "batata.functionMode";
 pub const FUNCTION_MODE_STATE: &str = "function_mode";
-pub const PREFER_HOSTNAME_OVER_IP_PROPERTY_NAME: &str = "nacos.preferHostnameOverIp";
+pub const PREFER_HOSTNAME_OVER_IP_PROPERTY_NAME: &str = "batata.preferHostnameOverIp";
 
 // ============================================================================
 // Web Context Constants
@@ -135,7 +135,7 @@ pub const PREFER_HOSTNAME_OVER_IP_PROPERTY_NAME: &str = "nacos.preferHostnameOve
 
 pub const ROOT_WEB_CONTEXT_PATH: &str = "/";
 pub const NACOS_VERSION: &str = "version";
-pub const NACOS_SERVER_IP: &str = "nacos.server.ip";
+pub const NACOS_SERVER_IP: &str = "batata.server.ip";
 pub const NACOS_SERVER_IP_STATE: &str = "nacos_server_ip";
 pub const SERVER_PORT_STATE: &str = "server_port";
 pub const WEB_CONTEXT_PATH: &str = "server.servlet.context-path";
@@ -147,21 +147,21 @@ pub const NACOS_SERVER_CONTEXT: &str = "/nacos";
 // Network Constants
 // ============================================================================
 
-pub const USE_ONLY_SITE_INTERFACES: &str = "nacos.inetutils.use-only-site-local-interfaces";
-pub const PREFERRED_NETWORKS: &str = "nacos.inetutils.preferred-networks";
-pub const IGNORED_INTERFACES: &str = "nacos.inetutils.ignored-interfaces";
-pub const AUTO_REFRESH_TIME: &str = "nacos.core.inet.auto-refresh";
-pub const IP_ADDRESS: &str = "nacos.inetutils.ip-address";
-pub const PREFER_HOSTNAME_OVER_IP: &str = "nacos.inetutils.prefer-hostname-over-ip";
-pub const SYSTEM_PREFER_HOSTNAME_OVER_IP: &str = "nacos.preferHostnameOverIp";
+pub const USE_ONLY_SITE_INTERFACES: &str = "batata.inetutils.use-only-site-local-interfaces";
+pub const PREFERRED_NETWORKS: &str = "batata.inetutils.preferred-networks";
+pub const IGNORED_INTERFACES: &str = "batata.inetutils.ignored-interfaces";
+pub const AUTO_REFRESH_TIME: &str = "batata.core.inet.auto-refresh";
+pub const IP_ADDRESS: &str = "batata.inetutils.ip-address";
+pub const PREFER_HOSTNAME_OVER_IP: &str = "batata.inetutils.prefer-hostname-over-ip";
+pub const SYSTEM_PREFER_HOSTNAME_OVER_IP: &str = "batata.preferHostnameOverIp";
 pub const COMMA_DIVISION: &str = ",";
 
 // ============================================================================
 // Deployment Type Constants
 // ============================================================================
 
-pub const AVAILABLE_PROCESSORS_BASIC: &str = "nacos.core.sys.basic.processors";
-pub const NACOS_DEPLOYMENT_TYPE: &str = "nacos.deployment.type";
+pub const AVAILABLE_PROCESSORS_BASIC: &str = "batata.core.sys.basic.processors";
+pub const NACOS_DEPLOYMENT_TYPE: &str = "batata.deployment.type";
 pub const NACOS_DEPLOYMENT_TYPE_MERGED: &str = "merged";
 pub const NACOS_DEPLOYMENT_TYPE_SERVER: &str = "server";
 pub const NACOS_DEPLOYMENT_TYPE_CONSOLE: &str = "console";
@@ -171,24 +171,24 @@ pub const NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP: &str = "serverWithMcp";
 // Console Mode Constants
 // ============================================================================
 
-pub const NACOS_CONSOLE_REMOTE_SERVER_ADDR: &str = "nacos.console.remote.server_addr";
-pub const NACOS_CONSOLE_REMOTE_USERNAME: &str = "nacos.console.remote.username";
-pub const NACOS_CONSOLE_REMOTE_PASSWORD: &str = "nacos.console.remote.password";
-pub const NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS: &str = "nacos.console.remote.connect_timeout_ms";
-pub const NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS: &str = "nacos.console.remote.read_timeout_ms";
+pub const NACOS_CONSOLE_REMOTE_SERVER_ADDR: &str = "batata.console.remote.server_addr";
+pub const NACOS_CONSOLE_REMOTE_USERNAME: &str = "batata.console.remote.username";
+pub const NACOS_CONSOLE_REMOTE_PASSWORD: &str = "batata.console.remote.password";
+pub const NACOS_CONSOLE_REMOTE_CONNECT_TIMEOUT_MS: &str =
+    "batata.console.remote.connect_timeout_ms";
+pub const NACOS_CONSOLE_REMOTE_READ_TIMEOUT_MS: &str = "batata.console.remote.read_timeout_ms";
 
 // ============================================================================
 // Persistence Constants
 // ============================================================================
 
 pub const DEFAULT_ENCODE: &str = "UTF-8";
-pub const DATASOURCE_PLATFORM_PROPERTY_OLD: &str = "spring.datasource.platform";
-pub const DATASOURCE_PLATFORM_PROPERTY: &str = "spring.sql.init.platform";
+pub const DATASOURCE_PLATFORM_PROPERTY: &str = "batata.sql.init.platform";
 pub const MYSQL: &str = "mysql";
 pub const EMPTY_DATASOURCE_PLATFORM: &str = "";
 pub const EMBEDDED_STORAGE: &str = "embeddedStorage";
 pub const DERBY_BASE_DIR: &str = "derby-data";
-pub const NACOS_PLUGIN_DATASOURCE_LOG: &str = "nacos.plugin.datasource.log.enabled";
+pub const NACOS_PLUGIN_DATASOURCE_LOG: &str = "batata.plugin.datasource.log.enabled";
 pub const NACOS_PLUGIN_DATASOURCE_LOG_STATE: &str = "plugin_datasource_log_enabled";
 pub const DATASOURCE_PLATFORM_PROPERTY_STATE: &str = "datasource_platform";
 
@@ -357,16 +357,16 @@ pub const DEFAULT_MAX_AGGR_COUNT: &str = "defaultMaxAggrCount";
 pub const DEFAULT_MAX_AGGR_SIZE: &str = "defaultMaxAggrSize";
 pub const CORRECT_USAGE_DELAY: &str = "correctUsageDelay";
 pub const INITIAL_EXPANSION_PERCENT: &str = "initialExpansionPercent";
-pub const SEARCH_MAX_CAPACITY: &str = "nacos.config.search.max_capacity";
-pub const SEARCH_MAX_THREAD: &str = "nacos.config.search.max_thread";
-pub const SEARCH_WAIT_TIMEOUT: &str = "nacos.config.search.wait_timeout";
+pub const SEARCH_MAX_CAPACITY: &str = "batata.config.search.max_capacity";
+pub const SEARCH_MAX_THREAD: &str = "batata.config.search.max_thread";
+pub const SEARCH_WAIT_TIMEOUT: &str = "batata.config.search.wait_timeout";
 pub const DUMP_CHANGE_ON: &str = "dumpChangeOn";
 pub const DUMP_CHANGE_WORKER_INTERVAL: &str = "dumpChangeWorkerInterval";
-pub const CONFIG_RENTENTION_DAYS: &str = "nacos.config.retention.days";
-pub const GRAY_CAPATIBEL_MODEL: &str = "nacos.config.gray.compatible.model";
-pub const NAMESPACE_COMPATIBLE_MODE: &str = "nacos.config.namespace.compatible.mode";
+pub const CONFIG_RENTENTION_DAYS: &str = "batata.config.retention.days";
+pub const GRAY_CAPATIBEL_MODEL: &str = "batata.config.gray.compatible.model";
+pub const NAMESPACE_COMPATIBLE_MODE: &str = "batata.config.namespace.compatible.mode";
 pub const NACOS_DUPLICATE_BEAN_ENHANCEMENT_ENABLED: &str =
-    "nacos.sys.duplicate.bean.enhancement.enabled";
+    "batata.sys.duplicate.bean.enhancement.enabled";
 
 // ============================================================================
 // Auth Module Constants
@@ -395,11 +395,11 @@ pub const FUNCTION_MODE_NAMING: &str = "naming";
 // Home Directory Constants
 // ============================================================================
 
-pub const NACOS_HOME_KEY: &str = "nacos.home";
+pub const NACOS_HOME_KEY: &str = "batata.home";
 
 // ============================================================================
 // Internal Configuration Constants
 // ============================================================================
 
-pub const SERVER_PORT_PROPERTY: &str = "nacos.server.main.port";
+pub const SERVER_PORT_PROPERTY: &str = "batata.server.main.port";
 pub const DEFAULT_SERVER_PORT: i32 = 8849;

@@ -182,12 +182,7 @@ impl PayloadHandler for QueryMcpServerHandler {
         // Try operation service first
         if let Some(ref svc) = self.mcp_service {
             match svc
-                .get_mcp_server_detail(
-                    &request.namespace_id,
-                    None,
-                    Some(&request.mcp_name),
-                    None,
-                )
+                .get_mcp_server_detail(&request.namespace_id, None, Some(&request.mcp_name), None)
                 .await
             {
                 Ok(Some(server)) => {
@@ -431,9 +426,7 @@ impl PayloadHandler for AgentEndpointHandler {
                     .unwrap_or_default();
 
                 // Register endpoint via endpoint service if available
-                if let (Some(ep_svc), Some(ep_info)) =
-                    (&self.endpoint_service, &request.endpoint)
-                {
+                if let (Some(ep_svc), Some(ep_info)) = (&self.endpoint_service, &request.endpoint) {
                     ep_svc.create_agent_endpoint(
                         &request.namespace_id,
                         &request.agent_name,
@@ -464,9 +457,7 @@ impl PayloadHandler for AgentEndpointHandler {
             }
             "deregister" => {
                 // Deregister endpoint via endpoint service if available
-                if let (Some(ep_svc), Some(ep_info)) =
-                    (&self.endpoint_service, &request.endpoint)
-                {
+                if let (Some(ep_svc), Some(ep_info)) = (&self.endpoint_service, &request.endpoint) {
                     ep_svc.delete_agent_endpoint(
                         &request.namespace_id,
                         &request.agent_name,

@@ -10,13 +10,13 @@ use serde::{Deserialize, Serialize};
 use batata_persistence::entity::{permissions, roles, users};
 
 // Auth configuration keys
-pub const NACOS_CORE_AUTH_ENABLED: &str = "nacos.core.auth.enabled";
-pub const NACOS_CORE_AUTH_CONSOLE_ENABLED: &str = "nacos.core.auth.console.enabled";
-pub const NACOS_CORE_AUTH_ADMIN_ENABLED: &str = "nacos.core.auth.admin.enabled";
-pub const NACOS_CORE_AUTH_SYSTEM_TYPE: &str = "nacos.core.auth.system.type";
-pub const NACOS_CORE_AUTH_CACHING_ENABLED: &str = "nacos.core.auth.caching.enabled";
-pub const NACOS_CORE_AUTH_SERVER_IDENTITY_KEY: &str = "nacos.core.auth.server.identity.key";
-pub const NACOS_CORE_AUTH_SERVER_IDENTITY_VALUE: &str = "nacos.core.auth.server.identity.value";
+pub const NACOS_CORE_AUTH_ENABLED: &str = "batata.core.auth.enabled";
+pub const NACOS_CORE_AUTH_CONSOLE_ENABLED: &str = "batata.core.auth.console.enabled";
+pub const NACOS_CORE_AUTH_ADMIN_ENABLED: &str = "batata.core.auth.admin.enabled";
+pub const NACOS_CORE_AUTH_SYSTEM_TYPE: &str = "batata.core.auth.system.type";
+pub const NACOS_CORE_AUTH_CACHING_ENABLED: &str = "batata.core.auth.caching.enabled";
+pub const NACOS_CORE_AUTH_SERVER_IDENTITY_KEY: &str = "batata.core.auth.server.identity.key";
+pub const NACOS_CORE_AUTH_SERVER_IDENTITY_VALUE: &str = "batata.core.auth.server.identity.value";
 
 pub const AUTH_PLUGIN_TYPE: &str = "nacos";
 pub const LDAP_AUTH_PLUGIN_TYPE: &str = "ldap";
@@ -30,21 +30,21 @@ pub const CONSOLE_RESOURCE_NAME_PREFIX: &str = "console/";
 pub const UPDATE_PASSWORD_ENTRY_POINT: &str = "console/user/password";
 pub const LOCK_OPERATOR_POINT: &str = "grpc/lock";
 pub const NACOS_USER_KEY: &str = "nacosuser";
-pub const TOKEN_SECRET_KEY: &str = "nacos.core.auth.plugin.nacos.token.secret.key";
+pub const TOKEN_SECRET_KEY: &str = "batata.core.auth.plugin.nacos.token.secret.key";
 pub const DEFAULT_TOKEN_SECRET_KEY: &str = "";
-pub const TOKEN_EXPIRE_SECONDS: &str = "nacos.core.auth.plugin.nacos.token.expire.seconds";
+pub const TOKEN_EXPIRE_SECONDS: &str = "batata.core.auth.plugin.nacos.token.expire.seconds";
 pub const DEFAULT_TOKEN_EXPIRE_SECONDS: i64 = 18000;
 
 // LDAP configuration keys
-pub const NACOS_CORE_AUTH_LDAP_URL: &str = "nacos.core.auth.ldap.url";
-pub const NACOS_CORE_AUTH_LDAP_BASEDC: &str = "nacos.core.auth.ldap.basedc";
-pub const NACOS_CORE_AUTH_LDAP_TIMEOUT: &str = "nacos.core.auth.ldap.timeout";
-pub const NACOS_CORE_AUTH_LDAP_USERDN: &str = "nacos.core.auth.ldap.userDn";
-pub const NACOS_CORE_AUTH_LDAP_PASSWORD: &str = "nacos.core.auth.ldap.password";
-pub const NACOS_CORE_AUTH_LDAP_FILTER_PREFIX: &str = "nacos.core.auth.ldap.filter.prefix";
-pub const NACOS_CORE_AUTH_CASE_SENSITIVE: &str = "nacos.core.auth.ldap.case.sensitive";
+pub const NACOS_CORE_AUTH_LDAP_URL: &str = "batata.core.auth.ldap.url";
+pub const NACOS_CORE_AUTH_LDAP_BASEDC: &str = "batata.core.auth.ldap.basedc";
+pub const NACOS_CORE_AUTH_LDAP_TIMEOUT: &str = "batata.core.auth.ldap.timeout";
+pub const NACOS_CORE_AUTH_LDAP_USERDN: &str = "batata.core.auth.ldap.userDn";
+pub const NACOS_CORE_AUTH_LDAP_PASSWORD: &str = "batata.core.auth.ldap.password";
+pub const NACOS_CORE_AUTH_LDAP_FILTER_PREFIX: &str = "batata.core.auth.ldap.filter.prefix";
+pub const NACOS_CORE_AUTH_CASE_SENSITIVE: &str = "batata.core.auth.ldap.case.sensitive";
 pub const NACOS_CORE_AUTH_IGNORE_PARTIAL_RESULT_EXCEPTION: &str =
-    "nacos.core.auth.ldap.ignore.partial.result.exception";
+    "batata.core.auth.ldap.ignore.partial.result.exception";
 pub const LDAP_PREFIX: &str = "LDAP_";
 
 pub const MAX_PASSWORD_LENGTH: i32 = 72;
@@ -283,8 +283,8 @@ mod tests {
     #[test]
     fn test_ldap_constants() {
         assert_eq!(LDAP_AUTH_PLUGIN_TYPE, "ldap");
-        assert_eq!(NACOS_CORE_AUTH_LDAP_URL, "nacos.core.auth.ldap.url");
-        assert_eq!(NACOS_CORE_AUTH_LDAP_BASEDC, "nacos.core.auth.ldap.basedc");
+        assert_eq!(NACOS_CORE_AUTH_LDAP_URL, "batata.core.auth.ldap.url");
+        assert_eq!(NACOS_CORE_AUTH_LDAP_BASEDC, "batata.core.auth.ldap.basedc");
         assert_eq!(LDAP_PREFIX, "LDAP_");
     }
 

@@ -41,10 +41,7 @@ impl McpServerIndex {
 
     /// Insert or update a cache entry
     pub fn upsert(&self, data: McpServerIndexData) {
-        let ns_map = self
-            .by_name
-            .entry(data.namespace.clone())
-            .or_default();
+        let ns_map = self.by_name.entry(data.namespace.clone()).or_default();
         ns_map.insert(data.name.clone(), data.id.clone());
         self.by_id.insert(data.id.clone(), data);
     }
@@ -114,11 +111,7 @@ impl McpServerIndex {
         results.sort_by(|a, b| a.name.cmp(&b.name));
         let total = results.len() as u64;
 
-        let page: Vec<McpServerIndexData> = results
-            .into_iter()
-            .skip(offset)
-            .take(limit)
-            .collect();
+        let page: Vec<McpServerIndexData> = results.into_iter().skip(offset).take(limit).collect();
 
         (page, total)
     }

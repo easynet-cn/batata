@@ -176,33 +176,33 @@ impl Configuration {
     /// Get the main server port
     pub fn server_main_port(&self) -> u16 {
         self.config
-            .get_int("nacos.server.main.port")
+            .get_int("batata.server.main.port")
             .unwrap_or(8848) as u16
     }
 
     /// Check if running in standalone mode
     pub fn is_standalone(&self) -> bool {
-        self.config.get_bool("nacos.standalone").unwrap_or(true)
+        self.config.get_bool("batata.standalone").unwrap_or(true)
     }
 
     /// Get the server version
     pub fn version(&self) -> String {
         self.config
-            .get_string("nacos.version")
+            .get_string("batata.version")
             .unwrap_or_else(|_| "1.0.0".to_string())
     }
 
     /// Check if running in console remote mode
     pub fn is_console_remote_mode(&self) -> bool {
         self.config
-            .get_bool("nacos.console.remote.mode")
+            .get_bool("batata.console.remote.mode")
             .unwrap_or(false)
     }
 
     /// Get console remote server addresses
     pub fn console_remote_servers(&self) -> Vec<String> {
         self.config
-            .get_string("nacos.console.remote.servers")
+            .get_string("batata.console.remote.servers")
             .map(|s| s.split(',').map(|s| s.trim().to_string()).collect())
             .unwrap_or_default()
     }
@@ -212,35 +212,35 @@ impl Configuration {
     /// Get cluster client connect timeout in milliseconds (default: 5000ms)
     pub fn cluster_connect_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.remote.server.grpc.cluster.connect-timeout")
+            .get_int("batata.remote.server.grpc.cluster.connect-timeout")
             .unwrap_or(5000) as u64
     }
 
     /// Get cluster client request timeout in milliseconds (default: 5000ms)
     pub fn cluster_request_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.remote.server.grpc.cluster.request-timeout")
+            .get_int("batata.remote.server.grpc.cluster.request-timeout")
             .unwrap_or(5000) as u64
     }
 
     /// Get cluster client max retry count (default: 3)
     pub fn cluster_max_retries(&self) -> u32 {
         self.config
-            .get_int("nacos.remote.server.grpc.cluster.max-retries")
+            .get_int("batata.remote.server.grpc.cluster.max-retries")
             .unwrap_or(3) as u32
     }
 
     /// Get cluster client retry delay in milliseconds (default: 500ms)
     pub fn cluster_retry_delay_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.remote.server.grpc.cluster.retry-delay")
+            .get_int("batata.remote.server.grpc.cluster.retry-delay")
             .unwrap_or(500) as u64
     }
 
     /// Get cluster client idle connection timeout in milliseconds (default: 300000ms = 5 minutes)
     pub fn cluster_idle_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.remote.server.grpc.cluster.idle-timeout")
+            .get_int("batata.remote.server.grpc.cluster.idle-timeout")
             .unwrap_or(300000) as u64
     }
 
@@ -249,21 +249,21 @@ impl Configuration {
     /// Get SDK gRPC max inbound message size in bytes (default: 10MB)
     pub fn sdk_grpc_max_inbound_message_size(&self) -> usize {
         self.config
-            .get_int("nacos.remote.server.grpc.sdk.max-inbound-message-size")
+            .get_int("batata.remote.server.grpc.sdk.max-inbound-message-size")
             .unwrap_or(10485760) as usize
     }
 
     /// Get SDK gRPC keep-alive time in milliseconds (default: 7200000ms = 2 hours)
     pub fn sdk_grpc_keep_alive_time_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.remote.server.grpc.sdk.keep-alive-time")
+            .get_int("batata.remote.server.grpc.sdk.keep-alive-time")
             .unwrap_or(7200000) as u64
     }
 
     /// Get SDK gRPC keep-alive timeout in milliseconds (default: 20000ms = 20 seconds)
     pub fn sdk_grpc_keep_alive_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.remote.server.grpc.sdk.keep-alive-timeout")
+            .get_int("batata.remote.server.grpc.sdk.keep-alive-timeout")
             .unwrap_or(20000) as u64
     }
 
@@ -272,35 +272,35 @@ impl Configuration {
     /// Check if TLS is enabled for cluster client connections
     pub fn cluster_client_tls_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.remote.client.grpc.cluster.tls.enabled")
+            .get_bool("batata.remote.client.grpc.cluster.tls.enabled")
             .unwrap_or(false)
     }
 
     /// Get cluster client TLS certificate path (for mTLS)
     pub fn cluster_client_tls_cert_path(&self) -> Option<String> {
         self.config
-            .get_string("nacos.remote.client.grpc.cluster.tls.cert.path")
+            .get_string("batata.remote.client.grpc.cluster.tls.cert.path")
             .ok()
     }
 
     /// Get cluster client TLS private key path (for mTLS)
     pub fn cluster_client_tls_key_path(&self) -> Option<String> {
         self.config
-            .get_string("nacos.remote.client.grpc.cluster.tls.key.path")
+            .get_string("batata.remote.client.grpc.cluster.tls.key.path")
             .ok()
     }
 
     /// Get cluster client TLS CA certificate path for server verification
     pub fn cluster_client_tls_ca_cert_path(&self) -> Option<String> {
         self.config
-            .get_string("nacos.remote.client.grpc.cluster.tls.ca.cert.path")
+            .get_string("batata.remote.client.grpc.cluster.tls.ca.cert.path")
             .ok()
     }
 
     /// Get cluster client TLS domain name for SNI verification
     pub fn cluster_client_tls_domain(&self) -> Option<String> {
         self.config
-            .get_string("nacos.remote.client.grpc.cluster.tls.domain")
+            .get_string("batata.remote.client.grpc.cluster.tls.domain")
             .ok()
     }
 }

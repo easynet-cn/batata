@@ -45,7 +45,13 @@ async fn list_agents(
         let page_no = q.page_no.unwrap_or(1);
         let page_size = q.page_size.unwrap_or(20);
         match svc
-            .list_agents(namespace, q.agent_name.as_deref(), search_type, page_no, page_size)
+            .list_agents(
+                namespace,
+                q.agent_name.as_deref(),
+                search_type,
+                page_no,
+                page_size,
+            )
             .await
         {
             Ok(result) => model::common::Result::<AgentListResponse>::http_success(result),
@@ -84,7 +90,10 @@ async fn get_agent(
     if let Some(svc) = a2a_service {
         let namespace = q.namespace_id.as_deref().unwrap_or("public");
         if let Some(ref name) = q.agent_name {
-            match svc.get_agent_card(namespace, name, q.version.as_deref()).await {
+            match svc
+                .get_agent_card(namespace, name, q.version.as_deref())
+                .await
+            {
                 Ok(Some(agent)) => model::common::Result::<RegisteredAgent>::http_success(agent),
                 Ok(None) => model::common::Result::<String>::http_response(
                     404,
@@ -321,9 +330,7 @@ async fn list_versions(
 
     if let Some(svc) = a2a_service {
         match svc.list_versions(namespace, name).await {
-            Ok(versions) => {
-                model::common::Result::<Vec<VersionDetail>>::http_success(versions)
-            }
+            Ok(versions) => model::common::Result::<Vec<VersionDetail>>::http_success(versions),
             Err(e) => model::common::Result::<String>::http_response(
                 500,
                 500,

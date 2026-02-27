@@ -28,38 +28,36 @@ nacos.server.main.port: 8848
 # nacos.inetutils.ip-address=
 
 #*************** Datasource Related Configurations ***************#
-### Storage mode is auto-derived from spring.sql.init.platform + nacos.standalone:
-###   spring.sql.init.platform = "mysql"/"postgresql" → External DB (requires db.url)
-###   spring.sql.init.platform = empty + standalone   → Embedded RocksDB (single node)
-###   spring.sql.init.platform = empty + cluster      → Distributed Raft + RocksDB (multi-node)
+### Storage mode is auto-derived from batata.sql.init.platform + batata.standalone:
+###   batata.sql.init.platform = "mysql"/"postgresql" → External DB (requires db.url)
+###   batata.sql.init.platform = empty + standalone   → Embedded RocksDB (single node)
+###   batata.sql.init.platform = empty + cluster      → Distributed Raft + RocksDB (multi-node)
 ### Database platform: mysql, postgresql, or empty (embedded RocksDB)
-spring.sql.init.platform: mysql
+batata.sql.init.platform: mysql
 
-### RocksDB data directory for embedded modes (when spring.sql.init.platform is empty)
+### RocksDB data directory for embedded modes (when batata.sql.init.platform is empty)
 #nacos.persistence.embedded.data_dir: data/rocksdb
 
 ### nacos.plugin.datasource.log.enabled=true
 ### Count of DB:
-# db.num=1
-
 ### Connect URL of DB:
 ### Use environment variable for security (e.g., export DATABASE_URL="mysql://user:pass@localhost:3306/batata")
 ### For MySQL:
-# db.url: mysql://user:password@localhost:3306/batata
+# batata.db.url: mysql://user:password@localhost:3306/batata
 ### For PostgreSQL:
-# db.url: postgres://user:password@localhost:5432/batata
-### Default: use DATABASE_URL environment variable
-db.url:
+# batata.db.url: postgres://user:password@localhost:5432/batata
+### Default: use DATABASE_URL environment variable or --db-url CLI arg
+batata.db.url:
 
 ### Database connection pool configuration
-db.pool.config.maximumPoolSize: 100
-db.pool.config.minimumPoolSize: 10
-db.pool.config.connectionTimeout: 30
-db.pool.config.initializationFailTimeout: 30
-db.pool.config.idleTimeout: 600
-db.pool.config.maxLifetime: 1800
+batata.db.pool.max_connections: 100
+batata.db.pool.min_connections: 10
+batata.db.pool.connect_timeout: 30
+batata.db.pool.acquire_timeout: 30
+batata.db.pool.idle_timeout: 600
+batata.db.pool.max_lifetime: 1800
 ### Enable SQL logging (true in dev, false in production)
-db.pool.config.sqlxLogging: false
+batata.db.pool.sqlx_logging: false
 
 #*************** Metrics Related Configurations ***************#
 ### Metrics for prometheus

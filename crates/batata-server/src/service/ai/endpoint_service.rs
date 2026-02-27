@@ -48,8 +48,12 @@ impl AiEndpointService {
             ..Default::default()
         };
 
-        self.naming_service
-            .register_instance(namespace, MCP_ENDPOINT_GROUP, &service_name, instance);
+        self.naming_service.register_instance(
+            namespace,
+            MCP_ENDPOINT_GROUP,
+            &service_name,
+            instance,
+        );
 
         info!(
             name = %name,
@@ -73,7 +77,7 @@ impl AiEndpointService {
             namespace,
             MCP_ENDPOINT_GROUP,
             &service_name,
-            "",   // all clusters
+            "",    // all clusters
             false, // include unhealthy
         );
 
@@ -107,8 +111,12 @@ impl AiEndpointService {
             ..Default::default()
         };
 
-        self.naming_service
-            .deregister_instance(namespace, MCP_ENDPOINT_GROUP, &service_name, &instance);
+        self.naming_service.deregister_instance(
+            namespace,
+            MCP_ENDPOINT_GROUP,
+            &service_name,
+            &instance,
+        );
 
         debug!(
             name = %name,
@@ -145,8 +153,12 @@ impl AiEndpointService {
             ..Default::default()
         };
 
-        self.naming_service
-            .register_instance(namespace, AGENT_ENDPOINT_GROUP, &service_name, instance);
+        self.naming_service.register_instance(
+            namespace,
+            AGENT_ENDPOINT_GROUP,
+            &service_name,
+            instance,
+        );
 
         info!(
             name = %name,
@@ -204,8 +216,12 @@ impl AiEndpointService {
             ..Default::default()
         };
 
-        self.naming_service
-            .deregister_instance(namespace, AGENT_ENDPOINT_GROUP, &service_name, &instance);
+        self.naming_service.deregister_instance(
+            namespace,
+            AGENT_ENDPOINT_GROUP,
+            &service_name,
+            &instance,
+        );
 
         debug!(
             name = %name,

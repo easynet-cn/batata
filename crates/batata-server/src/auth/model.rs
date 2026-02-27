@@ -19,7 +19,7 @@ mod tests {
 
     #[test]
     fn test_ldap_constants() {
-        assert_eq!(NACOS_CORE_AUTH_LDAP_URL, "nacos.core.auth.ldap.url");
+        assert_eq!(NACOS_CORE_AUTH_LDAP_URL, "batata.core.auth.ldap.url");
         assert_eq!(LDAP_PREFIX, "LDAP_");
     }
 

@@ -48,7 +48,7 @@ pub const AGENT_ENDPOINT_GROUP: &str = "agent-endpoints";
 // =============================================================================
 
 /// Tag indicating internal AI config entry
-pub const TAG_INTERNAL_CONFIG: &str = "nacos.internal.config";
+pub const TAG_INTERNAL_CONFIG: &str = "batata.internal.config";
 
 /// Tag value for MCP-type internal config
 pub const TAG_INTERNAL_CONFIG_MCP: &str = "mcp";
@@ -151,10 +151,7 @@ mod tests {
 
     #[test]
     fn test_mcp_version_data_id() {
-        assert_eq!(
-            mcp_version_data_id("abc123"),
-            "abc123-mcp-versions.json"
-        );
+        assert_eq!(mcp_version_data_id("abc123"), "abc123-mcp-versions.json");
     }
 
     #[test]
@@ -176,7 +173,7 @@ mod tests {
     #[test]
     fn test_mcp_tags() {
         let tags = mcp_tags("my-server");
-        assert!(tags.contains("nacos.internal.config=mcp"));
+        assert!(tags.contains("batata.internal.config=mcp"));
         assert!(tags.contains("mcpServerName=my-server"));
     }
 

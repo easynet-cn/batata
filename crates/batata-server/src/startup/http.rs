@@ -329,9 +329,7 @@ impl AIServices {
         let a2a_service = Arc::new(crate::service::ai::A2aServerOperationService::new(
             persistence,
         ));
-        let endpoint_service = Arc::new(crate::service::ai::AiEndpointService::new(
-            naming_service,
-        ));
+        let endpoint_service = Arc::new(crate::service::ai::AiEndpointService::new(naming_service));
 
         Self {
             mcp_registry: Arc::new(McpServerRegistry::new()),

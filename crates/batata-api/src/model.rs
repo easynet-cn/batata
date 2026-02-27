@@ -149,10 +149,10 @@ pub const AI_MODULE: &str = "ai";
 pub const CMDB_CONTEXT_TYPE: &str = "CMDB";
 
 // Connection labels
-pub const APP_CONN_LABELS_KEY: &str = "nacos.app.conn.labels";
+pub const APP_CONN_LABELS_KEY: &str = "batata.app.conn.labels";
 pub const APP_CONN_LABELS_PREFERRED: &str = "nacos_app_conn_labels_preferred";
 pub const APP_CONN_PREFIX: &str = "app_";
-pub const CONFIG_GRAY_LABEL: &str = "nacos.config.gray.label";
+pub const CONFIG_GRAY_LABEL: &str = "batata.config.gray.label";
 pub const WEIGHT: &str = "weight";
 pub const PROPERTIES_KEY: &str = "properties";
 pub const JVM_KEY: &str = "jvm";
@@ -305,10 +305,10 @@ impl Member {
     pub const DEFAULT_ZONE: &str = "default";
 
     pub const TARGET_MEMBER_CONNECT_REFUSE_ERRMSG: &str = "Connection refused";
-    pub const SERVER_PORT_PROPERTY: &str = "nacos.server.main.port";
+    pub const SERVER_PORT_PROPERTY: &str = "batata.server.main.port";
     pub const DEFAULT_SERVER_PORT: u16 = 8848;
     pub const DEFAULT_RAFT_OFFSET_PORT: u16 = 1000;
-    pub const MEMBER_FAIL_ACCESS_CNT_PROPERTY: &str = "nacos.core.member.fail-access-cnt";
+    pub const MEMBER_FAIL_ACCESS_CNT_PROPERTY: &str = "batata.core.member.fail-access-cnt";
     pub const DEFAULT_MEMBER_FAIL_ACCESS_CNT: i16 = 3;
 
     pub fn new(ip: String, port: u16) -> Self {

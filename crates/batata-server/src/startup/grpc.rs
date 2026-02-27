@@ -438,11 +438,7 @@ pub fn start_grpc_servers(
     );
 
     // Register AI handlers (MCP + A2A)
-    register_ai_handlers(
-        &mut handler_registry,
-        ai_services,
-        grpc_auth_service_arc,
-    );
+    register_ai_handlers(&mut handler_registry, ai_services, grpc_auth_service_arc);
 
     let handler_registry_arc = Arc::new(handler_registry);
 

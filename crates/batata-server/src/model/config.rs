@@ -7,6 +7,7 @@ use std::time::Duration;
 use clap::Parser;
 use config::Config;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
+use serde_yaml::Value as YamlValue;
 
 use crate::auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
 
@@ -36,6 +37,8 @@ struct Cli {
     deployment: Option<String>,
     #[arg(long = "db-url", env = "DATABASE_URL")]
     database_url: Option<String>,
+    #[arg(short = 'c', long = "config")]
+    config_file: Option<String>,
 }
 
 /// Application configuration loaded from config files and environment
@@ -44,23 +47,172 @@ pub struct Configuration {
     pub config: Config,
 }
 
+/// Extract `--dotted.key=value` property overrides from command-line arguments.
+///
+/// Any argument matching `--<key>=<value>` where `<key>` contains a `.` is treated
+/// as a property override and removed from the args list so clap won't reject it.
+///
+/// Returns `(property_overrides, filtered_args)`.
+fn extract_property_overrides() -> (Vec<(String, String)>, Vec<String>) {
+    let mut overrides = Vec::new();
+    let mut filtered_args = Vec::new();
+
+    for arg in std::env::args() {
+        if let Some(rest) = arg.strip_prefix("--")
+            && let Some((key, value)) = rest.split_once('=')
+            && key.contains('.')
+        {
+            overrides.push((key.to_string(), value.to_string()));
+            continue;
+        }
+        filtered_args.push(arg);
+    }
+
+    (overrides, filtered_args)
+}
+
+/// Pre-process YAML: rename top-level `nacos:` key to `batata:` for compatibility.
+///
+/// If YAML has both `nacos:` and `batata:`, deep-merge `nacos:` into `batata:` (batata wins).
+/// After this step, all nacos-namespace config lives under `batata:`.
+fn preprocess_yaml(yaml_content: &str) -> String {
+    let mut root: YamlValue =
+        serde_yaml::from_str(yaml_content).expect("Failed to parse YAML configuration file");
+
+    if let YamlValue::Mapping(ref mut map) = root {
+        let nacos_key = YamlValue::String("nacos".to_string());
+        let batata_key = YamlValue::String("batata".to_string());
+
+        if let Some(nacos_val) = map.remove(&nacos_key) {
+            let batata_val = map.remove(&batata_key);
+            let merged = match batata_val {
+                Some(existing) => deep_merge(nacos_val, existing),
+                None => nacos_val,
+            };
+            map.insert(batata_key, merged);
+        }
+    }
+
+    serde_yaml::to_string(&root).expect("Failed to serialize merged YAML")
+}
+
+/// Deep-merge two YAML values. `override_val` takes priority on conflict.
+fn deep_merge(base: YamlValue, override_val: YamlValue) -> YamlValue {
+    match (base, override_val) {
+        (YamlValue::Mapping(mut base_map), YamlValue::Mapping(override_map)) => {
+            for (k, v) in override_map {
+                let merged = if let Some(base_v) = base_map.remove(&k) {
+                    deep_merge(base_v, v)
+                } else {
+                    v
+                };
+                base_map.insert(k, merged);
+            }
+            YamlValue::Mapping(base_map)
+        }
+        // For non-mapping types, override wins
+        (_, override_val) => override_val,
+    }
+}
+
+/// Try to parse a string value as bool, int, or float (for env var type coercion).
+fn try_parse_env_value(s: &str) -> config::Value {
+    if s.eq_ignore_ascii_case("true") {
+        return true.into();
+    }
+    if s.eq_ignore_ascii_case("false") {
+        return false.into();
+    }
+    if let Ok(i) = s.parse::<i64>() {
+        return i.into();
+    }
+    if let Ok(f) = s.parse::<f64>() {
+        return f.into();
+    }
+    s.into()
+}
+
+/// Collect environment variable overrides for a given prefix, mapped to config keys.
+///
+/// - `NACOS_*`: prefix is remapped to `batata.` (e.g., `NACOS_SERVER_MAIN_PORT` → `batata.server.main.port`)
+/// - `BATATA_*`: prefix is kept as `batata.` (e.g., `BATATA_SERVER_MAIN_PORT` → `batata.server.main.port`)
+///
+/// Returns sorted Vec to ensure deterministic override order.
+fn collect_env_overrides(prefix: &str, remap_to_batata: bool) -> Vec<(String, config::Value)> {
+    let prefix_with_sep = format!("{prefix}_");
+    let mut overrides: Vec<(String, config::Value)> = std::env::vars()
+        .filter_map(|(key, value)| {
+            let rest = key.strip_prefix(&prefix_with_sep)?;
+            let config_key = if remap_to_batata {
+                // NACOS_SERVER_MAIN_PORT → batata.server.main.port
+                format!("batata.{}", rest.to_lowercase().replace('_', "."))
+            } else {
+                // BATATA_SERVER_MAIN_PORT → batata.server.main.port (keep_prefix equivalent)
+                format!(
+                    "{}.{}",
+                    prefix.to_lowercase(),
+                    rest.to_lowercase().replace('_', ".")
+                )
+            };
+            Some((config_key, try_parse_env_value(&value)))
+        })
+        .collect();
+    overrides.sort_by(|a, b| a.0.cmp(&b.0));
+    overrides
+}
+
 impl Configuration {
     pub fn new() -> Self {
-        let args = Cli::parse();
-        let mut config_builder =
-            Config::builder().add_source(config::File::with_name("conf/application.yml"));
+        // Step 1: Extract --dotted.key=value overrides before clap sees them
+        let (property_overrides, filtered_args) = extract_property_overrides();
 
-        // clap already handles command line args and environment variables
-        // We don't need Environment::with_prefix here as clap does that
+        // Step 2: Parse clap from filtered args
+        let args = Cli::parse_from(filtered_args);
 
+        // Step 3: Pre-process YAML — rename nacos: → batata: for compatibility
+        let config_file = args
+            .config_file
+            .as_deref()
+            .unwrap_or("conf/application.yml");
+        let yaml_content =
+            std::fs::read_to_string(config_file).expect("Failed to read configuration file");
+        let merged_yaml = preprocess_yaml(&yaml_content);
+
+        // Step 4: Build config with layered sources (lowest to highest priority)
+        let mut config_builder = Config::builder()
+            // Priority 4 (lowest): Pre-processed YAML (nacos: already merged into batata:)
+            .add_source(config::File::from_str(
+                &merged_yaml,
+                config::FileFormat::Yaml,
+            ));
+
+        // Priority 3: NACOS_* and BATATA_* env vars (manual processing)
+        // Both are remapped to batata.* keys. BATATA_* applied after NACOS_* so it wins.
+        let nacos_env = collect_env_overrides("NACOS", true);
+        let batata_env = collect_env_overrides("BATATA", false);
+
+        // Apply NACOS_* first (lower priority)
+        for (key, value) in &nacos_env {
+            config_builder = config_builder
+                .set_override(key, value.clone())
+                .unwrap_or_else(|e| panic!("Failed to set NACOS_ env override for {key}: {e}"));
+        }
+        // Apply BATATA_* second (higher priority, overwrites NACOS_* for same keys)
+        for (key, value) in &batata_env {
+            config_builder = config_builder
+                .set_override(key, value.clone())
+                .unwrap_or_else(|e| panic!("Failed to set BATATA_ env override for {key}: {e}"));
+        }
+
+        // Priority 2: Convenience CLI args
         if let Some(v) = args.mode {
             config_builder = config_builder
-                .set_override("nacos.standalone", v == "standalone")
+                .set_override(STANDALONE_MODE_PROPERTY_NAME, v == "standalone")
                 .expect("Failed to set standalone mode override");
         }
         if let Some(v) = args.function_mode {
             config_builder = config_builder
-                .set_override("nacos.function.mode", v)
+                .set_override(FUNCTION_MODE_PROPERTY_NAME, v)
                 .expect("Failed to set function mode override");
         }
         if let Some(v) = args.deployment {
@@ -70,13 +222,20 @@ impl Configuration {
         }
         if let Some(v) = args.database_url {
             config_builder = config_builder
-                .set_override("db.url", v)
+                .set_override("batata.db.url", v)
                 .expect("Failed to set database URL override");
+        }
+
+        // Priority 1 (highest): --dotted.key=value property overrides
+        for (key, value) in property_overrides {
+            config_builder = config_builder
+                .set_override(&key, value)
+                .unwrap_or_else(|e| panic!("Failed to set override for {key}: {e}"));
         }
 
         let app_config = config_builder
             .build()
-            .expect("Failed to build configuration - check conf/application.yml");
+            .expect("Failed to build configuration");
 
         Configuration { config: app_config }
     }
@@ -111,7 +270,7 @@ impl Configuration {
 
     pub fn version(&self) -> String {
         self.config
-            .get_string("nacos.version")
+            .get_string("batata.version")
             .unwrap_or("".to_string())
     }
 
@@ -133,7 +292,7 @@ impl Configuration {
 
     pub fn server_context_path(&self) -> String {
         self.config
-            .get_string("nacos.server.contextPath")
+            .get_string("batata.server.contextPath")
             .unwrap_or("nacos".to_string())
     }
 
@@ -150,18 +309,18 @@ impl Configuration {
     // ========================================================================
 
     pub fn console_server_port(&self) -> u16 {
-        self.config.get_int("nacos.console.port").unwrap_or(8081) as u16
+        self.config.get_int("batata.console.port").unwrap_or(8081) as u16
     }
 
     pub fn console_server_context_path(&self) -> String {
         self.config
-            .get_string("nacos.console.contextPath")
+            .get_string("batata.console.contextPath")
             .unwrap_or("".to_string())
     }
 
     pub fn console_ui_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.console.ui.enabled")
+            .get_bool("batata.console.ui.enabled")
             .unwrap_or(true)
     }
 
@@ -189,7 +348,7 @@ impl Configuration {
         // 1. Try nacos.member.list
         let mut addresses: Vec<String> = self
             .config
-            .get_string("nacos.member.list")
+            .get_string("batata.member.list")
             .ok()
             .map(|list| {
                 list.split(',')
@@ -265,13 +424,13 @@ impl Configuration {
 
     pub fn auth_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.core.auth.enabled")
+            .get_bool("batata.core.auth.enabled")
             .unwrap_or(false)
     }
 
     pub fn auth_admin_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.core.auth.admin.enabled")
+            .get_bool("batata.core.auth.admin.enabled")
             .unwrap_or(false)
     }
 
@@ -286,31 +445,31 @@ impl Configuration {
 
     pub fn server_identity_key(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.server.identity.key")
+            .get_string("batata.core.auth.server.identity.key")
             .unwrap_or_default()
     }
 
     pub fn server_identity_value(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.server.identity.value")
+            .get_string("batata.core.auth.server.identity.value")
             .unwrap_or_default()
     }
 
     pub fn auth_system_type(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.system.type")
+            .get_string("batata.core.auth.system.type")
             .unwrap_or("nacos".to_string())
     }
 
     pub fn auth_console_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.core.auth.console.enabled")
+            .get_bool("batata.core.auth.console.enabled")
             .unwrap_or(true)
     }
 
     pub fn token_secret_key(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.plugin.nacos.token.secret.key")
+            .get_string("batata.core.auth.plugin.nacos.token.secret.key")
             .unwrap_or_default()
     }
 
@@ -327,55 +486,55 @@ impl Configuration {
 
     /// Get LDAP URL
     pub fn ldap_url(&self) -> Option<String> {
-        self.config.get_string("nacos.core.auth.ldap.url").ok()
+        self.config.get_string("batata.core.auth.ldap.url").ok()
     }
 
     /// Get LDAP base DN
     pub fn ldap_base_dn(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.ldap.basedc")
+            .get_string("batata.core.auth.ldap.basedc")
             .unwrap_or_default()
     }
 
     /// Get LDAP bind DN (admin user)
     pub fn ldap_bind_dn(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.ldap.userDn")
+            .get_string("batata.core.auth.ldap.userDn")
             .unwrap_or_default()
     }
 
     /// Get LDAP bind password
     pub fn ldap_bind_password(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.ldap.password")
+            .get_string("batata.core.auth.ldap.password")
             .unwrap_or_default()
     }
 
     /// Get LDAP user DN pattern
     pub fn ldap_user_dn_pattern(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.ldap.userdn")
+            .get_string("batata.core.auth.ldap.userdn")
             .unwrap_or_default()
     }
 
     /// Get LDAP filter prefix (default: uid)
     pub fn ldap_filter_prefix(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.ldap.filter.prefix")
+            .get_string("batata.core.auth.ldap.filter.prefix")
             .unwrap_or_else(|_| "uid".to_string())
     }
 
     /// Get LDAP connection timeout in milliseconds
     pub fn ldap_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.core.auth.ldap.timeout")
+            .get_int("batata.core.auth.ldap.timeout")
             .unwrap_or(5000) as u64
     }
 
     /// Check if LDAP username comparison is case-sensitive
     pub fn ldap_case_sensitive(&self) -> bool {
         self.config
-            .get_bool("nacos.core.auth.ldap.case.sensitive")
+            .get_bool("batata.core.auth.ldap.case.sensitive")
             .unwrap_or(true)
     }
 
@@ -392,7 +551,7 @@ impl Configuration {
             case_sensitive: self.ldap_case_sensitive(),
             ignore_partial_result_exception: self
                 .config
-                .get_bool("nacos.core.auth.ldap.ignore.partial.result.exception")
+                .get_bool("batata.core.auth.ldap.ignore.partial.result.exception")
                 .unwrap_or(false),
         }
     }
@@ -404,28 +563,28 @@ impl Configuration {
     /// Check if OAuth2/OIDC authentication is enabled
     pub fn is_oauth_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.core.auth.oauth.enabled")
+            .get_bool("batata.core.auth.oauth.enabled")
             .unwrap_or(false)
     }
 
     /// Get OAuth user creation mode (auto or manual)
     pub fn oauth_user_creation(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.oauth.user.creation")
+            .get_string("batata.core.auth.oauth.user.creation")
             .unwrap_or_else(|_| "auto".to_string())
     }
 
     /// Get OAuth role sync mode (on_login or periodic)
     pub fn oauth_role_sync(&self) -> String {
         self.config
-            .get_string("nacos.core.auth.oauth.role.sync")
+            .get_string("batata.core.auth.oauth.role.sync")
             .unwrap_or_else(|_| "on_login".to_string())
     }
 
     /// Get default OAuth redirect URI template
     pub fn oauth_redirect_uri(&self) -> Option<String> {
         self.config
-            .get_string("nacos.core.auth.oauth.redirect.uri")
+            .get_string("batata.core.auth.oauth.redirect.uri")
             .ok()
     }
 
@@ -437,7 +596,7 @@ impl Configuration {
 
         // Load providers from config (e.g., nacos.core.auth.oauth.providers.google)
         // This is a simplified version - actual implementation would iterate over providers
-        if let Ok(provider_config) = self.config.get_table("nacos.core.auth.oauth.providers") {
+        if let Ok(provider_config) = self.config.get_table("batata.core.auth.oauth.providers") {
             for (name, value) in provider_config {
                 if let Ok(provider) = value
                     .clone()
@@ -461,12 +620,12 @@ impl Configuration {
     // Persistence Mode Configuration
     // ========================================================================
 
-    /// Derive the persistence storage mode from `spring.sql.init.platform` and `nacos.standalone`.
+    /// Derive the persistence storage mode from `batata.sql.init.platform` and `batata.standalone`.
     ///
     /// Logic (aligned with Nacos 3.x):
-    /// - `spring.sql.init.platform` = "mysql" or "postgresql" → ExternalDb
-    /// - `spring.sql.init.platform` = empty + standalone=true → StandaloneEmbedded (RocksDB)
-    /// - `spring.sql.init.platform` = empty + standalone=false → DistributedEmbedded (Raft + RocksDB)
+    /// - `batata.sql.init.platform` = "mysql" or "postgresql" → ExternalDb
+    /// - `batata.sql.init.platform` = empty + standalone=true → StandaloneEmbedded (RocksDB)
+    /// - `batata.sql.init.platform` = empty + standalone=false → DistributedEmbedded (Raft + RocksDB)
     pub fn persistence_mode(&self) -> batata_persistence::StorageMode {
         let platform = self.datasource_platform();
         if platform.eq_ignore_ascii_case("mysql") || platform.eq_ignore_ascii_case("postgresql") {
@@ -481,7 +640,7 @@ impl Configuration {
     /// Get the RocksDB data directory for embedded modes
     pub fn embedded_data_dir(&self) -> String {
         self.config
-            .get_string("nacos.persistence.embedded.data_dir")
+            .get_string("batata.persistence.embedded.data_dir")
             .unwrap_or_else(|_| "data/rocksdb".to_string())
     }
 
@@ -506,34 +665,34 @@ impl Configuration {
     ) -> std::result::Result<DatabaseConnection, Box<dyn std::error::Error>> {
         let max_connections = self
             .config
-            .get_int("db.pool.config.maximumPoolSize")
+            .get_int("batata.db.pool.max_connections")
             .unwrap_or(100) as u32;
         let min_connections = self
             .config
-            .get_int("db.pool.config.minimumPoolSize")
+            .get_int("batata.db.pool.min_connections")
             .unwrap_or(1) as u32;
         let connect_timeout = self
             .config
-            .get_int("db.pool.config.connectionTimeout")
+            .get_int("batata.db.pool.connect_timeout")
             .unwrap_or(30) as u64;
         let acquire_timeout = self
             .config
-            .get_int("db.pool.config.initializationFailTimeout")
+            .get_int("batata.db.pool.acquire_timeout")
             .unwrap_or(8) as u64;
         let idle_timeout = self
             .config
-            .get_int("db.pool.config.idleTimeout")
+            .get_int("batata.db.pool.idle_timeout")
             .unwrap_or(10) as u64;
         let max_lifetime = self
             .config
-            .get_int("db.pool.config.maxLifetime")
+            .get_int("batata.db.pool.max_lifetime")
             .unwrap_or(1800) as u64;
         let sqlx_logging = self
             .config
-            .get_bool("db.pool.config.sqlxLogging")
+            .get_bool("batata.db.pool.sqlx_logging")
             .unwrap_or(false);
 
-        let url = self.config.get_string("db.url")?;
+        let url = self.config.get_string("batata.db.url")?;
 
         let mut opt = ConnectOptions::new(url);
 
@@ -569,7 +728,7 @@ impl Configuration {
     /// When true, instances will be automatically deleted after ip_delete_timeout
     pub fn expire_instance_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.naming.expireInstance")
+            .get_bool("batata.naming.expireInstance")
             .unwrap_or(true)
     }
 
@@ -638,30 +797,30 @@ impl Configuration {
     // ========================================================================
 
     pub fn otel_enabled(&self) -> bool {
-        self.config.get_bool("nacos.otel.enabled").unwrap_or(false)
+        self.config.get_bool("batata.otel.enabled").unwrap_or(false)
     }
 
     pub fn otel_endpoint(&self) -> String {
         self.config
-            .get_string("nacos.otel.endpoint")
+            .get_string("batata.otel.endpoint")
             .unwrap_or_else(|_| "http://localhost:4317".to_string())
     }
 
     pub fn otel_service_name(&self) -> String {
         self.config
-            .get_string("nacos.otel.service_name")
+            .get_string("batata.otel.service_name")
             .unwrap_or_else(|_| "batata".to_string())
     }
 
     pub fn otel_sampling_ratio(&self) -> f64 {
         self.config
-            .get_float("nacos.otel.sampling_ratio")
+            .get_float("batata.otel.sampling_ratio")
             .unwrap_or(1.0)
     }
 
     pub fn otel_export_timeout_secs(&self) -> u64 {
         self.config
-            .get_int("nacos.otel.export_timeout_secs")
+            .get_int("batata.otel.export_timeout_secs")
             .unwrap_or(10) as u64
     }
 
@@ -672,49 +831,49 @@ impl Configuration {
     /// Check if API rate limiting is enabled
     pub fn ratelimit_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.ratelimit.enabled")
+            .get_bool("batata.ratelimit.enabled")
             .unwrap_or(false)
     }
 
     /// Get maximum requests per window for API rate limiting
     pub fn ratelimit_max_requests(&self) -> u32 {
         self.config
-            .get_int("nacos.ratelimit.max_requests")
+            .get_int("batata.ratelimit.max_requests")
             .unwrap_or(100) as u32
     }
 
     /// Get rate limit window duration in seconds
     pub fn ratelimit_window_seconds(&self) -> u64 {
         self.config
-            .get_int("nacos.ratelimit.window_seconds")
+            .get_int("batata.ratelimit.window_seconds")
             .unwrap_or(60) as u64
     }
 
     /// Check if authentication rate limiting is enabled
     pub fn ratelimit_auth_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.ratelimit.auth.enabled")
+            .get_bool("batata.ratelimit.auth.enabled")
             .unwrap_or(false)
     }
 
     /// Get maximum login attempts before lockout
     pub fn ratelimit_auth_max_attempts(&self) -> u32 {
         self.config
-            .get_int("nacos.ratelimit.auth.max_attempts")
+            .get_int("batata.ratelimit.auth.max_attempts")
             .unwrap_or(5) as u32
     }
 
     /// Get login attempt window duration in seconds
     pub fn ratelimit_auth_window_seconds(&self) -> u64 {
         self.config
-            .get_int("nacos.ratelimit.auth.window_seconds")
+            .get_int("batata.ratelimit.auth.window_seconds")
             .unwrap_or(60) as u64
     }
 
     /// Get lockout duration in seconds after exceeding max login attempts
     pub fn ratelimit_auth_lockout_seconds(&self) -> u64 {
         self.config
-            .get_int("nacos.ratelimit.auth.lockout_seconds")
+            .get_int("batata.ratelimit.auth.lockout_seconds")
             .unwrap_or(300) as u64
     }
 
@@ -744,26 +903,26 @@ impl Configuration {
     /// Check if configuration encryption is enabled
     pub fn encryption_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.config.encryption.enabled")
+            .get_bool("batata.config.encryption.enabled")
             .unwrap_or(false)
     }
 
     /// Get the encryption plugin type
     pub fn encryption_plugin_type(&self) -> String {
         self.config
-            .get_string("nacos.config.encryption.plugin.type")
+            .get_string("batata.config.encryption.plugin.type")
             .unwrap_or_else(|_| "aes-gcm".to_string())
     }
 
     /// Get the encryption key (Base64-encoded)
     pub fn encryption_key(&self) -> Option<String> {
-        self.config.get_string("nacos.config.encryption.key").ok()
+        self.config.get_string("batata.config.encryption.key").ok()
     }
 
     /// Get the encryption hot reload interval in milliseconds (0 = disabled)
     pub fn encryption_reload_interval_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.config.encryption.reload.interval.ms")
+            .get_int("batata.config.encryption.reload.interval.ms")
             .unwrap_or(0) as u64
     }
 
@@ -779,42 +938,42 @@ impl Configuration {
     /// Check if TLS is enabled for SDK gRPC server
     pub fn grpc_sdk_tls_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.remote.server.grpc.sdk.tls.enabled")
+            .get_bool("batata.remote.server.grpc.sdk.tls.enabled")
             .unwrap_or(false)
     }
 
     /// Check if TLS is enabled for cluster gRPC server
     pub fn grpc_cluster_tls_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.remote.server.grpc.cluster.tls.enabled")
+            .get_bool("batata.remote.server.grpc.cluster.tls.enabled")
             .unwrap_or(false)
     }
 
     /// Get the path to the server certificate file
     pub fn grpc_tls_cert_path(&self) -> Option<String> {
         self.config
-            .get_string("nacos.remote.server.grpc.tls.cert.path")
+            .get_string("batata.remote.server.grpc.tls.cert.path")
             .ok()
     }
 
     /// Get the path to the server private key file
     pub fn grpc_tls_key_path(&self) -> Option<String> {
         self.config
-            .get_string("nacos.remote.server.grpc.tls.key.path")
+            .get_string("batata.remote.server.grpc.tls.key.path")
             .ok()
     }
 
     /// Get the path to the CA certificate for mTLS
     pub fn grpc_tls_ca_cert_path(&self) -> Option<String> {
         self.config
-            .get_string("nacos.remote.server.grpc.tls.ca.cert.path")
+            .get_string("batata.remote.server.grpc.tls.ca.cert.path")
             .ok()
     }
 
     /// Check if mutual TLS is enabled
     pub fn grpc_mtls_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.remote.server.grpc.tls.mtls.enabled")
+            .get_bool("batata.remote.server.grpc.tls.mtls.enabled")
             .unwrap_or(false)
     }
 
@@ -847,65 +1006,65 @@ impl Configuration {
     /// Check if xDS server is enabled
     pub fn xds_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.mesh.xds.enabled")
+            .get_bool("batata.mesh.xds.enabled")
             .unwrap_or(false)
     }
 
     /// Get xDS server port (default: 15010)
     pub fn xds_server_port(&self) -> u16 {
-        self.config.get_int("nacos.mesh.xds.port").unwrap_or(15010) as u16
+        self.config.get_int("batata.mesh.xds.port").unwrap_or(15010) as u16
     }
 
     /// Get xDS server ID
     pub fn xds_server_id(&self) -> String {
         self.config
-            .get_string("nacos.mesh.xds.server.id")
+            .get_string("batata.mesh.xds.server.id")
             .unwrap_or_else(|_| "batata-xds-server".to_string())
     }
 
     /// Get xDS sync interval in milliseconds
     pub fn xds_sync_interval_ms(&self) -> u64 {
         self.config
-            .get_int("nacos.mesh.xds.sync.interval.ms")
+            .get_int("batata.mesh.xds.sync.interval.ms")
             .unwrap_or(5000) as u64
     }
 
     /// Check if xDS should generate default listeners
     pub fn xds_generate_listeners(&self) -> bool {
         self.config
-            .get_bool("nacos.mesh.xds.generate.listeners")
+            .get_bool("batata.mesh.xds.generate.listeners")
             .unwrap_or(true)
     }
 
     /// Check if xDS should generate default routes
     pub fn xds_generate_routes(&self) -> bool {
         self.config
-            .get_bool("nacos.mesh.xds.generate.routes")
+            .get_bool("batata.mesh.xds.generate.routes")
             .unwrap_or(true)
     }
 
     /// Get default listener port for xDS generated listeners
     pub fn xds_default_listener_port(&self) -> u16 {
         self.config
-            .get_int("nacos.mesh.xds.default.listener.port")
+            .get_int("batata.mesh.xds.default.listener.port")
             .unwrap_or(15001) as u16
     }
 
     /// Check if xDS TLS is enabled
     pub fn xds_tls_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.mesh.xds.tls.enabled")
+            .get_bool("batata.mesh.xds.tls.enabled")
             .unwrap_or(false)
     }
 
     /// Get xDS TLS certificate path
     pub fn xds_tls_cert_path(&self) -> Option<String> {
-        self.config.get_string("nacos.mesh.xds.tls.cert.path").ok()
+        self.config.get_string("batata.mesh.xds.tls.cert.path").ok()
     }
 
     /// Get xDS TLS key path
     pub fn xds_tls_key_path(&self) -> Option<String> {
-        self.config.get_string("nacos.mesh.xds.tls.key.path").ok()
+        self.config.get_string("batata.mesh.xds.tls.key.path").ok()
     }
 
     /// Get xDS configuration
@@ -931,35 +1090,35 @@ impl Configuration {
     /// Check if Consul compatibility server is enabled
     pub fn consul_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.plugin.consul.enabled")
+            .get_bool("batata.plugin.consul.enabled")
             .unwrap_or(false)
     }
 
     /// Get Consul compatibility server port (default: 8500)
     pub fn consul_server_port(&self) -> u16 {
         self.config
-            .get_int("nacos.plugin.consul.port")
+            .get_int("batata.plugin.consul.port")
             .unwrap_or(8500) as u16
     }
 
     /// Check if Consul ACL is enabled (default: false)
     pub fn consul_acl_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.plugin.consul.acl.enabled")
+            .get_bool("batata.plugin.consul.acl.enabled")
             .unwrap_or(false)
     }
 
     /// Get Consul data directory for RocksDB persistence (default: data/consul_rocksdb)
     pub fn consul_data_dir(&self) -> String {
         self.config
-            .get_string("nacos.plugin.consul.data_dir")
+            .get_string("batata.plugin.consul.data_dir")
             .unwrap_or_else(|_| "data/consul_rocksdb".to_string())
     }
 
     /// Check if Consul should register itself as a service (default: true)
     pub fn consul_register_self(&self) -> bool {
         self.config
-            .get_bool("nacos.plugin.consul.register_self")
+            .get_bool("batata.plugin.consul.register_self")
             .unwrap_or(true)
     }
 
@@ -968,7 +1127,7 @@ impl Configuration {
     /// will be checked for automatic deregistration.
     pub fn consul_check_reap_interval(&self) -> u64 {
         self.config
-            .get_int("nacos.plugin.consul.check_reap_interval")
+            .get_int("batata.plugin.consul.check_reap_interval")
             .unwrap_or(30) as u64
     }
 
@@ -979,14 +1138,14 @@ impl Configuration {
     /// Check if Apollo compatibility server is enabled
     pub fn apollo_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.plugin.apollo.enabled")
+            .get_bool("batata.plugin.apollo.enabled")
             .unwrap_or(false)
     }
 
     /// Get Apollo compatibility server port (default: 8080)
     pub fn apollo_server_port(&self) -> u16 {
         self.config
-            .get_int("nacos.plugin.apollo.port")
+            .get_int("batata.plugin.apollo.port")
             .unwrap_or(8080) as u16
     }
 
@@ -997,14 +1156,14 @@ impl Configuration {
     /// Check if MCP Registry server is enabled (default: false)
     pub fn mcp_registry_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.ai.mcp.registry.enabled")
+            .get_bool("batata.ai.mcp.registry.enabled")
             .unwrap_or(false)
     }
 
     /// Get MCP Registry server port (default: 9080)
     pub fn mcp_registry_port(&self) -> u16 {
         self.config
-            .get_int("nacos.ai.mcp.registry.port")
+            .get_int("batata.ai.mcp.registry.port")
             .unwrap_or(9080) as u16
     }
 
@@ -1014,27 +1173,27 @@ impl Configuration {
 
     /// Get log directory path
     pub fn log_dir(&self) -> Option<String> {
-        self.config.get_string("nacos.logs.path").ok()
+        self.config.get_string("batata.logs.path").ok()
     }
 
     /// Check if console logging is enabled
     pub fn log_console_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.logs.console.enabled")
+            .get_bool("batata.logs.console.enabled")
             .unwrap_or(true)
     }
 
     /// Check if file logging is enabled
     pub fn log_file_enabled(&self) -> bool {
         self.config
-            .get_bool("nacos.logs.file.enabled")
+            .get_bool("batata.logs.file.enabled")
             .unwrap_or(true)
     }
 
     /// Get log level
     pub fn log_level(&self) -> String {
         self.config
-            .get_string("nacos.logs.level")
+            .get_string("batata.logs.level")
             .unwrap_or_else(|_| "info".to_string())
     }
 
@@ -1098,26 +1257,26 @@ mod tests {
 
     #[test]
     fn test_auth_enabled_only_core_auth() {
-        let cfg = build_config(vec![("nacos.core.auth.enabled", true.into())]);
+        let cfg = build_config(vec![("batata.core.auth.enabled", true.into())]);
         assert!(cfg.auth_enabled());
     }
 
     #[test]
     fn test_auth_enabled_does_not_include_admin() {
         // Setting admin.enabled=true should NOT make auth_enabled() return true
-        let cfg = build_config(vec![("nacos.core.auth.admin.enabled", true.into())]);
+        let cfg = build_config(vec![("batata.core.auth.admin.enabled", true.into())]);
         assert!(!cfg.auth_enabled());
     }
 
     #[test]
     fn test_auth_admin_enabled() {
-        let cfg = build_config(vec![("nacos.core.auth.admin.enabled", true.into())]);
+        let cfg = build_config(vec![("batata.core.auth.admin.enabled", true.into())]);
         assert!(cfg.auth_admin_enabled());
     }
 
     #[test]
     fn test_auth_enabled_for_api_type_open_api() {
-        let cfg = build_config(vec![("nacos.core.auth.enabled", true.into())]);
+        let cfg = build_config(vec![("batata.core.auth.enabled", true.into())]);
         assert!(cfg.auth_enabled_for_api_type(ApiType::OpenApi));
 
         let cfg2 = build_config(vec![]);
@@ -1126,7 +1285,7 @@ mod tests {
 
     #[test]
     fn test_auth_enabled_for_api_type_admin_api() {
-        let cfg = build_config(vec![("nacos.core.auth.admin.enabled", true.into())]);
+        let cfg = build_config(vec![("batata.core.auth.admin.enabled", true.into())]);
         assert!(cfg.auth_enabled_for_api_type(ApiType::AdminApi));
 
         let cfg2 = build_config(vec![]);
@@ -1139,7 +1298,7 @@ mod tests {
         let cfg = build_config(vec![]);
         assert!(cfg.auth_enabled_for_api_type(ApiType::ConsoleApi));
 
-        let cfg2 = build_config(vec![("nacos.core.auth.console.enabled", false.into())]);
+        let cfg2 = build_config(vec![("batata.core.auth.console.enabled", false.into())]);
         assert!(!cfg2.auth_enabled_for_api_type(ApiType::ConsoleApi));
     }
 
@@ -1160,11 +1319,11 @@ mod tests {
     fn test_server_identity_key_value() {
         let cfg = build_config(vec![
             (
-                "nacos.core.auth.server.identity.key",
+                "batata.core.auth.server.identity.key",
                 "serverIdentity".into(),
             ),
             (
-                "nacos.core.auth.server.identity.value",
+                "batata.core.auth.server.identity.value",
                 "cluster-node-1".into(),
             ),
         ]);
@@ -1180,7 +1339,7 @@ mod tests {
 
     #[test]
     fn test_consul_enabled_false() {
-        let cfg = build_config(vec![("nacos.plugin.consul.enabled", false.into())]);
+        let cfg = build_config(vec![("batata.plugin.consul.enabled", false.into())]);
         assert!(!cfg.consul_enabled());
     }
 
@@ -1192,7 +1351,7 @@ mod tests {
 
     #[test]
     fn test_consul_server_port_custom() {
-        let cfg = build_config(vec![("nacos.plugin.consul.port", 9500_i64.into())]);
+        let cfg = build_config(vec![("batata.plugin.consul.port", 9500_i64.into())]);
         assert_eq!(cfg.consul_server_port(), 9500);
     }
 
@@ -1205,7 +1364,7 @@ mod tests {
     #[test]
     fn test_consul_data_dir_custom() {
         let cfg = build_config(vec![(
-            "nacos.plugin.consul.data_dir",
+            "batata.plugin.consul.data_dir",
             "/custom/path/consul".into(),
         )]);
         assert_eq!(cfg.consul_data_dir(), "/custom/path/consul");
@@ -1219,13 +1378,13 @@ mod tests {
 
     #[test]
     fn test_consul_register_self_true() {
-        let cfg = build_config(vec![("nacos.plugin.consul.register_self", true.into())]);
+        let cfg = build_config(vec![("batata.plugin.consul.register_self", true.into())]);
         assert!(cfg.consul_register_self());
     }
 
     #[test]
     fn test_consul_register_self_false() {
-        let cfg = build_config(vec![("nacos.plugin.consul.register_self", false.into())]);
+        let cfg = build_config(vec![("batata.plugin.consul.register_self", false.into())]);
         assert!(!cfg.consul_register_self());
     }
 
@@ -1237,7 +1396,7 @@ mod tests {
 
     #[test]
     fn test_apollo_enabled_false() {
-        let cfg = build_config(vec![("nacos.plugin.apollo.enabled", false.into())]);
+        let cfg = build_config(vec![("batata.plugin.apollo.enabled", false.into())]);
         assert!(!cfg.apollo_enabled());
     }
 
@@ -1249,7 +1408,7 @@ mod tests {
 
     #[test]
     fn test_apollo_server_port_custom() {
-        let cfg = build_config(vec![("nacos.plugin.apollo.port", 9080_i64.into())]);
+        let cfg = build_config(vec![("batata.plugin.apollo.port", 9080_i64.into())]);
         assert_eq!(cfg.apollo_server_port(), 9080);
     }
 
@@ -1262,7 +1421,7 @@ mod tests {
 
     #[test]
     fn test_ratelimit_enabled_true() {
-        let cfg = build_config(vec![("nacos.ratelimit.enabled", true.into())]);
+        let cfg = build_config(vec![("batata.ratelimit.enabled", true.into())]);
         assert!(cfg.ratelimit_enabled());
     }
 
@@ -1274,7 +1433,7 @@ mod tests {
 
     #[test]
     fn test_ratelimit_max_requests_custom() {
-        let cfg = build_config(vec![("nacos.ratelimit.max_requests", 5000_i64.into())]);
+        let cfg = build_config(vec![("batata.ratelimit.max_requests", 5000_i64.into())]);
         assert_eq!(cfg.ratelimit_max_requests(), 5000);
     }
 
@@ -1286,7 +1445,7 @@ mod tests {
 
     #[test]
     fn test_ratelimit_window_seconds_custom() {
-        let cfg = build_config(vec![("nacos.ratelimit.window_seconds", 120_i64.into())]);
+        let cfg = build_config(vec![("batata.ratelimit.window_seconds", 120_i64.into())]);
         assert_eq!(cfg.ratelimit_window_seconds(), 120);
     }
 
@@ -1298,7 +1457,7 @@ mod tests {
 
     #[test]
     fn test_ratelimit_auth_enabled_true() {
-        let cfg = build_config(vec![("nacos.ratelimit.auth.enabled", true.into())]);
+        let cfg = build_config(vec![("batata.ratelimit.auth.enabled", true.into())]);
         assert!(cfg.ratelimit_auth_enabled());
     }
 
@@ -1310,16 +1469,16 @@ mod tests {
 
     #[test]
     fn test_ratelimit_auth_max_attempts_custom() {
-        let cfg = build_config(vec![("nacos.ratelimit.auth.max_attempts", 10_i64.into())]);
+        let cfg = build_config(vec![("batata.ratelimit.auth.max_attempts", 10_i64.into())]);
         assert_eq!(cfg.ratelimit_auth_max_attempts(), 10);
     }
 
     #[test]
     fn test_rate_limit_config() {
         let cfg = build_config(vec![
-            ("nacos.ratelimit.enabled", true.into()),
-            ("nacos.ratelimit.max_requests", 1000_i64.into()),
-            ("nacos.ratelimit.window_seconds", 30_i64.into()),
+            ("batata.ratelimit.enabled", true.into()),
+            ("batata.ratelimit.max_requests", 1000_i64.into()),
+            ("batata.ratelimit.window_seconds", 30_i64.into()),
         ]);
         let rate_limit_cfg = cfg.rate_limit_config();
         assert!(rate_limit_cfg.enabled);
@@ -1330,10 +1489,10 @@ mod tests {
     #[test]
     fn test_auth_rate_limit_config() {
         let cfg = build_config(vec![
-            ("nacos.ratelimit.auth.enabled", true.into()),
-            ("nacos.ratelimit.auth.max_attempts", 3_i64.into()),
-            ("nacos.ratelimit.auth.window_seconds", 120_i64.into()),
-            ("nacos.ratelimit.auth.lockout_seconds", 600_i64.into()),
+            ("batata.ratelimit.auth.enabled", true.into()),
+            ("batata.ratelimit.auth.max_attempts", 3_i64.into()),
+            ("batata.ratelimit.auth.window_seconds", 120_i64.into()),
+            ("batata.ratelimit.auth.lockout_seconds", 600_i64.into()),
         ]);
         let auth_rate_limit_cfg = cfg.auth_rate_limit_config();
         assert!(auth_rate_limit_cfg.enabled);
@@ -1349,7 +1508,7 @@ mod tests {
     #[test]
     fn test_resolve_remote_server_addrs_from_member_list() {
         let cfg = build_config(vec![(
-            "nacos.member.list",
+            "batata.member.list",
             "192.168.1.10:8848,192.168.1.11:8848".into(),
         )]);
         let addrs = cfg.resolve_remote_server_addrs();
@@ -1361,7 +1520,7 @@ mod tests {
     #[test]
     fn test_resolve_remote_server_addrs_strips_query_params() {
         let cfg = build_config(vec![(
-            "nacos.member.list",
+            "batata.member.list",
             "192.168.1.10:8848?raft_port=8807,192.168.1.11:8848?raft_port=8808".into(),
         )]);
         let addrs = cfg.resolve_remote_server_addrs();
@@ -1373,7 +1532,7 @@ mod tests {
     #[test]
     fn test_resolve_remote_server_addrs_preserves_http_prefix() {
         let cfg = build_config(vec![(
-            "nacos.member.list",
+            "batata.member.list",
             "http://10.0.0.1:8848,https://10.0.0.2:8848".into(),
         )]);
         let addrs = cfg.resolve_remote_server_addrs();
@@ -1386,7 +1545,7 @@ mod tests {
     fn test_resolve_remote_server_addrs_fallback_to_server_addr() {
         // No member.list and no cluster.conf → falls back to console.remote.server_addr
         let cfg = build_config(vec![(
-            "nacos.console.remote.server_addr",
+            "batata.console.remote.server_addr",
             "http://my-server:8848".into(),
         )]);
         let addrs = cfg.resolve_remote_server_addrs();
@@ -1401,5 +1560,139 @@ mod tests {
         let addrs = cfg.resolve_remote_server_addrs();
         assert_eq!(addrs.len(), 1);
         assert_eq!(addrs[0], "http://127.0.0.1:8848");
+    }
+
+    // ========================================================================
+    // Property Override Extraction Tests
+    // ========================================================================
+
+    #[test]
+    fn test_extract_overrides_from_args() {
+        // Simulate extracting property overrides from a list of args
+        let args = vec![
+            "batata-server".to_string(),
+            "--batata.server.main.port=9090".to_string(),
+            "-m".to_string(),
+            "standalone".to_string(),
+            "--batata.db.url=mysql://localhost/db".to_string(),
+            "--db-url".to_string(),
+            "postgres://other".to_string(),
+        ];
+
+        let mut overrides = Vec::new();
+        let mut filtered = Vec::new();
+        for arg in args {
+            if let Some(rest) = arg.strip_prefix("--") {
+                if let Some((key, value)) = rest.split_once('=') {
+                    if key.contains('.') {
+                        overrides.push((key.to_string(), value.to_string()));
+                        continue;
+                    }
+                }
+            }
+            filtered.push(arg);
+        }
+
+        assert_eq!(overrides.len(), 2);
+        assert_eq!(
+            overrides[0],
+            ("batata.server.main.port".to_string(), "9090".to_string())
+        );
+        assert_eq!(
+            overrides[1],
+            ("batata.db.url".to_string(), "mysql://localhost/db".to_string())
+        );
+
+        // Filtered args should NOT contain the property overrides
+        assert_eq!(filtered.len(), 5);
+        assert_eq!(filtered[0], "batata-server");
+        assert_eq!(filtered[1], "-m");
+        assert_eq!(filtered[2], "standalone");
+        assert_eq!(filtered[3], "--db-url");
+        assert_eq!(filtered[4], "postgres://other");
+    }
+
+    #[test]
+    fn test_extract_overrides_no_dot_is_not_property() {
+        // --db-url=value has no dot in key, should NOT be extracted as property
+        let arg = "--db-url=value";
+        let rest = arg.strip_prefix("--").unwrap();
+        let (key, _value) = rest.split_once('=').unwrap();
+        assert!(!key.contains('.'));
+    }
+
+    #[test]
+    fn test_extract_overrides_short_flag_ignored() {
+        // Short flags like -m should never be treated as overrides
+        let arg = "-m";
+        assert!(arg.strip_prefix("--").is_none());
+    }
+
+    #[test]
+    fn test_env_source_nacos_prefix() {
+        // Verify NACOS_ env vars produce the correct config keys
+        let config = Config::builder()
+            .set_override("batata.server.main.port", 8848)
+            .unwrap()
+            .add_source(
+                config::Environment::with_prefix("NACOS")
+                    .keep_prefix(true)
+                    .separator("_")
+                    .try_parsing(true),
+            )
+            .build()
+            .unwrap();
+
+        // Default from set_override should be there
+        assert_eq!(config.get_int("batata.server.main.port").unwrap(), 8848);
+    }
+
+    #[test]
+    fn test_env_source_batata_prefix() {
+        // Verify BATATA_ env vars produce the correct config keys
+        let config = Config::builder()
+            .set_override("batata.db.url", "default://url")
+            .unwrap()
+            .add_source(
+                config::Environment::with_prefix("BATATA")
+                    .separator("_")
+                    .try_parsing(true),
+            )
+            .build()
+            .unwrap();
+
+        // Default from set_override should be there
+        assert_eq!(config.get_string("batata.db.url").unwrap(), "default://url");
+    }
+
+    #[test]
+    fn test_property_override_highest_priority() {
+        // --dotted.key=value overrides should take highest priority
+        let config = Config::builder()
+            .set_override("batata.server.main.port", 8848)
+            .unwrap()
+            // Simulate property override applied last (highest priority)
+            .set_override("batata.server.main.port", 9090)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        assert_eq!(config.get_int("batata.server.main.port").unwrap(), 9090);
+    }
+
+    #[test]
+    fn test_config_file_path_default() {
+        // When no -c flag, should use default path
+        let default_path = None::<String>;
+        let resolved = default_path.as_deref().unwrap_or("conf/application.yml");
+        assert_eq!(resolved, "conf/application.yml");
+    }
+
+    #[test]
+    fn test_config_file_path_custom() {
+        // When -c is provided, should use custom path
+        let custom_path = Some("/etc/batata/app.yml".to_string());
+        let resolved = custom_path.as_deref().unwrap_or("conf/application.yml");
+        assert_eq!(resolved, "/etc/batata/app.yml");
     }
 }

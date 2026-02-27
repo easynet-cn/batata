@@ -310,7 +310,9 @@ impl A2aServerOperationService {
                 .await?
             {
                 let mut version_info: AgentCardVersionInfo = serde_json::from_str(&content)?;
-                version_info.version_details.retain(|v| v.version != version);
+                version_info
+                    .version_details
+                    .retain(|v| v.version != version);
 
                 if version_info.version_details.is_empty() {
                     self.delete_config(namespace, AGENT_GROUP, &encoded_name)
@@ -425,13 +427,28 @@ impl A2aServerOperationService {
                                     updated_at: item.modified_time,
                                 }
                             } else {
-                                build_agent_stub(&version_info, &item.tenant, item.created_time, item.modified_time)
+                                build_agent_stub(
+                                    &version_info,
+                                    &item.tenant,
+                                    item.created_time,
+                                    item.modified_time,
+                                )
                             }
                         } else {
-                            build_agent_stub(&version_info, &item.tenant, item.created_time, item.modified_time)
+                            build_agent_stub(
+                                &version_info,
+                                &item.tenant,
+                                item.created_time,
+                                item.modified_time,
+                            )
                         }
                     } else {
-                        build_agent_stub(&version_info, &item.tenant, item.created_time, item.modified_time)
+                        build_agent_stub(
+                            &version_info,
+                            &item.tenant,
+                            item.created_time,
+                            item.modified_time,
+                        )
                     };
 
                     agents.push(agent);

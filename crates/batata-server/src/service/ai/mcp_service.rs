@@ -20,14 +20,8 @@ pub struct McpServerOperationService {
 }
 
 impl McpServerOperationService {
-    pub fn new(
-        persistence: Arc<dyn PersistenceService>,
-        index: Arc<McpServerIndex>,
-    ) -> Self {
-        Self {
-            persistence,
-            index,
-        }
+    pub fn new(persistence: Arc<dyn PersistenceService>, index: Arc<McpServerIndex>) -> Self {
+        Self { persistence, index }
     }
 
     /// Create a new MCP server, returning its generated ID
@@ -261,10 +255,13 @@ impl McpServerOperationService {
         let version = &registration.version;
 
         // Resolve ID from name
-        let index_data = self
-            .index
-            .get_by_name(namespace, name)
-            .ok_or_else(|| anyhow::anyhow!("MCP server '{}' not found in namespace '{}'", name, namespace))?;
+        let index_data = self.index.get_by_name(namespace, name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "MCP server '{}' not found in namespace '{}'",
+                name,
+                namespace
+            )
+        })?;
 
         let id = &index_data.id;
         let now = Utc::now().to_rfc3339();
@@ -416,11 +413,19 @@ impl McpServerOperationService {
 
         if let Some(version) = version.filter(|v| !v.is_empty()) {
             // Delete specific version
-            self.delete_config(namespace, MCP_SERVER_GROUP, &mcp_spec_data_id(&resolved_id, version))
-                .await?;
-            self.delete_config(namespace, MCP_SERVER_TOOL_GROUP, &mcp_tool_data_id(&resolved_id, version))
-                .await
-                .ok(); // Tools may not exist
+            self.delete_config(
+                namespace,
+                MCP_SERVER_GROUP,
+                &mcp_spec_data_id(&resolved_id, version),
+            )
+            .await?;
+            self.delete_config(
+                namespace,
+                MCP_SERVER_TOOL_GROUP,
+                &mcp_tool_data_id(&resolved_id, version),
+            )
+            .await
+            .ok(); // Tools may not exist
 
             // Update version info to remove this version
             let version_data_id = mcp_version_data_id(&resolved_id);
@@ -429,7 +434,9 @@ impl McpServerOperationService {
                 .await?
             {
                 let mut version_info: McpServerVersionInfo = serde_json::from_str(&content)?;
-                version_info.version_details.retain(|v| v.version != version);
+                version_info
+                    .version_details
+                    .retain(|v| v.version != version);
 
                 if version_info.version_details.is_empty() {
                     // No more versions, delete the whole server
@@ -510,13 +517,9 @@ impl McpServerOperationService {
         let offset = ((page_no - 1) * page_size) as usize;
         let limit = page_size as usize;
 
-        let (entries, total) = self.index.search_by_name(
-            namespace,
-            name,
-            search_type,
-            offset,
-            limit,
-        );
+        let (entries, total) =
+            self.index
+                .search_by_name(namespace, name, search_type, offset, limit);
 
         // Convert index entries to McpServer stubs (without full detail)
         let servers: Vec<McpServer> = entries
@@ -554,9 +557,7 @@ impl McpServerOperationService {
 
     /// Get all servers (for MCP Registry server)
     pub fn list_all_servers(&self) -> Vec<McpServerIndexData> {
-        self.index
-            .search_by_name("", None, "blur", 0, 10000)
-            .0
+        self.index.search_by_name("", None, "blur", 0, 10000).0
     }
 
     // =========================================================================
@@ -583,11 +584,11 @@ impl McpServerOperationService {
                 "127.0.0.1",
                 tags,
                 desc,
-                "",            // use
-                "",            // effect
+                "", // use
+                "", // effect
                 AI_CONFIG_TYPE,
-                "",            // schema
-                "",            // encrypted_data_key
+                "", // schema
+                "", // encrypted_data_key
             )
             .await?;
         Ok(())

@@ -230,11 +230,13 @@ impl ServerReloadHandler {
         let content = tokio::fs::read_to_string(&self.config_path).await?;
 
         // Basic validation: check for required sections
-        if !content.contains("nacos.server.main.port")
+        if !content.contains("batata.server.main.port")
+            && !content.contains("batata.server.main-port")
+            && !content.contains("nacos.server.main.port")
             && !content.contains("nacos.server.main-port")
         {
             return Err(anyhow::anyhow!(
-                "Invalid configuration: missing required 'nacos.server.main.port' section"
+                "Invalid configuration: missing required 'batata.server.main.port' (or 'nacos.server.main.port') section"
             ));
         }
 

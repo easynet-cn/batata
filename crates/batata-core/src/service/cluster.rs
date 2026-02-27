@@ -519,11 +519,11 @@ mod tests {
 
     fn test_config() -> Configuration {
         let config = config::Config::builder()
-            .set_default("nacos.standalone", true)
+            .set_default("batata.standalone", true)
             .unwrap()
-            .set_default("nacos.server.main.port", 8848)
+            .set_default("batata.server.main.port", 8848)
             .unwrap()
-            .set_default("nacos.version", "1.0.0")
+            .set_default("batata.version", "1.0.0")
             .unwrap()
             .build()
             .unwrap();

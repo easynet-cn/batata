@@ -45,8 +45,13 @@ async fn list_servers(
         let search_type = q.search.as_deref().unwrap_or("blur");
         let page_no = q.page_no.unwrap_or(1);
         let page_size = q.page_size.unwrap_or(20);
-        let result =
-            svc.list_mcp_servers(namespace, q.mcp_name.as_deref(), search_type, page_no, page_size);
+        let result = svc.list_mcp_servers(
+            namespace,
+            q.mcp_name.as_deref(),
+            search_type,
+            page_no,
+            page_size,
+        );
         model::common::Result::<McpServerListResponse>::http_success(result)
     } else {
         let result = registry.list_with_search(&q);
