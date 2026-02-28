@@ -32,5 +32,6 @@ pub use secured::{
     ConfigHttpResourceParser, NamingHttpResourceParser, Secured, SecuredBuilder, join_resource,
 };
 
-// Re-export AppState
+// Re-export AppState and server status types
 pub use model::AppState;
+pub use model::server_status::{ServerStatus, ServerStatusManager};

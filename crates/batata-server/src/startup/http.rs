@@ -30,7 +30,9 @@ use crate::{
     api::v3::client::route::client_routes as v3_client_routes,
     auth,
     console::v3::{a2a as console_a2a, mcp as console_mcp, plugin as console_plugin},
-    middleware::{auth::Authentication, rate_limit::RateLimiter},
+    middleware::{
+        auth::Authentication, rate_limit::RateLimiter, traffic_revise::TrafficReviseFilter,
+    },
     model::common::AppState,
     service::naming::NamingService,
 };
@@ -420,9 +422,12 @@ pub fn main_server(
     let cloud_services = CloudServices::new();
     let rate_limit_config = app_state.configuration.rate_limit_config();
 
+    let server_status = app_state.server_status.clone();
+
     Ok(HttpServer::new(move || {
         let mut app = App::new()
             .wrap(Logger::default())
+            .wrap(TrafficReviseFilter::new(server_status.clone()))
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
             .app_data(web::Data::from(app_state.clone()))

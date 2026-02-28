@@ -3,6 +3,7 @@
 
 pub mod auth; // Authentication and authorization middleware (server-specific, uses AppState)
 
-// Re-export rate limiting and tracing middleware from server-common
+// Re-export rate limiting, tracing, and traffic revise middleware from server-common
 pub use batata_server_common::middleware::rate_limit;
 pub use batata_server_common::middleware::tracing;
+pub use batata_server_common::middleware::traffic_revise;

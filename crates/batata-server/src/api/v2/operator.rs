@@ -146,7 +146,8 @@ pub async fn get_metrics(
 
     // If onlyStatus is true (default), return only the status string
     if params.only_status {
-        return Result::<String>::http_success("UP".to_string());
+        let status = data.server_status.status().to_string();
+        return Result::<String>::http_success(status);
     }
 
     // Get service keys to count services and instances
@@ -270,7 +271,8 @@ pub async fn get_metrics_handler(
 
     // If onlyStatus is true (default), return only the status string
     if params.only_status {
-        return Result::<String>::http_success("UP".to_string());
+        let status = data.server_status.status().to_string();
+        return Result::<String>::http_success(status);
     }
 
     let service_keys = naming_service.get_all_service_keys();

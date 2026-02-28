@@ -51,11 +51,20 @@ async fn liveness() -> web::Json<Result<String>> {
 
 #[get("/readiness")]
 async fn readiness(data: web::Data<AppState>) -> impl Responder {
+    if !data.server_status.is_up() {
+        let status = data.server_status.status().to_string();
+        return Result::<String>::http_response(
+            503,
+            30000,
+            format!("server is {} now, please try again later!", status),
+            String::new(),
+        );
+    }
+
     let ds = &data.console_datasource;
     let db_ready = ds.server_readiness().await;
-    let cluster_up = true; // cluster status is always UP for now
 
-    if db_ready && cluster_up {
+    if db_ready {
         Result::<String>::http_success("ok".to_string())
     } else {
         Result::<String>::http_response(500, 30000, "not ready".to_string(), String::new())

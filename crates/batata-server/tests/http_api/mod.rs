@@ -14,6 +14,7 @@ pub mod naming_api_test;
 pub mod naming_cluster_test;
 pub mod naming_healthcheck_test;
 pub mod naming_heartbeat_test;
+pub mod server_separation_test;
 pub mod v2_additional_api_test;
 pub mod v3_admin_ai_api_test;
 pub mod v3_admin_config_api_test;

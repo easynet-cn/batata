@@ -21,6 +21,7 @@ use batata_server::{
         XdsServerHandle, start_xds_service,
     },
 };
+use batata_server_common::ServerStatusManager;
 use rocksdb::{BlockBasedOptions, ColumnFamilyDescriptor, Options};
 use tracing::{error, info};
 
@@ -273,6 +274,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Create server status manager (starts in STARTING state)
+    let server_status = Arc::new(ServerStatusManager::new());
+
     // Create application state
     let app_state = Arc::new(AppState {
         configuration,
@@ -283,7 +287,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         persistence,
         health_check_manager,
         raft_node: raft_node.clone(),
+        server_status: server_status.clone(),
     });
+
+    // If data warmup is disabled (default), transition to UP immediately.
+    // Otherwise a background poller will set UP once subsystems are ready.
+    if !app_state.configuration.data_warmup() {
+        server_status.set_up();
+        info!("Server status: UP (data warmup disabled)");
+    } else {
+        info!("Server status: STARTING (data warmup enabled, waiting for subsystems)");
+    }
 
     // Initialize graceful shutdown handler
     let shutdown_signal = startup::wait_for_shutdown_signal().await;
@@ -358,6 +372,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         info!("Health check manager started (unhealthy/expired instance checkers)");
+    }
+
+    // If data warmup is enabled, spawn a background poller that checks subsystem
+    // readiness every 5 seconds and transitions to UP once everything is ready.
+    if app_state.configuration.data_warmup() {
+        let status_mgr = server_status.clone();
+        let console_ds = app_state.console_datasource.clone();
+        let raft_ref = app_state.raft_node.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                let db_ready = console_ds.server_readiness().await;
+                let raft_ready = match &raft_ref {
+                    Some(raft) => raft.leader_id().is_some(),
+                    None => true,
+                };
+
+                if db_ready && raft_ready {
+                    if !status_mgr.is_up() {
+                        status_mgr.set_up();
+                        status_mgr.set_error_msg(None).await;
+                        info!("Server status: UP (all subsystems ready)");
+                    }
+                } else {
+                    let mut reasons = Vec::new();
+                    if !db_ready {
+                        reasons.push("database not ready");
+                    }
+                    if !raft_ready {
+                        reasons.push("raft leader not elected");
+                    }
+                    let msg = reasons.join(", ");
+                    status_mgr.set_down();
+                    status_mgr.set_error_msg(Some(msg)).await;
+                }
+            }
+        });
+        info!("Data warmup poller started (checking every 5s)");
     }
 
     // Start periodic MCP index refresh task if persistence is available
@@ -858,6 +911,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+
+    // Mark server as DOWN during shutdown
+    server_status.set_down();
 
     // Cleanup: stop xDS service if running
     if let Some(handle) = xds_handle {

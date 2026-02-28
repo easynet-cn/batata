@@ -22,6 +22,16 @@ pub async fn liveness() -> impl Responder {
 /// Checks module health and returns 200 if ready, 500 if not ready.
 #[get("readiness")]
 pub async fn readiness(data: web::Data<AppState>) -> impl Responder {
+    if !data.server_status.is_up() {
+        let status = data.server_status.status().to_string();
+        return Result::<String>::http_response(
+            503,
+            500,
+            format!("server is {} now, please try again later!", status),
+            String::new(),
+        );
+    }
+
     let ds = &data.console_datasource;
     let db_ready = ds.server_readiness().await;
 

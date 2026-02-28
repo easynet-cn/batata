@@ -792,6 +792,15 @@ impl Configuration {
             .unwrap_or(true)
     }
 
+    /// Check if data warmup is enabled for naming service.
+    /// When true, the server stays in STARTING state until subsystems are ready.
+    /// When false (default), the server transitions to UP immediately after startup.
+    pub fn data_warmup(&self) -> bool {
+        self.config
+            .get_bool("batata.naming.data.warmup")
+            .unwrap_or(false)
+    }
+
     // ========================================================================
     // Capacity & Health Configuration
     // ========================================================================

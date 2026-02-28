@@ -12,6 +12,8 @@ use batata_persistence::PersistenceService;
 
 use crate::console::datasource::ConsoleDataSource;
 
+use super::server_status::ServerStatusManager;
+
 use super::{
     config::Configuration,
     constants::{
@@ -47,6 +49,8 @@ pub struct AppState {
     pub health_check_manager: Option<Arc<HealthCheckManager>>,
     /// Raft consensus node (only in DistributedEmbedded mode)
     pub raft_node: Option<Arc<RaftNode>>,
+    /// Server lifecycle status (Starting → Up / Down)
+    pub server_status: Arc<ServerStatusManager>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -63,6 +67,7 @@ impl std::fmt::Debug for AppState {
             .field("persistence", &self.persistence.is_some())
             .field("health_check_manager", &self.health_check_manager.is_some())
             .field("raft_node", &self.raft_node.is_some())
+            .field("server_status", &self.server_status)
             .finish()
     }
 }
@@ -78,6 +83,7 @@ impl Clone for AppState {
             persistence: self.persistence.clone(),
             health_check_manager: self.health_check_manager.clone(),
             raft_node: self.raft_node.clone(),
+            server_status: self.server_status.clone(),
         }
     }
 }
@@ -213,7 +219,7 @@ impl AppState {
 
     /// Get environment state as a HashMap for API responses
     pub fn env_state(&self) -> HashMap<String, Option<String>> {
-        let mut state = HashMap::with_capacity(4);
+        let mut state = HashMap::with_capacity(5);
 
         state.insert(
             STARTUP_MODE_STATE.to_string(),
@@ -230,6 +236,10 @@ impl AppState {
         state.insert(
             SERVER_PORT_STATE.to_string(),
             Some(format!("{}", self.configuration.server_main_port())),
+        );
+        state.insert(
+            "server_status".to_string(),
+            Some(self.server_status.status().to_string()),
         );
 
         state

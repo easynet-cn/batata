@@ -45,6 +45,16 @@ async fn liveness() -> impl Responder {
 /// Kubernetes-compatible readiness probe. Checks that the server is ready to accept requests.
 #[get("readiness")]
 async fn readiness(data: web::Data<AppState>) -> impl Responder {
+    if !data.server_status.is_up() {
+        let status = data.server_status.status().to_string();
+        return Result::<String>::http_response(
+            503,
+            error::SERVER_ERROR.code,
+            format!("server is {} now, please try again later!", status),
+            "not ready".to_string(),
+        );
+    }
+
     let ds = &data.console_datasource;
     let db_ready = ds.server_readiness().await;
 

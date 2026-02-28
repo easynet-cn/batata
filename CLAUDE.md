@@ -56,6 +56,48 @@ Batata follows the **Nacos 3.x architecture** where Server and Console are **sep
 
 Batata is a Rust implementation of a Nacos-compatible service discovery, configuration management, and service management platform. It provides HTTP and gRPC APIs for configuration management, service discovery, and cluster coordination. It also supports Consul API compatibility.
 
+## Startup Scripts
+
+Common startup commands are provided in `scripts/`:
+
+```bash
+# Start in embedded mode (no database required, both console + main server)
+./scripts/start-embedded.sh
+
+# Start server-only (main server on 8848, no console)
+./scripts/start-server.sh
+
+# Start console-only (connects to a remote server)
+./scripts/start-console.sh [server_addr]
+
+# Start with MySQL database
+./scripts/start-mysql.sh [db_url]
+
+# Initialize admin user (required on first startup)
+./scripts/init-admin.sh [username] [password] [server_url]
+
+# Test console/server route separation
+./scripts/test-separation.sh
+```
+
+### Deployment Modes (`-d` flag)
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| Merged (default) | `-d merged` | Console (8081) + Main Server (8848) in same process |
+| Server only | `-d server` | Only Main Server (8848) + gRPC (9848/9849) |
+| Console only | `-d console` | Only Console Server (8081), connects to remote server |
+| Server + MCP | `-d serverWithMcp` | Main Server + MCP Registry (9080) |
+
+### First-time Setup
+
+In embedded mode, no default user is created. Initialize the admin user:
+```bash
+./scripts/init-admin.sh
+# or manually:
+curl -X POST http://localhost:8848/nacos/v3/auth/user/admin -d "username=nacos&password=nacos"
+```
+
 ## Build Commands
 
 ```bash
