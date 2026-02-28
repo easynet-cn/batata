@@ -1,177 +1,110 @@
-//! Configuration history console endpoints
-
-use std::sync::Arc;
-
-use actix_web::{Responder, Scope, get, web};
+use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, post, web};
 use serde::{Deserialize, Serialize};
 
-use batata_api::Page;
-use batata_config::ConfigHistoryInfo;
-
-use crate::datasource::ConsoleDataSource;
-
-use super::config::DEFAULT_NAMESPACE_ID;
-use super::namespace::ApiResult;
+use batata_api::model::Page;
+use batata_server_common::{
+    ActionTypes, ApiType, Secured, SignType,
+    console::api_model::{ConfigBasicInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo},
+    model::{self, AppState, constants::DEFAULT_NAMESPACE_ID},
+    secured,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
-pub struct FindOneParam {
-    pub data_id: String,
-    pub group_name: String,
-    pub namespace_id: String,
-    pub nid: u64,
+struct FindOneParam {
+    data_id: String,
+    group_name: String,
+    namespace_id: String,
+    nid: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SearchParam {
-    pub data_id: String,
-    pub group_name: String,
-    pub tenant: Option<String>,
-    pub namespace_id: Option<String>,
-    pub page_no: u64,
-    pub page_size: u64,
+struct SearchParam {
+    data_id: String,
+    group_name: String,
+    tenant: Option<String>,
+    namespace_id: Option<String>,
+    page_no: u64,
+    page_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FindConfigsByNamespaceIdParam {
-    pub namespace_id: String,
+struct FindConfigsbyNamespaceIdParam {
+    namespace_id: String,
 }
 
-/// Config history basic info for API response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfigHistoryBasicInfo {
-    pub id: u64,
-    pub data_id: String,
-    pub group_name: String,
-    pub namespace_id: String,
-    pub op_type: String,
-    pub publish_type: String,
-    pub gray_name: String,
-    pub src_user: String,
-    pub src_ip: String,
-    pub created_time: i64,
-    pub last_modified_time: i64,
+struct DiffParam {
+    nid1: u64,
+    nid2: u64,
 }
 
-impl From<ConfigHistoryInfo> for ConfigHistoryBasicInfo {
-    fn from(info: ConfigHistoryInfo) -> Self {
-        Self {
-            id: info.id,
-            data_id: info.data_id,
-            group_name: info.group,
-            namespace_id: info.tenant,
-            op_type: info.op_type,
-            publish_type: info.publish_type,
-            gray_name: info.gray_name,
-            src_user: info.src_user,
-            src_ip: info.src_ip,
-            created_time: info.created_time,
-            last_modified_time: info.last_modified_time,
-        }
-    }
-}
-
-/// Config history detail info for API response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfigHistoryDetailInfo {
-    pub id: u64,
-    pub data_id: String,
-    pub group_name: String,
-    pub namespace_id: String,
-    pub content: String,
-    pub md5: String,
-    pub app_name: String,
-    pub op_type: String,
-    pub publish_type: String,
-    pub gray_name: String,
-    pub ext_info: String,
-    pub src_user: String,
-    pub src_ip: String,
-    pub created_time: i64,
-    pub last_modified_time: i64,
-    pub encrypted_data_key: String,
+struct RollbackParam {
+    data_id: String,
+    group_name: String,
+    namespace_id: Option<String>,
+    nid: u64,
 }
 
-impl From<ConfigHistoryInfo> for ConfigHistoryDetailInfo {
-    fn from(info: ConfigHistoryInfo) -> Self {
-        Self {
-            id: info.id,
-            data_id: info.data_id,
-            group_name: info.group,
-            namespace_id: info.tenant,
-            content: info.content,
-            md5: info.md5,
-            app_name: info.app_name,
-            op_type: info.op_type,
-            publish_type: info.publish_type,
-            gray_name: info.gray_name,
-            ext_info: info.ext_info,
-            src_user: info.src_user,
-            src_ip: info.src_ip,
-            created_time: info.created_time,
-            last_modified_time: info.last_modified_time,
-            encrypted_data_key: info.encrypted_data_key,
-        }
-    }
-}
-
-/// Config basic info for configs by namespace response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfigBasicInfo {
-    pub id: Option<u64>,
-    pub namespace_id: String,
-    pub group_name: String,
-    pub data_id: String,
-    pub md5: Option<String>,
-    pub r#type: String,
-    pub app_name: String,
-    pub create_time: i64,
-    pub modify_time: i64,
+struct AdvancedSearchParam {
+    data_id: Option<String>,
+    group_name: Option<String>,
+    namespace_id: Option<String>,
+    op_type: Option<String>,
+    src_user: Option<String>,
+    start_time: Option<i64>,
+    end_time: Option<i64>,
+    page_no: Option<u64>,
+    page_size: Option<u64>,
 }
 
-impl From<batata_config::ConfigInfoWrapper> for ConfigBasicInfo {
-    fn from(wrapper: batata_config::ConfigInfoWrapper) -> Self {
-        Self {
-            id: wrapper.id,
-            namespace_id: wrapper.namespace_id,
-            group_name: wrapper.group_name,
-            data_id: wrapper.data_id,
-            md5: wrapper.md5,
-            r#type: wrapper.r#type,
-            app_name: wrapper.app_name,
-            create_time: wrapper.create_time,
-            modify_time: wrapper.modify_time,
-        }
-    }
+/// Response for diff operation
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiffResponse {
+    version1: ConfigHistoryDetailInfo,
+    version2: ConfigHistoryDetailInfo,
+    content_diff: Vec<DiffLine>,
+}
+
+/// A single diff line
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiffLine {
+    line_number: usize,
+    operation: String, // "add", "remove", "unchanged"
+    content: String,
 }
 
 #[get("")]
-pub async fn find_one(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn find_one(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<FindOneParam>,
 ) -> impl Responder {
-    match datasource
-        .history_get(
-            params.nid,
-            &params.data_id,
-            &params.group_name,
-            &params.namespace_id,
-        )
-        .await
-    {
-        Ok(result) => {
-            let config_info = result.map(ConfigHistoryDetailInfo::from);
-            ApiResult::<Option<ConfigHistoryDetailInfo>>::http_success(config_info)
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    match data.console_datasource.history_find_by_id(params.nid).await {
+        Ok(config_info) => {
+            model::common::Result::<Option<ConfigHistoryDetailInfo>>::http_success(config_info)
         }
         Err(e) => {
             tracing::error!("Failed to find history by id: {}", e);
-            ApiResult::<String>::http_response(
+            model::common::Result::<String>::http_response(
                 500,
                 500,
                 format!("Failed to find history: {}", e),
@@ -182,10 +115,19 @@ pub async fn find_one(
 }
 
 #[get("list")]
-pub async fn search(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn search(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<SearchParam>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
     let data_id = &params.data_id;
     let group_name = &params.group_name;
     let mut namespace_id = params.tenant.clone().unwrap_or_default();
@@ -194,11 +136,12 @@ pub async fn search(
         namespace_id = params
             .namespace_id
             .clone()
-            .unwrap_or_else(|| DEFAULT_NAMESPACE_ID.to_string());
+            .unwrap_or(DEFAULT_NAMESPACE_ID.to_string());
     }
 
-    match datasource
-        .history_list(
+    match data
+        .console_datasource
+        .history_search_page(
             data_id,
             group_name,
             &namespace_id,
@@ -207,22 +150,12 @@ pub async fn search(
         )
         .await
     {
-        Ok(result) => {
-            let page_result = Page::<ConfigHistoryBasicInfo>::new(
-                result.total_count,
-                result.page_number,
-                result.pages_available,
-                result
-                    .page_items
-                    .into_iter()
-                    .map(ConfigHistoryBasicInfo::from)
-                    .collect(),
-            );
-            ApiResult::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
+        Ok(page_result) => {
+            model::common::Result::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
         }
         Err(e) => {
             tracing::error!("Failed to search history: {}", e);
-            ApiResult::<String>::http_response(
+            model::common::Result::<String>::http_response(
                 500,
                 500,
                 format!("Failed to search history: {}", e),
@@ -233,27 +166,368 @@ pub async fn search(
 }
 
 #[get("configs")]
-pub async fn find_configs_by_namespace_id(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    params: web::Query<FindConfigsByNamespaceIdParam>,
+async fn find_configs_by_namespace_id(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<FindConfigsbyNamespaceIdParam>,
 ) -> impl Responder {
-    match datasource
-        .history_configs_by_namespace(&params.namespace_id)
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    match data
+        .console_datasource
+        .history_find_configs_by_namespace_id(&params.namespace_id)
         .await
     {
-        Ok(result) => {
-            let config_infos = result
-                .into_iter()
-                .map(ConfigBasicInfo::from)
-                .collect::<Vec<ConfigBasicInfo>>();
-            ApiResult::<Vec<ConfigBasicInfo>>::http_success(config_infos)
+        Ok(config_infos) => {
+            model::common::Result::<Vec<ConfigBasicInfo>>::http_success(config_infos)
         }
         Err(e) => {
             tracing::error!("Failed to find configs by namespace: {}", e);
-            ApiResult::<String>::http_response(
+            model::common::Result::<String>::http_response(
                 500,
                 500,
                 format!("Failed to find configs: {}", e),
+                String::new(),
+            )
+        }
+    }
+}
+
+/// Compare two history versions
+///
+/// GET /v3/console/cs/history/diff
+#[get("diff")]
+async fn diff(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<DiffParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let v1 = match data
+        .console_datasource
+        .history_find_by_id(params.nid1)
+        .await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return model::common::Result::<String>::http_response(
+                404,
+                404,
+                format!("Version {} not found", params.nid1),
+                String::new(),
+            );
+        }
+        Err(e) => {
+            tracing::error!("Failed to find version {}: {}", params.nid1, e);
+            return model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find version: {}", e),
+                String::new(),
+            );
+        }
+    };
+
+    let v2 = match data
+        .console_datasource
+        .history_find_by_id(params.nid2)
+        .await
+    {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return model::common::Result::<String>::http_response(
+                404,
+                404,
+                format!("Version {} not found", params.nid2),
+                String::new(),
+            );
+        }
+        Err(e) => {
+            tracing::error!("Failed to find version {}: {}", params.nid2, e);
+            return model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find version: {}", e),
+                String::new(),
+            );
+        }
+    };
+
+    // Generate simple line-by-line diff
+    let lines1: Vec<&str> = v1.content.lines().collect();
+    let lines2: Vec<&str> = v2.content.lines().collect();
+
+    let mut diff_lines = Vec::new();
+    let max_lines = lines1.len().max(lines2.len());
+
+    for i in 0..max_lines {
+        let line1 = lines1.get(i).copied().unwrap_or("");
+        let line2 = lines2.get(i).copied().unwrap_or("");
+
+        if i >= lines1.len() {
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "add".to_string(),
+                content: line2.to_string(),
+            });
+        } else if i >= lines2.len() {
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "remove".to_string(),
+                content: line1.to_string(),
+            });
+        } else if line1 != line2 {
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "remove".to_string(),
+                content: line1.to_string(),
+            });
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "add".to_string(),
+                content: line2.to_string(),
+            });
+        } else {
+            diff_lines.push(DiffLine {
+                line_number: i + 1,
+                operation: "unchanged".to_string(),
+                content: line1.to_string(),
+            });
+        }
+    }
+
+    let response = DiffResponse {
+        version1: v1,
+        version2: v2,
+        content_diff: diff_lines,
+    };
+    model::common::Result::<DiffResponse>::http_success(response)
+}
+
+/// Rollback config to a previous version
+///
+/// POST /v3/console/cs/history/rollback
+#[post("rollback")]
+async fn rollback(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<RollbackParam>,
+) -> impl Responder {
+    let namespace_id = params
+        .namespace_id
+        .clone()
+        .unwrap_or_else(|| DEFAULT_NAMESPACE_ID.to_string());
+
+    // Check write permission
+    let resource = format!(
+        "{}:{}:config/{}",
+        namespace_id, params.group_name, params.data_id
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    // Get the history version to rollback to
+    match data.console_datasource.history_find_by_id(params.nid).await {
+        Ok(Some(history)) => {
+            // Verify it matches the requested config
+            let basic = &history.config_history_basic_info.config_basic_info;
+            if basic.data_id != params.data_id || basic.group_name != params.group_name {
+                return model::common::Result::<String>::http_response(
+                    400,
+                    400,
+                    "History version does not match requested config".to_string(),
+                    String::new(),
+                );
+            }
+
+            // Get client IP for audit
+            let src_ip = req
+                .connection_info()
+                .realip_remote_addr()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // Publish the old content as a new version
+            match data
+                .console_datasource
+                .config_create_or_update(
+                    &params.data_id,
+                    &params.group_name,
+                    &namespace_id,
+                    &history.content,
+                    &basic.app_name, // app_name
+                    "rollback",      // src_user
+                    &src_ip,
+                    "", // config_tags
+                    "", // desc
+                    "", // use
+                    "", // effect
+                    "", // type
+                    "", // schema
+                    &history.encrypted_data_key,
+                )
+                .await
+            {
+                Ok(_) => {
+                    model::common::Result::<String>::http_success("Rollback successful".to_string())
+                }
+                Err(e) => {
+                    tracing::error!("Failed to rollback config: {}", e);
+                    model::common::Result::<String>::http_response(
+                        500,
+                        500,
+                        format!("Failed to rollback config: {}", e),
+                        String::new(),
+                    )
+                }
+            }
+        }
+        Ok(None) => model::common::Result::<String>::http_response(
+            404,
+            404,
+            "History version not found".to_string(),
+            String::new(),
+        ),
+        Err(e) => {
+            tracing::error!("Failed to find history version: {}", e);
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find history version: {}", e),
+                String::new(),
+            )
+        }
+    }
+}
+
+/// Advanced search with filters
+///
+/// GET /v3/console/cs/history/search
+#[get("search")]
+async fn advanced_search(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<AdvancedSearchParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let namespace_id = params
+        .namespace_id
+        .clone()
+        .unwrap_or_else(|| DEFAULT_NAMESPACE_ID.to_string());
+    let data_id = params.data_id.clone().unwrap_or_default();
+    let group_name = params.group_name.clone().unwrap_or_default();
+    let page_no = params.page_no.unwrap_or(1);
+    let page_size = params.page_size.unwrap_or(20);
+
+    match data
+        .console_datasource
+        .history_search_with_filters(
+            &data_id,
+            &group_name,
+            &namespace_id,
+            params.op_type.as_deref(),
+            params.src_user.as_deref(),
+            params.start_time,
+            params.end_time,
+            page_no,
+            page_size,
+        )
+        .await
+    {
+        Ok(page_result) => {
+            model::common::Result::<Page<ConfigHistoryBasicInfo>>::http_success(page_result)
+        }
+        Err(e) => {
+            tracing::error!("Failed to search history: {}", e);
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to search history: {}", e),
+                String::new(),
+            )
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviousParam {
+    data_id: String,
+    group_name: String,
+    #[serde(default)]
+    namespace_id: Option<String>,
+    id: u64,
+}
+
+#[get("previous")]
+async fn find_previous(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<PreviousParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let namespace_id = params
+        .namespace_id
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_NAMESPACE_ID)
+        .to_string();
+
+    match data
+        .console_datasource
+        .history_find_previous(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            params.id,
+        )
+        .await
+    {
+        Ok(Some(detail)) => model::common::Result::<ConfigHistoryDetailInfo>::http_success(detail),
+        Ok(None) => model::common::Result::<String>::http_response(
+            404,
+            404,
+            "previous config history not found".to_string(),
+            String::new(),
+        ),
+        Err(e) => {
+            tracing::error!("Failed to find previous history: {}", e);
+            model::common::Result::<String>::http_response(
+                500,
+                500,
+                format!("Failed to find previous history: {}", e),
                 String::new(),
             )
         }
@@ -265,4 +539,8 @@ pub fn routes() -> Scope {
         .service(find_one)
         .service(search)
         .service(find_configs_by_namespace_id)
+        .service(find_previous)
+        .service(diff)
+        .service(rollback)
+        .service(advanced_search)
 }

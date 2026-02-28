@@ -9,7 +9,7 @@ use config::Config;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use serde_yaml::Value as YamlValue;
 
-use crate::auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
+use batata_auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
 
 use super::constants::{
     CONFIG_RENTENTION_DAYS, DATASOURCE_PLATFORM_PROPERTY, DEFAULT_CLUSTER_QUOTA,
@@ -1257,15 +1257,8 @@ impl Configuration {
             .unwrap_or_else(|_| "info".to_string())
     }
 
-    /// Get logging configuration
-    pub fn logging_config(&self) -> crate::startup::LoggingConfig {
-        crate::startup::LoggingConfig::from_config(
-            self.log_dir(),
-            self.log_console_enabled(),
-            self.log_file_enabled(),
-            self.log_level(),
-        )
-    }
+    // NOTE: logging_config() is provided as an extension in batata-server/src/startup/logging.rs
+    // because LoggingConfig lives in the startup module which is server-specific.
 }
 
 /// xDS server configuration

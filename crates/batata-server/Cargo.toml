@@ -26,6 +26,7 @@ batata-core = { workspace = true }
 batata-config = { workspace = true }
 batata-naming = { workspace = true }
 batata-console = { workspace = true }
+batata-server-common = { workspace = true }
 batata-plugin-consul = { workspace = true }
 batata-plugin-apollo = { workspace = true }
 batata-maintainer-client = { workspace = true }

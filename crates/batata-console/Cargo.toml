@@ -10,11 +10,14 @@ description = "Management console for Batata"
 [dependencies]
 batata-common = { workspace = true }
 batata-api = { workspace = true }
+batata-auth = { workspace = true }
 batata-persistence = { workspace = true }
 batata-core = { workspace = true }
 batata-config = { workspace = true }
 batata-naming = { workspace = true }
 batata-client = { workspace = true }
+batata-maintainer-client = { workspace = true }
+batata-server-common = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }

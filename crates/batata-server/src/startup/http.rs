@@ -30,8 +30,8 @@ use crate::{
     },
     api::v3::admin::route::admin_routes as v3_admin_routes,
     api::v3::client::route::client_routes as v3_client_routes,
-    auth, console,
-    console::v3::metrics::routes as metrics_routes,
+    auth,
+    console::v3::{a2a as console_a2a, mcp as console_mcp, plugin as console_plugin},
     middleware::{auth::Authentication, rate_limit::RateLimiter},
     model::common::AppState,
     service::naming::NamingService,
@@ -176,7 +176,13 @@ pub fn console_server(
         app.service(
             web::scope(&context_path)
                 .service(auth::v3::route::routes())
-                .service(console::v3::route::routes())
+                .service(
+                    web::scope("/v3/console")
+                        .configure(batata_console::configure_v3_console_routes)
+                        .service(console_mcp::routes())
+                        .service(console_a2a::routes())
+                        .service(console_plugin::routes()),
+                )
                 .service(v2_console_routes()),
         )
     })
@@ -459,8 +465,14 @@ pub fn main_server(
                 .service(cluster_routes())
                 // V2 Console API routes
                 .service(v2_console_routes())
-                // V3 Console API routes
-                .service(console::v3::route::routes())
+                // V3 Console API routes (non-AI from batata-console + AI from server)
+                .service(
+                    web::scope("/v3/console")
+                        .configure(batata_console::configure_v3_console_routes)
+                        .service(console_mcp::routes())
+                        .service(console_a2a::routes())
+                        .service(console_plugin::routes()),
+                )
                 // V3 Admin API routes
                 .service(v3_admin_routes())
                 // V3 Client API routes
@@ -473,7 +485,7 @@ pub fn main_server(
         .configure(configure_prometheus)
         .configure(configure_kubernetes)
         // Prometheus metrics endpoint at /metrics (standard path)
-        .service(metrics_routes())
+        .service(batata_console::v3::metrics::routes())
     })
     .bind((address, port))?
     .run())

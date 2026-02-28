@@ -14,7 +14,6 @@ use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
 use batata_persistence::{PersistenceService, StorageMode};
 use batata_plugin_consul::HealthCheckExecutor;
 use batata_server::{
-    console::datasource,
     middleware::rate_limit,
     model::{self, common::AppState},
     startup::{
@@ -43,7 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Initialize multi-file logging with optional OpenTelemetry support
-    let logging_config = configuration.logging_config();
+    let logging_config = startup::LoggingConfig::from_config(
+        configuration.log_dir(),
+        configuration.log_console_enabled(),
+        configuration.log_file_enabled(),
+        configuration.log_level(),
+    );
     let otel_config = OtelConfig::from_config(
         configuration.otel_enabled(),
         configuration.otel_endpoint(),
@@ -222,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    let console_datasource = datasource::create_datasource(
+    let console_datasource = batata_console::create_datasource(
         &configuration,
         database_connection.clone(),
         server_member_manager.clone(),
@@ -459,8 +463,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "Waiting for {} Raft peer(s) to become reachable...",
                             peer_addrs.len()
                         );
-                        let deadline =
-                            std::time::Instant::now() + Duration::from_secs(30);
+                        let deadline = std::time::Instant::now() + Duration::from_secs(30);
 
                         for addr in &peer_addrs {
                             loop {
@@ -477,8 +480,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             );
                                             break;
                                         }
-                                        tokio::time::sleep(Duration::from_millis(500))
-                                            .await;
+                                        tokio::time::sleep(Duration::from_millis(500)).await;
                                     }
                                 }
                             }

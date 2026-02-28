@@ -1,14 +1,8 @@
-//! Health check console endpoints
-
-use std::sync::Arc;
-
 use actix_web::{HttpResponse, Responder, Scope, get, web};
-use sea_orm::{ConnectionTrait, DatabaseConnection};
 use serde::Serialize;
 
-use crate::datasource::ConsoleDataSource;
-
-use super::namespace::ApiResult;
+use batata_server_common::model::AppState;
+use batata_server_common::model::response::Result;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,31 +44,26 @@ impl ComponentStatus {
     }
 }
 
-async fn check_database(db: &DatabaseConnection) -> ComponentStatus {
-    match db.execute_unprepared("SELECT 1").await {
-        Ok(_) => ComponentStatus::up(),
-        Err(e) => ComponentStatus::down(e.to_string()),
-    }
-}
-
 #[get("/liveness")]
-pub async fn liveness() -> web::Json<ApiResult<String>> {
-    web::Json(ApiResult::<String>::success("ok".to_string()))
+async fn liveness() -> web::Json<Result<String>> {
+    web::Json(Result::<String>::success("ok".to_string()))
 }
 
 #[get("/readiness")]
-pub async fn readiness(datasource: web::Data<Arc<dyn ConsoleDataSource>>) -> impl Responder {
-    let db_status = if let Some(db) = datasource.database() {
-        check_database(db).await
-    } else {
-        // Remote mode - assume database is ok if we can reach the server
+async fn readiness(data: web::Data<AppState>) -> impl Responder {
+    let ds = &data.console_datasource;
+    let db_ready = ds.server_readiness().await;
+
+    let db_status = if db_ready {
         ComponentStatus::up()
+    } else {
+        ComponentStatus::down("Database check failed".to_string())
     };
 
     let cluster_status = ClusterStatus {
         status: "UP".to_string(),
-        member_count: datasource.cluster_member_count(),
-        is_leader: true, // Simplified - in production would check Raft leader status
+        member_count: ds.cluster_member_count(),
+        is_leader: ds.cluster_is_leader(),
     };
 
     let overall_status = if db_status.status == "UP" && cluster_status.status == "UP" {
@@ -97,17 +86,20 @@ pub async fn readiness(datasource: web::Data<Arc<dyn ConsoleDataSource>>) -> imp
 }
 
 #[get("")]
-pub async fn health_check(datasource: web::Data<Arc<dyn ConsoleDataSource>>) -> impl Responder {
-    let db_status = if let Some(db) = datasource.database() {
-        check_database(db).await
-    } else {
+async fn health_check(data: web::Data<AppState>) -> impl Responder {
+    let ds = &data.console_datasource;
+    let db_ready = ds.server_readiness().await;
+
+    let db_status = if db_ready {
         ComponentStatus::up()
+    } else {
+        ComponentStatus::down("Database check failed".to_string())
     };
 
     let cluster_status = ClusterStatus {
         status: "UP".to_string(),
-        member_count: datasource.cluster_member_count(),
-        is_leader: true,
+        member_count: ds.cluster_member_count(),
+        is_leader: ds.cluster_is_leader(),
     };
 
     let overall_status = if db_status.status == "UP" && cluster_status.status == "UP" {

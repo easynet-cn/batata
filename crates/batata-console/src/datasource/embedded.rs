@@ -8,40 +8,32 @@ use std::sync::Arc;
 use batata_core::cluster::ServerMemberManager;
 use batata_persistence::PersistenceService;
 
-use batata_config::Namespace;
+use batata_api::config::ConfigListenerInfo;
+use batata_api::model::Page;
+use batata_config::{ConfigAllInfo, ImportResult, NacosExportItem, Namespace, SameConfigPolicy};
+use batata_naming::Instance;
+use batata_server_common::console::api_model::{
+    ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+    ConfigHistoryDetailInfo,
+};
+use batata_server_common::console::datasource::ConsoleDataSource;
+use batata_server_common::console::model::{
+    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, Member,
+    SelfMemberResponse,
+};
 
 use std::collections::{HashMap, HashSet};
 
-use crate::{
-    api::{
-        config::model::{
-            ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
-            ConfigHistoryDetailInfo, ConfigListenerInfo,
-        },
-        model::{Member, Page},
-        naming::model::Instance,
-    },
-    config::{
-        export_model::{ImportResult, NacosExportItem, SameConfigPolicy},
-        model::ConfigAllInfo,
-    },
-    console::v3::cluster::{
-        ClusterHealthResponse, ClusterHealthSummaryResponse, SelfMemberResponse,
-    },
-    model::common::{
-        APOLLO_ENABLED_STATE, APOLLO_PORT_STATE, AUTH_ADMIN_REQUEST, AUTH_ENABLED,
-        AUTH_SYSTEM_TYPE, CONFIG_RENTENTION_DAYS_PROPERTY_STATE, CONSUL_ENABLED_STATE,
-        CONSUL_PORT_STATE, Configuration, DATASOURCE_PLATFORM_PROPERTY_STATE,
-        DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA, DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE,
-        DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE, IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK,
-        IS_MANAGE_CAPACITY, MAX_CONTENT, MAX_HEALTH_CHECK_FAIL_COUNT,
-        NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION, NOTIFY_CONNECT_TIMEOUT,
-        NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE, STARTUP_MODE_STATE,
-    },
-    service::naming::NamingService,
+use batata_naming::service::NamingService;
+use batata_server_common::model::{
+    APOLLO_ENABLED_STATE, APOLLO_PORT_STATE, AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE,
+    CONFIG_RENTENTION_DAYS_PROPERTY_STATE, CONSUL_ENABLED_STATE, CONSUL_PORT_STATE, Configuration,
+    DATASOURCE_PLATFORM_PROPERTY_STATE, DEFAULT_CLUSTER_QUOTA, DEFAULT_GROUP_QUOTA,
+    DEFAULT_MAX_AGGR_COUNT, DEFAULT_MAX_AGGR_SIZE, DEFAULT_MAX_SIZE, FUNCTION_MODE_STATE,
+    IS_CAPACITY_LIMIT_CHECK, IS_HEALTH_CHECK, IS_MANAGE_CAPACITY, MAX_CONTENT,
+    MAX_HEALTH_CHECK_FAIL_COUNT, NACOS_PLUGIN_DATASOURCE_LOG_STATE, NACOS_VERSION,
+    NOTIFY_CONNECT_TIMEOUT, NOTIFY_SOCKET_TIMEOUT, SERVER_PORT_STATE, STARTUP_MODE_STATE,
 };
-
-use super::ConsoleDataSource;
 
 /// Embedded local data source — direct PersistenceService access
 ///
@@ -986,11 +978,19 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
     // ============== Cluster Operations ==============
 
     fn cluster_all_members(&self) -> Vec<Member> {
-        self.server_member_manager.all_members()
+        self.server_member_manager
+            .all_members()
+            .into_iter()
+            .map(Member::from)
+            .collect()
     }
 
     fn cluster_healthy_members(&self) -> Vec<Member> {
-        self.server_member_manager.healthy_members()
+        self.server_member_manager
+            .healthy_members()
+            .into_iter()
+            .map(Member::from)
+            .collect()
     }
 
     fn cluster_get_health(&self) -> ClusterHealthResponse {
@@ -1012,7 +1012,7 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
             .read()
             .ok()
             .and_then(|info| {
-                info.get(Member::VERSION)
+                info.get(batata_api::model::Member::VERSION)
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
             })
@@ -1029,7 +1029,9 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
     }
 
     fn cluster_get_member(&self, address: &str) -> Option<Member> {
-        self.server_member_manager.get_member(address)
+        self.server_member_manager
+            .get_member(address)
+            .map(Member::from)
     }
 
     fn cluster_member_count(&self) -> usize {
@@ -1168,13 +1170,11 @@ impl EmbeddedLocalDataSource {
             if existing.is_some() {
                 match policy {
                     SameConfigPolicy::Abort => {
-                        result
-                            .fail_data
-                            .push(crate::config::export_model::ImportFailItem {
-                                data_id: data_id.clone(),
-                                group: group.clone(),
-                                reason: "Config already exists".to_string(),
-                            });
+                        result.fail_data.push(batata_config::model::ImportFailItem {
+                            data_id: data_id.clone(),
+                            group: group.clone(),
+                            reason: "Config already exists".to_string(),
+                        });
                         return Ok(result);
                     }
                     SameConfigPolicy::Skip => {
@@ -1209,13 +1209,11 @@ impl EmbeddedLocalDataSource {
             {
                 Ok(_) => result.success_count += 1,
                 Err(e) => {
-                    result
-                        .fail_data
-                        .push(crate::config::export_model::ImportFailItem {
-                            data_id: data_id.clone(),
-                            group: group.clone(),
-                            reason: e.to_string(),
-                        });
+                    result.fail_data.push(batata_config::model::ImportFailItem {
+                        data_id: data_id.clone(),
+                        group: group.clone(),
+                        reason: e.to_string(),
+                    });
                 }
             }
         }

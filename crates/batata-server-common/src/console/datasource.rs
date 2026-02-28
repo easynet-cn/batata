@@ -1,36 +1,21 @@
 // Console data source abstraction layer
 // Provides a unified interface for console operations in both local and remote modes
 
-pub mod embedded;
-pub mod local;
-pub mod remote;
-
 use async_trait::async_trait;
-use sea_orm::DatabaseConnection;
 
+use batata_api::config::ConfigListenerInfo;
+use batata_api::model::Page;
+use batata_config::{ConfigAllInfo, ImportResult, Namespace, SameConfigPolicy};
 use batata_core::cluster::ServerMemberManager;
+use batata_naming::Instance;
 
-use batata_config::Namespace;
+use super::api_model::{
+    ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+};
+use super::model::{ClusterHealthResponse, Member, SelfMemberResponse};
 
 use std::collections::HashMap;
 use std::sync::Arc;
-
-use crate::{
-    api::{
-        config::model::{
-            ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
-            ConfigListenerInfo,
-        },
-        model::{Member, Page},
-        naming::model::Instance,
-    },
-    config::{
-        export_model::{ImportResult, SameConfigPolicy},
-        model::ConfigAllInfo,
-    },
-    console::v3::cluster::{ClusterHealthResponse, SelfMemberResponse},
-    model::common::Configuration,
-};
 
 /// Console data source trait - abstracts data access for console operations
 #[async_trait]
@@ -422,49 +407,4 @@ pub trait ConsoleDataSource: Send + Sync {
 
     /// Get server member manager (only available in local mode)
     fn get_server_member_manager(&self) -> Option<Arc<ServerMemberManager>>;
-}
-
-/// Create a console data source based on configuration
-pub async fn create_datasource(
-    configuration: &Configuration,
-    database_connection: Option<DatabaseConnection>,
-    server_member_manager: Option<Arc<ServerMemberManager>>,
-    config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
-    naming_service: Option<Arc<crate::service::naming::NamingService>>,
-    persistence: Option<Arc<dyn batata_persistence::PersistenceService>>,
-) -> anyhow::Result<Arc<dyn ConsoleDataSource>> {
-    if configuration.is_console_remote_mode() {
-        // Remote mode: use HTTP client to connect to server
-        let remote_datasource = remote::RemoteDataSource::new(configuration).await?;
-        Ok(Arc::new(remote_datasource))
-    } else if let Some(db) = database_connection {
-        // Local mode with external DB: direct database access
-        let smm = server_member_manager.ok_or_else(|| {
-            anyhow::anyhow!("Server member manager required for local console mode")
-        })?;
-        let local_datasource = local::LocalDataSource::new(
-            db,
-            smm,
-            config_subscriber_manager,
-            configuration.clone(),
-            naming_service,
-        );
-        Ok(Arc::new(local_datasource))
-    } else {
-        // Embedded mode (standalone/distributed): use direct PersistenceService access
-        let smm = server_member_manager.ok_or_else(|| {
-            anyhow::anyhow!("Server member manager required for embedded console mode")
-        })?;
-        let persist = persistence.ok_or_else(|| {
-            anyhow::anyhow!("Persistence service required for embedded console mode")
-        })?;
-        let embedded_ds = embedded::EmbeddedLocalDataSource::new(
-            persist,
-            smm,
-            config_subscriber_manager,
-            configuration.clone(),
-            naming_service,
-        );
-        Ok(Arc::new(embedded_ds))
-    }
 }

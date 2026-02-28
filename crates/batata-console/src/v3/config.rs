@@ -1,298 +1,247 @@
-//! Configuration management console endpoints
-
-use std::sync::Arc;
+use std::str::FromStr;
 
 use actix_multipart::Multipart;
-use actix_web::{HttpResponse, Responder, Scope, delete, get, post, web};
-use chrono::Utc;
+use actix_web::{
+    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, http::StatusCode, post,
+    web,
+};
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
-use tracing::warn;
+use serde::Deserialize;
 
-use batata_api::Page;
-use batata_config::{
-    ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper, SameConfigPolicy,
-    service::config::CloneResult,
+use chrono::Utc;
+
+use batata_api::config::ConfigListenerInfo;
+use batata_auth::model::AuthContext;
+use batata_server_common::{
+    ActionTypes, ApiType, Secured, SignType,
+    console::api_model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo},
+    error, is_valid,
+    model::{self, AppState, constants::DEFAULT_NAMESPACE_ID, response::ErrorResult},
+    secured,
 };
 
-use crate::datasource::{ConfigListenerInfo, ConsoleDataSource};
-
-use super::namespace::ApiResult;
-
-pub const DEFAULT_NAMESPACE_ID: &str = "public";
-
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigForm {
-    pub data_id: String,
-    pub group_name: String,
-    #[serde(default)]
-    pub namespace_id: String,
-    #[serde(default)]
-    pub content: String,
-    #[serde(default)]
-    pub app_name: String,
-    #[serde(default)]
-    pub config_tags: String,
-    #[serde(default)]
-    pub desc: String,
-    #[serde(default)]
-    pub r#use: Option<String>,
-    #[serde(default)]
-    pub effect: Option<String>,
-    #[serde(default)]
-    pub r#type: String,
-    #[serde(default)]
-    pub schema: Option<String>,
-    #[serde(default)]
-    pub encrypted_data_key: Option<String>,
-    #[serde(default)]
-    pub src_user: Option<String>,
-}
+use batata_api::model::Page;
+use batata_config::model::{
+    ConfigAllInfo, ConfigForm, ConfigType, ExportRequest, ImportRequest, ImportResult,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SearchPageParam {
+struct SearchPageParam {
     #[serde(flatten)]
-    pub config_form: ConfigForm,
+    config_form: ConfigForm,
     pub page_no: u64,
     pub page_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeleteParam {
-    pub data_id: String,
-    pub group_name: String,
-    pub tenant: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteForm {
-    pub namespace_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExportRequest {
-    #[serde(default)]
-    pub namespace_id: String,
-    pub group: Option<String>,
-    pub data_ids: Option<String>,
-    pub app_name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImportRequest {
-    #[serde(default)]
-    pub namespace_id: String,
-    pub policy: Option<String>,
-}
-
-impl ImportRequest {
-    pub fn get_policy(&self) -> SameConfigPolicy {
-        self.policy
-            .as_ref()
-            .map(|p| p.parse().unwrap_or_default())
-            .unwrap_or_default()
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BatchDeleteRequest {
-    pub ids: String,
-    #[serde(default)]
-    pub namespace_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CloneRequest {
-    pub ids: String,
-    pub target_namespace_id: String,
-    #[serde(default)]
-    pub policy: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListenerRequest {
+struct DeleteParam {
     pub data_id: String,
     pub group_name: String,
     #[serde(default)]
     pub namespace_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ListenerByIpRequest {
-    pub ip: String,
-}
-
-/// Config detail info for API response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigDetailInfo {
-    pub id: i64,
-    pub data_id: String,
-    pub group_name: String,
-    pub content: String,
-    pub md5: String,
-    pub namespace_id: String,
-    pub app_name: String,
-    pub r#type: String,
-    pub create_time: i64,
-    pub modify_time: i64,
-    pub create_user: String,
-    pub create_ip: String,
-    pub desc: String,
-    pub r#use: String,
-    pub effect: String,
-    pub schema: String,
-    pub config_tags: String,
-    pub encrypted_data_key: String,
-}
-
-impl From<ConfigAllInfo> for ConfigDetailInfo {
-    fn from(info: ConfigAllInfo) -> Self {
-        Self {
-            id: info.config_info.config_info_base.id,
-            data_id: info.config_info.config_info_base.data_id,
-            group_name: info.config_info.config_info_base.group,
-            content: info.config_info.config_info_base.content,
-            md5: info.config_info.config_info_base.md5,
-            namespace_id: info.config_info.tenant,
-            app_name: info.config_info.app_name,
-            r#type: info.config_info.r#type,
-            create_time: info.create_time,
-            modify_time: info.modify_time,
-            create_user: info.create_user,
-            create_ip: info.create_ip,
-            desc: info.desc,
-            r#use: info.r#use,
-            effect: info.effect,
-            schema: info.schema,
-            config_tags: info.config_tags,
-            encrypted_data_key: info.config_info.config_info_base.encrypted_data_key,
-        }
-    }
-}
-
-/// Config gray info for API response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigGrayInfo {
-    pub id: i64,
-    pub data_id: String,
-    pub group_name: String,
-    pub content: String,
-    pub md5: String,
-    pub namespace_id: String,
-    pub gray_name: String,
-    pub gray_rule: String,
-    pub src_user: String,
-    pub r#type: String,
-}
-
-impl From<ConfigInfoGrayWrapper> for ConfigGrayInfo {
-    fn from(wrapper: ConfigInfoGrayWrapper) -> Self {
-        Self {
-            id: wrapper.config_info.config_info_base.id,
-            data_id: wrapper.config_info.config_info_base.data_id,
-            group_name: wrapper.config_info.config_info_base.group,
-            content: wrapper.config_info.config_info_base.content,
-            md5: wrapper.config_info.config_info_base.md5,
-            namespace_id: wrapper.config_info.tenant,
-            gray_name: wrapper.gray_name,
-            gray_rule: wrapper.gray_rule,
-            src_user: wrapper.src_user,
-            r#type: wrapper.config_info.r#type,
-        }
-    }
 }
 
 #[get("")]
-pub async fn find_one(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn find_one(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<ConfigForm>,
 ) -> impl Responder {
-    match datasource
-        .config_get(&params.data_id, &params.group_name, &params.namespace_id)
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let result = match data
+        .console_datasource
+        .config_find_one(&params.data_id, &params.group_name, &namespace_id)
         .await
     {
-        Ok(config) => {
-            let result = config.map(ConfigDetailInfo::from);
-            ApiResult::<Option<ConfigDetailInfo>>::http_success(result)
-        }
-        Err(e) => ApiResult::http_internal_error(e),
-    }
+        Ok(config) => config.map(ConfigDetailInfo::from),
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    model::common::Result::<Option<ConfigAllInfo>>::http_success(result)
 }
 
 #[get("list")]
-pub async fn search(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn search(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<SearchPageParam>,
 ) -> impl Responder {
-    let search_param = params.0;
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
 
-    match datasource
-        .config_list(
+    let search_param = params.0;
+    let tags = search_param
+        .config_form
+        .config_tags
+        .split(",")
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
+    let types = search_param
+        .config_form
+        .r#type
+        .split(",")
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
+
+    let search_ns = if search_param.config_form.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        search_param.config_form.namespace_id.clone()
+    };
+
+    let result = data
+        .console_datasource
+        .config_search_page(
             search_param.page_no,
             search_param.page_size,
-            &search_param.config_form.namespace_id,
+            &search_ns,
             &search_param.config_form.data_id,
             &search_param.config_form.group_name,
             &search_param.config_form.app_name,
-            &search_param.config_form.config_tags,
-            &search_param.config_form.r#type,
+            tags,
+            types,
             &search_param.config_form.content,
         )
-        .await
-    {
-        Ok(page_result) => ApiResult::<Page<ConfigBasicInfo>>::http_success(page_result),
-        Err(e) => ApiResult::http_internal_error(e),
+        .await;
+
+    match result {
+        Ok(page_result) => {
+            model::common::Result::<Page<ConfigBasicInfo>>::http_success(page_result)
+        }
+        Err(err) => HttpResponse::InternalServerError().json(ErrorResult {
+            timestamp: Utc::now().to_rfc3339(),
+            status: 403,
+            message: err.to_string(),
+            error: String::from("Forbiden"),
+            path: req.path().to_string(),
+        }),
     }
 }
 
 #[post("")]
-pub async fn create_or_update(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn create_or_update(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     form: web::Form<ConfigForm>,
-    src_user: Option<String>,
-    src_ip: Option<String>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
     if form.data_id.is_empty() {
-        return ApiResult::http_param_missing("dataId");
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'dataId' type String is not present",
+        );
+    }
+
+    if !is_valid(&form.data_id) {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            format!("invalid dataId : {}", form.data_id),
+        );
     }
 
     if form.group_name.is_empty() {
-        return ApiResult::http_param_missing("groupName");
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'groupName' type String is not present",
+        );
+    }
+
+    if !is_valid(&form.group_name) {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            format!("invalid group : {}", form.group_name),
+        );
     }
 
     if form.content.is_empty() {
-        return ApiResult::http_param_missing("content");
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'content' type String is not present",
+        );
+    }
+
+    if form.content.chars().count() > data.configuration.max_content() as usize {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            format!("invalid content, over {}", data.configuration.max_content()),
+        );
     }
 
     let mut config_form = form.into_inner();
-    if config_form.namespace_id.is_empty() {
+    let namespace_transferred = config_form.namespace_id.is_empty();
+
+    if namespace_transferred {
         config_form.namespace_id = DEFAULT_NAMESPACE_ID.to_string();
     }
 
-    let user = src_user.unwrap_or_else(|| config_form.src_user.clone().unwrap_or_default());
-    let ip = src_ip.unwrap_or_default();
+    config_form.namespace_id = config_form.namespace_id.trim().to_string();
+    config_form.r#type = ConfigType::from_str(&config_form.r#type)
+        .unwrap_or_default()
+        .to_string();
 
-    match datasource
-        .config_publish(
+    let auth_content = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
+    let src_user = config_form.src_user.take().unwrap_or(auth_content.username);
+
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    let _ = data
+        .console_datasource
+        .config_create_or_update(
             &config_form.data_id,
             &config_form.group_name,
             &config_form.namespace_id,
             &config_form.content,
             &config_form.app_name,
-            &user,
-            &ip,
+            &src_user,
+            &src_ip,
             &config_form.config_tags,
             &config_form.desc,
             &config_form.r#use.unwrap_or_default(),
@@ -301,109 +250,378 @@ pub async fn create_or_update(
             &config_form.schema.unwrap_or_default(),
             &config_form.encrypted_data_key.unwrap_or_default(),
         )
-        .await
-    {
-        Ok(_) => ApiResult::<bool>::http_success(true),
-        Err(e) => ApiResult::http_internal_error(e),
-    }
+        .await;
+
+    model::common::Result::<bool>::http_success(true)
 }
 
 #[delete("")]
-pub async fn delete_config(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn delete(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<DeleteParam>,
-    form: Option<web::Form<DeleteForm>>,
-    src_user: Option<String>,
-    src_ip: Option<String>,
 ) -> impl Responder {
-    let mut tenant = params.tenant.to_string();
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
 
-    if let Some(delete_form) = form {
-        let namespace_id = delete_form.namespace_id.to_string();
-        if !namespace_id.is_empty() && tenant.is_empty() {
-            tenant = namespace_id;
-        }
-    }
+    let tenant = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.to_string()
+    };
 
-    if tenant.is_empty() {
-        tenant = DEFAULT_NAMESPACE_ID.to_string();
-    }
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
 
-    let user = src_user.unwrap_or_default();
-    let ip = src_ip.unwrap_or_default();
+    let auth_content = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
 
-    match datasource
-        .config_delete(&params.data_id, &params.group_name, &tenant, "", &ip, &user)
+    let src_user = auth_content.username;
+
+    if let Err(e) = data
+        .console_datasource
+        .config_delete(
+            &params.data_id,
+            &params.group_name,
+            &tenant,
+            "",
+            &client_ip,
+            &src_user,
+            "",
+        )
         .await
     {
-        Ok(_) => ApiResult::<bool>::http_success(true),
-        Err(e) => ApiResult::http_internal_error(e),
+        return HttpResponse::InternalServerError().body(e.to_string());
     }
+
+    model::common::Result::<bool>::http_success(true)
 }
 
 #[get("beta")]
-pub async fn find_beta_one(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn find_beta_one(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<ConfigForm>,
 ) -> impl Responder {
-    match datasource
-        .config_gray_get(&params.data_id, &params.group_name, &params.namespace_id)
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let beta_ns = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let result = match data
+        .console_datasource
+        .config_find_gray_one(&params.data_id, &params.group_name, &beta_ns)
         .await
     {
-        Ok(config) => {
-            let result = config.map(ConfigGrayInfo::from);
-            ApiResult::<Option<ConfigGrayInfo>>::http_success(result)
+        Ok(config) => config,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct BetaPublishForm {
+    pub data_id: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+    pub content: String,
+    #[serde(default)]
+    pub beta_ips: String,
+    #[serde(default)]
+    pub app_name: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub encrypted_data_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BetaQueryParam {
+    pub data_id: String,
+    #[serde(default)]
+    pub group_name: String,
+    #[serde(default)]
+    pub namespace_id: String,
+    #[serde(default)]
+    pub tenant: String,
+}
+
+#[post("beta")]
+async fn publish_beta(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<BetaPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    if form.data_id.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'dataId' type String is not present",
+        );
+    }
+
+    if form.content.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'content' type String is not present",
+        );
+    }
+
+    if form.beta_ips.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'betaIps' type String is not present",
+        );
+    }
+
+    let mut namespace_id = form.namespace_id.clone();
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let group_name = if form.group_name.is_empty() {
+        "DEFAULT_GROUP".to_string()
+    } else {
+        form.group_name.clone()
+    };
+
+    let auth_context = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
+    let src_user = auth_context.username;
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    // Build gray rule from betaIps
+    let gray_rule_info = batata_config::model::gray_rule::GrayRulePersistInfo::new_beta(
+        &form.beta_ips,
+        batata_config::model::gray_rule::BetaGrayRule::PRIORITY,
+    );
+    let gray_rule = match gray_rule_info.to_json() {
+        Ok(json) => json,
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                error::SERVER_ERROR.code,
+                error::SERVER_ERROR.message.to_string(),
+                format!("Failed to serialize gray rule: {}", e),
+            );
         }
-        Err(e) => ApiResult::http_internal_error(e),
+    };
+
+    if let Err(e) = data
+        .console_datasource
+        .config_create_or_update_gray(
+            &form.data_id,
+            &group_name,
+            &namespace_id,
+            &form.content,
+            "beta",
+            &gray_rule,
+            &src_user,
+            &src_ip,
+            &form.app_name,
+            &form.encrypted_data_key,
+        )
+        .await
+    {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+
+    model::common::Result::<bool>::http_success(true)
+}
+
+#[delete("beta")]
+async fn delete_beta(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BetaQueryParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let mut namespace_id = params.namespace_id.clone();
+    if namespace_id.is_empty() {
+        namespace_id = params.tenant.clone();
+    }
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    let src_user = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.username.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
+
+    if let Err(e) = data
+        .console_datasource
+        .config_delete_gray(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            "beta",
+            &client_ip,
+            &src_user,
+        )
+        .await
+    {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+
+    model::common::Result::<bool>::http_success(true)
+}
+
+#[get("listener")]
+async fn find_listeners(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ConfigForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    match data
+        .console_datasource
+        .config_listener_list(&params.data_id, &params.group_name, &params.namespace_id)
+        .await
+    {
+        Ok(listener_info) => {
+            model::common::Result::<Option<ConfigListenerInfo>>::http_success(listener_info)
+        }
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
 #[get("export")]
-pub async fn export_configs(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn export_configs(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<ExportRequest>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
     let namespace_id = if params.namespace_id.is_empty() {
         DEFAULT_NAMESPACE_ID.to_string()
     } else {
         params.namespace_id.clone()
     };
 
-    match datasource
+    // Parse data_ids if provided
+    let data_ids = params.data_ids.as_ref().map(|ids| {
+        ids.split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim().to_string())
+            .collect::<Vec<String>>()
+    });
+
+    // Export configs via datasource
+    let zip_data = match data
+        .console_datasource
         .config_export(
             &namespace_id,
             params.group.as_deref(),
-            params.data_ids.as_deref(),
+            data_ids,
             params.app_name.as_deref(),
         )
         .await
     {
-        Ok(zip_data) => {
-            let filename = format!(
-                "nacos_config_export_{}.zip",
-                Utc::now().format("%Y%m%d%H%M%S")
-            );
+        Ok(z) => z,
+        Err(e) => return HttpResponse::NotFound().body(e.to_string()),
+    };
 
-            HttpResponse::Ok()
-                .content_type("application/zip")
-                .insert_header((
-                    "Content-Disposition",
-                    format!("attachment; filename=\"{}\"", filename),
-                ))
-                .body(zip_data)
-        }
-        Err(e) => ApiResult::http_internal_error(e),
-    }
+    let filename = format!(
+        "nacos_config_export_{}.zip",
+        Utc::now().format("%Y%m%d%H%M%S")
+    );
+
+    HttpResponse::Ok()
+        .content_type("application/zip")
+        .insert_header((
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", filename),
+        ))
+        .body(zip_data)
 }
 
 #[post("import")]
-pub async fn import_configs(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn import_configs(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<ImportRequest>,
     mut payload: Multipart,
-    src_user: Option<String>,
-    src_ip: Option<String>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
     let namespace_id = if params.namespace_id.is_empty() {
         DEFAULT_NAMESPACE_ID.to_string()
     } else {
@@ -412,320 +630,309 @@ pub async fn import_configs(
 
     let policy = params.get_policy();
 
-    let user = src_user.unwrap_or_default();
-    let ip = src_ip.unwrap_or_default();
+    // Get user info
+    let auth_context = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
+    };
 
-    // Read file from multipart with proper error handling
+    let src_user = auth_context.username;
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    // Read file from multipart
     let mut file_data: Vec<u8> = Vec::new();
-    while let Some(field_result) = payload.next().await {
-        let mut field = match field_result {
-            Ok(f) => f,
-            Err(e) => {
-                warn!(error = %e, "Failed to read multipart field");
-                return ApiResult::http_internal_error(e.to_string());
-            }
-        };
-
+    while let Some(Ok(mut field)) = payload.next().await {
         if let Some(content_disposition) = field.content_disposition()
-            && content_disposition.get_name().is_some_and(|n| n == "file")
+            && content_disposition
+                .get_name()
+                .map(|n| n == "file")
+                .unwrap_or(false)
         {
-            while let Some(chunk_result) = field.next().await {
-                match chunk_result {
-                    Ok(chunk) => file_data.extend_from_slice(&chunk),
-                    Err(e) => {
-                        warn!(error = %e, "Failed to read multipart chunk");
-                        return ApiResult::http_internal_error(e.to_string());
-                    }
-                }
+            while let Some(Ok(chunk)) = field.next().await {
+                file_data.extend_from_slice(&chunk);
             }
             break;
         }
     }
 
     if file_data.is_empty() {
-        return ApiResult::http_param_missing("file");
+        return model::common::Result::<ImportResult>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "No file uploaded",
+        );
     }
 
-    match datasource
-        .config_import(file_data, &namespace_id, policy, &user, &ip)
+    // Import configs via datasource
+    let result = match data
+        .console_datasource
+        .config_import(file_data, &namespace_id, policy, &src_user, &src_ip)
         .await
     {
-        Ok(result) => ApiResult::http_success(result),
-        Err(e) => ApiResult::http_internal_error(e),
-    }
+        Ok(r) => r,
+        Err(e) => {
+            return model::common::Result::<ImportResult>::http_response(
+                StatusCode::BAD_REQUEST.as_u16(),
+                error::PARAMETER_VALIDATE_ERROR.code,
+                error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+                format!("Import failed: {}", e),
+            );
+        }
+    };
+
+    model::common::Result::<ImportResult>::http_success(result)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchDeleteParam {
+    pub ids: String,
 }
 
 #[delete("batchDelete")]
-pub async fn batch_delete(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    params: web::Query<BatchDeleteRequest>,
-    src_user: Option<String>,
-    src_ip: Option<String>,
+async fn batch_delete(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<BatchDeleteParam>,
 ) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
     let ids: Vec<i64> = params
         .ids
         .split(',')
-        .filter_map(|s| s.trim().parse().ok())
+        .filter_map(|s| s.trim().parse::<i64>().ok())
         .collect();
 
     if ids.is_empty() {
-        return ApiResult::http_param_missing("ids");
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameter 'ids' is missing or invalid",
+        );
     }
 
-    let user = src_user.unwrap_or_default();
-    let ip = src_ip.unwrap_or_default();
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
 
-    match datasource.config_batch_delete(&ids, &ip, &user).await {
-        Ok(count) => ApiResult::<usize>::http_success(count),
-        Err(e) => ApiResult::http_internal_error(e),
-    }
-}
-
-#[delete("beta")]
-pub async fn delete_beta(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    params: web::Query<ConfigForm>,
-    src_user: Option<String>,
-    src_ip: Option<String>,
-) -> impl Responder {
-    let namespace_id = if params.namespace_id.is_empty() {
-        DEFAULT_NAMESPACE_ID.to_string()
-    } else {
-        params.namespace_id.clone()
+    let src_user = match req.extensions().get::<AuthContext>() {
+        Some(ctx) => ctx.username.clone(),
+        None => return HttpResponse::Unauthorized().body("Unauthorized"),
     };
 
-    let user = src_user.unwrap_or_default();
-    let ip = src_ip.unwrap_or_default();
-
-    match datasource
-        .config_gray_delete(
-            &params.data_id,
-            &params.group_name,
-            &namespace_id,
-            &ip,
-            &user,
-        )
+    match data
+        .console_datasource
+        .config_batch_delete(&ids, &client_ip, &src_user)
         .await
     {
-        Ok(deleted) => ApiResult::<bool>::http_success(deleted),
-        Err(e) => ApiResult::http_internal_error(e),
+        Ok(_) => model::common::Result::<bool>::http_success(true),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
-/// Publish gray/beta configuration request
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BetaPublishRequest {
-    pub data_id: String,
-    pub group_name: String,
-    #[serde(default)]
-    pub namespace_id: String,
-    pub content: String,
-    #[serde(default = "default_gray_name")]
-    pub gray_name: String,
-    #[serde(default)]
-    pub gray_rule: String,
-    #[serde(default)]
-    pub app_name: String,
-    #[serde(default)]
-    pub encrypted_data_key: String,
-}
-
-fn default_gray_name() -> String {
-    "beta".to_string()
-}
-
-/// Search gray/beta configurations request
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BetaSearchRequest {
-    #[serde(default = "default_page_no")]
+#[allow(dead_code)]
+struct SearchDetailParam {
+    #[serde(flatten)]
+    config_form: ConfigForm,
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
     pub page_size: u64,
     #[serde(default)]
-    pub namespace_id: String,
-    #[serde(default)]
-    pub data_id: String,
-    #[serde(default)]
-    pub group_name: String,
-    #[serde(default)]
-    pub app_name: String,
+    pub config_detail: String,
+    #[serde(default = "default_search_type")]
+    pub search: String,
 }
 
-fn default_page_no() -> u64 {
-    1
+fn default_search_type() -> String {
+    "blur".to_string()
 }
 
-fn default_page_size() -> u64 {
-    10
-}
-
-#[post("beta")]
-pub async fn publish_beta(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    body: web::Json<BetaPublishRequest>,
-    src_user: Option<String>,
-    src_ip: Option<String>,
+#[get("searchDetail")]
+async fn search_detail(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<SearchDetailParam>,
 ) -> impl Responder {
-    let namespace_id = if body.namespace_id.is_empty() {
-        DEFAULT_NAMESPACE_ID.to_string()
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let tags = params
+        .config_form
+        .config_tags
+        .split(',')
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
+    let types = params
+        .config_form
+        .r#type
+        .split(',')
+        .filter(|e| !e.is_empty())
+        .map(|e| e.to_string())
+        .collect::<Vec<String>>();
+
+    let content = if params.config_detail.is_empty() {
+        &params.config_form.content
     } else {
-        body.namespace_id.clone()
+        &params.config_detail
     };
 
-    let user = src_user.unwrap_or_default();
-    let ip = src_ip.unwrap_or_default();
-
-    match datasource
-        .config_gray_publish(
-            &body.data_id,
-            &body.group_name,
-            &namespace_id,
-            &body.content,
-            &body.gray_name,
-            &body.gray_rule,
-            &user,
-            &ip,
-            &body.app_name,
-            &body.encrypted_data_key,
-        )
-        .await
-    {
-        Ok(published) => ApiResult::<bool>::http_success(published),
-        Err(e) => ApiResult::http_internal_error(e),
-    }
-}
-
-#[get("beta/list")]
-pub async fn search_beta(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    params: web::Query<BetaSearchRequest>,
-) -> impl Responder {
-    let namespace_id = if params.namespace_id.is_empty() {
-        DEFAULT_NAMESPACE_ID.to_string()
-    } else {
-        params.namespace_id.clone()
-    };
-
-    match datasource
-        .config_gray_list(
+    match data
+        .console_datasource
+        .config_search_page(
             params.page_no,
             params.page_size,
-            &namespace_id,
-            &params.data_id,
-            &params.group_name,
-            &params.app_name,
+            &params.config_form.namespace_id,
+            &params.config_form.data_id,
+            &params.config_form.group_name,
+            &params.config_form.app_name,
+            tags,
+            types,
+            content,
         )
         .await
     {
-        Ok(page) => {
-            let result: batata_api::Page<ConfigGrayInfo> = batata_api::Page::new(
-                page.total_count,
-                page.page_number,
-                params.page_size,
-                page.page_items
-                    .into_iter()
-                    .map(ConfigGrayInfo::from)
-                    .collect(),
-            );
-            ApiResult::<batata_api::Page<ConfigGrayInfo>>::http_success(result)
+        Ok(page_result) => {
+            model::common::Result::<Page<ConfigBasicInfo>>::http_success(page_result)
         }
-        Err(e) => ApiResult::http_internal_error(e),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
-#[get("beta/versions")]
-pub async fn find_beta_versions(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    params: web::Query<ConfigForm>,
-) -> impl Responder {
-    let namespace_id = if params.namespace_id.is_empty() {
-        DEFAULT_NAMESPACE_ID.to_string()
-    } else {
-        params.namespace_id.clone()
-    };
-
-    match datasource
-        .config_gray_find_list(&params.data_id, &params.group_name, &namespace_id)
-        .await
-    {
-        Ok(configs) => {
-            let result: Vec<ConfigGrayInfo> =
-                configs.into_iter().map(ConfigGrayInfo::from).collect();
-            ApiResult::<Vec<ConfigGrayInfo>>::http_success(result)
-        }
-        Err(e) => ApiResult::http_internal_error(e),
-    }
-}
-
-#[post("clone")]
-pub async fn clone_configs(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    params: web::Query<CloneRequest>,
-    src_user: Option<String>,
-    src_ip: Option<String>,
-) -> impl Responder {
-    let ids: Vec<i64> = params
-        .ids
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
-
-    if ids.is_empty() {
-        return ApiResult::http_param_missing("ids");
-    }
-
-    if params.target_namespace_id.is_empty() {
-        return ApiResult::http_param_missing("targetNamespaceId");
-    }
-
-    let policy = if params.policy.is_empty() {
-        "ABORT"
-    } else {
-        &params.policy
-    };
-
-    let user = src_user.unwrap_or_default();
-    let ip = src_ip.unwrap_or_default();
-
-    match datasource
-        .config_clone(&ids, &params.target_namespace_id, policy, &user, &ip)
-        .await
-    {
-        Ok(result) => ApiResult::<CloneResult>::http_success(result),
-        Err(e) => ApiResult::http_internal_error(e),
-    }
-}
-
-#[get("listener")]
-pub async fn get_listeners(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    params: web::Query<ListenerRequest>,
-) -> impl Responder {
-    let namespace_id = if params.namespace_id.is_empty() {
-        DEFAULT_NAMESPACE_ID.to_string()
-    } else {
-        params.namespace_id.clone()
-    };
-
-    match datasource
-        .config_listeners(&params.data_id, &params.group_name, &namespace_id)
-        .await
-    {
-        Ok(listeners) => ApiResult::<Vec<ConfigListenerInfo>>::http_success(listeners),
-        Err(e) => ApiResult::http_internal_error(e),
-    }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListenerByIpParam {
+    pub ip: String,
+    #[serde(default)]
+    pub all: bool,
+    #[serde(default)]
+    pub namespace_id: Option<String>,
 }
 
 #[get("listener/ip")]
-pub async fn get_listeners_by_ip(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    params: web::Query<ListenerByIpRequest>,
+async fn find_listener_by_ip(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ListenerByIpParam>,
 ) -> impl Responder {
-    match datasource.config_listeners_by_ip(&params.ip).await {
-        Ok(listeners) => ApiResult::<Vec<ConfigListenerInfo>>::http_success(listeners),
-        Err(e) => ApiResult::http_internal_error(e),
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let namespace_id = params.namespace_id.as_deref().unwrap_or("").to_string();
+
+    match data
+        .console_datasource
+        .config_listener_list_by_ip(&params.ip, params.all, &namespace_id)
+        .await
+    {
+        Ok(listener_info) => {
+            model::common::Result::<ConfigListenerInfo>::http_success(listener_info)
+        }
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ConsoleCloneParam {
+    pub target_namespace_id: String,
+    #[serde(default = "default_clone_policy")]
+    pub policy: String,
+    #[serde(default)]
+    pub src_user: Option<String>,
+}
+
+fn default_clone_policy() -> String {
+    "ABORT".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+struct CloneConfigBean {
+    pub cfg_id: i64,
+    #[serde(default)]
+    pub data_id: String,
+    #[serde(default)]
+    pub group: String,
+}
+
+#[post("clone")]
+async fn clone_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<ConsoleCloneParam>,
+    body: web::Json<Vec<CloneConfigBean>>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let clone_beans = body.into_inner();
+    if clone_beans.is_empty() {
+        return model::common::Result::<ImportResult>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::NO_SELECTED_CONFIG.code,
+            error::NO_SELECTED_CONFIG.message.to_string(),
+            "No configuration selected",
+        );
+    }
+
+    let mut namespace_id = params.target_namespace_id.trim().to_string();
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
+    }
+
+    let src_user = params.src_user.clone().unwrap_or_else(|| {
+        req.extensions()
+            .get::<AuthContext>()
+            .map(|ctx| ctx.username.clone())
+            .unwrap_or_default()
+    });
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    let ids: Vec<i64> = clone_beans.iter().map(|c| c.cfg_id).collect();
+
+    match data
+        .console_datasource
+        .config_clone(&ids, &namespace_id, &params.policy, &src_user, &src_ip)
+        .await
+    {
+        Ok(import_result) => model::common::Result::<ImportResult>::http_success(import_result),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
@@ -733,17 +940,16 @@ pub fn routes() -> Scope {
     web::scope("/cs/config")
         .service(find_one)
         .service(search)
+        .service(search_detail)
         .service(create_or_update)
-        .service(delete_config)
+        .service(delete)
+        .service(batch_delete)
         .service(find_beta_one)
         .service(publish_beta)
-        .service(search_beta)
-        .service(find_beta_versions)
         .service(delete_beta)
+        .service(find_listener_by_ip)
+        .service(find_listeners)
         .service(export_configs)
         .service(import_configs)
-        .service(batch_delete)
-        .service(clone_configs)
-        .service(get_listeners)
-        .service(get_listeners_by_ip)
+        .service(clone_config)
 }

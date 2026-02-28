@@ -1,21 +1,11 @@
 // Console web interface module
-// This module provides the web console API endpoints for management and monitoring
+// AI handler endpoints remain in batata-server since they depend on server-specific AI types.
+// Non-AI console handlers have been moved to the batata-console crate.
 
 pub mod client;
-pub mod datasource;
 
 pub mod v3 {
     pub mod a2a; // A2A agent management console endpoints
-    pub mod cluster; // Cluster management console endpoints
-    pub mod config; // Configuration management console endpoints
-    pub mod health; // Health check console endpoints
-    pub mod history; // Configuration history console endpoints
-    pub mod instance; // Instance management console endpoints
     pub mod mcp; // MCP server management console endpoints
-    pub mod metrics; // Prometheus metrics endpoint
-    pub mod namespace; // Namespace management console endpoints
     pub mod plugin; // Plugin management console endpoints
-    pub mod route; // Console routing and API endpoints
-    pub mod server_state; // Server status and monitoring endpoints
-    pub mod service; // Service management console endpoints
 }

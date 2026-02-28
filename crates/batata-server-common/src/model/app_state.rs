@@ -1,4 +1,4 @@
-//! Application state management for Batata server
+//! Application state management
 //!
 //! This module defines the central application state shared across all handlers.
 
@@ -105,13 +105,11 @@ impl AppState {
     // ========================================================================
 
     /// Try to get server member manager, returns None if not available
-    /// Use this in code that needs to handle remote console mode gracefully
     pub fn try_member_manager(&self) -> Option<&Arc<ServerMemberManager>> {
         self.server_member_manager.as_ref()
     }
 
     /// Get server member manager (panics if not available)
-    /// Use this only in server endpoints that require cluster management
     pub fn member_manager(&self) -> &Arc<ServerMemberManager> {
         self.server_member_manager
             .as_ref()

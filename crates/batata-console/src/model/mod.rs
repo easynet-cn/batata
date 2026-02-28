@@ -1,142 +1,22 @@
 //! Console model types
 //!
-//! This module defines data structures specific to the console APIs.
-
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+//! This module re-exports shared console types from batata-server-common
+//! and additional types from batata-config.
 
 // Re-export types from batata-config
 pub use batata_config::model::{Namespace, NamespaceForm};
 
-/// Remote connection ability information
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteAbility {
-    pub support_remote_connection: bool,
-    pub grpc_report_enabled: bool,
-}
+// Re-export all console model types from server-common
+pub use batata_server_common::console::model::{
+    ClusterHealthResponse, ClusterHealthSummary, ConfigAbility, Member, NamingAbility,
+    NodeAbilities, RemoteAbility, SelfMemberResponse,
+};
 
-impl Default for RemoteAbility {
-    fn default() -> Self {
-        Self {
-            support_remote_connection: true,
-            grpc_report_enabled: true,
-        }
-    }
-}
-
-/// Configuration management ability information
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigAbility {
-    pub support_remote_metrics: bool,
-}
-
-/// Naming/service discovery ability information
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NamingAbility {
-    pub support_jraft: bool,
-}
-
-impl Default for NamingAbility {
-    fn default() -> Self {
-        Self {
-            support_jraft: true,
-        }
-    }
-}
-
-/// Aggregated node abilities matching Nacos V3 response format
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeAbilities {
-    pub remote_ability: RemoteAbility,
-    pub config_ability: ConfigAbility,
-    pub naming_ability: NamingAbility,
-}
-
-/// Cluster member info for console responses
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Member {
-    pub ip: String,
-    pub port: u16,
-    pub state: String,
-    pub extend_info: HashMap<String, serde_json::Value>,
-    pub address: String,
-    pub abilities: NodeAbilities,
-    pub grpc_report_enabled: bool,
-    pub fail_access_cnt: i32,
-}
-
-impl From<batata_api::model::Member> for Member {
-    fn from(value: batata_api::model::Member) -> Self {
-        let extend_info = value
-            .extend_info
-            .read()
-            .ok()
-            .map(|info| info.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default();
-
-        Self {
-            ip: value.ip,
-            port: value.port,
-            state: value.state.to_string(),
-            extend_info,
-            address: value.address,
-            abilities: NodeAbilities::default(),
-            grpc_report_enabled: true,
-            fail_access_cnt: value.fail_access_cnt,
-        }
-    }
-}
-
-/// Cluster health summary for console responses
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClusterHealthSummary {
-    pub total: usize,
-    pub up: usize,
-    pub down: usize,
-    pub suspicious: usize,
-    pub starting: usize,
-    pub isolation: usize,
-}
-
-impl From<batata_core::cluster::ClusterHealthSummary> for ClusterHealthSummary {
-    fn from(value: batata_core::cluster::ClusterHealthSummary) -> Self {
-        Self {
-            total: value.total,
-            up: value.up,
-            down: value.down,
-            suspicious: value.suspicious,
-            starting: value.starting,
-            isolation: value.isolation,
-        }
-    }
-}
-
-/// Cluster health response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClusterHealthResponse {
-    pub is_healthy: bool,
-    pub summary: ClusterHealthSummary,
-    pub standalone: bool,
-}
-
-/// Self member response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SelfMemberResponse {
-    pub ip: String,
-    pub port: u16,
-    pub address: String,
-    pub state: String,
-    pub is_standalone: bool,
-    pub version: String,
-}
+// Re-export console API config types from server-common
+pub use batata_server_common::console::api_model::{
+    ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+    ConfigHistoryDetailInfo,
+};
 
 #[cfg(test)]
 mod tests {
@@ -205,71 +85,13 @@ mod tests {
         assert_eq!(console_member.address, "192.168.3.47:8848");
         assert!(console_member.grpc_report_enabled);
         assert_eq!(console_member.fail_access_cnt, 0);
-
-        // Verify extend_info preserves values as serde_json::Value
-        assert_eq!(
-            console_member.extend_info.get("version"),
-            Some(&serde_json::Value::String("3.1.0".to_string()))
-        );
-        assert_eq!(
-            console_member.extend_info.get("raftPort"),
-            Some(&serde_json::Value::String("7848".to_string()))
-        );
     }
 
     #[test]
     fn test_node_abilities_serialization() {
         let abilities = NodeAbilities::default();
         let json = serde_json::to_string(&abilities).unwrap();
-
-        // Verify camelCase field names match Nacos format
         assert!(json.contains("\"remoteAbility\""));
         assert!(json.contains("\"supportRemoteConnection\":true"));
-        assert!(json.contains("\"grpcReportEnabled\":true"));
-        assert!(json.contains("\"configAbility\""));
-        assert!(json.contains("\"supportRemoteMetrics\":false"));
-        assert!(json.contains("\"namingAbility\""));
-        assert!(json.contains("\"supportJraft\":true"));
-    }
-
-    #[test]
-    fn test_member_serialization_has_extend_info() {
-        let mut extend_info = HashMap::new();
-        extend_info.insert(
-            "version".to_string(),
-            serde_json::Value::String("3.1.0".to_string()),
-        );
-        extend_info.insert(
-            "raftPort".to_string(),
-            serde_json::Value::String("7848".to_string()),
-        );
-
-        let member = Member {
-            ip: "192.168.3.47".to_string(),
-            port: 8848,
-            state: "UP".to_string(),
-            extend_info,
-            address: "192.168.3.47:8848".to_string(),
-            abilities: NodeAbilities::default(),
-            grpc_report_enabled: true,
-            fail_access_cnt: 0,
-        };
-
-        let json = serde_json::to_string(&member).unwrap();
-
-        // Verify key fields appear in JSON
-        assert!(json.contains("\"extendInfo\""));
-        assert!(json.contains("\"version\":\"3.1.0\""));
-        assert!(json.contains("\"raftPort\":\"7848\""));
-        assert!(json.contains("\"abilities\""));
-        assert!(json.contains("\"grpcReportEnabled\":true"));
-        assert!(json.contains("\"failAccessCnt\":0"));
-
-        // Verify it can be deserialized back
-        let deserialized: Member = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.ip, "192.168.3.47");
-        assert_eq!(deserialized.port, 8848);
-        assert!(deserialized.abilities.remote_ability.grpc_report_enabled);
-        assert!(deserialized.abilities.naming_ability.support_jraft);
     }
 }

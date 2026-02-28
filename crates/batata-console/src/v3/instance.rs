@@ -1,162 +1,247 @@
-//! Instance console endpoints
+//! V3 Console instance management endpoints
 //!
-//! Provides HTTP handlers for instance management operations.
+//! Provides HTTP handlers for instance operations on the main server.
 
-use std::sync::Arc;
+use std::collections::HashMap;
 
-use actix_web::{Responder, Scope, get, put, web};
-use serde::Deserialize;
+use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, put, web};
+use serde::{Deserialize, Serialize};
 
-use batata_api::Page;
+use batata_api::naming::model::Instance;
+use batata_server_common::{
+    ActionTypes, ApiType, Secured, SignType, error, model::AppState, model::response::Result,
+    secured,
+};
 
-use crate::datasource::{ConsoleDataSource, InstanceInfo};
+const DEFAULT_NAMESPACE_ID: &str = "public";
+const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
+const DEFAULT_CLUSTER: &str = "DEFAULT";
 
-use super::namespace::ApiResult;
-
-pub const DEFAULT_NAMESPACE_ID: &str = "public";
-pub const DEFAULT_GROUP_NAME: &str = "DEFAULT_GROUP";
-pub const DEFAULT_CLUSTER_NAME: &str = "DEFAULT";
-
-/// Instance list query parameters
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InstanceListQuery {
+struct InstanceListQuery {
     #[serde(default)]
-    pub namespace_id: String,
-    #[serde(default = "default_group")]
-    pub group_name: String,
-    pub service_name: String,
+    namespace_id: Option<String>,
     #[serde(default)]
-    pub cluster_name: String,
+    group_name: Option<String>,
+    service_name: String,
+    #[serde(default)]
+    cluster_name: Option<String>,
     #[serde(default = "default_page_no")]
-    pub page_no: u32,
+    page_no: u64,
     #[serde(default = "default_page_size")]
-    pub page_size: u32,
+    page_size: u64,
 }
 
-fn default_group() -> String {
-    DEFAULT_GROUP_NAME.to_string()
-}
-
-fn default_page_no() -> u32 {
+fn default_page_no() -> u64 {
     1
 }
 
-fn default_page_size() -> u32 {
+fn default_page_size() -> u64 {
     10
 }
 
-/// Instance update form
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct InstanceForm {
-    #[serde(default)]
-    pub namespace_id: String,
-    #[serde(default = "default_group")]
-    pub group_name: String,
-    pub service_name: String,
-    pub ip: String,
-    pub port: i32,
-    #[serde(default = "default_cluster")]
-    pub cluster_name: String,
-    #[serde(default = "default_weight")]
-    pub weight: f64,
-    #[serde(default = "default_healthy")]
-    pub healthy: bool,
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-    #[serde(default = "default_ephemeral")]
-    pub ephemeral: bool,
-    #[serde(default)]
-    pub metadata: String,
+impl InstanceListQuery {
+    fn namespace_id_or_default(&self) -> &str {
+        self.namespace_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_NAMESPACE_ID)
+    }
+
+    fn group_name_or_default(&self) -> &str {
+        self.group_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_GROUP)
+    }
 }
 
-fn default_cluster() -> String {
-    DEFAULT_CLUSTER_NAME.to_string()
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceUpdateForm {
+    #[serde(default)]
+    namespace_id: Option<String>,
+    #[serde(default)]
+    group_name: Option<String>,
+    service_name: String,
+    ip: String,
+    port: i32,
+    #[serde(default)]
+    cluster_name: Option<String>,
+    #[serde(default = "default_weight")]
+    weight: f64,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    metadata: Option<HashMap<String, String>>,
 }
 
 fn default_weight() -> f64 {
     1.0
 }
 
-fn default_healthy() -> bool {
+fn default_true() -> bool {
     true
 }
 
-fn default_enabled() -> bool {
-    true
+impl InstanceUpdateForm {
+    fn namespace_id_or_default(&self) -> &str {
+        self.namespace_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_NAMESPACE_ID)
+    }
+
+    fn group_name_or_default(&self) -> &str {
+        self.group_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_GROUP)
+    }
+
+    fn cluster_name_or_default(&self) -> &str {
+        self.cluster_name
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_CLUSTER)
+    }
 }
 
-fn default_ephemeral() -> bool {
-    true
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstanceListResponse {
+    total_count: usize,
+    page_number: u64,
+    pages_available: u64,
+    list: Vec<Instance>,
 }
 
-/// List instances of a service
+/// GET /ns/instance/list
 #[get("list")]
-pub async fn list_instances(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
+async fn list_instances(
+    req: HttpRequest,
+    data: web::Data<AppState>,
     params: web::Query<InstanceListQuery>,
 ) -> impl Responder {
-    let namespace_id = if params.namespace_id.is_empty() {
-        DEFAULT_NAMESPACE_ID
-    } else {
-        &params.namespace_id
-    };
+    let namespace_id = params.namespace_id_or_default();
+    let group_name = params.group_name_or_default();
+    let cluster = params.cluster_name.as_deref().unwrap_or("");
 
-    match datasource
-        .instance_list(
-            namespace_id,
-            &params.group_name,
-            &params.service_name,
-            &params.cluster_name,
-            params.page_no,
-            params.page_size,
-        )
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, params.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
+    let all_instances = match data
+        .console_datasource
+        .instance_list(namespace_id, group_name, &params.service_name, cluster)
         .await
     {
-        Ok(page) => ApiResult::<Page<InstanceInfo>>::http_success(page),
-        Err(e) => ApiResult::http_internal_error(e),
-    }
+        Ok(i) => i,
+        Err(e) => {
+            return Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
+    };
+
+    let total_count = all_instances.len();
+    let page_no = params.page_no.max(1);
+    let page_size = params.page_size.max(1);
+    let start = ((page_no - 1) * page_size) as usize;
+    let list: Vec<Instance> = all_instances
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .collect();
+    let pages_available = if total_count == 0 {
+        0
+    } else {
+        (total_count as u64).div_ceil(page_size)
+    };
+
+    let response = InstanceListResponse {
+        total_count,
+        page_number: page_no,
+        pages_available,
+        list,
+    };
+
+    Result::<InstanceListResponse>::http_success(response)
 }
 
-/// Update an instance
+/// PUT /ns/instance
 #[put("")]
-pub async fn update_instance(
-    datasource: web::Data<Arc<dyn ConsoleDataSource>>,
-    form: web::Json<InstanceForm>,
+async fn update_instance(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Json<InstanceUpdateForm>,
 ) -> impl Responder {
-    let namespace_id = if form.namespace_id.is_empty() {
-        DEFAULT_NAMESPACE_ID
-    } else {
-        &form.namespace_id
-    };
+    let namespace_id = form.namespace_id_or_default();
+    let group_name = form.group_name_or_default();
+    let cluster_name = form.cluster_name_or_default();
 
-    // Validate weight
-    let weight = if form.weight <= 0.0 { 1.0 } else { form.weight };
+    let resource = format!(
+        "{}:{}:naming/{}",
+        namespace_id, group_name, form.service_name
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
 
-    match datasource
-        .instance_update(
-            namespace_id,
-            &form.group_name,
-            &form.service_name,
-            &form.cluster_name,
+    let weight = batata_api::naming::model::clamp_weight(form.weight);
+
+    let instance = Instance {
+        instance_id: batata_api::naming::model::generate_instance_id(
             &form.ip,
             form.port,
-            weight,
-            form.healthy,
-            form.enabled,
-            form.ephemeral,
-            &form.metadata,
-        )
+            cluster_name,
+            &form.service_name,
+        ),
+        ip: form.ip.clone(),
+        port: form.port,
+        weight,
+        healthy: true,
+        enabled: form.enabled,
+        ephemeral: true,
+        cluster_name: cluster_name.to_string(),
+        service_name: form.service_name.clone(),
+        metadata: form.metadata.clone().unwrap_or_default(),
+    };
+
+    if let Err(e) = data
+        .console_datasource
+        .instance_update(namespace_id, group_name, &form.service_name, instance)
         .await
     {
-        Ok(result) => ApiResult::<bool>::http_success(result),
-        Err(e) => ApiResult::http_internal_error(e),
+        return Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
     }
+
+    Result::<bool>::http_success(true)
 }
 
 pub fn routes() -> Scope {
-    web::scope("/ns/instance")
+    web::scope("/instance")
         .service(list_instances)
         .service(update_instance)
 }

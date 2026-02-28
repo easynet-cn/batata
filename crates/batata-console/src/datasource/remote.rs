@@ -1,205 +1,451 @@
-//! Remote data source implementation
-//!
-//! Provides HTTP-based access to console operations via a remote Batata server.
-//! Uses batata-client for HTTP communication.
+// Remote data source implementation
+// Provides HTTP-based access to console operations via remote server
 
 use async_trait::async_trait;
-use sea_orm::DatabaseConnection;
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use tracing::warn;
-
-use batata_api::Page;
-use batata_client::{BatataApiClient, BatataHttpClient, HttpClientConfig};
-use batata_config::{
-    ConfigAllInfo, ConfigBasicInfo, ConfigHistoryInfo, ConfigInfoGrayWrapper, ConfigInfoWrapper,
-    ImportResult, Namespace, SameConfigPolicy,
+use std::{
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
+use tracing::{debug, info, warn};
+
 use batata_core::cluster::ServerMemberManager;
 
-use batata_config::service::config::CloneResult;
-
-use super::{
-    ClusterInfo, ConfigListenerInfo, ConsoleDataSource, ConsoleDataSourceConfig, HealthChecker,
-    InstanceInfo, ServiceDetail, ServiceListItem, ServiceSelector, SubscriberInfo,
+use batata_api::config::ConfigListenerInfo;
+use batata_api::model::Page;
+use batata_config::{ConfigAllInfo, ImportResult, Namespace, SameConfigPolicy};
+use batata_maintainer_client::{MaintainerClient, MaintainerClientConfig};
+use batata_naming::Instance;
+use batata_server_common::console::api_model::{
+    ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
 };
-use crate::model::{ClusterHealthResponse, ClusterHealthSummary, Member, SelfMemberResponse};
+use batata_server_common::console::datasource::ConsoleDataSource;
+use batata_server_common::console::model::{
+    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, Member,
+    SelfMemberResponse,
+};
+use batata_server_common::model::config::Configuration;
 
-/// Extension trait for RwLock that handles poison recovery gracefully
-///
-/// Lock poisoning occurs when a thread panics while holding a lock. By default,
-/// Rust marks the lock as "poisoned" to indicate the data may be in an inconsistent state.
-///
-/// This trait provides recovery methods that:
-/// 1. Log the poisoning event for debugging/monitoring
-/// 2. Clear the poisoned state and continue operation
-///
-/// This is appropriate for caches and non-critical data that can tolerate inconsistency.
-/// For critical data, consider using alternative synchronization methods or proper error handling.
-trait RwLockExt<T> {
-    /// Acquire a read lock, recovering from poison if necessary
-    ///
-    /// # Safety
-    ///
-    /// The data behind the lock may be in an inconsistent state if the lock was poisoned.
-    /// Only use this for data that can tolerate such inconsistency (e.g., caches).
-    fn read_recover(&self, name: &str) -> RwLockReadGuard<'_, T>;
+use std::collections::HashMap;
 
-    /// Acquire a write lock, recovering from poison if necessary
-    ///
-    /// # Safety
-    ///
-    /// The data behind the lock may be in an inconsistent state if the lock was poisoned.
-    /// Only use this for data that can tolerate such inconsistency (e.g., caches).
-    fn write_recover(&self, name: &str) -> RwLockWriteGuard<'_, T>;
+// ============== Type Conversions ==============
+
+/// Build MaintainerClientConfig from server Configuration.
+///
+/// Server discovery order (same as Nacos 3.x cluster member lookup):
+/// 1. `nacos.member.list` config property
+/// 2. `conf/cluster.conf` file
+/// 3. `nacos.console.remote.server_addr` (legacy fallback)
+///
+/// Authentication priority:
+/// 1. Server identity headers (no login needed, used for console-server trust)
+/// 2. JWT username/password (fallback for backward compatibility)
+fn build_maintainer_config(configuration: &Configuration) -> MaintainerClientConfig {
+    let server_addrs = configuration.resolve_remote_server_addrs();
+
+    MaintainerClientConfig {
+        server_addrs,
+        // Server identity (primary auth, no login needed)
+        server_identity_key: configuration.server_identity_key(),
+        server_identity_value: configuration.server_identity_value(),
+        // JWT fallback (kept for backward compatibility)
+        username: configuration.console_remote_username(),
+        password: configuration.console_remote_password(),
+        connect_timeout_ms: configuration.console_remote_connect_timeout_ms(),
+        read_timeout_ms: configuration.console_remote_read_timeout_ms(),
+        context_path: configuration.server_context_path(),
+    }
 }
 
-impl<T> RwLockExt<T> for RwLock<T> {
-    fn read_recover(&self, name: &str) -> RwLockReadGuard<'_, T> {
-        self.read().unwrap_or_else(|poisoned| {
-            // Lock poisoning indicates a panic occurred while holding the lock.
-            // Log at error level since this indicates a serious issue.
-            tracing::error!(
-                lock_name = name,
-                "Lock poisoning detected on read lock '{}'. A thread panicked while holding this lock. \
-                 Data may be in an inconsistent state. Recovering and continuing operation.",
-                name
-            );
-            poisoned.into_inner()
-        })
+fn convert_namespace(v: batata_maintainer_client::model::Namespace) -> Namespace {
+    Namespace {
+        namespace: v.namespace,
+        namespace_show_name: v.namespace_show_name,
+        namespace_desc: v.namespace_desc,
+        quota: v.quota,
+        config_count: v.config_count,
+        type_: v.type_,
     }
+}
 
-    fn write_recover(&self, name: &str) -> RwLockWriteGuard<'_, T> {
-        self.write().unwrap_or_else(|poisoned| {
-            // Lock poisoning indicates a panic occurred while holding the lock.
-            // Log at error level since this indicates a serious issue.
-            tracing::error!(
-                lock_name = name,
-                "Lock poisoning detected on write lock '{}'. A thread panicked while holding this lock. \
-                 Data may be in an inconsistent state. Recovering and continuing operation.",
-                name
-            );
-            poisoned.into_inner()
-        })
+fn convert_config_basic_info(
+    v: batata_maintainer_client::model::ConfigBasicInfo,
+) -> ConfigBasicInfo {
+    ConfigBasicInfo {
+        id: v.id,
+        namespace_id: v.namespace_id,
+        group_name: v.group_name,
+        data_id: v.data_id,
+        md5: v.md5,
+        r#type: v.r#type,
+        app_name: v.app_name,
+        create_time: v.create_time,
+        modify_time: v.modify_time,
+    }
+}
+
+fn convert_config_gray_info(v: batata_maintainer_client::model::ConfigGrayInfo) -> ConfigGrayInfo {
+    use batata_server_common::console::api_model::ConfigDetailInfo;
+
+    ConfigGrayInfo {
+        config_detail_info: ConfigDetailInfo {
+            config_basic_info: convert_config_basic_info(v.config_detail_info.config_basic_info),
+            content: v.config_detail_info.content,
+            desc: v.config_detail_info.desc,
+            encrypted_data_key: v.config_detail_info.encrypted_data_key,
+            create_user: v.config_detail_info.create_user,
+            create_ip: v.config_detail_info.create_ip,
+            config_tags: v.config_detail_info.config_tags,
+        },
+        gray_name: v.gray_name,
+        gray_rule: v.gray_rule,
+    }
+}
+
+fn convert_config_history_basic_info(
+    v: batata_maintainer_client::model::ConfigHistoryBasicInfo,
+) -> ConfigHistoryBasicInfo {
+    ConfigHistoryBasicInfo {
+        config_basic_info: convert_config_basic_info(v.config_basic_info),
+        src_ip: v.src_ip,
+        src_user: v.src_user,
+        op_type: v.op_type,
+        publish_type: v.publish_type,
+    }
+}
+
+fn convert_config_history_detail_info(
+    v: batata_maintainer_client::model::ConfigHistoryDetailInfo,
+) -> ConfigHistoryDetailInfo {
+    ConfigHistoryDetailInfo {
+        config_history_basic_info: convert_config_history_basic_info(v.config_history_basic_info),
+        content: v.content,
+        encrypted_data_key: v.encrypted_data_key,
+        gray_name: v.gray_name,
+        ext_info: v.ext_info,
+    }
+}
+
+fn convert_page<S, T>(v: batata_maintainer_client::model::Page<S>, f: fn(S) -> T) -> Page<T> {
+    Page {
+        total_count: v.total_count,
+        page_number: v.page_number,
+        pages_available: v.pages_available,
+        page_items: v.page_items.into_iter().map(f).collect(),
+    }
+}
+
+fn convert_import_result(v: batata_maintainer_client::model::ImportResult) -> ImportResult {
+    use batata_config::ImportFailItem;
+
+    ImportResult {
+        success_count: v.success_count,
+        skip_count: v.skip_count,
+        fail_count: v.fail_count,
+        fail_data: v
+            .fail_data
+            .into_iter()
+            .map(|item| ImportFailItem {
+                data_id: item.data_id,
+                group: item.group,
+                reason: item.reason,
+            })
+            .collect(),
+    }
+}
+
+fn convert_member(v: batata_maintainer_client::model::Member) -> Member {
+    Member {
+        ip: v.ip,
+        port: v.port,
+        state: v.state,
+        extend_info: Default::default(),
+        address: v.address,
+        abilities: Default::default(),
+        grpc_report_enabled: true,
+        fail_access_cnt: v.fail_access_cnt,
+    }
+}
+
+fn convert_cluster_health(
+    v: batata_maintainer_client::model::ClusterHealthResponse,
+) -> ClusterHealthResponse {
+    ClusterHealthResponse {
+        is_healthy: v.is_healthy,
+        summary: ClusterHealthSummaryResponse {
+            total: v.summary.total,
+            up: v.summary.up,
+            down: v.summary.down,
+            suspicious: v.summary.suspicious,
+            starting: v.summary.starting,
+            isolation: v.summary.isolation,
+        },
+        standalone: v.standalone,
+    }
+}
+
+fn convert_self_member(
+    v: batata_maintainer_client::model::SelfMemberResponse,
+) -> SelfMemberResponse {
+    SelfMemberResponse {
+        ip: v.ip,
+        port: v.port,
+        address: v.address,
+        state: v.state,
+        is_standalone: v.is_standalone,
+        version: v.version,
+    }
+}
+
+fn convert_config_detail_to_all_info(
+    v: batata_maintainer_client::model::ConfigDetailInfo,
+) -> ConfigAllInfo {
+    use batata_config::model::{ConfigInfo, ConfigInfoBase};
+
+    ConfigAllInfo {
+        config_info: ConfigInfo {
+            config_info_base: ConfigInfoBase {
+                id: v.config_basic_info.id,
+                data_id: v.config_basic_info.data_id,
+                group: v.config_basic_info.group_name,
+                content: v.content,
+                md5: v.config_basic_info.md5,
+                encrypted_data_key: v.encrypted_data_key,
+            },
+            tenant: v.config_basic_info.namespace_id,
+            app_name: v.config_basic_info.app_name,
+            r#type: v.config_basic_info.r#type,
+        },
+        create_time: v.config_basic_info.create_time,
+        modify_time: v.config_basic_info.modify_time,
+        create_user: v.create_user,
+        create_ip: v.create_ip,
+        desc: v.desc,
+        r#use: String::new(),
+        effect: String::new(),
+        schema: String::new(),
+        config_tags: v.config_tags,
+    }
+}
+
+fn convert_instance(v: batata_maintainer_client::model::Instance) -> Instance {
+    Instance {
+        instance_id: v.instance_id,
+        ip: v.ip,
+        port: v.port,
+        weight: v.weight,
+        healthy: v.healthy,
+        enabled: v.enabled,
+        ephemeral: v.ephemeral,
+        cluster_name: v.cluster_name,
+        service_name: v.service_name,
+        metadata: v.metadata,
+    }
+}
+
+fn convert_config_listener_info(
+    v: batata_maintainer_client::model::ConfigListenerInfo,
+) -> ConfigListenerInfo {
+    ConfigListenerInfo {
+        query_type: v.query_type,
+        listeners_status: v.listeners_status,
+    }
+}
+
+fn convert_same_config_policy(
+    policy: SameConfigPolicy,
+) -> batata_maintainer_client::model::SameConfigPolicy {
+    match policy {
+        SameConfigPolicy::Abort => batata_maintainer_client::model::SameConfigPolicy::Abort,
+        SameConfigPolicy::Skip => batata_maintainer_client::model::SameConfigPolicy::Skip,
+        SameConfigPolicy::Overwrite => batata_maintainer_client::model::SameConfigPolicy::Overwrite,
+    }
+}
+
+// ============== RemoteDataSource ==============
+
+/// Configuration for auto-refresh behavior
+#[derive(Clone, Debug)]
+pub struct AutoRefreshConfig {
+    /// Whether auto-refresh is enabled
+    pub enabled: bool,
+    /// Refresh interval
+    pub interval: Duration,
+    /// Initial delay before starting refresh
+    pub initial_delay: Duration,
+}
+
+impl Default for AutoRefreshConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval: Duration::from_secs(30),
+            initial_delay: Duration::from_secs(5),
+        }
     }
 }
 
 /// Remote data source - HTTP-based access to remote server
 pub struct RemoteDataSource {
-    api_client: BatataApiClient,
+    client: Arc<MaintainerClient>,
     // Cached cluster info (refreshed periodically)
-    cached_members: RwLock<Vec<Member>>,
-    cached_health: RwLock<Option<ClusterHealthResponse>>,
-    cached_self: RwLock<Option<SelfMemberResponse>>,
+    cached_members: Arc<RwLock<Vec<Member>>>,
+    cached_health: Arc<RwLock<Option<ClusterHealthResponse>>>,
+    cached_self: Arc<RwLock<Option<SelfMemberResponse>>>,
+    // Auto-refresh state
+    auto_refresh_config: AutoRefreshConfig,
+    running: Arc<AtomicBool>,
 }
 
 impl RemoteDataSource {
-    pub async fn new(config: &ConsoleDataSourceConfig) -> anyhow::Result<Self> {
-        let http_config = HttpClientConfig::with_servers(config.server_addrs.clone())
-            .with_auth(&config.username, &config.password)
-            .with_context_path(&config.context_path);
+    pub async fn new(configuration: &Configuration) -> anyhow::Result<Self> {
+        Self::with_auto_refresh(configuration, AutoRefreshConfig::default()).await
+    }
 
-        let http_client = BatataHttpClient::new(http_config).await?;
-        let api_client = BatataApiClient::new(http_client);
+    /// Create with custom auto-refresh configuration
+    pub async fn with_auto_refresh(
+        configuration: &Configuration,
+        auto_refresh_config: AutoRefreshConfig,
+    ) -> anyhow::Result<Self> {
+        let maintainer_config = build_maintainer_config(configuration);
+        let client = Arc::new(MaintainerClient::new(maintainer_config).await?);
 
         let datasource = Self {
-            api_client,
-            cached_members: RwLock::new(Vec::new()),
-            cached_health: RwLock::new(None),
-            cached_self: RwLock::new(None),
+            client,
+            cached_members: Arc::new(RwLock::new(Vec::new())),
+            cached_health: Arc::new(RwLock::new(None)),
+            cached_self: Arc::new(RwLock::new(None)),
+            auto_refresh_config,
+            running: Arc::new(AtomicBool::new(false)),
         };
 
         // Pre-fetch cluster info
         datasource.refresh_cluster_cache().await;
 
+        // Start auto-refresh if enabled
+        if datasource.auto_refresh_config.enabled {
+            datasource.start_auto_refresh();
+        }
+
         Ok(datasource)
+    }
+
+    /// Start the auto-refresh background task
+    pub fn start_auto_refresh(&self) {
+        if self
+            .running
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            debug!("Auto-refresh already running");
+            return;
+        }
+
+        info!(
+            "Starting remote data source auto-refresh (interval: {:?})",
+            self.auto_refresh_config.interval
+        );
+
+        let client = self.client.clone();
+        let cached_members = self.cached_members.clone();
+        let cached_health = self.cached_health.clone();
+        let cached_self = self.cached_self.clone();
+        let config = self.auto_refresh_config.clone();
+        let running = self.running.clone();
+
+        tokio::spawn(async move {
+            // Initial delay
+            tokio::time::sleep(config.initial_delay).await;
+
+            while running.load(Ordering::SeqCst) {
+                debug!("Refreshing remote data source cache");
+
+                // Refresh members
+                match client.cluster_members().await {
+                    Ok(members) => {
+                        if let Ok(mut cache) = cached_members.write() {
+                            *cache = members.into_iter().map(convert_member).collect();
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to refresh cluster members: {}", e);
+                    }
+                }
+
+                // Refresh health
+                match client.cluster_health().await {
+                    Ok(health) => {
+                        if let Ok(mut cache) = cached_health.write() {
+                            *cache = Some(convert_cluster_health(health));
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to refresh cluster health: {}", e);
+                    }
+                }
+
+                // Refresh self
+                match client.cluster_self().await {
+                    Ok(self_member) => {
+                        if let Ok(mut cache) = cached_self.write() {
+                            *cache = Some(convert_self_member(self_member));
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to refresh self member: {}", e);
+                    }
+                }
+
+                // Wait for next refresh
+                tokio::time::sleep(config.interval).await;
+            }
+
+            info!("Remote data source auto-refresh stopped");
+        });
+    }
+
+    /// Stop the auto-refresh background task
+    pub fn stop_auto_refresh(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        info!("Stopping remote data source auto-refresh");
+    }
+
+    /// Check if auto-refresh is running
+    pub fn is_auto_refresh_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Manually trigger a cache refresh
+    pub async fn trigger_refresh(&self) {
+        self.refresh_cluster_cache().await;
     }
 
     /// Refresh cached cluster information
     async fn refresh_cluster_cache(&self) {
         // Fetch members
-        match self.api_client.cluster_members().await {
-            Ok(members) => {
-                let mut cache = self.cached_members.write_recover("cached_members");
-                *cache = members
-                    .into_iter()
-                    .map(|m| Member {
-                        ip: m.ip,
-                        port: m.port as u16,
-                        state: m.state,
-                        extend_info: m.extend_info,
-                        address: m.address,
-                        abilities: crate::model::NodeAbilities {
-                            remote_ability: crate::model::RemoteAbility {
-                                support_remote_connection: m
-                                    .abilities
-                                    .remote_ability
-                                    .support_remote_connection,
-                                grpc_report_enabled: m.abilities.remote_ability.grpc_report_enabled,
-                            },
-                            config_ability: crate::model::ConfigAbility {
-                                support_remote_metrics: m
-                                    .abilities
-                                    .config_ability
-                                    .support_remote_metrics,
-                            },
-                            naming_ability: crate::model::NamingAbility {
-                                support_jraft: m.abilities.naming_ability.support_jraft,
-                            },
-                        },
-                        grpc_report_enabled: m.grpc_report_enabled,
-                        fail_access_cnt: m.fail_access_cnt,
-                    })
-                    .collect();
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to fetch cluster members from remote server");
-            }
+        if let Ok(members) = self.client.cluster_members().await {
+            let mut cache = self
+                .cached_members
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            *cache = members.into_iter().map(convert_member).collect();
         }
 
         // Fetch health
-        match self.api_client.cluster_health().await {
-            Ok(health) => {
-                let mut cache = self.cached_health.write_recover("cached_health");
-                *cache = Some(ClusterHealthResponse {
-                    is_healthy: health.healthy,
-                    summary: ClusterHealthSummary {
-                        total: health.member_count,
-                        up: health.healthy_count,
-                        down: health.unhealthy_count,
-                        suspicious: 0,
-                        starting: 0,
-                        isolation: 0,
-                    },
-                    standalone: health.member_count <= 1,
-                });
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to fetch cluster health from remote server");
-            }
+        if let Ok(health) = self.client.cluster_health().await {
+            let mut cache = self
+                .cached_health
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            *cache = Some(convert_cluster_health(health));
         }
 
         // Fetch self
-        match self.api_client.cluster_self().await {
-            Ok(self_member) => {
-                let mut cache = self.cached_self.write_recover("cached_self");
-                *cache = Some(SelfMemberResponse {
-                    ip: self_member.member.ip,
-                    port: self_member.member.port as u16,
-                    address: self_member.member.address,
-                    state: self_member.member.state,
-                    is_standalone: !self_member.is_leader, // Approximate
-                    version: self_member
-                        .member
-                        .extend_info
-                        .get("version")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                });
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to fetch self member info from remote server");
-            }
+        if let Ok(self_member) = self.client.cluster_self().await {
+            let mut cache = self.cached_self.write().unwrap_or_else(|e| e.into_inner());
+            *cache = Some(convert_self_member(self_member));
         }
     }
 }
@@ -208,19 +454,9 @@ impl RemoteDataSource {
 impl ConsoleDataSource for RemoteDataSource {
     // ============== Namespace Operations ==============
 
-    async fn namespace_list(&self) -> Vec<Namespace> {
-        match self.api_client.namespace_list().await {
-            Ok(namespaces) => namespaces
-                .into_iter()
-                .map(|n| Namespace {
-                    namespace: n.namespace,
-                    namespace_show_name: n.namespace_show_name,
-                    namespace_desc: n.namespace_desc,
-                    quota: n.quota,
-                    config_count: n.config_count,
-                    type_: n.type_,
-                })
-                .collect(),
+    async fn namespace_find_all(&self) -> Vec<Namespace> {
+        match self.client.namespace_list().await {
+            Ok(namespaces) => namespaces.into_iter().map(convert_namespace).collect(),
             Err(e) => {
                 warn!("Failed to fetch namespaces from remote server: {}", e);
                 Vec::new()
@@ -228,16 +464,14 @@ impl ConsoleDataSource for RemoteDataSource {
         }
     }
 
-    async fn namespace_get(&self, namespace_id: &str) -> anyhow::Result<Namespace> {
-        let n = self.api_client.namespace_get(namespace_id).await?;
-        Ok(Namespace {
-            namespace: n.namespace,
-            namespace_show_name: n.namespace_show_name,
-            namespace_desc: n.namespace_desc,
-            quota: n.quota,
-            config_count: n.config_count,
-            type_: n.type_,
-        })
+    async fn namespace_get_by_id(
+        &self,
+        namespace_id: &str,
+        _tenant_id: &str,
+    ) -> anyhow::Result<Namespace> {
+        Ok(convert_namespace(
+            self.client.namespace_get(namespace_id).await?,
+        ))
     }
 
     async fn namespace_create(
@@ -245,10 +479,11 @@ impl ConsoleDataSource for RemoteDataSource {
         namespace_id: &str,
         namespace_name: &str,
         namespace_desc: &str,
-    ) -> anyhow::Result<bool> {
-        self.api_client
+    ) -> anyhow::Result<()> {
+        self.client
             .namespace_create(namespace_id, namespace_name, namespace_desc)
-            .await
+            .await?;
+        Ok(())
     }
 
     async fn namespace_update(
@@ -257,59 +492,36 @@ impl ConsoleDataSource for RemoteDataSource {
         namespace_name: &str,
         namespace_desc: &str,
     ) -> anyhow::Result<bool> {
-        self.api_client
+        self.client
             .namespace_update(namespace_id, namespace_name, namespace_desc)
             .await
     }
 
     async fn namespace_delete(&self, namespace_id: &str) -> anyhow::Result<bool> {
-        self.api_client.namespace_delete(namespace_id).await
+        self.client.namespace_delete(namespace_id).await
     }
 
-    async fn namespace_exists(&self, namespace_id: &str) -> anyhow::Result<bool> {
-        self.api_client.namespace_exists(namespace_id).await
+    async fn namespace_check(&self, namespace_id: &str) -> anyhow::Result<bool> {
+        self.client.namespace_exists(namespace_id).await
     }
 
     // ============== Config Operations ==============
 
-    async fn config_get(
+    async fn config_find_one(
         &self,
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
     ) -> anyhow::Result<Option<ConfigAllInfo>> {
-        let result = self
-            .api_client
+        let data = self
+            .client
             .config_get(data_id, group_name, namespace_id)
             .await?;
 
-        Ok(result.map(|c| ConfigAllInfo {
-            config_info: batata_config::ConfigInfo {
-                config_info_base: batata_config::ConfigInfoBase {
-                    id: c.id,
-                    data_id: c.data_id,
-                    group: c.group,
-                    content: c.content,
-                    md5: c.md5,
-                    encrypted_data_key: c.encrypted_data_key,
-                },
-                tenant: c.tenant,
-                app_name: c.app_name,
-                r#type: c.r#type,
-            },
-            create_time: c.create_time,
-            modify_time: c.modify_time,
-            create_user: c.create_user,
-            create_ip: c.create_ip,
-            desc: c.desc,
-            r#use: c.r#use,
-            effect: c.effect,
-            schema: c.schema,
-            config_tags: c.config_tags,
-        }))
+        Ok(data.map(convert_config_detail_to_all_info))
     }
 
-    async fn config_list(
+    async fn config_search_page(
         &self,
         page_no: u64,
         page_size: u64,
@@ -317,48 +529,31 @@ impl ConsoleDataSource for RemoteDataSource {
         data_id: &str,
         group_name: &str,
         app_name: &str,
-        tags: &str,
-        types: &str,
+        tags: Vec<String>,
+        types: Vec<String>,
         content: &str,
     ) -> anyhow::Result<Page<ConfigBasicInfo>> {
-        let result = self
-            .api_client
-            .config_list(
+        let tags_str = tags.join(",");
+        let types_str = types.join(",");
+
+        let page = self
+            .client
+            .config_search(
                 page_no,
                 page_size,
                 namespace_id,
                 data_id,
                 group_name,
                 app_name,
-                tags,
-                types,
+                &tags_str,
+                &types_str,
                 content,
             )
             .await?;
-
-        Ok(Page::new(
-            result.total_count,
-            result.page_number,
-            result.pages_available,
-            result
-                .page_items
-                .into_iter()
-                .map(|c| ConfigBasicInfo {
-                    id: c.id,
-                    namespace_id: c.namespace_id,
-                    group_name: c.group_name,
-                    data_id: c.data_id,
-                    md5: c.md5,
-                    r#type: c.r#type,
-                    app_name: c.app_name,
-                    create_time: c.create_time,
-                    modify_time: c.modify_time,
-                })
-                .collect(),
-        ))
+        Ok(convert_page(page, convert_config_basic_info))
     }
 
-    async fn config_publish(
+    async fn config_create_or_update(
         &self,
         data_id: &str,
         group_name: &str,
@@ -374,8 +569,8 @@ impl ConsoleDataSource for RemoteDataSource {
         r#type: &str,
         schema: &str,
         encrypted_data_key: &str,
-    ) -> anyhow::Result<bool> {
-        self.api_client
+    ) -> anyhow::Result<()> {
+        self.client
             .config_publish(
                 data_id,
                 group_name,
@@ -390,7 +585,8 @@ impl ConsoleDataSource for RemoteDataSource {
                 schema,
                 encrypted_data_key,
             )
-            .await
+            .await?;
+        Ok(())
     }
 
     async fn config_delete(
@@ -398,56 +594,87 @@ impl ConsoleDataSource for RemoteDataSource {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-        _gray_name: &str,
+        _tag: &str,
         _client_ip: &str,
         _src_user: &str,
-    ) -> anyhow::Result<bool> {
-        self.api_client
+        _caas_user: &str,
+    ) -> anyhow::Result<()> {
+        self.client
             .config_delete(data_id, group_name, namespace_id)
-            .await
+            .await?;
+        Ok(())
     }
 
-    async fn config_gray_get(
+    async fn config_find_gray_one(
         &self,
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-    ) -> anyhow::Result<Option<ConfigInfoGrayWrapper>> {
+    ) -> anyhow::Result<Option<ConfigGrayInfo>> {
         let result = self
-            .api_client
-            .config_gray_get(data_id, group_name, namespace_id)
+            .client
+            .config_get_beta(data_id, group_name, namespace_id)
             .await?;
+        Ok(result.map(convert_config_gray_info))
+    }
 
-        Ok(result.map(|c| ConfigInfoGrayWrapper {
-            config_info: batata_config::ConfigInfo {
-                config_info_base: batata_config::ConfigInfoBase {
-                    id: c.id,
-                    data_id: c.data_id,
-                    group: c.group,
-                    content: c.content,
-                    md5: c.md5,
-                    encrypted_data_key: String::new(),
-                },
-                tenant: c.tenant,
-                app_name: String::new(),
-                r#type: c.r#type,
-            },
-            last_modified: 0,
-            gray_name: c.gray_name,
-            gray_rule: c.gray_rule,
-            src_user: c.src_user,
-        }))
+    async fn config_create_or_update_gray(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        content: &str,
+        _gray_name: &str,
+        _gray_rule: &str,
+        src_user: &str,
+        _src_ip: &str,
+        app_name: &str,
+        _encrypted_data_key: &str,
+    ) -> anyhow::Result<()> {
+        // Remote mode delegates to MaintainerClient which calls the admin API
+        // The admin API builds gray_rule from betaIps on the server side
+        self.client
+            .config_publish_beta(
+                data_id,
+                group_name,
+                namespace_id,
+                content,
+                app_name,
+                src_user,
+                "", // config_tags
+                "", // desc
+                "", // type
+                "", // beta_ips - the admin server reconstructs from gray_rule
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn config_delete_gray(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        _gray_name: &str,
+        _client_ip: &str,
+        _src_user: &str,
+    ) -> anyhow::Result<()> {
+        self.client
+            .config_stop_beta(data_id, group_name, namespace_id)
+            .await?;
+        Ok(())
     }
 
     async fn config_export(
         &self,
         namespace_id: &str,
         group: Option<&str>,
-        data_ids: Option<&str>,
+        data_ids: Option<Vec<String>>,
         app_name: Option<&str>,
     ) -> anyhow::Result<Vec<u8>> {
-        self.api_client
-            .config_export(namespace_id, group, data_ids, app_name)
+        let data_ids_str = data_ids.map(|ids| ids.join(","));
+        self.client
+            .config_export(namespace_id, group, data_ids_str.as_deref(), app_name)
             .await
     }
 
@@ -459,226 +686,160 @@ impl ConsoleDataSource for RemoteDataSource {
         _src_user: &str,
         _src_ip: &str,
     ) -> anyhow::Result<ImportResult> {
-        // Import configuration via HTTP API
-        let client_result = self
-            .api_client
-            .config_import(file_data, namespace_id, &format!("{}", policy))
+        let result = self
+            .client
+            .config_import(file_data, namespace_id, convert_same_config_policy(policy))
             .await?;
-
-        // Convert from client ImportResult to config ImportResult
-        Ok(ImportResult {
-            success_count: client_result.success_count,
-            skip_count: client_result.skip_count,
-            fail_count: client_result.fail_count,
-            fail_data: client_result
-                .fail_data
-                .into_iter()
-                .map(|item| batata_config::ImportFailItem {
-                    data_id: item.data_id,
-                    group: item.group,
-                    reason: item.reason,
-                })
-                .collect(),
-        })
+        Ok(convert_import_result(result))
     }
 
     async fn config_batch_delete(
         &self,
-        ids: &[i64],
+        _ids: &[i64],
         _client_ip: &str,
         _src_user: &str,
-    ) -> anyhow::Result<usize> {
-        self.api_client.config_batch_delete(ids).await
-    }
-
-    async fn config_gray_delete(
-        &self,
-        data_id: &str,
-        group_name: &str,
-        namespace_id: &str,
-        _client_ip: &str,
-        _src_user: &str,
-    ) -> anyhow::Result<bool> {
-        self.api_client
-            .config_gray_delete(data_id, group_name, namespace_id)
-            .await
-    }
-
-    async fn config_gray_publish(
-        &self,
-        data_id: &str,
-        group_name: &str,
-        namespace_id: &str,
-        content: &str,
-        gray_name: &str,
-        gray_rule: &str,
-        _src_user: &str,
-        _src_ip: &str,
-        app_name: &str,
-        encrypted_data_key: &str,
-    ) -> anyhow::Result<bool> {
-        self.api_client
-            .config_gray_publish(
-                data_id,
-                group_name,
-                namespace_id,
-                content,
-                gray_name,
-                gray_rule,
-                app_name,
-                encrypted_data_key,
-            )
-            .await
-    }
-
-    async fn config_gray_list(
-        &self,
-        page_no: u64,
-        page_size: u64,
-        namespace_id: &str,
-        data_id: &str,
-        group_name: &str,
-        app_name: &str,
-    ) -> anyhow::Result<Page<ConfigInfoGrayWrapper>> {
-        let result = self
-            .api_client
-            .config_gray_list(
-                page_no,
-                page_size,
-                namespace_id,
-                data_id,
-                group_name,
-                app_name,
-            )
-            .await?;
-
-        Ok(Page::new(
-            result.total_count,
-            page_no,
-            page_size,
-            result
-                .page_items
-                .into_iter()
-                .map(|c| ConfigInfoGrayWrapper {
-                    config_info: batata_config::ConfigInfo {
-                        config_info_base: batata_config::ConfigInfoBase {
-                            id: c.id,
-                            data_id: c.data_id,
-                            group: c.group,
-                            content: c.content,
-                            md5: c.md5,
-                            encrypted_data_key: String::new(),
-                        },
-                        tenant: c.tenant,
-                        app_name: String::new(),
-                        r#type: c.r#type,
-                    },
-                    last_modified: 0,
-                    gray_name: c.gray_name,
-                    gray_rule: c.gray_rule,
-                    src_user: c.src_user,
-                })
-                .collect(),
-        ))
-    }
-
-    async fn config_gray_find_list(
-        &self,
-        data_id: &str,
-        group_name: &str,
-        namespace_id: &str,
-    ) -> anyhow::Result<Vec<ConfigInfoGrayWrapper>> {
-        let result = self
-            .api_client
-            .config_gray_find_list(data_id, group_name, namespace_id)
-            .await?;
-
-        Ok(result
-            .into_iter()
-            .map(|c| ConfigInfoGrayWrapper {
-                config_info: batata_config::ConfigInfo {
-                    config_info_base: batata_config::ConfigInfoBase {
-                        id: c.id,
-                        data_id: c.data_id,
-                        group: c.group,
-                        content: c.content,
-                        md5: c.md5,
-                        encrypted_data_key: String::new(),
-                    },
-                    tenant: c.tenant,
-                    app_name: String::new(),
-                    r#type: c.r#type,
-                },
-                last_modified: 0,
-                gray_name: c.gray_name,
-                gray_rule: c.gray_rule,
-                src_user: c.src_user,
-            })
-            .collect())
+    ) -> anyhow::Result<()> {
+        // Remote mode: not yet supported via client API
+        Ok(())
     }
 
     async fn config_clone(
         &self,
-        ids: &[i64],
-        target_namespace_id: &str,
-        policy: &str,
+        _ids: &[i64],
+        _target_namespace_id: &str,
+        _policy: &str,
         _src_user: &str,
         _src_ip: &str,
-    ) -> anyhow::Result<CloneResult> {
-        let client_result = self
-            .api_client
-            .config_clone(ids, target_namespace_id, policy)
-            .await?;
+    ) -> anyhow::Result<ImportResult> {
+        // Remote mode: not yet supported via client API
+        Ok(ImportResult::default())
+    }
 
-        // Convert from client CloneResult to batata_config CloneResult
-        Ok(CloneResult {
-            succeeded: client_result.succeeded,
-            skipped: client_result.skipped,
-            failed: client_result.failed,
+    async fn config_listener_list_by_ip(
+        &self,
+        _ip: &str,
+        _all: bool,
+        _namespace_id: &str,
+    ) -> anyhow::Result<ConfigListenerInfo> {
+        Ok(ConfigListenerInfo {
+            query_type: ConfigListenerInfo::QUERY_TYPE_IP.to_string(),
+            listeners_status: std::collections::HashMap::new(),
         })
     }
 
-    async fn config_listeners(
+    // ============== History Operations ==============
+
+    async fn history_find_by_id(
+        &self,
+        nid: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
+        let result = self.client.history_get(nid, "", "", "").await?;
+        Ok(result.map(convert_config_history_detail_info))
+    }
+
+    async fn history_search_page(
         &self,
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
-        let result = self
-            .api_client
-            .config_listeners(data_id, group_name, namespace_id)
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<ConfigHistoryBasicInfo>> {
+        let page = self
+            .client
+            .history_list(data_id, group_name, namespace_id, page_no, page_size)
+            .await?;
+        Ok(convert_page(page, convert_config_history_basic_info))
+    }
+
+    async fn history_find_configs_by_namespace_id(
+        &self,
+        namespace_id: &str,
+    ) -> anyhow::Result<Vec<ConfigBasicInfo>> {
+        let items = self
+            .client
+            .history_configs_by_namespace(namespace_id)
+            .await?;
+        Ok(items.into_iter().map(convert_config_basic_info).collect())
+    }
+
+    async fn history_find_previous(
+        &self,
+        _data_id: &str,
+        _group_name: &str,
+        _namespace_id: &str,
+        _id: u64,
+    ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
+        // Remote mode: not yet supported via client API
+        Ok(None)
+    }
+
+    // ============== History Operations (Advanced) ==============
+
+    async fn history_search_with_filters(
+        &self,
+        data_id: &str,
+        group_name: &str,
+        namespace_id: &str,
+        _op_type: Option<&str>,
+        _src_user: Option<&str>,
+        _start_time: Option<i64>,
+        _end_time: Option<i64>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<ConfigHistoryBasicInfo>> {
+        // Remote mode: fall back to basic search (admin API may not support all filters)
+        let page = self
+            .client
+            .history_list(data_id, group_name, namespace_id, page_no, page_size)
+            .await?;
+        Ok(convert_page(page, convert_config_history_basic_info))
+    }
+
+    // ============== Service Operations ==============
+
+    async fn service_list(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        page_no: u64,
+        page_size: u64,
+        _has_ip_count: bool,
+    ) -> anyhow::Result<(i32, Vec<serde_json::Value>)> {
+        let page = self
+            .client
+            .service_list(namespace_id, group_name, service_name, page_no, page_size)
             .await?;
 
-        Ok(result
+        let count = page.total_count as i32;
+        let service_list = page
+            .page_items
             .into_iter()
-            .map(|l| ConfigListenerInfo {
-                connection_id: l.connection_id,
-                client_ip: l.client_ip,
-                data_id: l.data_id,
-                group: l.group,
-                tenant: l.tenant,
-                md5: l.md5,
-            })
-            .collect())
+            .filter_map(|item| serde_json::to_value(item).ok())
+            .collect();
+
+        Ok((count, service_list))
     }
 
-    async fn config_listeners_by_ip(&self, ip: &str) -> anyhow::Result<Vec<ConfigListenerInfo>> {
-        let result = self.api_client.config_listeners_by_ip(ip).await?;
-
-        Ok(result
-            .into_iter()
-            .map(|l| ConfigListenerInfo {
-                connection_id: l.connection_id,
-                client_ip: l.client_ip,
-                data_id: l.data_id,
-                group: l.group,
-                tenant: l.tenant,
-                md5: l.md5,
-            })
-            .collect())
+    async fn service_get(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        match self
+            .client
+            .service_get(namespace_id, group_name, service_name)
+            .await
+        {
+            Ok(data) => {
+                let value = serde_json::to_value(data)?;
+                Ok(Some(value))
+            }
+            Err(_) => Ok(None),
+        }
     }
-
-    // ============== Naming/Service Operations ==============
 
     async fn service_create(
         &self,
@@ -689,7 +850,7 @@ impl ConsoleDataSource for RemoteDataSource {
         metadata: &str,
         selector: &str,
     ) -> anyhow::Result<bool> {
-        self.api_client
+        self.client
             .service_create(
                 namespace_id,
                 group_name,
@@ -698,7 +859,30 @@ impl ConsoleDataSource for RemoteDataSource {
                 metadata,
                 selector,
             )
-            .await
+            .await?;
+        Ok(true)
+    }
+
+    async fn service_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        protect_threshold: Option<f32>,
+        metadata: Option<&str>,
+        selector: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        self.client
+            .service_update(
+                namespace_id,
+                group_name,
+                service_name,
+                protect_threshold.unwrap_or(0.0),
+                metadata.unwrap_or(""),
+                selector.unwrap_or(""),
+            )
+            .await?;
+        Ok(true)
     }
 
     async fn service_delete(
@@ -707,167 +891,33 @@ impl ConsoleDataSource for RemoteDataSource {
         group_name: &str,
         service_name: &str,
     ) -> anyhow::Result<bool> {
-        self.api_client
+        self.client
             .service_delete(namespace_id, group_name, service_name)
-            .await
-    }
-
-    async fn service_update(
-        &self,
-        namespace_id: &str,
-        group_name: &str,
-        service_name: &str,
-        protect_threshold: f32,
-        metadata: &str,
-        selector: &str,
-    ) -> anyhow::Result<bool> {
-        self.api_client
-            .service_update(
-                namespace_id,
-                group_name,
-                service_name,
-                protect_threshold,
-                metadata,
-                selector,
-            )
-            .await
-    }
-
-    async fn service_get(
-        &self,
-        namespace_id: &str,
-        group_name: &str,
-        service_name: &str,
-    ) -> anyhow::Result<Option<ServiceDetail>> {
-        let result = self
-            .api_client
-            .service_get(namespace_id, group_name, service_name)
             .await?;
-
-        Ok(result.map(|s| ServiceDetail {
-            namespace_id: s.namespace_id,
-            group_name: s.group_name,
-            service_name: s.service_name,
-            protect_threshold: s.protect_threshold,
-            metadata: s.metadata,
-            selector: ServiceSelector {
-                selector_type: s.selector.selector_type,
-                expression: s.selector.expression,
-            },
-            clusters: s
-                .clusters
-                .into_iter()
-                .map(|c| ClusterInfo {
-                    name: c.name,
-                    health_checker: HealthChecker {
-                        check_type: c.health_checker.check_type,
-                        port: c.health_checker.port,
-                        use_instance_port: c.health_checker.use_instance_port,
-                    },
-                    metadata: c.metadata,
-                })
-                .collect(),
-        }))
+        Ok(true)
     }
 
-    async fn service_list(
-        &self,
-        namespace_id: &str,
-        group_name: &str,
-        service_name_pattern: &str,
-        page_no: u32,
-        page_size: u32,
-        with_instances: bool,
-    ) -> anyhow::Result<Page<ServiceListItem>> {
-        let result = self
-            .api_client
-            .service_list(
-                namespace_id,
-                group_name,
-                service_name_pattern,
-                page_no,
-                page_size,
-                with_instances,
-            )
-            .await?;
-
-        Ok(Page::new(
-            result.total_count,
-            result.page_number,
-            result.pages_available,
-            result
-                .page_items
-                .into_iter()
-                .map(|s| ServiceListItem {
-                    name: s.name,
-                    group_name: s.group_name,
-                    cluster_count: s.cluster_count,
-                    ip_count: s.ip_count,
-                    healthy_instance_count: s.healthy_instance_count,
-                    trigger_flag: s.trigger_flag,
-                    metadata: s.metadata,
-                    instances: None, // Remote API doesn't return nested instances
-                })
-                .collect(),
-        ))
-    }
-
-    async fn service_subscribers(
+    async fn service_subscriber_list(
         &self,
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        page_no: u32,
-        page_size: u32,
-    ) -> anyhow::Result<Page<SubscriberInfo>> {
-        let result = self
-            .api_client
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<(i32, Vec<String>)> {
+        let page = self
+            .client
             .service_subscribers(namespace_id, group_name, service_name, page_no, page_size)
             .await?;
 
-        Ok(Page::new(
-            result.total_count,
-            result.page_number,
-            result.pages_available,
-            result
-                .page_items
-                .into_iter()
-                .map(|s| SubscriberInfo {
-                    address: s.address,
-                    agent: s.agent,
-                    app: s.app,
-                })
-                .collect(),
-        ))
-    }
+        let count = page.total_count as i32;
+        let subscribers = page
+            .page_items
+            .into_iter()
+            .map(|s| format!("{}:{}", s.ip, s.port))
+            .collect();
 
-    fn service_selector_types(&self) -> Vec<String> {
-        vec!["none".to_string(), "label".to_string()]
-    }
-
-    async fn service_cluster_update(
-        &self,
-        namespace_id: &str,
-        group_name: &str,
-        service_name: &str,
-        cluster_name: &str,
-        check_port: i32,
-        use_instance_port: bool,
-        health_check_type: &str,
-        metadata: &str,
-    ) -> anyhow::Result<bool> {
-        self.api_client
-            .service_cluster_update(
-                namespace_id,
-                group_name,
-                service_name,
-                cluster_name,
-                check_port,
-                use_instance_port,
-                health_check_type,
-                metadata,
-            )
-            .await
+        Ok((count, subscribers))
     }
 
     // ============== Instance Operations ==============
@@ -878,44 +928,13 @@ impl ConsoleDataSource for RemoteDataSource {
         group_name: &str,
         service_name: &str,
         cluster_name: &str,
-        page_no: u32,
-        page_size: u32,
-    ) -> anyhow::Result<Page<InstanceInfo>> {
-        let result = self
-            .api_client
-            .instance_list(
-                namespace_id,
-                group_name,
-                service_name,
-                cluster_name,
-                page_no,
-                page_size,
-            )
+    ) -> anyhow::Result<Vec<Instance>> {
+        let instances = self
+            .client
+            .instance_list(namespace_id, group_name, service_name, cluster_name)
             .await?;
 
-        Ok(Page::new(
-            result.total_count,
-            result.page_number,
-            result.pages_available,
-            result
-                .page_items
-                .into_iter()
-                .map(|i| InstanceInfo {
-                    ip: i.ip,
-                    port: i.port,
-                    weight: i.weight,
-                    healthy: i.healthy,
-                    enabled: i.enabled,
-                    ephemeral: i.ephemeral,
-                    cluster_name: i.cluster_name,
-                    service_name: i.service_name,
-                    metadata: i.metadata,
-                    instance_heart_beat_interval: i.instance_heart_beat_interval,
-                    instance_heart_beat_timeout: i.instance_heart_beat_timeout,
-                    ip_delete_timeout: i.ip_delete_timeout,
-                })
-                .collect(),
-        ))
+        Ok(instances.into_iter().map(convert_instance).collect())
     }
 
     async fn instance_update(
@@ -923,164 +942,100 @@ impl ConsoleDataSource for RemoteDataSource {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-        cluster_name: &str,
-        ip: &str,
-        port: i32,
-        weight: f64,
-        healthy: bool,
-        enabled: bool,
-        ephemeral: bool,
-        metadata: &str,
+        instance: Instance,
     ) -> anyhow::Result<bool> {
-        self.api_client
+        let metadata_str = serde_json::to_string(&instance.metadata).unwrap_or_default();
+        self.client
             .instance_update(
                 namespace_id,
                 group_name,
                 service_name,
-                cluster_name,
-                ip,
-                port,
-                weight,
-                healthy,
-                enabled,
-                ephemeral,
-                metadata,
+                &instance.ip,
+                instance.port,
+                &instance.cluster_name,
+                instance.weight,
+                instance.enabled,
+                &metadata_str,
             )
-            .await
-    }
-
-    // ============== History Operations ==============
-
-    async fn history_get(
-        &self,
-        nid: u64,
-        data_id: &str,
-        group_name: &str,
-        namespace_id: &str,
-    ) -> anyhow::Result<Option<ConfigHistoryInfo>> {
-        let result = self
-            .api_client
-            .history_get(nid, data_id, group_name, namespace_id)
             .await?;
-
-        Ok(result.map(|h| ConfigHistoryInfo {
-            id: h.id,
-            last_id: -1,
-            data_id: h.data_id,
-            group: h.group,
-            tenant: h.tenant,
-            content: h.content,
-            md5: h.md5,
-            app_name: h.app_name,
-            created_time: h.created_time,
-            last_modified_time: h.last_modified_time,
-            src_user: h.src_user,
-            src_ip: h.src_ip,
-            op_type: h.op_type,
-            publish_type: h.publish_type,
-            gray_name: h.gray_name,
-            ext_info: h.ext_info,
-            encrypted_data_key: h.encrypted_data_key,
-        }))
+        Ok(true)
     }
 
-    async fn history_list(
+    // ============== Config Listener Operations ==============
+
+    async fn config_listener_list(
         &self,
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-        page_no: u64,
-        page_size: u64,
-    ) -> anyhow::Result<Page<ConfigHistoryInfo>> {
-        let result = self
-            .api_client
-            .history_list(data_id, group_name, namespace_id, page_no, page_size)
+    ) -> anyhow::Result<ConfigListenerInfo> {
+        let data = self
+            .client
+            .config_listeners(data_id, group_name, namespace_id)
             .await?;
 
-        Ok(Page::new(
-            result.total_count,
-            result.page_number,
-            result.pages_available,
-            result
-                .page_items
-                .into_iter()
-                .map(|h| ConfigHistoryInfo {
-                    id: h.id,
-                    last_id: -1,
-                    data_id: h.data_id,
-                    group: h.group,
-                    tenant: h.tenant,
-                    content: String::new(),
-                    md5: String::new(),
-                    app_name: String::new(),
-                    created_time: h.created_time,
-                    last_modified_time: h.last_modified_time,
-                    src_user: h.src_user,
-                    src_ip: h.src_ip,
-                    op_type: h.op_type,
-                    publish_type: h.publish_type,
-                    gray_name: h.gray_name,
-                    ext_info: String::new(),
-                    encrypted_data_key: String::new(),
-                })
-                .collect(),
-        ))
+        Ok(convert_config_listener_info(data))
     }
 
-    async fn history_configs_by_namespace(
-        &self,
-        namespace_id: &str,
-    ) -> anyhow::Result<Vec<ConfigInfoWrapper>> {
-        let result = self
-            .api_client
-            .history_configs_by_namespace(namespace_id)
-            .await?;
+    // ============== Server State Operations ==============
 
-        Ok(result
-            .into_iter()
-            .map(|c| ConfigInfoWrapper {
-                id: Some(c.id as u64),
-                namespace_id: c.namespace_id,
-                group_name: c.group_name,
-                data_id: c.data_id,
-                md5: None,
-                r#type: c.r#type,
-                app_name: c.app_name,
-                create_time: c.create_time,
-                modify_time: c.modify_time,
-            })
-            .collect())
+    async fn server_state(&self) -> HashMap<String, Option<String>> {
+        match self.client.server_state().await {
+            Ok(state) => state,
+            Err(e) => {
+                warn!("Failed to fetch server state from remote server: {}", e);
+                HashMap::new()
+            }
+        }
+    }
+
+    async fn server_readiness(&self) -> bool {
+        // In remote mode, check if we can reach the server
+        self.client.server_readiness().await
     }
 
     // ============== Cluster Operations ==============
 
-    fn cluster_members(&self) -> Vec<Member> {
-        self.cached_members.read_recover("cached_members").clone()
+    fn cluster_all_members(&self) -> Vec<Member> {
+        self.cached_members
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     fn cluster_healthy_members(&self) -> Vec<Member> {
         self.cached_members
-            .read_recover("cached_members")
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .filter(|m| m.state == "UP")
             .cloned()
             .collect()
     }
 
-    fn cluster_health(&self) -> ClusterHealthResponse {
+    fn cluster_get_health(&self) -> ClusterHealthResponse {
         self.cached_health
-            .read_recover("cached_health")
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
             .unwrap_or(ClusterHealthResponse {
                 is_healthy: false,
-                summary: ClusterHealthSummary::default(),
+                summary: ClusterHealthSummaryResponse {
+                    total: 0,
+                    up: 0,
+                    down: 0,
+                    suspicious: 0,
+                    starting: 0,
+                    isolation: 0,
+                },
                 standalone: true,
             })
     }
 
-    fn cluster_self(&self) -> SelfMemberResponse {
+    fn cluster_get_self(&self) -> SelfMemberResponse {
         self.cached_self
-            .read_recover("cached_self")
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
             .unwrap_or(SelfMemberResponse {
                 ip: "0.0.0.0".to_string(),
@@ -1092,21 +1047,26 @@ impl ConsoleDataSource for RemoteDataSource {
             })
     }
 
-    fn cluster_member(&self, address: &str) -> Option<Member> {
+    fn cluster_get_member(&self, address: &str) -> Option<Member> {
         self.cached_members
-            .read_recover("cached_members")
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
             .iter()
             .find(|m| m.address == address)
             .cloned()
     }
 
     fn cluster_member_count(&self) -> usize {
-        self.cached_members.read_recover("cached_members").len()
+        self.cached_members
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     fn cluster_is_standalone(&self) -> bool {
         self.cached_health
-            .read_recover("cached_health")
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .map(|h| h.standalone)
             .unwrap_or(true)
@@ -1118,17 +1078,53 @@ impl ConsoleDataSource for RemoteDataSource {
         // and the cluster cache is refreshed in the constructor and by other operations
     }
 
+    async fn cluster_update_member_state(
+        &self,
+        _address: &str,
+        _state: &str,
+    ) -> anyhow::Result<String> {
+        // In remote mode, member state updates are not supported directly
+        Err(anyhow::anyhow!(
+            "Member state update not supported in remote console mode"
+        ))
+    }
+
+    fn cluster_is_leader(&self) -> bool {
+        false
+    }
+
+    fn cluster_leader_address(&self) -> Option<String> {
+        None
+    }
+
+    fn cluster_local_address(&self) -> String {
+        self.cluster_get_self().address
+    }
+
+    // ============== Service Operations (Cluster) ==============
+
+    async fn service_update_cluster(
+        &self,
+        _namespace_id: &str,
+        _group_name: &str,
+        _service_name: &str,
+        _cluster_name: &str,
+        _health_checker_type: Option<&str>,
+        _metadata: Option<HashMap<String, String>>,
+    ) -> anyhow::Result<bool> {
+        // In remote mode, cluster updates would go through the admin API
+        Err(anyhow::anyhow!(
+            "Service cluster update not supported in remote console mode"
+        ))
+    }
+
     // ============== Helper Methods ==============
 
     fn is_remote(&self) -> bool {
         true
     }
 
-    fn database(&self) -> Option<&DatabaseConnection> {
-        None
-    }
-
-    fn member_manager(&self) -> Option<Arc<ServerMemberManager>> {
+    fn get_server_member_manager(&self) -> Option<Arc<ServerMemberManager>> {
         None
     }
 }

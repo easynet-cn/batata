@@ -1,0 +1,68 @@
+[package]
+name = "batata-server-common"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared server infrastructure for Batata (AppState, Configuration, middleware, secured! macro)"
+
+[dependencies]
+# Internal crates
+batata-common = { workspace = true }
+batata-api = { workspace = true }
+batata-persistence = { workspace = true }
+batata-auth = { workspace = true }
+batata-consistency = { workspace = true }
+batata-core = { workspace = true }
+batata-naming = { workspace = true }
+batata-config = { workspace = true }
+
+# Web framework
+actix-web = { workspace = true }
+actix-service = { workspace = true }
+actix-utils = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+
+# Configuration
+config = { workspace = true }
+clap = { workspace = true }
+
+# Database
+sea-orm = { workspace = true }
+
+# Async
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "fs"] }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Auth
+jsonwebtoken = { workspace = true }
+
+# Rate limiting
+dashmap = { workspace = true }
+
+# Regex
+regex = { workspace = true }
+
+# HTML escaping (for error responses)
+htmlescape = { workspace = true }
+
+# gRPC (for TLS config)
+tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
