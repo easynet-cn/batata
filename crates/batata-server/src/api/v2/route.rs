@@ -5,8 +5,8 @@
 use actix_web::{Scope, web};
 
 use super::{
-    capacity, client, cluster, config, console_health, core_ops, health, history, instance,
-    listener, namespace, naming_catalog, operator, service,
+    capacity, client, cluster, config, core_ops, health, history, instance, listener,
+    naming_catalog, operator, service,
 };
 
 /// Create the V2 Config Service routes
@@ -154,36 +154,4 @@ pub fn cluster_routes() -> Scope {
                 .service(web::scope("/lookup").service(cluster::switch_lookup)),
         )
         .service(core_ops::routes())
-}
-
-/// Create the V2 Console routes
-///
-/// Routes:
-/// - GET /nacos/v2/console/namespace/list - List all namespaces
-/// - GET /nacos/v2/console/namespace - Get namespace detail
-/// - POST /nacos/v2/console/namespace - Create namespace
-/// - PUT /nacos/v2/console/namespace - Update namespace
-/// - DELETE /nacos/v2/console/namespace - Delete namespace
-pub fn console_routes() -> Scope {
-    web::scope("/v2/console")
-        .service(
-            web::scope("/namespace")
-                .service(namespace::get_namespace_list)
-                .service(namespace::get_namespace)
-                .service(namespace::create_namespace)
-                .service(namespace::update_namespace)
-                .service(namespace::delete_namespace),
-        )
-        .service(console_health::routes())
-}
-
-/// Create all V2 API routes
-///
-/// This combines all V2 API route groups under the /nacos prefix.
-pub fn routes() -> Scope {
-    web::scope("/nacos")
-        .service(config_routes())
-        .service(naming_routes())
-        .service(cluster_routes())
-        .service(console_routes())
 }

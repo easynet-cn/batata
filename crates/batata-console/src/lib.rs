@@ -8,6 +8,7 @@
 
 pub mod datasource;
 pub mod model;
+pub mod v2;
 pub mod v3;
 
 // Re-export commonly used types
@@ -21,6 +22,12 @@ pub use model::*;
 pub use v3::metrics::{METRICS, Metrics};
 pub use v3::route::routes as v3_routes;
 pub use v3::server_state::ServerStateConfig;
+
+/// Configure v2 console routes on a given ServiceConfig.
+/// This registers the V2 console namespace and health routes under `/v2/console`.
+pub fn configure_v2_console_routes(cfg: &mut actix_web::web::ServiceConfig) {
+    cfg.service(v2::route::routes());
+}
 
 /// Configure v3 console routes on a given ServiceConfig.
 /// This allows composing console routes with additional routes (e.g., AI handlers)

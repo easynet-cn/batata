@@ -25,9 +25,7 @@ use crate::{
         catalog::ConsulCatalogService, health::ConsulHealthService,
         health_actor::create_health_actor, kv::ConsulKVService, route::consul_routes,
     },
-    api::v2::route::{
-        cluster_routes, config_routes, console_routes as v2_console_routes, naming_routes,
-    },
+    api::v2::route::{cluster_routes, config_routes, naming_routes},
     api::v3::admin::route::admin_routes as v3_admin_routes,
     api::v3::client::route::client_routes as v3_client_routes,
     auth,
@@ -183,7 +181,7 @@ pub fn console_server(
                         .service(console_a2a::routes())
                         .service(console_plugin::routes()),
                 )
-                .service(v2_console_routes()),
+                .configure(batata_console::configure_v2_console_routes),
         )
     })
     .bind((address, port))?
@@ -463,8 +461,6 @@ pub fn main_server(
                 .service(config_routes())
                 .service(naming_routes())
                 .service(cluster_routes())
-                // V2 Console API routes
-                .service(v2_console_routes())
                 // V3 Console API routes (non-AI from batata-console + AI from server)
                 .service(
                     web::scope("/v3/console")

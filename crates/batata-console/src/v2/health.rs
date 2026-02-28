@@ -1,13 +1,13 @@
 //! V2 Console Health API handlers
 //!
-//! Implements the Nacos V2 console health endpoints (deprecated, use V3):
-//! - GET /nacos/v2/console/health/liveness - Check if server is alive
-//! - GET /nacos/v2/console/health/readiness - Check if server is ready
+//! Implements the Nacos V2 console health endpoints:
+//! - GET /v2/console/health/liveness - Check if server is alive
+//! - GET /v2/console/health/readiness - Check if server is ready
 
 use actix_web::{Responder, Scope, get, web};
 
-use crate::model::common::AppState;
-use crate::model::response::Result;
+use batata_server_common::model::AppState;
+use batata_server_common::model::response::Result;
 
 /// GET /v2/console/health/liveness
 ///

@@ -1,24 +1,23 @@
-//! V2 Namespace API handlers
+//! V2 Console Namespace API handlers
 //!
-//! Implements the Nacos V2 namespace management API endpoints:
-//! - GET /nacos/v2/console/namespace/list - List all namespaces
-//! - GET /nacos/v2/console/namespace - Get namespace detail
-//! - POST /nacos/v2/console/namespace - Create namespace
-//! - PUT /nacos/v2/console/namespace - Update namespace
-//! - DELETE /nacos/v2/console/namespace - Delete namespace
+//! Implements the Nacos V2 console namespace management API endpoints:
+//! - GET /v2/console/namespace/list - List all namespaces
+//! - GET /v2/console/namespace - Get namespace detail
+//! - POST /v2/console/namespace - Create namespace
+//! - PUT /v2/console/namespace - Update namespace
+//! - DELETE /v2/console/namespace - Delete namespace
 
 use std::sync::LazyLock;
 
 use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, post, put, web};
+use serde::{Deserialize, Serialize};
 
-use crate::{
-    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
-    model::response::Result, secured,
-};
+use batata_config::Namespace;
 
-use super::model::{
-    NamespaceCreateParam, NamespaceDeleteParam, NamespaceDetailParam, NamespaceResponse,
-    NamespaceUpdateParam,
+use batata_server_common::{
+    ActionTypes, ApiType, Secured, SignType, error,
+    model::{AppState, response::Result},
+    secured,
 };
 
 /// Regex for validating namespace IDs
@@ -32,66 +31,120 @@ static NAMESPACE_NAME_REGEX: LazyLock<regex::Regex> =
 /// Maximum length for namespace ID
 const NAMESPACE_ID_MAX_LENGTH: usize = 128;
 
+/// Request parameters for getting namespace detail
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NamespaceDetailParam {
+    namespace_id: String,
+}
+
+/// Request parameters for creating a namespace
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NamespaceCreateParam {
+    /// Custom namespace ID (optional, will generate UUID if not provided)
+    #[serde(default)]
+    custom_namespace_id: Option<String>,
+    /// Namespace ID (alternative to custom_namespace_id)
+    #[serde(default)]
+    namespace_id: Option<String>,
+    /// Namespace name (required)
+    namespace_name: String,
+    /// Namespace description (optional)
+    #[serde(default)]
+    namespace_desc: Option<String>,
+}
+
+impl NamespaceCreateParam {
+    /// Get the namespace ID, preferring custom_namespace_id over namespace_id
+    fn get_namespace_id(&self) -> Option<&str> {
+        self.custom_namespace_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.namespace_id.as_deref().filter(|s| !s.is_empty()))
+    }
+}
+
+/// Request parameters for updating a namespace
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NamespaceUpdateParam {
+    namespace_id: String,
+    namespace_name: String,
+    #[serde(default)]
+    namespace_desc: Option<String>,
+}
+
+/// Request parameters for deleting a namespace
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NamespaceDeleteParam {
+    namespace_id: String,
+}
+
+/// Response data for namespace (V2 format)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NamespaceResponse {
+    namespace: String,
+    namespace_show_name: String,
+    namespace_desc: String,
+    quota: i32,
+    config_count: i32,
+    #[serde(rename = "type")]
+    type_: i32,
+}
+
+impl From<Namespace> for NamespaceResponse {
+    fn from(ns: Namespace) -> Self {
+        Self {
+            namespace: ns.namespace,
+            namespace_show_name: ns.namespace_show_name,
+            namespace_desc: ns.namespace_desc,
+            quota: ns.quota,
+            config_count: ns.config_count,
+            type_: ns.type_,
+        }
+    }
+}
+
 /// List all namespaces
 ///
-/// GET /nacos/v2/console/namespace/list
-///
-/// Returns a list of all namespaces.
+/// GET /v2/console/namespace/list
 #[get("list")]
 pub async fn get_namespace_list(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
-    // Check authorization
     let resource = "*:*:*";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Read)
             .sign_type(SignType::Console)
-            .api_type(ApiType::OpenApi)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
-    let ns_list = data
-        .persistence()
-        .namespace_find_all()
-        .await
-        .unwrap_or_default();
+    let ns_list = data.console_datasource.namespace_find_all().await;
 
-    // Convert to response format
-    let response: Vec<NamespaceResponse> = ns_list
-        .into_iter()
-        .map(|ns| {
-            let type_ = if ns.namespace_id == "public" { 0 } else { 2 };
-            NamespaceResponse {
-                namespace: ns.namespace_id,
-                namespace_show_name: ns.namespace_name,
-                namespace_desc: ns.namespace_desc,
-                quota: ns.quota,
-                config_count: ns.config_count,
-                type_,
-            }
-        })
-        .collect();
+    let response: Vec<NamespaceResponse> =
+        ns_list.into_iter().map(NamespaceResponse::from).collect();
 
     Result::<Vec<NamespaceResponse>>::http_success(response)
 }
 
 /// Get namespace detail
 ///
-/// GET /nacos/v2/console/namespace
-///
-/// Returns details of a specific namespace.
+/// GET /v2/console/namespace
 #[get("")]
 pub async fn get_namespace(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<NamespaceDetailParam>,
 ) -> impl Responder {
-    // Check authorization
     let resource = "*:*:*";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Read)
             .sign_type(SignType::Console)
-            .api_type(ApiType::OpenApi)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -112,23 +165,15 @@ pub async fn get_namespace(
     }
 
     match data
-        .persistence()
-        .namespace_get_by_id(&params.namespace_id)
+        .console_datasource
+        .namespace_get_by_id(&params.namespace_id, "1")
         .await
     {
-        Ok(Some(ns)) => {
-            let type_ = if ns.namespace_id == "public" { 0 } else { 2 };
-            let response = NamespaceResponse {
-                namespace: ns.namespace_id,
-                namespace_show_name: ns.namespace_name,
-                namespace_desc: ns.namespace_desc,
-                quota: ns.quota,
-                config_count: ns.config_count,
-                type_,
-            };
+        Ok(ns) => {
+            let response = NamespaceResponse::from(ns);
             Result::<NamespaceResponse>::http_success(response)
         }
-        Ok(None) | Err(_) => Result::<NamespaceResponse>::http_response(
+        Err(_) => Result::<NamespaceResponse>::http_response(
             404,
             404,
             format!("Namespace not found: {}", params.namespace_id),
@@ -146,22 +191,19 @@ pub async fn get_namespace(
 
 /// Create a namespace
 ///
-/// POST /nacos/v2/console/namespace
-///
-/// Creates a new namespace.
+/// POST /v2/console/namespace
 #[post("")]
 pub async fn create_namespace(
     req: HttpRequest,
     data: web::Data<AppState>,
     form: web::Form<NamespaceCreateParam>,
 ) -> impl Responder {
-    // Check authorization
     let resource = "*:*:*";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Write)
             .sign_type(SignType::Console)
-            .api_type(ApiType::OpenApi)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -225,7 +267,7 @@ pub async fn create_namespace(
 
     // Create namespace
     match data
-        .persistence()
+        .console_datasource
         .namespace_create(&namespace_id, &namespace_name, &namespace_desc)
         .await
     {
@@ -255,22 +297,19 @@ pub async fn create_namespace(
 
 /// Update a namespace
 ///
-/// PUT /nacos/v2/console/namespace
-///
-/// Updates an existing namespace.
+/// PUT /v2/console/namespace
 #[put("")]
 pub async fn update_namespace(
     req: HttpRequest,
     data: web::Data<AppState>,
     form: web::Form<NamespaceUpdateParam>,
 ) -> impl Responder {
-    // Check authorization
     let resource = "*:*:*";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Write)
             .sign_type(SignType::Console)
-            .api_type(ApiType::OpenApi)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -310,7 +349,7 @@ pub async fn update_namespace(
 
     // Update namespace
     match data
-        .persistence()
+        .console_datasource
         .namespace_update(&form.namespace_id, &form.namespace_name, &namespace_desc)
         .await
     {
@@ -342,22 +381,19 @@ pub async fn update_namespace(
 
 /// Delete a namespace
 ///
-/// DELETE /nacos/v2/console/namespace
-///
-/// Deletes a namespace.
+/// DELETE /v2/console/namespace
 #[delete("")]
 pub async fn delete_namespace(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<NamespaceDeleteParam>,
 ) -> impl Responder {
-    // Check authorization
     let resource = "*:*:*";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Write)
             .sign_type(SignType::Console)
-            .api_type(ApiType::OpenApi)
+            .api_type(ApiType::ConsoleApi)
             .build()
     );
 
@@ -382,7 +418,7 @@ pub async fn delete_namespace(
 
     // Delete namespace
     match data
-        .persistence()
+        .console_datasource
         .namespace_delete(&params.namespace_id)
         .await
     {
