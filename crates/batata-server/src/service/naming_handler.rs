@@ -697,7 +697,7 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Write
+        AuthRequirement::Read
     }
 
     fn sign_type(&self) -> &'static str {

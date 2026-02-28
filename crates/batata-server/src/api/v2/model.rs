@@ -346,6 +346,72 @@ pub struct HistoryItemResponse {
     pub encrypted_data_key: Option<String>,
 }
 
+/// Response for /v2/cs/history/detail - includes original and updated versions for comparison.
+/// Matches Nacos ConfigHistoryInfoDetail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigHistoryInfoDetail {
+    /// History entry ID
+    pub id: String,
+    /// Last modified ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_id: Option<i64>,
+    /// Data ID
+    pub data_id: String,
+    /// Group name
+    pub group: String,
+    /// Namespace/tenant ID
+    pub tenant: String,
+    /// Operation type (I=Insert, U=Update, D=Delete)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub op_type: Option<String>,
+    /// Publish type
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub publish_type: Option<String>,
+    /// Gray/canary release name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gray_name: Option<String>,
+    /// Application name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    /// Source IP
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_ip: Option<String>,
+    /// Source user
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub src_user: Option<String>,
+    /// MD5 hash of the original version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_md5: Option<String>,
+    /// Content of the original version before this change
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_content: Option<String>,
+    /// Encrypted data key of the original version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_encrypted_data_key: Option<String>,
+    /// Extended info of the original version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_ext_info: Option<String>,
+    /// MD5 hash of the updated version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_md5: Option<String>,
+    /// Content of the updated version (for comparison)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_content: Option<String>,
+    /// Encrypted data key of the updated version
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_encrypted_data_key: Option<String>,
+    /// Extended info of the updated version (note: Nacos uses "updateExtInfo" not "updatedExtInfo")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_ext_info: Option<String>,
+    /// Creation time (timestamp)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_time: Option<String>,
+    /// Last modified time (timestamp)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified_time: Option<String>,
+}
+
 /// Response data for config info in namespace listing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

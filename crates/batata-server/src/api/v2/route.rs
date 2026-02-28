@@ -5,8 +5,8 @@
 use actix_web::{Scope, web};
 
 use super::{
-    capacity, client, cluster, config, health, history, instance, listener, namespace,
-    naming_catalog, operator, service,
+    capacity, client, cluster, config, console_health, core_ops, health, history, instance,
+    listener, namespace, naming_catalog, operator, service,
 };
 
 /// Create the V2 Config Service routes
@@ -19,6 +19,7 @@ use super::{
 /// - POST /nacos/v2/cs/config/listener - Listen for config changes
 /// - GET /nacos/v2/cs/history/list - Get history list
 /// - GET /nacos/v2/cs/history - Get specific history entry
+/// - GET /nacos/v2/cs/history/detail - Get history detail with version comparison
 /// - GET /nacos/v2/cs/history/previous - Get previous history entry
 /// - GET /nacos/v2/cs/history/configs - Get all configs in namespace
 /// - GET /nacos/v2/cs/capacity - Get capacity
@@ -38,6 +39,7 @@ pub fn config_routes() -> Scope {
             web::scope("/history")
                 .service(history::get_history_list)
                 .service(history::get_history)
+                .service(history::get_history_detail)
                 .service(history::get_previous_history)
                 .service(history::get_namespace_configs),
         )
@@ -113,7 +115,21 @@ pub fn naming_routes() -> Scope {
                 .service(operator::update_switches)
                 .service(operator::get_metrics),
         )
-        .service(web::scope("/health/instance").service(health::update_instance_health))
+        // Nacos registers operator endpoints under both /operator and /ops (dual path)
+        .service(
+            web::scope("/ops")
+                .route("switches", web::get().to(operator::get_switches_handler))
+                .route("switches", web::put().to(operator::update_switches_handler))
+                .route("metrics", web::get().to(operator::get_metrics_handler)),
+        )
+        .service(
+            web::scope("/health")
+                .service(health::update_instance_health)
+                .route(
+                    "/instance",
+                    web::put().to(health::update_instance_health_handler),
+                ),
+        )
 }
 
 /// Create the V2 Core Cluster routes
@@ -124,16 +140,20 @@ pub fn naming_routes() -> Scope {
 /// - GET /nacos/v2/core/cluster/node/self/health - Get current node health
 /// - PUT /nacos/v2/core/cluster/lookup - Switch lookup mode
 pub fn cluster_routes() -> Scope {
-    web::scope("/v2/core/cluster")
+    web::scope("/v2/core")
         .service(
-            web::scope("/node")
-                .service(cluster::get_node_self)
-                .service(cluster::get_node_list)
-                .service(cluster::get_node_health)
-                .service(cluster::update_node_list),
+            web::scope("/cluster")
+                .service(
+                    web::scope("/node")
+                        .service(cluster::get_node_self)
+                        .service(cluster::get_node_list)
+                        .service(cluster::get_node_health)
+                        .service(cluster::update_node_list),
+                )
+                .service(web::scope("/nodes").service(cluster::remove_nodes))
+                .service(web::scope("/lookup").service(cluster::switch_lookup)),
         )
-        .service(web::scope("/nodes").service(cluster::remove_nodes))
-        .service(web::scope("/lookup").service(cluster::switch_lookup))
+        .service(core_ops::routes())
 }
 
 /// Create the V2 Console routes
@@ -145,14 +165,16 @@ pub fn cluster_routes() -> Scope {
 /// - PUT /nacos/v2/console/namespace - Update namespace
 /// - DELETE /nacos/v2/console/namespace - Delete namespace
 pub fn console_routes() -> Scope {
-    web::scope("/v2/console").service(
-        web::scope("/namespace")
-            .service(namespace::get_namespace_list)
-            .service(namespace::get_namespace)
-            .service(namespace::create_namespace)
-            .service(namespace::update_namespace)
-            .service(namespace::delete_namespace),
-    )
+    web::scope("/v2/console")
+        .service(
+            web::scope("/namespace")
+                .service(namespace::get_namespace_list)
+                .service(namespace::get_namespace)
+                .service(namespace::create_namespace)
+                .service(namespace::update_namespace)
+                .service(namespace::delete_namespace),
+        )
+        .service(console_health::routes())
 }
 
 /// Create all V2 API routes

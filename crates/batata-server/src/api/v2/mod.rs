@@ -7,6 +7,8 @@ pub mod capacity;
 pub mod client;
 pub mod cluster;
 pub mod config;
+pub mod console_health;
+pub mod core_ops;
 pub mod health;
 pub mod history;
 pub mod instance;

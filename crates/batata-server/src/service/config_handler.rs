@@ -986,15 +986,15 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Write
+        AuthRequirement::Internal
     }
 
     fn sign_type(&self) -> &'static str {
-        "config"
+        "internal"
     }
 
     fn resource_type(&self) -> batata_core::ResourceType {
-        batata_core::ResourceType::Config
+        batata_core::ResourceType::Internal
     }
 }
 
@@ -1210,15 +1210,15 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Write
+        AuthRequirement::Internal
     }
 
     fn sign_type(&self) -> &'static str {
-        "config"
+        "internal"
     }
 
     fn resource_type(&self) -> batata_core::ResourceType {
-        batata_core::ResourceType::Config
+        batata_core::ResourceType::Internal
     }
 }
 

@@ -4,6 +4,8 @@
 //! - GET /nacos/v2/ns/operator/switches - Get system switches
 //! - PUT /nacos/v2/ns/operator/switches - Update system switches
 //! - GET /nacos/v2/ns/operator/metrics - Get naming service metrics
+//!
+//! Nacos registers these under both `/v2/ns/operator` and `/v2/ns/ops` (dual path).
 
 use std::sync::Arc;
 
@@ -16,27 +18,9 @@ use crate::{
 
 use super::model::{NamingMetricsResponse, SwitchUpdateParam, SwitchesResponse};
 
-/// Get system switches
-///
-/// GET /nacos/v2/ns/operator/switches
-///
-/// Returns the current system configuration switches.
-#[get("")]
-pub async fn get_switches(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
-    // Check authorization for operator operations
-    let resource = "*:*:naming/*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Read)
-            .sign_type(SignType::Naming)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
-
-    // Build switches response from configuration
-    let config = &data.configuration;
-
-    let response = SwitchesResponse {
+/// Get system switches (internal implementation)
+fn build_switches_response(config: &crate::model::common::Configuration) -> SwitchesResponse {
+    SwitchesResponse {
         name: "00-00---000-NACOS_SWITCH_DOMAIN-000---00-00".to_string(),
         masters: None,
         addr_server_domain: None,
@@ -56,8 +40,27 @@ pub async fn get_switches(req: HttpRequest, data: web::Data<AppState>) -> impl R
         servers: None,
         overridden_server_status: None,
         default_instance_ephemeral: true,
-    };
+    }
+}
 
+/// Get system switches
+///
+/// GET /nacos/v2/ns/operator/switches
+///
+/// Returns the current system configuration switches.
+#[get("")]
+pub async fn get_switches(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
+    // Check authorization for operator operations
+    let resource = "*:*:naming/*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    let response = build_switches_response(&data.configuration);
     Result::<SwitchesResponse>::http_success(response)
 }
 
@@ -194,5 +197,118 @@ pub async fn get_metrics(
         mem: used_memory,
     };
 
+    Result::<NamingMetricsResponse>::http_success(response)
+}
+
+// Plain handler functions for /v2/ns/ops/* dual-path registration (without attribute macros).
+// These delegate to the same logic as the macro-annotated handlers above.
+
+pub async fn get_switches_handler(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
+    let resource = "*:*:naming/*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+    let response = build_switches_response(&data.configuration);
+    Result::<SwitchesResponse>::http_success(response)
+}
+
+pub async fn update_switches_handler(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<SwitchUpdateParam>,
+) -> impl Responder {
+    if params.entry.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Required parameter 'entry' is missing".to_string(),
+            false,
+        );
+    }
+    if params.value.is_empty() {
+        return Result::<bool>::http_response(
+            400,
+            400,
+            "Required parameter 'value' is missing".to_string(),
+            false,
+        );
+    }
+    let resource = "*:*:naming/*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+    tracing::info!(
+        entry = %params.entry,
+        value = %params.value,
+        debug = ?params.debug,
+        "Switch update requested via /ops alias (not persisted)"
+    );
+    Result::<String>::http_success(format!(
+        "ok, entry: {}, value: {}",
+        params.entry, params.value
+    ))
+}
+
+pub async fn get_metrics_handler(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    naming_service: web::Data<Arc<NamingService>>,
+) -> impl Responder {
+    let resource = "*:*:naming/*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+    let service_keys = naming_service.get_all_service_keys();
+    let service_count = service_keys.len() as i32;
+    let mut instance_count = 0;
+    for key in &service_keys {
+        let parts: Vec<&str> = key.split("@@").collect();
+        if parts.len() == 3 {
+            instance_count +=
+                naming_service.get_instance_count(parts[0], parts[1], parts[2]) as i32;
+        }
+    }
+    let subscriber_ids = naming_service.get_all_subscriber_ids();
+    let subscribe_count = subscriber_ids.len() as i32;
+    let cluster_node_count = data.member_manager().all_members().len() as i32;
+    let is_standalone = data.configuration.is_standalone();
+    let (responsible_service_count, responsible_instance_count) = if is_standalone {
+        (service_count, instance_count)
+    } else {
+        let divisor = cluster_node_count.max(1);
+        (service_count / divisor, instance_count / divisor)
+    };
+    let sys_info = sysinfo::System::new_all();
+    let cpu_usage = sys_info.global_cpu_usage() as f64;
+    let total_memory = sys_info.total_memory() as f64;
+    let used_memory = sys_info.used_memory() as f64;
+    let memory_usage = if total_memory > 0.0 {
+        (used_memory / total_memory) * 100.0
+    } else {
+        0.0
+    };
+    let response = NamingMetricsResponse {
+        service_count,
+        instance_count,
+        subscribe_count,
+        cluster_node_count,
+        responsible_service_count,
+        responsible_instance_count,
+        cpu: cpu_usage,
+        load: memory_usage,
+        mem: used_memory,
+    };
     Result::<NamingMetricsResponse>::http_success(response)
 }

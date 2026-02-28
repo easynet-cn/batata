@@ -3,6 +3,7 @@
 //! Implements the Nacos V2 configuration history API endpoints:
 //! - GET /nacos/v2/cs/history/list - Get history list with pagination
 //! - GET /nacos/v2/cs/history - Get specific history entry
+//! - GET /nacos/v2/cs/history/detail - Get history detail with original/updated content comparison
 //! - GET /nacos/v2/cs/history/previous - Get previous history entry
 //! - GET /nacos/v2/cs/history/configs - Get all configs in a namespace
 
@@ -18,8 +19,8 @@ use crate::{
 };
 
 use super::model::{
-    ConfigInfoResponse, HistoryDetailParam, HistoryItemResponse, HistoryListParam,
-    HistoryPreviousParam, NamespaceConfigsParam,
+    ConfigHistoryInfoDetail, ConfigInfoResponse, HistoryDetailParam, HistoryItemResponse,
+    HistoryListParam, HistoryPreviousParam, NamespaceConfigsParam,
 };
 
 /// Helper to convert ConfigHistoryStorageData to HistoryItemResponse (list view, no content)
@@ -289,6 +290,220 @@ pub async fn get_history(
             )
         }
     }
+}
+
+/// Get config history detail with original/updated content for comparison
+///
+/// GET /nacos/v2/cs/history/detail
+///
+/// Returns a history entry with both original and updated content for version comparison.
+/// The behavior depends on the operation type:
+/// - INSERT: originalContent is empty, updatedContent is the new content
+/// - UPDATE: originalContent is this version, updatedContent is the current config
+/// - DELETE: originalContent is the deleted content, updatedContent is empty
+#[get("detail")]
+pub async fn get_history_detail(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<HistoryDetailParam>,
+) -> impl Responder {
+    // Validate required parameters
+    if params.data_id.is_empty() {
+        return Result::<String>::http_response(
+            400,
+            400,
+            "Required parameter 'dataId' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    if params.group.is_empty() {
+        return Result::<String>::http_response(
+            400,
+            400,
+            "Required parameter 'group' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    let namespace_id = params.namespace_id_or_default();
+
+    // Check authorization
+    let resource = format!(
+        "{}:{}:config/{}",
+        namespace_id, params.group, params.data_id
+    );
+    secured!(
+        Secured::builder(&req, &data, &resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::OpenApi)
+            .build()
+    );
+
+    let persistence = data.persistence();
+
+    // Get history entry by nid
+    let history_item = match persistence.config_history_find_by_id(params.nid).await {
+        Ok(Some(item)) => item,
+        Ok(None) => {
+            return Result::<Option<ConfigHistoryInfoDetail>>::http_response(
+                404,
+                404,
+                "history entry not found".to_string(),
+                None::<ConfigHistoryInfoDetail>,
+            );
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to get history entry");
+            return Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
+    };
+
+    // Verify the history entry matches the requested config
+    if history_item.data_id != params.data_id
+        || history_item.group != params.group
+        || history_item.tenant != namespace_id
+    {
+        return Result::<Option<ConfigHistoryInfoDetail>>::http_response(
+            404,
+            404,
+            "Please check dataId, group or namespaceId.".to_string(),
+            None::<ConfigHistoryInfoDetail>,
+        );
+    }
+
+    let op_type = history_item.op_type.trim().to_string();
+
+    // Build base detail from history entry
+    let mut detail = ConfigHistoryInfoDetail {
+        id: history_item.id.to_string(),
+        last_id: Some(-1),
+        data_id: history_item.data_id.clone(),
+        group: history_item.group.clone(),
+        tenant: history_item.tenant.clone(),
+        op_type: Some(op_type.clone()),
+        publish_type: if history_item.publish_type.is_empty() {
+            None
+        } else {
+            Some(history_item.publish_type.clone())
+        },
+        gray_name: if history_item.gray_name.is_empty() {
+            None
+        } else {
+            Some(history_item.gray_name.clone())
+        },
+        app_name: if history_item.app_name.is_empty() {
+            None
+        } else {
+            Some(history_item.app_name.clone())
+        },
+        src_ip: if history_item.src_ip.is_empty() {
+            None
+        } else {
+            Some(history_item.src_ip.clone())
+        },
+        src_user: if history_item.src_user.is_empty() {
+            None
+        } else {
+            Some(history_item.src_user.clone())
+        },
+        original_md5: None,
+        original_content: None,
+        original_encrypted_data_key: None,
+        original_ext_info: None,
+        updated_md5: None,
+        updated_content: None,
+        updated_encrypted_data_key: None,
+        update_ext_info: None,
+        created_time: Some(history_item.created_time.to_string()),
+        last_modified_time: Some(history_item.modified_time.to_string()),
+    };
+
+    // Populate original/updated content based on operation type
+    // Matches Nacos HistoryService.getConfigHistoryInfoDetail logic
+    match op_type.as_str() {
+        "I" => {
+            // INSERT: no original, updated is the new content
+            detail.updated_content = Some(history_item.content.clone());
+            detail.updated_md5 = Some(history_item.md5.clone());
+            detail.updated_encrypted_data_key = if history_item.encrypted_data_key.is_empty() {
+                None
+            } else {
+                Some(history_item.encrypted_data_key.clone())
+            };
+            detail.update_ext_info = if history_item.ext_info.is_empty() {
+                None
+            } else {
+                Some(history_item.ext_info.clone())
+            };
+            detail.original_content = Some(String::new());
+            detail.original_md5 = Some(String::new());
+            detail.original_encrypted_data_key = Some(String::new());
+            detail.original_ext_info = Some(String::new());
+        }
+        "U" => {
+            // UPDATE: original is this record's content, updated is the current config
+            detail.original_content = Some(history_item.content.clone());
+            detail.original_md5 = Some(history_item.md5.clone());
+            detail.original_encrypted_data_key = if history_item.encrypted_data_key.is_empty() {
+                None
+            } else {
+                Some(history_item.encrypted_data_key.clone())
+            };
+            detail.original_ext_info = if history_item.ext_info.is_empty() {
+                None
+            } else {
+                Some(history_item.ext_info.clone())
+            };
+
+            // Fall back to current config as the "updated" version
+            match persistence
+                .config_find_one(&params.data_id, &params.group, namespace_id)
+                .await
+            {
+                Ok(Some(current)) => {
+                    detail.updated_content = Some(current.content);
+                    detail.updated_md5 = Some(current.md5);
+                    detail.updated_encrypted_data_key = if current.encrypted_data_key.is_empty() {
+                        None
+                    } else {
+                        Some(current.encrypted_data_key)
+                    };
+                }
+                _ => {
+                    // Config may have been deleted since; leave updated as None
+                }
+            }
+        }
+        "D" => {
+            // DELETE: original is the deleted content, no updated
+            detail.original_content = Some(history_item.content.clone());
+            detail.original_md5 = Some(history_item.md5.clone());
+            detail.original_encrypted_data_key = if history_item.encrypted_data_key.is_empty() {
+                None
+            } else {
+                Some(history_item.encrypted_data_key.clone())
+            };
+            detail.original_ext_info = if history_item.ext_info.is_empty() {
+                None
+            } else {
+                Some(history_item.ext_info.clone())
+            };
+        }
+        _ => {
+            // Unknown op type: just include raw content
+            detail.original_content = Some(history_item.content.clone());
+            detail.original_md5 = Some(history_item.md5.clone());
+        }
+    }
+
+    Result::<ConfigHistoryInfoDetail>::http_success(detail)
 }
 
 /// Get previous history entry

@@ -39,15 +39,15 @@ This document provides the complete HTTP API routing tables for the three origin
 
 ---
 
-## 1. Nacos API Routes
+## 1. Nacos API Routes (Reference from Original Project)
+
+> **Source**: All routes verified against `~/work/github/easynet-cn/nacos` source code.
 
 Nacos 3.x uses a split deployment model:
-- **Main Server** (default port 8848, contextPath `/nacos`): Serves V2 Open API, V3 Admin API, and V3 Client API.
-- **Console Server** (default port 8081, no contextPath): Serves V3 Console API, V3/V1 Auth API for admin management.
+- **Main Server** (default port 8848, contextPath `/nacos`): Serves V2 Open API, V3 Admin API, V3 Client API, and V3 Auth API.
+- **Console Server** (default port 8081, no contextPath): Serves V3 Console API, V2 Console API, and V3 Auth API.
 
-The `NacosServerWebApplication` explicitly excludes `com.alibaba.nacos.console.*` and `com.alibaba.nacos.plugin.auth.impl.*` packages, so console and auth controllers do NOT run on the main server.
-
-> **Note**: Nacos 3.x direction focuses on V2 and V3 APIs. V1 API (except auth) is deprecated and NOT supported.
+> **Note**: Nacos 3.x focuses on V2 and V3 APIs. V1 API (except auth login) is deprecated and NOT supported. Auth routes are registered on **both** servers to support SDK authentication flow (HTTP login on main server before gRPC).
 
 ### 1.1 V2 Open API (Main Server - Port 8848)
 
@@ -55,15 +55,22 @@ All routes are prefixed with `/nacos`.
 
 #### Config Module (`/nacos/v2/cs`)
 
+**Config Controller** (`/nacos/v2/cs/config`)
+
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/nacos/v2/cs/config` | Get configuration |
 | POST | `/nacos/v2/cs/config` | Publish configuration (add or update) |
 | DELETE | `/nacos/v2/cs/config` | Delete configuration |
 | GET | `/nacos/v2/cs/config/searchDetail` | Search config by detail/content |
-| GET | `/nacos/v2/cs/history/list` | Query list of config history |
+
+**History Controller** (`/nacos/v2/cs/history`)
+
+| Method | Path | Description |
+|--------|------|-------------|
 | GET | `/nacos/v2/cs/history` | Query specific history entry |
-| GET | `/nacos/v2/cs/history/detail` | Query detailed history with original and updated versions |
+| GET | `/nacos/v2/cs/history/list` | Query list of config history |
+| GET | `/nacos/v2/cs/history/detail` | Query detailed history (original and updated versions) |
 | GET | `/nacos/v2/cs/history/previous` | Query previous config history |
 | GET | `/nacos/v2/cs/history/configs` | Query configs list by namespace |
 
@@ -101,13 +108,18 @@ All routes are prefixed with `/nacos`.
 | PUT | `/nacos/v2/ns/health` | Update instance health check |
 | PUT | `/nacos/v2/ns/health/instance` | Update instance health check (alternative path) |
 
-**Operator Controller** (`/nacos/v2/ns/operator`)
+**Operator Controller** (`/nacos/v2/ns/operator` and `/nacos/v2/ns/ops`)
+
+> **Note**: Nacos registers these endpoints under BOTH `/operator` and `/ops` dual paths.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/nacos/v2/ns/operator/switches` | Get system switch information |
 | PUT | `/nacos/v2/ns/operator/switches` | Update system switch information |
 | GET | `/nacos/v2/ns/operator/metrics` | Get naming service metrics |
+| GET | `/nacos/v2/ns/ops/switches` | (alias) Get system switch information |
+| PUT | `/nacos/v2/ns/ops/switches` | (alias) Update system switch information |
+| GET | `/nacos/v2/ns/ops/metrics` | (alias) Get naming service metrics |
 
 **Client Info Controller** (`/nacos/v2/ns/client`)
 
@@ -162,6 +174,8 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 | PUT | `/nacos/v3/admin/ns/service` | Update service |
 | DELETE | `/nacos/v3/admin/ns/service` | Delete service |
 | GET | `/nacos/v3/admin/ns/service/list` | List services |
+| GET | `/nacos/v3/admin/ns/service/subscribers` | Get service subscribers |
+| GET | `/nacos/v3/admin/ns/service/selector/types` | Get selector types |
 
 **Instance Controller** (`/nacos/v3/admin/ns/instance`)
 
@@ -172,38 +186,34 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 | PUT | `/nacos/v3/admin/ns/instance` | Update instance |
 | GET | `/nacos/v3/admin/ns/instance` | Get instance detail |
 | GET | `/nacos/v3/admin/ns/instance/list` | List instances |
-| PUT | `/nacos/v3/admin/ns/instance/metadata` | Update instance metadata |
+| POST | `/nacos/v3/admin/ns/instance/metadata/batch` | Batch update instance metadata |
 
 **Cluster Controller** (`/nacos/v3/admin/ns/cluster`)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | PUT | `/nacos/v3/admin/ns/cluster` | Update cluster |
+| GET | `/nacos/v3/admin/ns/cluster` | Get cluster detail |
 
 **Health Controller** (`/nacos/v3/admin/ns/health`)
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/nacos/v3/admin/ns/health` | Get health check status |
 | PUT | `/nacos/v3/admin/ns/health/instance` | Update instance health status |
-| GET | `/nacos/v3/admin/ns/health/checkers` | Get health checkers |
 
 **Client Controller** (`/nacos/v3/admin/ns/client`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/nacos/v3/admin/ns/client/list` | Get client list |
 | GET | `/nacos/v3/admin/ns/client` | Get client detail |
-| GET | `/nacos/v3/admin/ns/client/publish/list` | Get published services by client |
-| GET | `/nacos/v3/admin/ns/client/subscribe/list` | Get subscribed services by client |
 
 **Operator Controller** (`/nacos/v3/admin/ns/ops`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/nacos/v3/admin/ns/ops/switches` | Get switch information |
-| PUT | `/nacos/v3/admin/ns/ops/switches` | Update switches |
-| GET | `/nacos/v3/admin/ns/ops/metrics` | Get naming metrics |
-| PUT | `/nacos/v3/admin/ns/ops/log` | Set log level |
+| GET | `/nacos/v3/admin/ns/ops` | Get operator info |
+| POST | `/nacos/v3/admin/ns/ops` | Operator action |
 
 #### Config Admin (`/nacos/v3/admin/cs`)
 
@@ -211,49 +221,48 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/nacos/v3/admin/cs/config` | Get configuration detail |
 | POST | `/nacos/v3/admin/cs/config` | Create configuration |
-| GET | `/nacos/v3/admin/cs/config` | Get configuration |
-| GET | `/nacos/v3/admin/cs/config/list` | List configurations with pagination |
 | PUT | `/nacos/v3/admin/cs/config` | Update configuration |
 | DELETE | `/nacos/v3/admin/cs/config` | Delete configuration |
+| GET | `/nacos/v3/admin/cs/config/search` | Search configurations |
 | POST | `/nacos/v3/admin/cs/config/import` | Import configurations |
 | GET | `/nacos/v3/admin/cs/config/export` | Export configurations |
+| GET | `/nacos/v3/admin/cs/config/clone` | Clone configuration to another namespace |
 
-**Config Ops Controller** (`/nacos/v3/admin/cs/ops`)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/nacos/v3/admin/cs/ops/localCache` | Dump local cache |
-| PUT | `/nacos/v3/admin/cs/ops/log` | Set log level |
-| GET | `/nacos/v3/admin/cs/ops/derby` | Derby query |
-| POST | `/nacos/v3/admin/cs/ops/derby/import` | Import from external DB |
-
-**Capacity Controller** (`/nacos/v3/admin/cs/capacity`)
+**Config Gray Rules** (`/nacos/v3/admin/cs/config/gray`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/nacos/v3/admin/cs/capacity` | Get capacity |
-| POST | `/nacos/v3/admin/cs/capacity` | Set capacity |
+| GET | `/nacos/v3/admin/cs/config/gray/{dataId}` | Get gray rule |
+| PUT | `/nacos/v3/admin/cs/config/gray/{dataId}` | Update gray rule |
+| DELETE | `/nacos/v3/admin/cs/config/gray/{dataId}` | Delete gray rule |
 
-**Listener Controller** (`/nacos/v3/admin/cs/listener`)
+**Config Listener** (`/nacos/v3/admin/cs/listener`)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/nacos/v3/admin/cs/listener` | Get listener state |
+| GET | `/nacos/v3/admin/cs/listener/ip` | Get listener by IP |
 
-**History Controller** (`/nacos/v3/admin/cs/history`)
+**Config History** (`/nacos/v3/admin/cs/history`)
 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/nacos/v3/admin/cs/history/list` | List config history |
-| GET | `/nacos/v3/admin/cs/history/detail` | Get history detail |
+| GET | `/nacos/v3/admin/cs/history/detail/{nid}` | Get history detail |
 
-**Metrics Controller** (`/nacos/v3/admin/cs/metrics`)
+**Config Capacity** (`/nacos/v3/admin/cs/capacity`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/nacos/v3/admin/cs/metrics/cluster` | Get cluster metrics |
-| GET | `/nacos/v3/admin/cs/metrics/ip` | Get IP metrics |
+| GET | `/nacos/v3/admin/cs/capacity` | Get capacity |
+
+**Config Metrics** (`/nacos/v3/admin/cs/metrics`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/nacos/v3/admin/cs/metrics` | Get config metrics |
 
 #### Core Admin (`/nacos/v3/admin/core`)
 
@@ -263,8 +272,8 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 |--------|------|-------------|
 | GET | `/nacos/v3/admin/core/cluster/node/self` | Get current node info |
 | GET | `/nacos/v3/admin/core/cluster/node/list` | List cluster nodes |
-| GET | `/nacos/v3/admin/core/cluster/node/self/health` | Get node health |
-| PUT | `/nacos/v3/admin/core/cluster/lookup` | Update node lookup mode |
+| PUT | `/nacos/v3/admin/core/cluster/node/list` | Update cluster node metadata |
+| PUT | `/nacos/v3/admin/core/cluster/lookup` | Update addressing/lookup mode |
 
 **Namespace Controller** (`/nacos/v3/admin/core/namespace`)
 
@@ -275,6 +284,15 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 | POST | `/nacos/v3/admin/core/namespace` | Create namespace |
 | PUT | `/nacos/v3/admin/core/namespace` | Update namespace |
 | DELETE | `/nacos/v3/admin/core/namespace` | Delete namespace |
+| GET | `/nacos/v3/admin/core/namespace/check` | Check if namespace ID exists |
+
+**State Controller** (`/nacos/v3/admin/core/state`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/nacos/v3/admin/core/state` | Get server state |
+| GET | `/nacos/v3/admin/core/state/liveness` | Server liveness check |
+| GET | `/nacos/v3/admin/core/state/readiness` | Server readiness check |
 
 **Ops Controller** (`/nacos/v3/admin/core/ops`)
 
@@ -288,11 +306,11 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/nacos/v3/admin/core/loader/current` | Get current clients |
-| POST | `/nacos/v3/admin/core/loader/reloadCurrent` | Reload current count |
-| POST | `/nacos/v3/admin/core/loader/smartReloadCluster` | Smart reload cluster |
-| GET | `/nacos/v3/admin/core/loader/reloadClient` | Reload client |
-| GET | `/nacos/v3/admin/core/loader/cluster` | Get cluster info |
+| GET | `/nacos/v3/admin/core/loader/current` | Get current SDK clients |
+| POST | `/nacos/v3/admin/core/loader/reloadCurrent` | Rebalance SDK connections on current server |
+| POST | `/nacos/v3/admin/core/loader/smartReloadCluster` | Smart reload cluster connections |
+| POST | `/nacos/v3/admin/core/loader/reloadClient` | Reload specific SDK client |
+| GET | `/nacos/v3/admin/core/loader/cluster` | Get server loader metrics |
 
 #### AI Admin (`/nacos/v3/admin/ai`)
 
@@ -305,6 +323,9 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 | POST | `/nacos/v3/admin/ai/mcp` | Create MCP server |
 | PUT | `/nacos/v3/admin/ai/mcp` | Update MCP server |
 | DELETE | `/nacos/v3/admin/ai/mcp` | Delete MCP server |
+| POST | `/nacos/v3/admin/ai/mcp/import/validate` | Validate MCP import |
+| POST | `/nacos/v3/admin/ai/mcp/import/execute` | Execute MCP import |
+| GET | `/nacos/v3/admin/ai/mcp/tools` | Get MCP tools |
 
 **A2A Controller** (`/nacos/v3/admin/ai/a2a`)
 
@@ -315,10 +336,19 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 | PUT | `/nacos/v3/admin/ai/a2a` | Update agent |
 | DELETE | `/nacos/v3/admin/ai/a2a` | Delete agent |
 | GET | `/nacos/v3/admin/ai/a2a/list` | List agents |
+| GET | `/nacos/v3/admin/ai/a2a/version/list` | List agent versions |
 
 ### 1.3 V3 Client API (Main Server - Port 8848)
 
-All routes are prefixed with `/nacos`. These are SDK client-facing APIs running on the main server.
+All routes are prefixed with `/nacos`. These are SDK client-facing HTTP APIs for non-gRPC clients.
+
+#### Config Client (`/nacos/v3/client/cs`)
+
+**Config Open API Controller** (`/nacos/v3/client/cs/config`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/nacos/v3/client/cs/config` | Get configuration |
 
 #### Naming Client (`/nacos/v3/client/ns`)
 
@@ -329,14 +359,6 @@ All routes are prefixed with `/nacos`. These are SDK client-facing APIs running 
 | POST | `/nacos/v3/client/ns/instance` | Register instance or heartbeat |
 | DELETE | `/nacos/v3/client/ns/instance` | Deregister instance |
 | GET | `/nacos/v3/client/ns/instance/list` | Get instance list |
-
-#### Config Client (`/nacos/v3/client/cs`)
-
-**Config Open API Controller** (`/nacos/v3/client/cs/config`)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/nacos/v3/client/cs/config` | Get configuration |
 
 ### 1.4 V3 Console API (Console Server)
 
@@ -464,7 +486,9 @@ All routes are under the console server (default port 8081, no `/nacos` prefix).
 | GET | `/v2/console/health/liveness` | Check if Nacos is in broken state |
 | GET | `/v2/console/health/readiness` | Check if Nacos is ready to receive requests |
 
-### 1.5 V3 Auth API (Console Server)
+### 1.5 V3 Auth API (Both Servers)
+
+Auth routes are registered on **both** Main Server (under `/nacos/v3/auth`) and Console Server (under `/v3/auth`).
 
 #### User Controller (`/v3/auth/user`)
 
@@ -495,6 +519,162 @@ All routes are under the console server (default port 8081, no `/nacos` prefix).
 | DELETE | `/v3/auth/permission` | Delete permission from a role |
 | GET | `/v3/auth/permission/list` | Query permissions of a role |
 | GET | `/v3/auth/permission` | Check if a permission is duplicate |
+
+### 1.6 Batata vs Nacos Route Comparison
+
+This section documents all differences between the original Nacos routes and Batata's implementation.
+
+#### Legend
+
+- **OK** = Fully implemented with matching path
+- **PATH** = Route exists but path differs from Nacos
+- **MISSING** = Not implemented in Batata
+- **EXTRA** = Batata-only extension (not in original Nacos)
+
+#### V2 Open API Differences
+
+| Nacos Route | Batata Status | Notes |
+|-------------|---------------|-------|
+| `GET /v2/cs/history/detail` | **MISSING** | Detailed history with original and updated versions |
+| `PUT /v2/ns/health` | **MISSING** | Only `/v2/ns/health/instance` is implemented |
+| `GET /v2/ns/ops/switches` | **MISSING** | Nacos dual-maps operator under both `/operator` and `/ops`; Batata only has `/operator` |
+| `PUT /v2/ns/ops/switches` | **MISSING** | Same dual-path issue |
+| `GET /v2/ns/ops/metrics` | **MISSING** | Same dual-path issue |
+| `POST /v2/core/ops/raft` | **MISSING** | V2 core ops not implemented |
+| `GET /v2/core/ops/ids` | **MISSING** | V2 core ops not implemented |
+| `PUT /v2/core/ops/log` | **MISSING** | V2 core ops not implemented |
+| `GET /v2/console/health/liveness` | **MISSING** | V2 console health not implemented |
+| `GET /v2/console/health/readiness` | **MISSING** | V2 console health not implemented |
+| `POST /v2/cs/config/listener` | **EXTRA** | Batata has this; not in Nacos V2 config controller |
+| `GET /v2/cs/capacity` | **EXTRA** | Batata has capacity management in V2; Nacos only in V3 admin |
+| `POST /v2/cs/capacity` | **EXTRA** | Same |
+| `DELETE /v2/cs/capacity` | **EXTRA** | Same |
+
+#### V3 Admin API Differences
+
+**Config Admin:**
+
+| Nacos Route | Batata Status | Notes |
+|-------------|---------------|-------|
+| `GET /v3/admin/cs/config/search` | **PATH** | Batata uses `/v3/admin/cs/config/list` instead |
+| `GET /v3/admin/cs/config/clone` | **PATH** | Batata uses `POST /v3/admin/cs/config/clone` (different HTTP method) |
+| `GET /v3/admin/cs/config/gray/{dataId}` | **PATH** | Batata implements as beta: `GET /v3/admin/cs/config/beta` |
+| `PUT /v3/admin/cs/config/gray/{dataId}` | **PATH** | Batata: `POST /v3/admin/cs/config/beta` |
+| `DELETE /v3/admin/cs/config/gray/{dataId}` | **PATH** | Batata: `DELETE /v3/admin/cs/config/beta` |
+| `GET /v3/admin/cs/listener/ip` | **MISSING** | Listener by IP not implemented in admin |
+| `GET /v3/admin/cs/history/detail/{nid}` | **PATH** | Batata uses `/v3/admin/cs/history/detail` (query param, not path param) |
+| `GET /v3/admin/cs/metrics` | **PATH** | Batata splits into `/metrics/cluster` and `/metrics/ip` |
+| `GET /v3/admin/cs/capacity` | **EXTRA** | Batata has capacity in admin; may not exist in Nacos admin |
+| `POST /v3/admin/cs/capacity` | **EXTRA** | Same |
+| `DELETE /v3/admin/cs/config/batch` | **EXTRA** | Batch delete in admin |
+| `PUT /v3/admin/cs/config/metadata` | **EXTRA** | Config metadata update in admin |
+| `GET /v3/admin/cs/history/previous` | **EXTRA** | Previous history in admin |
+| `GET /v3/admin/cs/history/configs` | **EXTRA** | Namespace configs in admin |
+| `POST /v3/admin/cs/ops/localCache` | **EXTRA** | Dump local cache |
+| `PUT /v3/admin/cs/ops/log` | **EXTRA** | Set log level |
+| `GET /v3/admin/cs/ops/derby` | **EXTRA** | Derby query |
+| `POST /v3/admin/cs/ops/derby/import` | **EXTRA** | Derby import |
+
+**Naming Admin:**
+
+| Nacos Route | Batata Status | Notes |
+|-------------|---------------|-------|
+| `POST /v3/admin/ns/instance/metadata/batch` | **PATH** | Batata uses `PUT /v3/admin/ns/instance/metadata` (different method/path) |
+| `GET /v3/admin/ns/health` | **MISSING** | Base health status endpoint |
+| `GET /v3/admin/ns/ops` | **MISSING** | Base ops info endpoint |
+| `POST /v3/admin/ns/ops` | **MISSING** | Base ops action endpoint |
+| `GET /v3/admin/ns/service/subscribers` | OK | Implemented |
+| `GET /v3/admin/ns/service/selector/types` | OK | Implemented |
+| `PUT /v3/admin/ns/instance/partial` | **EXTRA** | Partial instance update |
+| `DELETE /v3/admin/ns/instance/metadata/batch` | **EXTRA** | Batch delete metadata |
+| `GET /v3/admin/ns/health/checkers` | **EXTRA** | Health checkers list |
+| `POST /v3/admin/ns/cluster` | **EXTRA** | Create cluster |
+| `GET /v3/admin/ns/cluster/statistics` | **EXTRA** | Cluster statistics |
+| `GET /v3/admin/ns/client/list` | **EXTRA** | Client list (Nacos only has base `/client`) |
+| `GET /v3/admin/ns/client/publish/list` | **EXTRA** | Client published services |
+| `GET /v3/admin/ns/client/subscribe/list` | **EXTRA** | Client subscribed services |
+| `GET /v3/admin/ns/client/service/publisher/list` | **EXTRA** | Service publishers |
+| `GET /v3/admin/ns/client/service/subscriber/list` | **EXTRA** | Service subscribers |
+| `GET /v3/admin/ns/client/distro` | **EXTRA** | Distro info |
+| `GET /v3/admin/ns/ops/switches` | **EXTRA** | Switches (Nacos has base `/ops`) |
+| `PUT /v3/admin/ns/ops/switches` | **EXTRA** | Update switches |
+| `GET /v3/admin/ns/ops/metrics` | **EXTRA** | Naming metrics |
+| `PUT /v3/admin/ns/ops/log` | **EXTRA** | Log level setting |
+
+**Core Admin:**
+
+| Nacos Route | Batata Status | Notes |
+|-------------|---------------|-------|
+| `PUT /v3/admin/core/cluster/node/list` | OK | Implemented |
+| `GET /v3/admin/core/namespace/check` | OK | Implemented |
+| `GET /v3/admin/core/state` | OK | Implemented |
+| `GET /v3/admin/core/state/liveness` | OK | Implemented |
+| `GET /v3/admin/core/state/readiness` | OK | Implemented |
+| `GET /v3/admin/core/cluster/node/self/health` | **EXTRA** | Not in Nacos V3 admin (only in V2 core) |
+| `GET /v3/admin/core/loader/current` | OK | Implemented |
+| `POST /v3/admin/core/loader/reloadCurrent` | OK | Implemented |
+| `POST /v3/admin/core/loader/smartReloadCluster` | OK | Implemented |
+| `POST /v3/admin/core/loader/reloadClient` | OK | Implemented |
+| `GET /v3/admin/core/loader/cluster` | OK | Implemented |
+
+**AI Admin:**
+
+| Nacos Route | Batata Status | Notes |
+|-------------|---------------|-------|
+| `POST /v3/admin/ai/mcp/import/validate` | OK | Implemented |
+| `POST /v3/admin/ai/mcp/import/execute` | OK | Implemented |
+| `GET /v3/admin/ai/mcp/tools` | **MISSING** | Get MCP tools not implemented |
+| `GET /v3/admin/ai/a2a/version/list` | OK | Implemented |
+
+#### V3 Console API Differences
+
+| Nacos Route | Batata Status | Notes |
+|-------------|---------------|-------|
+| `GET /v3/console/cs/config/export2` | **PATH** | Batata uses `/export` instead of `/export2` |
+| `POST /v3/console/cs/config/beta` | **EXTRA** | Batata has publish beta; Nacos console only has GET and DELETE for beta |
+| `GET /v3/console/cs/history/diff` | **EXTRA** | History diff |
+| `POST /v3/console/cs/history/rollback` | **EXTRA** | History rollback |
+| `GET /v3/console/cs/history/search` | **EXTRA** | Advanced history search |
+| `GET /v3/console/health` | **EXTRA** | Base health endpoint (Nacos only has liveness/readiness) |
+| `GET /v3/console/metrics` | **EXTRA** | Prometheus metrics |
+| Various cluster endpoints | **EXTRA** | Batata has 9 extra cluster endpoints (healthy nodes, self, count, leader, etc.) |
+
+#### V3 Auth API Differences
+
+| Nacos Route | Batata Status | Notes |
+|-------------|---------------|-------|
+| All V3 auth routes | OK | Fully implemented |
+| `GET /v3/auth/oauth/providers` | **EXTRA** | OAuth2/OIDC support (Batata extension) |
+| `GET /v3/auth/oauth/login/{provider}` | **EXTRA** | OAuth2 login initiation |
+| `GET /v3/auth/oauth/callback/{provider}` | **EXTRA** | OAuth2 callback |
+
+#### Batata-Only Extensions (Not in Nacos)
+
+These are additional features provided by Batata:
+
+| Category | Routes | Description |
+|----------|--------|-------------|
+| AI Registry API | `/v1/ai/mcp/*` | MCP server registry (no `/nacos` prefix) |
+| AI Registry API | `/v1/ai/a2a/*` | A2A agent registry (no `/nacos` prefix) |
+| Cloud Integration | `/v1/cloud/prometheus/*` | Prometheus service discovery |
+| Cloud Integration | `/v1/cloud/k8s/*` | Kubernetes integration |
+| MCP Registry | `/v0/servers` (port 9080) | MCP Registry OpenAPI spec |
+| Consul Compat | `/v1/*` (port 8500) | Full Consul API compatibility |
+| Apollo Compat | `/configs/*`, `/configfiles/*` (port 8080) | Apollo Config compatibility |
+| Console Plugin | `/v3/console/core/plugin/*` | Plugin management |
+| OAuth2 Auth | `/v3/auth/oauth/*` | OAuth2/OIDC authentication |
+
+#### Summary of Critical Issues
+
+The following items may cause **SDK client compatibility issues** with standard Nacos clients:
+
+1. **`GET /v3/console/cs/config/export2`**: Nacos uses `export2` but Batata uses `export`. Nacos console UI calls `export2`.
+2. **V2 operator dual paths**: Nacos SDKs may call either `/v2/ns/operator/*` or `/v2/ns/ops/*`. Batata only supports `/operator`.
+3. **`PUT /v2/ns/health`**: Some SDKs call the base health path without `/instance` suffix.
+4. **V2 core ops**: Missing `raft`, `ids`, `log` endpoints under `/v2/core/ops/`.
+5. **V2 console health**: Missing liveness/readiness under `/v2/console/health/`.
+6. **V3 admin config gray**: Nacos uses `gray/{dataId}` path param pattern; Batata uses `beta` with query params.
+7. **V3 admin MCP tools**: Missing `GET /v3/admin/ai/mcp/tools` endpoint.
 
 ---
 

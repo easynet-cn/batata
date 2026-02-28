@@ -150,6 +150,18 @@ impl PayloadHandler for ServerLoaderInfoHandler {
     fn can_handle(&self) -> &'static str {
         "ServerLoaderInfoRequest"
     }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Internal
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "internal"
+    }
+
+    fn resource_type(&self) -> batata_core::ResourceType {
+        batata_core::ResourceType::Internal
+    }
 }
 
 // Handler for ServerReloadRequest - triggers server configuration reload
@@ -202,7 +214,7 @@ impl PayloadHandler for ServerReloadHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Write
+        AuthRequirement::Internal
     }
 
     fn sign_type(&self) -> &'static str {

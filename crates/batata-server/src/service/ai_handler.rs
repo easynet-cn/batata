@@ -228,7 +228,7 @@ impl PayloadHandler for QueryMcpServerHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Write
+        AuthRequirement::Read
     }
 }
 
@@ -581,7 +581,7 @@ impl PayloadHandler for QueryAgentCardHandler {
     }
 
     fn auth_requirement(&self) -> AuthRequirement {
-        AuthRequirement::Write
+        AuthRequirement::Read
     }
 }
 
