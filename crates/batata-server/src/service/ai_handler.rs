@@ -52,7 +52,7 @@ impl PayloadHandler for McpServerEndpointHandler {
     ) -> Result<Payload, Status> {
         let request = McpServerEndpointRequest::from(payload);
         let request_id = request.request_id();
-        let operation = request.operation_type.to_lowercase();
+        let operation = &request.operation_type;
 
         // Check permission for AI resource (write)
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
@@ -73,7 +73,7 @@ impl PayloadHandler for McpServerEndpointHandler {
         );
 
         match operation.as_str() {
-            "register" => {
+            "registerEndpoint" | "register" => {
                 // Register endpoint via endpoint service if available
                 if let Some(ref ep_svc) = self.endpoint_service {
                     ep_svc.create_mcp_endpoint(
@@ -102,7 +102,7 @@ impl PayloadHandler for McpServerEndpointHandler {
                 response.operation_type = "register".to_string();
                 Ok(response.build_payload())
             }
-            "deregister" => {
+            "deregisterEndpoint" | "deregister" => {
                 // Deregister endpoint via endpoint service if available
                 if let Some(ref ep_svc) = self.endpoint_service {
                     ep_svc.delete_mcp_endpoint(
@@ -189,7 +189,7 @@ impl PayloadHandler for QueryMcpServerHandler {
                     let detail = serde_json::to_value(&server).unwrap_or_default();
                     let mut response = QueryMcpServerResponse::new();
                     response.response.request_id = request_id;
-                    response.detail = detail;
+                    response.mcp_server_detail_info = detail;
                     return Ok(response.build_payload());
                 }
                 Ok(None) => {}
@@ -206,7 +206,7 @@ impl PayloadHandler for QueryMcpServerHandler {
                 let detail = serde_json::to_value(&server).unwrap_or_default();
                 let mut response = QueryMcpServerResponse::new();
                 response.response.request_id = request_id;
-                response.detail = detail;
+                response.mcp_server_detail_info = detail;
                 Ok(response.build_payload())
             }
             None => {
@@ -387,7 +387,7 @@ impl PayloadHandler for AgentEndpointHandler {
     ) -> Result<Payload, Status> {
         let request = AgentEndpointRequest::from(payload);
         let request_id = request.request_id();
-        let operation = request.operation_type.to_lowercase();
+        let operation = &request.operation_type;
 
         // Check permission for AI resource (write)
         let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
@@ -408,7 +408,7 @@ impl PayloadHandler for AgentEndpointHandler {
         );
 
         match operation.as_str() {
-            "register" => {
+            "registerEndpoint" | "register" => {
                 let endpoint_info = request.endpoint.as_ref();
                 let endpoint_url = endpoint_info
                     .map(|ep| {
@@ -455,7 +455,7 @@ impl PayloadHandler for AgentEndpointHandler {
                 response.operation_type = "register".to_string();
                 Ok(response.build_payload())
             }
-            "deregister" => {
+            "deregisterEndpoint" | "deregister" => {
                 // Deregister endpoint via endpoint service if available
                 if let (Some(ep_svc), Some(ep_info)) = (&self.endpoint_service, &request.endpoint) {
                     ep_svc.delete_agent_endpoint(
@@ -542,7 +542,7 @@ impl PayloadHandler for QueryAgentCardHandler {
                     let detail = serde_json::to_value(&agent).unwrap_or_default();
                     let mut response = QueryAgentCardResponse::new();
                     response.response.request_id = request_id;
-                    response.detail = detail;
+                    response.agent_card_detail_info = detail;
                     return Ok(response.build_payload());
                 }
                 Ok(None) => {}
@@ -559,7 +559,7 @@ impl PayloadHandler for QueryAgentCardHandler {
                 let detail = serde_json::to_value(&agent).unwrap_or_default();
                 let mut response = QueryAgentCardResponse::new();
                 response.response.request_id = request_id;
-                response.detail = detail;
+                response.agent_card_detail_info = detail;
                 Ok(response.build_payload())
             }
             None => {
@@ -802,7 +802,7 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "QueryMcpServerRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Read);
     }
 
     #[test]
@@ -836,7 +836,7 @@ mod tests {
             auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "QueryAgentCardRequest");
-        assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
+        assert_eq!(handler.auth_requirement(), AuthRequirement::Read);
     }
 
     #[test]

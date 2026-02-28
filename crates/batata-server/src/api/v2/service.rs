@@ -16,8 +16,8 @@ use tracing::info;
 use batata_naming::service::ServiceMetadata;
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
-    secured, service::naming::NamingService,
+    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
+    model::response::Result, secured, service::naming::NamingService,
 };
 
 use super::model::{
@@ -39,11 +39,11 @@ pub async fn create_service(
 ) -> impl Responder {
     // Validate required parameters
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -65,11 +65,11 @@ pub async fn create_service(
 
     // Check if service already exists
     if naming_service.service_exists(namespace_id, group_name, &form.service_name) {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             format!("service {} already exists", form.service_name),
-            false,
+            String::new(),
         );
     }
 
@@ -119,7 +119,7 @@ pub async fn create_service(
         "Service created successfully"
     );
 
-    Result::<bool>::http_success(true)
+    Result::<String>::http_success("ok".to_string())
 }
 
 /// Delete service
@@ -136,11 +136,11 @@ pub async fn delete_service(
 ) -> impl Responder {
     // Validate required parameters
     if params.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -162,11 +162,11 @@ pub async fn delete_service(
 
     // Check if service exists
     if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             404,
-            404,
+            error::SERVICE_NOT_EXIST.code,
             format!("service {} not found", params.service_name),
-            false,
+            String::new(),
         );
     }
 
@@ -175,15 +175,15 @@ pub async fn delete_service(
         naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
 
     if !instances.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             format!(
                 "service {} has {} instances, cannot delete",
                 params.service_name,
                 instances.len()
             ),
-            false,
+            String::new(),
         );
     }
 
@@ -197,7 +197,7 @@ pub async fn delete_service(
         "Service deleted successfully"
     );
 
-    Result::<bool>::http_success(true)
+    Result::<String>::http_success("ok".to_string())
 }
 
 /// Update service
@@ -214,11 +214,11 @@ pub async fn update_service(
 ) -> impl Responder {
     // Validate required parameters
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -240,11 +240,11 @@ pub async fn update_service(
 
     // Check if service exists
     if !naming_service.service_exists(namespace_id, group_name, &form.service_name) {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             404,
-            404,
+            error::SERVICE_NOT_EXIST.code,
             format!("service {} not found", form.service_name),
-            false,
+            String::new(),
         );
     }
 
@@ -292,7 +292,7 @@ pub async fn update_service(
         "Service updated successfully"
     );
 
-    Result::<bool>::http_success(true)
+    Result::<String>::http_success("ok".to_string())
 }
 
 /// Get service detail
@@ -311,7 +311,7 @@ pub async fn get_service(
     if params.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
             String::new(),
         );
@@ -337,7 +337,7 @@ pub async fn get_service(
     if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
         return Result::<Option<ServiceDetailResponse>>::http_response(
             404,
-            404,
+            error::SERVICE_NOT_EXIST.code,
             format!("service {} not found", params.service_name),
             None::<ServiceDetailResponse>,
         );
@@ -354,8 +354,6 @@ pub async fn get_service(
     // Calculate cluster count
     let clusters: std::collections::HashSet<_> =
         instances.iter().map(|i| i.cluster_name.clone()).collect();
-
-    let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
 
     let (protect_threshold, metadata, selector) = if let Some(meta) = metadata_opt {
         let selector = if meta.selector_type != "none" && !meta.selector_type.is_empty() {
@@ -384,16 +382,26 @@ pub async fn get_service(
         (0.0, None, None)
     };
 
+    // Build cluster map from cluster names
+    let cluster_map: Option<std::collections::HashMap<String, serde_json::Value>> =
+        if clusters.is_empty() {
+            None
+        } else {
+            let map: std::collections::HashMap<String, serde_json::Value> = clusters
+                .iter()
+                .map(|c| (c.clone(), serde_json::json!({})))
+                .collect();
+            Some(map)
+        };
+
     let response = ServiceDetailResponse {
         namespace: namespace_id.to_string(),
         group_name: group_name.to_string(),
-        name: params.service_name.clone(),
+        service_name: params.service_name.clone(),
         protect_threshold,
         metadata,
         selector,
-        cluster_count: clusters.len() as i32,
-        ip_count: instances.len() as i32,
-        healthy_instance_count: healthy_count as i32,
+        cluster_map,
         ephemeral: true, // Default to ephemeral
     };
 
@@ -425,12 +433,15 @@ pub async fn get_service_list(
             .build()
     );
 
+    // Cap page_size at 500
+    let page_size = params.page_size.min(500);
+
     // Get service list
     let (total_count, service_names) = naming_service.list_services(
         namespace_id,
         group_name,
         params.page_no as i32,
-        params.page_size as i32,
+        page_size as i32,
     );
 
     let response = ServiceListResponse {

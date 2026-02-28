@@ -19,6 +19,7 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct InstanceListQuery {
     #[serde(default)]
     namespace_id: Option<String>,
@@ -31,6 +32,8 @@ struct InstanceListQuery {
     page_no: u64,
     #[serde(default = "default_page_size")]
     page_size: u64,
+    #[serde(default)]
+    healthy_only: Option<bool>,
 }
 
 fn default_page_no() -> u64 {
@@ -38,7 +41,7 @@ fn default_page_no() -> u64 {
 }
 
 fn default_page_size() -> u64 {
-    10
+    100
 }
 
 impl InstanceListQuery {
@@ -75,6 +78,10 @@ struct InstanceUpdateForm {
     enabled: bool,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
+    #[serde(default)]
+    ephemeral: bool,
+    #[serde(default = "default_true")]
+    healthy: bool,
 }
 
 fn default_weight() -> f64 {
@@ -186,7 +193,7 @@ async fn list_instances(
 async fn update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Json<InstanceUpdateForm>,
+    form: web::Form<InstanceUpdateForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();
     let group_name = form.group_name_or_default();
@@ -216,9 +223,9 @@ async fn update_instance(
         ip: form.ip.clone(),
         port: form.port,
         weight,
-        healthy: true,
+        healthy: form.healthy,
         enabled: form.enabled,
-        ephemeral: true,
+        ephemeral: form.ephemeral,
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata: form.metadata.clone().unwrap_or_default(),
@@ -237,7 +244,7 @@ async fn update_instance(
         );
     }
 
-    Result::<bool>::http_success(true)
+    Result::<String>::http_success("ok".to_string())
 }
 
 pub fn routes() -> Scope {

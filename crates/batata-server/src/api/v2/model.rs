@@ -79,9 +79,9 @@ pub struct ConfigPublishParam {
     /// Schema for config validation (optional)
     #[serde(default)]
     pub schema: Option<String>,
-    /// Beta IPs for gray release (optional)
-    #[serde(default, alias = "betaIps")]
-    pub beta_ips: Option<String>,
+    /// Encrypted data key (optional)
+    #[serde(default)]
+    pub encrypted_data_key: Option<String>,
 }
 
 impl ConfigPublishParam {
@@ -156,7 +156,7 @@ pub struct ConfigSearchDetailParam {
     #[serde(default)]
     pub group: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "tenant")]
     pub namespace_id: Option<String>,
     /// Application name filter (optional)
     #[serde(default)]
@@ -170,6 +170,12 @@ pub struct ConfigSearchDetailParam {
     /// Content search filter (optional)
     #[serde(default)]
     pub content: Option<String>,
+    /// Search type (blur/accurate, defaults to "blur")
+    #[serde(default = "default_search")]
+    pub search: String,
+    /// Config detail/content search filter (optional)
+    #[serde(default)]
+    pub config_detail: Option<String>,
     /// Page number (1-based, defaults to 1)
     #[serde(default = "default_page_no")]
     pub page_no: u64,
@@ -216,6 +222,10 @@ fn default_page_no() -> u64 {
 
 fn default_page_size() -> u64 {
     100
+}
+
+fn default_search() -> String {
+    "blur".to_string()
 }
 
 impl HistoryListParam {
@@ -329,6 +339,9 @@ pub struct HistoryItemResponse {
     /// Publish type
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_type: Option<String>,
+    /// Gray/canary release name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gray_name: Option<String>,
     /// Extended information
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ext_info: Option<String>,
@@ -430,6 +443,18 @@ pub struct ConfigInfoResponse {
     /// Config type
     #[serde(skip_serializing_if = "Option::is_none")]
     pub r#type: Option<String>,
+    /// Config content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// MD5 hash of content
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub md5: Option<String>,
+    /// Encrypted data key
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_data_key: Option<String>,
+    /// Last modified time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
 }
 
 // =============================================================================
@@ -618,11 +643,20 @@ pub struct InstanceListParam {
     /// Service name (required)
     pub service_name: String,
     /// Cluster name filter (optional, comma-separated)
-    #[serde(default)]
-    pub clusters: Option<String>,
+    #[serde(default, alias = "clusters")]
+    pub cluster_name: Option<String>,
     /// Only return healthy instances (optional, defaults to false)
     #[serde(default)]
     pub healthy_only: Option<bool>,
+    /// IP filter (optional)
+    #[serde(default)]
+    pub ip: Option<String>,
+    /// Port filter (optional)
+    #[serde(default)]
+    pub port: Option<i32>,
+    /// App name filter (optional)
+    #[serde(default)]
+    pub app: Option<String>,
 }
 
 impl InstanceListParam {
@@ -847,7 +881,7 @@ pub struct ServiceListParam {
 }
 
 fn default_service_page_size() -> u64 {
-    10
+    20
 }
 
 impl ServiceListParam {
@@ -867,15 +901,14 @@ impl ServiceListParam {
 pub struct ServiceDetailResponse {
     pub namespace: String,
     pub group_name: String,
-    pub name: String,
+    pub service_name: String,
     pub protect_threshold: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<std::collections::HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selector: Option<SelectorResponse>,
-    pub cluster_count: i32,
-    pub ip_count: i32,
-    pub healthy_instance_count: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster_map: Option<std::collections::HashMap<String, serde_json::Value>>,
     pub ephemeral: bool,
 }
 
@@ -1147,9 +1180,12 @@ impl InstanceHealthParam {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeListParam {
-    /// Filter by address keyword (optional)
+    /// Filter by address prefix (optional)
     #[serde(default)]
-    pub keyword: Option<String>,
+    pub address: Option<String>,
+    /// Filter by node state (optional)
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 /// Request parameters for switching lookup mode

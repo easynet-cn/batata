@@ -6,7 +6,7 @@
 //! - DELETE /nacos/v2/cs/config - Delete config
 //! - GET /nacos/v2/cs/config/searchDetail - Search config detail
 
-use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, post, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, web};
 use batata_api::model::Page;
 use batata_config::model::config::ConfigBasicInfo;
 use tracing::{info, warn};
@@ -17,7 +17,7 @@ use crate::{
 };
 
 use super::model::{
-    ConfigDeleteParam, ConfigGetParam, ConfigPublishParam, ConfigResponse, ConfigSearchDetailParam,
+    ConfigDeleteParam, ConfigGetParam, ConfigPublishParam, ConfigSearchDetailParam,
 };
 
 /// Helper to convert ConfigStorageData to ConfigBasicInfo
@@ -50,7 +50,7 @@ pub async fn get_config(
     if params.data_id.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'dataId' is missing".to_string(),
             String::new(),
         );
@@ -59,7 +59,7 @@ pub async fn get_config(
     if params.group.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
@@ -111,26 +111,12 @@ pub async fn get_config(
 
         for (gray, rule) in candidates {
             if rule.matches(&labels) {
-                let response = ConfigResponse {
-                    id: "0".to_string(),
-                    data_id: gray.data_id.clone(),
-                    group: gray.group.clone(),
-                    content: gray.content.clone(),
-                    md5: gray.md5.clone(),
-                    encrypted_data_key: if gray.encrypted_data_key.is_empty() {
-                        None
-                    } else {
-                        Some(gray.encrypted_data_key.clone())
-                    },
-                    tenant: gray.tenant.clone(),
-                    app_name: if gray.app_name.is_empty() {
-                        None
-                    } else {
-                        Some(gray.app_name.clone())
-                    },
-                    r#type: None,
-                };
-                return Result::<ConfigResponse>::http_success(response);
+                return HttpResponse::Ok()
+                    .insert_header(("Config-Type", ""))
+                    .insert_header(("Content-MD5", gray.md5.as_str()))
+                    .insert_header(("Cache-Control", "no-cache"))
+                    .insert_header(("Pragma", "no-cache"))
+                    .json(Result::<String>::success(gray.content.clone()));
             }
         }
     }
@@ -140,40 +126,20 @@ pub async fn get_config(
         .config_find_one(&params.data_id, &params.group, namespace_id)
         .await
     {
-        Ok(Some(config)) => {
-            let response = ConfigResponse {
-                id: "0".to_string(),
-                data_id: config.data_id,
-                group: config.group,
-                content: config.content,
-                md5: config.md5,
-                encrypted_data_key: if config.encrypted_data_key.is_empty() {
-                    None
-                } else {
-                    Some(config.encrypted_data_key)
-                },
-                tenant: config.tenant,
-                app_name: if config.app_name.is_empty() {
-                    None
-                } else {
-                    Some(config.app_name)
-                },
-                r#type: if config.config_type.is_empty() {
-                    None
-                } else {
-                    Some(config.config_type)
-                },
-            };
-            Result::<ConfigResponse>::http_success(response)
-        }
-        Ok(None) => Result::<Option<ConfigResponse>>::http_response(
+        Ok(Some(config)) => HttpResponse::Ok()
+            .insert_header(("Config-Type", config.config_type.as_str()))
+            .insert_header(("Content-MD5", config.md5.as_str()))
+            .insert_header(("Cache-Control", "no-cache"))
+            .insert_header(("Pragma", "no-cache"))
+            .json(Result::<String>::success(config.content)),
+        Ok(None) => Result::<Option<String>>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!(
                 "config data not exist, dataId={}, group={}, tenant={}",
                 params.data_id, params.group, namespace_id
             ),
-            None::<ConfigResponse>,
+            None::<String>,
         ),
         Err(e) => {
             warn!(error = %e, "Failed to get config");
@@ -200,29 +166,29 @@ pub async fn publish_config(
 ) -> impl Responder {
     // Validate required parameters
     if form.data_id.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'dataId' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if form.group.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if form.content.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'content' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -247,10 +213,17 @@ pub async fn publish_config(
 
     let src_user = form.src_user.clone().unwrap_or_default();
 
+    // Read betaIps from request header instead of form body
+    let beta_ips = req
+        .headers()
+        .get("betaIps")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let persistence = data.persistence();
 
     // Handle gray (beta) publish if betaIps is provided
-    if let Some(ref beta_ips) = form.beta_ips
+    if let Some(ref beta_ips) = beta_ips
         && !beta_ips.is_empty()
     {
         let gray_rule_info = batata_config::model::gray_rule::GrayRulePersistInfo::new_beta(
@@ -260,11 +233,11 @@ pub async fn publish_config(
         let gray_rule = match gray_rule_info.to_json() {
             Ok(json) => json,
             Err(e) => {
-                return Result::<bool>::http_response(
+                return Result::<String>::http_response(
                     500,
-                    500,
+                    error::SERVER_ERROR.code,
                     format!("Failed to serialize gray rule: {}", e),
-                    false,
+                    String::new(),
                 );
             }
         };
@@ -291,15 +264,15 @@ pub async fn publish_config(
                     namespace_id = %namespace_id,
                     "Beta config published successfully"
                 );
-                return Result::<bool>::http_success(true);
+                return Result::<String>::http_success("ok".to_string());
             }
             Err(e) => {
                 warn!(error = %e, "Failed to publish beta config");
-                return Result::<bool>::http_response(
+                return Result::<String>::http_response(
                     500,
                     error::SERVER_ERROR.code,
                     e.to_string(),
-                    false,
+                    String::new(),
                 );
             }
         }
@@ -332,11 +305,16 @@ pub async fn publish_config(
                 namespace_id = %namespace_id,
                 "Config published successfully"
             );
-            Result::<bool>::http_success(true)
+            Result::<String>::http_success("ok".to_string())
         }
         Err(e) => {
             warn!(error = %e, "Failed to publish config");
-            Result::<bool>::http_response(500, error::SERVER_ERROR.code, e.to_string(), false)
+            Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -354,20 +332,20 @@ pub async fn delete_config(
 ) -> impl Responder {
     // Validate required parameters
     if params.data_id.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'dataId' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if params.group.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -406,30 +384,23 @@ pub async fn delete_config(
         )
         .await
     {
-        Ok(deleted) => {
-            if deleted {
-                info!(
-                    data_id = %params.data_id,
-                    group = %params.group,
-                    namespace_id = %namespace_id,
-                    "Config deleted successfully"
-                );
-                Result::<bool>::http_success(true)
-            } else {
-                Result::<bool>::http_response(
-                    404,
-                    404,
-                    format!(
-                        "config data not exist, dataId={}, group={}, tenant={}",
-                        params.data_id, params.group, namespace_id
-                    ),
-                    false,
-                )
-            }
+        Ok(_) => {
+            info!(
+                data_id = %params.data_id,
+                group = %params.group,
+                namespace_id = %namespace_id,
+                "Config deleted successfully"
+            );
+            Result::<String>::http_success("ok".to_string())
         }
         Err(e) => {
             warn!(error = %e, "Failed to delete config");
-            Result::<bool>::http_response(500, error::SERVER_ERROR.code, e.to_string(), false)
+            Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -508,7 +479,7 @@ pub async fn search_config_detail(
             warn!(error = %e, "Failed to search config detail");
             Result::<Page<ConfigBasicInfo>>::http_response(
                 500,
-                500,
+                error::SERVER_ERROR.code,
                 e.to_string(),
                 Page::<ConfigBasicInfo>::default(),
             )

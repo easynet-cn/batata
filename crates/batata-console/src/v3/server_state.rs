@@ -11,7 +11,12 @@ pub const GUIDE_FILE: &str = "console-guide.conf";
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LanguageParam {
+    #[serde(default = "default_language")]
     language: String,
+}
+
+fn default_language() -> String {
+    "zh-CN".to_string()
 }
 
 /// Server state configuration

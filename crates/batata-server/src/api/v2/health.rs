@@ -11,8 +11,8 @@ use std::sync::Arc;
 use actix_web::{HttpMessage, HttpRequest, Responder, put, web};
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
-    secured, service::naming::NamingService,
+    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
+    model::response::Result, secured, service::naming::NamingService,
 };
 
 use super::model::InstanceHealthParam;
@@ -29,35 +29,35 @@ pub async fn update_instance_health(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<NamingService>>,
-    params: web::Query<InstanceHealthParam>,
+    form: web::Form<InstanceHealthParam>,
 ) -> impl Responder {
     // Validate required parameters
-    if params.service_name.is_empty() {
-        return Result::<bool>::http_response(
+    if form.service_name.is_empty() {
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
-    if params.ip.is_empty() {
-        return Result::<bool>::http_response(
+    if form.ip.is_empty() {
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'ip' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
-    let namespace_id = params.namespace_id_or_default();
-    let group_name = params.group_name_or_default();
-    let cluster_name = params.cluster_name_or_default();
+    let namespace_id = form.namespace_id_or_default();
+    let group_name = form.group_name_or_default();
+    let cluster_name = form.cluster_name_or_default();
 
     // Check authorization
     let resource = format!(
         "{}:{}:naming/{}",
-        namespace_id, group_name, params.service_name
+        namespace_id, group_name, form.service_name
     );
     secured!(
         Secured::builder(&req, &data, &resource)
@@ -71,24 +71,24 @@ pub async fn update_instance_health(
     let instances = naming_service.get_instances(
         namespace_id,
         group_name,
-        &params.service_name,
+        &form.service_name,
         cluster_name,
         false,
     );
 
     let instance_exists = instances
         .iter()
-        .any(|i| i.ip == params.ip && i.port == params.port);
+        .any(|i| i.ip == form.ip && i.port == form.port);
 
     if !instance_exists {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             404,
-            404,
+            error::INSTANCE_NOT_FOUND.code,
             format!(
                 "instance {}:{} not found in service {}",
-                params.ip, params.port, params.service_name
+                form.ip, form.port, form.service_name
             ),
-            false,
+            String::new(),
         );
     }
 
@@ -96,30 +96,30 @@ pub async fn update_instance_health(
     let success = naming_service.update_instance_health(
         namespace_id,
         group_name,
-        &params.service_name,
-        &params.ip,
-        params.port,
+        &form.service_name,
+        &form.ip,
+        form.port,
         cluster_name,
-        params.healthy,
+        form.healthy,
     );
 
     if success {
         tracing::info!(
             namespace_id = %namespace_id,
             group_name = %group_name,
-            service_name = %params.service_name,
-            ip = %params.ip,
-            port = %params.port,
-            healthy = %params.healthy,
+            service_name = %form.service_name,
+            ip = %form.ip,
+            port = %form.port,
+            healthy = %form.healthy,
             "Instance health status updated"
         );
-        Result::<bool>::http_success(true)
+        Result::<String>::http_success("ok".to_string())
     } else {
-        Result::<bool>::http_response(
+        Result::<String>::http_response(
             500,
-            500,
+            error::SERVER_ERROR.code,
             "Failed to update instance health status".to_string(),
-            false,
+            String::new(),
         )
     }
 }
@@ -130,32 +130,32 @@ pub async fn update_instance_health_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<NamingService>>,
-    params: web::Query<InstanceHealthParam>,
+    form: web::Form<InstanceHealthParam>,
 ) -> impl Responder {
-    if params.service_name.is_empty() {
-        return Result::<bool>::http_response(
+    if form.service_name.is_empty() {
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
-    if params.ip.is_empty() {
-        return Result::<bool>::http_response(
+    if form.ip.is_empty() {
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'ip' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
-    let namespace_id = params.namespace_id_or_default();
-    let group_name = params.group_name_or_default();
-    let cluster_name = params.cluster_name_or_default();
+    let namespace_id = form.namespace_id_or_default();
+    let group_name = form.group_name_or_default();
+    let cluster_name = form.cluster_name_or_default();
 
     let resource = format!(
         "{}:{}:naming/{}",
-        namespace_id, group_name, params.service_name
+        namespace_id, group_name, form.service_name
     );
     secured!(
         Secured::builder(&req, &data, &resource)
@@ -168,45 +168,45 @@ pub async fn update_instance_health_handler(
     let instances = naming_service.get_instances(
         namespace_id,
         group_name,
-        &params.service_name,
+        &form.service_name,
         cluster_name,
         false,
     );
 
     let instance_exists = instances
         .iter()
-        .any(|i| i.ip == params.ip && i.port == params.port);
+        .any(|i| i.ip == form.ip && i.port == form.port);
 
     if !instance_exists {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             404,
-            404,
+            error::INSTANCE_NOT_FOUND.code,
             format!(
                 "instance {}:{} not found in service {}",
-                params.ip, params.port, params.service_name
+                form.ip, form.port, form.service_name
             ),
-            false,
+            String::new(),
         );
     }
 
     let success = naming_service.update_instance_health(
         namespace_id,
         group_name,
-        &params.service_name,
-        &params.ip,
-        params.port,
+        &form.service_name,
+        &form.ip,
+        form.port,
         cluster_name,
-        params.healthy,
+        form.healthy,
     );
 
     if success {
-        Result::<bool>::http_success(true)
+        Result::<String>::http_success("ok".to_string())
     } else {
-        Result::<bool>::http_response(
+        Result::<String>::http_response(
             500,
-            500,
+            error::SERVER_ERROR.code,
             "Failed to update instance health status".to_string(),
-            false,
+            String::new(),
         )
     }
 }

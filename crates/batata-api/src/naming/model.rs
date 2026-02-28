@@ -153,7 +153,7 @@ impl Service {
         Self {
             name,
             group_name,
-            cache_millis: 10000,
+            cache_millis: 1000,
             ..Default::default()
         }
     }
@@ -590,6 +590,9 @@ pub struct NamingFuzzyWatchRequest {
     pub namespace: String,
     pub service_name_pattern: String,
     pub group_name_pattern: String,
+    #[serde(default, alias = "groupKeyPattern")]
+    pub group_key_pattern: String,
+    #[serde(default, alias = "receivedGroupKeys")]
     pub received_service_keys: HashSet<String>,
     pub watch_type: String,
     pub is_initializing: bool,
@@ -648,6 +651,7 @@ pub struct NamingFuzzyWatchChangeNotifyRequest {
     #[serde(flatten)]
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
     pub service_key: String,
+    #[serde(alias = "changedType")]
     pub change_type: String,
 }
 

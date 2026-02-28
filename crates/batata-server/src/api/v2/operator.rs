@@ -12,11 +12,25 @@ use std::sync::Arc;
 use actix_web::{HttpMessage, HttpRequest, Responder, get, put, web};
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
-    secured, service::naming::NamingService,
+    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
+    model::response::Result, secured, service::naming::NamingService,
 };
 
+use serde::Deserialize;
+
 use super::model::{NamingMetricsResponse, SwitchUpdateParam, SwitchesResponse};
+
+/// Request parameters for metrics endpoint
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetricsParam {
+    #[serde(default = "default_true")]
+    pub only_status: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
 
 /// Get system switches (internal implementation)
 fn build_switches_response(config: &crate::model::common::Configuration) -> SwitchesResponse {
@@ -49,17 +63,7 @@ fn build_switches_response(config: &crate::model::common::Configuration) -> Swit
 ///
 /// Returns the current system configuration switches.
 #[get("")]
-pub async fn get_switches(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
-    // Check authorization for operator operations
-    let resource = "*:*:naming/*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Read)
-            .sign_type(SignType::Naming)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
-
+pub async fn get_switches(data: web::Data<AppState>) -> impl Responder {
     let response = build_switches_response(&data.configuration);
     Result::<SwitchesResponse>::http_success(response)
 }
@@ -73,21 +77,21 @@ pub async fn get_switches(req: HttpRequest, data: web::Data<AppState>) -> impl R
 pub async fn update_switches(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Query<SwitchUpdateParam>,
+    form: web::Form<SwitchUpdateParam>,
 ) -> impl Responder {
-    if params.entry.is_empty() {
+    if form.entry.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'entry' is missing".to_string(),
             false,
         );
     }
 
-    if params.value.is_empty() {
+    if form.value.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'value' is missing".to_string(),
             false,
         );
@@ -108,17 +112,14 @@ pub async fn update_switches(
     // but don't persist it since configuration is loaded at startup.
 
     tracing::info!(
-        entry = %params.entry,
-        value = %params.value,
-        debug = ?params.debug,
+        entry = %form.entry,
+        value = %form.value,
+        debug = ?form.debug,
         "Switch update requested (not persisted - configuration is read-only)"
     );
 
     // Return success - actual switch persistence would require additional infrastructure
-    Result::<String>::http_success(format!(
-        "ok, entry: {}, value: {}",
-        params.entry, params.value
-    ))
+    Result::<String>::http_success(format!("ok, entry: {}, value: {}", form.entry, form.value))
 }
 
 /// Get naming service metrics
@@ -131,6 +132,7 @@ pub async fn get_metrics(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<NamingService>>,
+    params: web::Query<MetricsParam>,
 ) -> impl Responder {
     // Check authorization for operator operations
     let resource = "*:*:naming/*";
@@ -141,6 +143,11 @@ pub async fn get_metrics(
             .api_type(ApiType::OpenApi)
             .build()
     );
+
+    // If onlyStatus is true (default), return only the status string
+    if params.only_status {
+        return Result::<String>::http_success("UP".to_string());
+    }
 
     // Get service keys to count services and instances
     let service_keys = naming_service.get_all_service_keys();
@@ -203,15 +210,7 @@ pub async fn get_metrics(
 // Plain handler functions for /v2/ns/ops/* dual-path registration (without attribute macros).
 // These delegate to the same logic as the macro-annotated handlers above.
 
-pub async fn get_switches_handler(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
-    let resource = "*:*:naming/*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Read)
-            .sign_type(SignType::Naming)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
+pub async fn get_switches_handler(data: web::Data<AppState>) -> impl Responder {
     let response = build_switches_response(&data.configuration);
     Result::<SwitchesResponse>::http_success(response)
 }
@@ -219,20 +218,20 @@ pub async fn get_switches_handler(req: HttpRequest, data: web::Data<AppState>) -
 pub async fn update_switches_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
-    params: web::Query<SwitchUpdateParam>,
+    form: web::Form<SwitchUpdateParam>,
 ) -> impl Responder {
-    if params.entry.is_empty() {
+    if form.entry.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'entry' is missing".to_string(),
             false,
         );
     }
-    if params.value.is_empty() {
+    if form.value.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'value' is missing".to_string(),
             false,
         );
@@ -246,21 +245,19 @@ pub async fn update_switches_handler(
             .build()
     );
     tracing::info!(
-        entry = %params.entry,
-        value = %params.value,
-        debug = ?params.debug,
+        entry = %form.entry,
+        value = %form.value,
+        debug = ?form.debug,
         "Switch update requested via /ops alias (not persisted)"
     );
-    Result::<String>::http_success(format!(
-        "ok, entry: {}, value: {}",
-        params.entry, params.value
-    ))
+    Result::<String>::http_success(format!("ok, entry: {}, value: {}", form.entry, form.value))
 }
 
 pub async fn get_metrics_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<NamingService>>,
+    params: web::Query<MetricsParam>,
 ) -> impl Responder {
     let resource = "*:*:naming/*";
     secured!(
@@ -270,6 +267,12 @@ pub async fn get_metrics_handler(
             .api_type(ApiType::OpenApi)
             .build()
     );
+
+    // If onlyStatus is true (default), return only the status string
+    if params.only_status {
+        return Result::<String>::http_success("UP".to_string());
+    }
+
     let service_keys = naming_service.get_all_service_keys();
     let service_count = service_keys.len() as i32;
     let mut instance_count = 0;

@@ -53,35 +53,12 @@ async fn liveness() -> web::Json<Result<String>> {
 async fn readiness(data: web::Data<AppState>) -> impl Responder {
     let ds = &data.console_datasource;
     let db_ready = ds.server_readiness().await;
+    let cluster_up = true; // cluster status is always UP for now
 
-    let db_status = if db_ready {
-        ComponentStatus::up()
+    if db_ready && cluster_up {
+        Result::<String>::http_success("ok".to_string())
     } else {
-        ComponentStatus::down("Database check failed".to_string())
-    };
-
-    let cluster_status = ClusterStatus {
-        status: "UP".to_string(),
-        member_count: ds.cluster_member_count(),
-        is_leader: ds.cluster_is_leader(),
-    };
-
-    let overall_status = if db_status.status == "UP" && cluster_status.status == "UP" {
-        "UP"
-    } else {
-        "DOWN"
-    };
-
-    let health_status = HealthStatus {
-        status: overall_status.to_string(),
-        database: db_status,
-        cluster: cluster_status,
-    };
-
-    if overall_status == "UP" {
-        HttpResponse::Ok().json(health_status)
-    } else {
-        HttpResponse::ServiceUnavailable().json(health_status)
+        Result::<String>::http_response(500, 30000, "not ready".to_string(), String::new())
     }
 }
 

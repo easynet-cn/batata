@@ -10,7 +10,8 @@ use actix_web::{
 use serde::Deserialize;
 
 use batata_server_common::{
-    ActionTypes, ApiType, Secured, SignType, model::AppState, model::response::Result, secured,
+    ActionTypes, ApiType, Secured, SignType, error, model::AppState, model::response::Result,
+    secured,
 };
 
 const DEFAULT_NAMESPACE_ID: &str = "public";
@@ -22,9 +23,9 @@ const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 struct ServiceListQuery {
     #[serde(default)]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupNameParam")]
     group_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "serviceNameParam")]
     service_name: Option<String>,
     #[serde(default = "default_page_no")]
     page_no: u64,
@@ -39,7 +40,7 @@ fn default_page_no() -> u64 {
 }
 
 fn default_page_size() -> u64 {
-    20
+    100
 }
 
 impl ServiceListQuery {
@@ -148,6 +149,7 @@ impl SubscriberQuery {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct UpdateClusterForm {
     #[serde(default)]
     namespace_id: Option<String>,
@@ -156,25 +158,13 @@ struct UpdateClusterForm {
     service_name: String,
     cluster_name: String,
     #[serde(default)]
-    health_checker: Option<HealthCheckerForm>,
+    health_checker: Option<String>,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
-struct HealthCheckerForm {
-    #[serde(default = "default_check_type")]
-    r#type: String,
     #[serde(default)]
-    path: Option<String>,
+    check_port: Option<i32>,
     #[serde(default)]
-    headers: Option<String>,
-}
-
-fn default_check_type() -> String {
-    "TCP".to_string()
+    use_instance_port4_check: Option<bool>,
 }
 
 impl UpdateClusterForm {
@@ -281,14 +271,14 @@ async fn get_service(
 async fn create_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Json<ServiceForm>,
+    form: web::Form<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -323,7 +313,7 @@ async fn create_service(
         )
         .await
     {
-        Ok(result) => Result::<bool>::http_success(result),
+        Ok(_result) => Result::<String>::http_success("ok".to_string()),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
@@ -333,14 +323,14 @@ async fn create_service(
 async fn update_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Json<ServiceForm>,
+    form: web::Form<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -371,7 +361,7 @@ async fn update_service(
         )
         .await
     {
-        Ok(result) => Result::<bool>::http_success(result),
+        Ok(_result) => Result::<String>::http_success("ok".to_string()),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
@@ -403,7 +393,7 @@ async fn delete_service(
         .service_delete(namespace_id, group_name, &params.service_name)
         .await
     {
-        Ok(result) => Result::<bool>::http_success(result),
+        Ok(_result) => Result::<String>::http_success("ok".to_string()),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
@@ -474,7 +464,7 @@ async fn get_selector_types() -> impl Responder {
 async fn update_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Json<UpdateClusterForm>,
+    form: web::Form<UpdateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();
     let group_name = form.group_name_or_default();
@@ -491,7 +481,19 @@ async fn update_cluster(
             .build()
     );
 
-    let health_checker_type = form.health_checker.as_ref().map(|c| c.r#type.as_str());
+    let health_checker_type = form
+        .health_checker
+        .as_ref()
+        .and_then(|s| {
+            serde_json::from_str::<serde_json::Value>(s)
+                .ok()
+                .and_then(|v| {
+                    v.get("type")
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string())
+                })
+        })
+        .unwrap_or_else(|| "TCP".to_string());
 
     match data
         .console_datasource
@@ -500,12 +502,12 @@ async fn update_cluster(
             group_name,
             &form.service_name,
             &form.cluster_name,
-            health_checker_type,
+            Some(health_checker_type.as_str()),
             form.metadata.clone(),
         )
         .await
     {
-        Ok(result) => Result::<bool>::http_success(result),
+        Ok(_result) => Result::<String>::http_success("ok".to_string()),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }

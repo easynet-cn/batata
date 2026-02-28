@@ -130,7 +130,12 @@ impl PayloadHandler for ConfigQueryHandler {
 
         let data_id = &request.config_request.data_id;
         let group = &request.config_request.group;
-        let tenant = &request.config_request.tenant;
+        let tenant_raw = &request.config_request.tenant;
+        let tenant = if tenant_raw.is_empty() {
+            "public"
+        } else {
+            tenant_raw.as_str()
+        };
 
         debug!(
             "ConfigQuery: data_id={}, group={}, tenant={}",
@@ -150,6 +155,7 @@ impl PayloadHandler for ConfigQueryHandler {
             response.md5 = md5;
             response.encrypted_data_key = encrypted_data_key;
             response.last_modified = last_modified;
+            response.is_beta = true;
             return Ok(response.build_payload());
         }
 
@@ -169,6 +175,7 @@ impl PayloadHandler for ConfigQueryHandler {
             Ok(None) => {
                 let mut response = ConfigQueryResponse::new();
                 response.response.request_id = request_id;
+                response.response.result_code = ResponseCode::Fail.code();
                 response.response.error_code = ConfigQueryResponse::CONFIG_NOT_FOUND;
                 response.response.message = "config data not exist".to_string();
 
@@ -222,7 +229,12 @@ impl PayloadHandler for ConfigPublishHandler {
 
         let data_id = &request.config_request.data_id;
         let group = &request.config_request.group;
-        let tenant = &request.config_request.tenant;
+        let tenant_raw = &request.config_request.tenant;
+        let tenant = if tenant_raw.is_empty() {
+            "public"
+        } else {
+            tenant_raw.as_str()
+        };
         let content = &request.content;
 
         // Validate required fields
@@ -264,7 +276,7 @@ impl PayloadHandler for ConfigPublishHandler {
         for (key, value) in &request.addition_map {
             match key.as_str() {
                 "appName" => app_name = value.as_str(),
-                "configTags" => config_tags = value.as_str(),
+                "config_tags" | "configTags" => config_tags = value.as_str(),
                 "desc" => desc = value.as_str(),
                 "use" => r#use = value.as_str(),
                 "effect" => effect = value.as_str(),
@@ -606,8 +618,13 @@ impl PayloadHandler for ConfigRemoveHandler {
 
         let data_id = &request.config_request.data_id;
         let group = &request.config_request.group;
-        let tenant = &request.config_request.tenant;
-        let _tag = &request.tag;
+        let tenant_raw = &request.config_request.tenant;
+        let tenant = if tenant_raw.is_empty() {
+            "public"
+        } else {
+            tenant_raw.as_str()
+        };
+        let tag = &request.tag;
 
         let src_user = "";
         let src_ip = payload
@@ -619,7 +636,7 @@ impl PayloadHandler for ConfigRemoveHandler {
         let persistence = self.app_state.persistence();
 
         match persistence
-            .config_delete(data_id, group, tenant, "", src_ip, src_user)
+            .config_delete(data_id, group, tenant, tag, src_ip, src_user)
             .await
         {
             Ok(_) => {
@@ -823,7 +840,11 @@ impl PayloadHandler for ConfigBatchListenHandler {
         for ctx in &request.config_listen_contexts {
             let data_id = &ctx.data_id;
             let group = &ctx.group;
-            let tenant = &ctx.tenant;
+            let tenant = if ctx.tenant.is_empty() {
+                "public"
+            } else {
+                &ctx.tenant
+            };
             let client_md5 = &ctx.md5;
 
             let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
@@ -844,7 +865,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
                     changed_configs.push(ConfigContext {
                         data_id: data_id.clone(),
                         group: group.clone(),
-                        tenant: tenant.clone(),
+                        tenant: tenant.to_string(),
                     });
                 }
                 continue;
@@ -859,7 +880,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
                     changed_configs.push(ConfigContext {
                         data_id: data_id.clone(),
                         group: group.clone(),
-                        tenant: tenant.clone(),
+                        tenant: tenant.to_string(),
                     });
                 }
             } else if request.listen {
@@ -867,7 +888,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
                 changed_configs.push(ConfigContext {
                     data_id: data_id.clone(),
                     group: group.clone(),
-                    tenant: tenant.clone(),
+                    tenant: tenant.to_string(),
                 });
             }
         }

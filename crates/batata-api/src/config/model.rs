@@ -28,6 +28,10 @@ where
     Ok(CONFIG_MODULE.to_string())
 }
 
+fn default_listen_true() -> bool {
+    true
+}
+
 /// Base configuration request structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -137,6 +141,7 @@ pub struct ConfigListenContext {
 pub struct ConfigBatchListenRequest {
     #[serde(flatten)]
     pub config_request: ConfigRequest,
+    #[serde(default = "default_listen_true")]
     pub listen: bool,
     pub config_listen_contexts: Vec<ConfigListenContext>,
 }

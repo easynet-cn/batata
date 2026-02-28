@@ -52,7 +52,10 @@ impl PayloadHandler for InstanceRequestHandler {
         let namespace = &request.naming_request.namespace;
         let group_name = &request.naming_request.group_name;
         let service_name = &request.naming_request.service_name;
-        let instance = request.instance;
+        let mut instance = request.instance;
+        if instance.cluster_name.is_empty() {
+            instance.cluster_name = "DEFAULT".to_string();
+        }
         let req_type = &request.r#type;
         let connection_id = &connection.meta_info.connection_id;
 
@@ -77,12 +80,10 @@ impl PayloadHandler for InstanceRequestHandler {
 
         // Build keys for tracking before the instance is moved
         let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
-        let cluster_name = if instance.cluster_name.is_empty() {
-            "DEFAULT"
-        } else {
-            &instance.cluster_name
-        };
-        let instance_key = format!("{}#{}#{}", instance.ip, instance.port, cluster_name);
+        let instance_key = format!(
+            "{}#{}#{}",
+            instance.ip, instance.port, instance.cluster_name
+        );
 
         let result = if req_type == REGISTER_INSTANCE {
             let ok = self.naming_service.register_instance(
@@ -127,6 +128,7 @@ impl PayloadHandler for InstanceRequestHandler {
             }
             ok
         } else {
+            warn!("Unsupported instance request type: {}", req_type);
             false
         };
 
@@ -349,7 +351,12 @@ impl PayloadHandler for BatchInstanceRequestHandler {
         let namespace = &request.naming_request.namespace;
         let group_name = &request.naming_request.group_name;
         let service_name = &request.naming_request.service_name;
-        let instances = request.instances;
+        let mut instances = request.instances;
+        for inst in &mut instances {
+            if inst.cluster_name.is_empty() {
+                inst.cluster_name = "DEFAULT".to_string();
+            }
+        }
         let req_type = &request.r#type;
         let connection_id = &connection.meta_info.connection_id;
 
@@ -431,6 +438,7 @@ impl PayloadHandler for BatchInstanceRequestHandler {
             }
             ok
         } else {
+            warn!("Unsupported batch instance request type: {}", req_type);
             false
         };
 
@@ -687,6 +695,7 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
 
         let mut response = SubscribeServiceResponse::new();
         response.response.request_id = request_id;
+        response.response.message = "success".to_string();
         response.service_info = service_info;
 
         Ok(response.build_payload())
@@ -730,6 +739,9 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
         let group_name = &request.naming_request.group_name;
         let service_name = &request.naming_request.service_name;
         let mut instance = request.instance;
+        if instance.cluster_name.is_empty() {
+            instance.cluster_name = "DEFAULT".to_string();
+        }
         let req_type = &request.r#type;
 
         // Mark instance as persistent (non-ephemeral)
@@ -742,6 +754,7 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
             self.naming_service
                 .deregister_instance(namespace, group_name, service_name, &instance)
         } else {
+            warn!("Unsupported persistent instance request type: {}", req_type);
             false
         };
 

@@ -8,17 +8,16 @@
 //! - DELETE /nacos/v2/core/cluster/nodes - Remove nodes
 //! - PUT /nacos/v2/core/cluster/lookup - Switch lookup mode
 
-use actix_web::{HttpMessage, HttpRequest, Responder, delete, get, put, web};
-use serde::Deserialize;
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, put, web};
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, api::model::Member, model::common::AppState,
+    ActionTypes, ApiType, Secured, SignType, api::model::Member, error, model::common::AppState,
     model::response::Result, secured,
 };
 
 use super::model::{
     ConfigAbility, LookupSwitchParam, LookupSwitchResponse, NamingAbility, NodeAbilities,
-    NodeHealthResponse, NodeListParam, NodeResponse, NodeSelfResponse,
+    NodeListParam, NodeResponse, NodeSelfResponse,
 };
 
 /// Get current node information
@@ -29,12 +28,12 @@ use super::model::{
 #[get("self")]
 pub async fn get_node_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
     // Check authorization for cluster operations
-    let resource = "*:*:*";
+    let resource = "nacos/admin";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Read)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::AdminApi)
             .build()
     );
 
@@ -80,22 +79,28 @@ pub async fn get_node_list(
     params: web::Query<NodeListParam>,
 ) -> impl Responder {
     // Check authorization for cluster operations
-    let resource = "*:*:*";
+    let resource = "nacos/admin";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Read)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::AdminApi)
             .build()
     );
 
     let mut members: Vec<Member> = data.member_manager().all_members();
 
-    // Filter by keyword if provided
-    if let Some(keyword) = &params.keyword
-        && !keyword.is_empty()
+    // Filter by address prefix if provided
+    if let Some(address) = &params.address
+        && !address.is_empty()
     {
-        members.retain(|m| m.address.contains(keyword));
+        members.retain(|m| m.address.starts_with(address));
+    }
+    // Filter by state if provided
+    if let Some(state) = &params.state
+        && !state.is_empty()
+    {
+        members.retain(|m| m.state.to_string().eq_ignore_ascii_case(state));
     }
 
     // Convert to NodeResponse
@@ -130,21 +135,19 @@ pub async fn get_node_list(
 #[get("self/health")]
 pub async fn get_node_health(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
     // Check authorization for cluster operations
-    let resource = "*:*:*";
+    let resource = "nacos/admin";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Read)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::AdminApi)
             .build()
     );
 
     let self_member = data.member_manager().get_self();
-    let healthy = self_member.is_healthy();
+    let state = self_member.state.to_string();
 
-    let response = NodeHealthResponse { healthy };
-
-    Result::<NodeHealthResponse>::http_success(response)
+    Result::<String>::http_success(state)
 }
 
 /// Switch lookup mode
@@ -160,12 +163,12 @@ pub async fn switch_lookup(
     params: web::Query<LookupSwitchParam>,
 ) -> impl Responder {
     // Check authorization for cluster operations
-    let resource = "*:*:*";
+    let resource = "nacos/admin";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Write)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::AdminApi)
             .build()
     );
 
@@ -175,7 +178,7 @@ pub async fn switch_lookup(
     if lookup_type != "file" && lookup_type != "address-server" {
         return Result::<LookupSwitchResponse>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             format!(
                 "Invalid lookup type: {}. Valid types are: file, address-server",
                 params.r#type
@@ -213,47 +216,27 @@ pub async fn switch_lookup(
 pub async fn update_node_list(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Form<NodeListUpdateParam>,
+    body: web::Json<Vec<serde_json::Value>>,
 ) -> impl Responder {
-    let resource = "*:*:*";
+    let resource = "nacos/admin";
     secured!(
         Secured::builder(&req, &data, resource)
             .action(ActionTypes::Write)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
+            .sign_type(SignType::Console)
+            .api_type(ApiType::AdminApi)
             .build()
     );
 
-    if form.nodes.is_empty() {
+    if body.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'nodes' is missing".to_string(),
             false,
         );
     }
 
-    let addresses: Vec<&str> = form
-        .nodes
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    if addresses.is_empty() {
-        return Result::<bool>::http_response(
-            400,
-            400,
-            "No valid node addresses provided".to_string(),
-            false,
-        );
-    }
-
-    tracing::info!(
-        nodes = %form.nodes,
-        count = addresses.len(),
-        "Node list update requested"
-    );
+    tracing::info!(count = body.len(), "Node list update requested");
 
     Result::<bool>::http_success(true)
 }
@@ -262,59 +245,12 @@ pub async fn update_node_list(
 ///
 /// DELETE /nacos/v2/core/cluster/nodes
 ///
-/// Removes specified nodes from the cluster.
+/// Returns 405 Method Not Allowed - this API is not allowed temporarily.
 #[delete("")]
-pub async fn remove_nodes(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-    params: web::Query<NodeRemoveParam>,
-) -> impl Responder {
-    let resource = "*:*:*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Write)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
-
-    if params.nodes.is_empty() {
-        return Result::<bool>::http_response(
-            400,
-            400,
-            "Required parameter 'nodes' is missing".to_string(),
-            false,
-        );
-    }
-
-    let addresses: Vec<&str> = params
-        .nodes
-        .split(',')
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    tracing::info!(
-        nodes = %params.nodes,
-        count = addresses.len(),
-        "Node removal requested"
-    );
-
-    Result::<bool>::http_success(true)
-}
-
-/// Request parameters for updating node list
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeListUpdateParam {
-    /// Comma-separated list of node addresses (ip:port)
-    pub nodes: String,
-}
-
-/// Request parameters for removing nodes
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NodeRemoveParam {
-    /// Comma-separated list of node addresses to remove (ip:port)
-    pub nodes: String,
+pub async fn remove_nodes() -> impl Responder {
+    HttpResponse::MethodNotAllowed().json(Result::<String>::new(
+        405,
+        "DELETE /v2/core/cluster/nodes API not allow to use temporarily.".to_string(),
+        String::new(),
+    ))
 }

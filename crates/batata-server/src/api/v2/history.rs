@@ -58,6 +58,7 @@ fn history_storage_to_list_response(item: ConfigHistoryStorageData) -> HistoryIt
         } else {
             Some(item.publish_type)
         },
+        gray_name: None,
         ext_info: if item.ext_info.is_empty() {
             None
         } else {
@@ -109,6 +110,7 @@ fn history_storage_to_detail_response(item: ConfigHistoryStorageData) -> History
         } else {
             Some(item.publish_type)
         },
+        gray_name: None,
         ext_info: if item.ext_info.is_empty() {
             None
         } else {
@@ -140,7 +142,7 @@ pub async fn get_history_list(
     if params.data_id.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'dataId' is missing".to_string(),
             String::new(),
         );
@@ -149,7 +151,7 @@ pub async fn get_history_list(
     if params.group.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
@@ -170,6 +172,9 @@ pub async fn get_history_list(
             .build()
     );
 
+    // Cap page size to 500
+    let page_size = params.page_size.min(500);
+
     // Get history from persistence service
     let persistence = data.persistence();
     match persistence
@@ -178,7 +183,7 @@ pub async fn get_history_list(
             &params.group,
             namespace_id,
             params.page_no,
-            params.page_size,
+            page_size,
         )
         .await
     {
@@ -224,7 +229,7 @@ pub async fn get_history(
     if params.data_id.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'dataId' is missing".to_string(),
             String::new(),
         );
@@ -233,7 +238,7 @@ pub async fn get_history(
     if params.group.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
@@ -265,7 +270,7 @@ pub async fn get_history(
             {
                 return Result::<Option<HistoryItemResponse>>::http_response(
                     404,
-                    404,
+                    error::RESOURCE_NOT_FOUND.code,
                     "history entry not found".to_string(),
                     None::<HistoryItemResponse>,
                 );
@@ -276,7 +281,7 @@ pub async fn get_history(
         }
         Ok(None) => Result::<Option<HistoryItemResponse>>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             "history entry not found".to_string(),
             None::<HistoryItemResponse>,
         ),
@@ -311,7 +316,7 @@ pub async fn get_history_detail(
     if params.data_id.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'dataId' is missing".to_string(),
             String::new(),
         );
@@ -320,7 +325,7 @@ pub async fn get_history_detail(
     if params.group.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
@@ -349,7 +354,7 @@ pub async fn get_history_detail(
         Ok(None) => {
             return Result::<Option<ConfigHistoryInfoDetail>>::http_response(
                 404,
-                404,
+                error::RESOURCE_NOT_FOUND.code,
                 "history entry not found".to_string(),
                 None::<ConfigHistoryInfoDetail>,
             );
@@ -372,7 +377,7 @@ pub async fn get_history_detail(
     {
         return Result::<Option<ConfigHistoryInfoDetail>>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             "Please check dataId, group or namespaceId.".to_string(),
             None::<ConfigHistoryInfoDetail>,
         );
@@ -521,7 +526,7 @@ pub async fn get_previous_history(
     if params.data_id.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'dataId' is missing".to_string(),
             String::new(),
         );
@@ -530,7 +535,7 @@ pub async fn get_previous_history(
     if params.group.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
@@ -563,7 +568,7 @@ pub async fn get_previous_history(
         }
         Ok(None) => Result::<Option<HistoryItemResponse>>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             "previous history entry not found".to_string(),
             None::<HistoryItemResponse>,
         ),
@@ -623,6 +628,10 @@ pub async fn get_namespace_configs(
                     } else {
                         Some(config.config_type)
                     },
+                    content: None,
+                    md5: None,
+                    encrypted_data_key: None,
+                    last_modified: None,
                 })
                 .collect();
 

@@ -310,6 +310,21 @@ pub const MCP_SERVER_REF_ENDPOINT_SERVICE_NOT_FOUND: ErrorCode<'static> = ErrorC
     message: "MCP server ref endpoint service not found",
 };
 
+pub const AGENT_NOT_FOUND: ErrorCode<'static> = ErrorCode {
+    code: 50100,
+    message: "agent not found",
+};
+
+pub const AGENT_VERSION_NOT_FOUND: ErrorCode<'static> = ErrorCode {
+    code: 50101,
+    message: "agent version not found",
+};
+
+pub const AGENT_VERSION_EXIST: ErrorCode<'static> = ErrorCode {
+    code: 50102,
+    message: "agent version has existed",
+};
+
 pub const METADATA_ILLEGAL: ErrorCode<'static> = ErrorCode {
     code: 100002,
     message: "Imported metadata is invalid",

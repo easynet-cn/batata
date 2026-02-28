@@ -1098,6 +1098,7 @@ pub struct LockOperationRequest {
     pub request: Request,
     pub module: String,
     pub lock_instance: Option<LockInstance>,
+    #[serde(alias = "lockOperationEnum")]
     pub lock_operation: String,
 }
 
@@ -1179,6 +1180,8 @@ pub struct McpServerEndpointRequest {
     pub request: Request,
     pub module: String,
     pub namespace_id: String,
+    #[serde(default)]
+    pub mcp_id: String,
     pub mcp_name: String,
     pub address: String,
     pub port: u16,
@@ -1296,14 +1299,14 @@ impl From<&Payload> for QueryMcpServerRequest {
 pub struct QueryMcpServerResponse {
     #[serde(flatten)]
     pub response: Response,
-    pub detail: serde_json::Value,
+    pub mcp_server_detail_info: serde_json::Value,
 }
 
 impl QueryMcpServerResponse {
     pub fn new() -> Self {
         Self {
             response: Response::new(),
-            detail: serde_json::Value::Null,
+            mcp_server_detail_info: serde_json::Value::Null,
         }
     }
 }
@@ -1342,6 +1345,10 @@ pub struct ReleaseMcpServerRequest {
     pub namespace_id: String,
     pub mcp_name: String,
     pub server_specification: serde_json::Value,
+    #[serde(default)]
+    pub tool_specification: serde_json::Value,
+    #[serde(default)]
+    pub endpoint_specification: serde_json::Value,
 }
 
 impl RequestTrait for ReleaseMcpServerRequest {
@@ -1517,6 +1524,8 @@ pub struct QueryAgentCardRequest {
     pub namespace_id: String,
     pub agent_name: String,
     pub version: String,
+    #[serde(default)]
+    pub registration_type: String,
 }
 
 impl RequestTrait for QueryAgentCardRequest {
@@ -1549,14 +1558,14 @@ impl From<&Payload> for QueryAgentCardRequest {
 pub struct QueryAgentCardResponse {
     #[serde(flatten)]
     pub response: Response,
-    pub detail: serde_json::Value,
+    pub agent_card_detail_info: serde_json::Value,
 }
 
 impl QueryAgentCardResponse {
     pub fn new() -> Self {
         Self {
             response: Response::new(),
-            detail: serde_json::Value::Null,
+            agent_card_detail_info: serde_json::Value::Null,
         }
     }
 }
@@ -1585,6 +1594,10 @@ impl From<QueryAgentCardResponse> for Any {
     }
 }
 
+fn default_registration_type() -> String {
+    "service".to_string()
+}
+
 /// Request to release (publish) an agent card
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1596,6 +1609,8 @@ pub struct ReleaseAgentCardRequest {
     pub agent_name: String,
     pub agent_card: serde_json::Value,
     pub set_as_latest: bool,
+    #[serde(default = "default_registration_type")]
+    pub registration_type: String,
 }
 
 impl RequestTrait for ReleaseAgentCardRequest {

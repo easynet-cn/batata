@@ -45,29 +45,29 @@ pub async fn register_instance(
 ) -> impl Responder {
     // Validate required parameters
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if form.ip.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'ip' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if form.port <= 0 {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'port' is invalid".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -153,13 +153,13 @@ pub async fn register_instance(
             });
         }
 
-        Result::<bool>::http_success(true)
+        Result::<String>::http_success("ok".to_string())
     } else {
-        Result::<bool>::http_response(
+        Result::<String>::http_response(
             500,
             error::SERVER_ERROR.code,
             "Failed to register instance".to_string(),
-            false,
+            String::new(),
         )
     }
 }
@@ -175,33 +175,33 @@ pub async fn deregister_instance(
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<NamingService>>,
     distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
-    params: web::Query<InstanceDeregisterParam>,
+    params: web::Form<InstanceDeregisterParam>,
 ) -> impl Responder {
     // Validate required parameters
     if params.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if params.ip.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'ip' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if params.port <= 0 {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'port' is invalid".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -279,13 +279,13 @@ pub async fn deregister_instance(
             });
         }
 
-        Result::<bool>::http_success(true)
+        Result::<String>::http_success("ok".to_string())
     } else {
-        Result::<bool>::http_response(
+        Result::<String>::http_response(
             404,
             error::INSTANCE_NOT_FOUND.code,
             "Instance not found".to_string(),
-            false,
+            String::new(),
         )
     }
 }
@@ -305,29 +305,29 @@ pub async fn update_instance(
 ) -> impl Responder {
     // Validate required parameters
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if form.ip.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'ip' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if form.port <= 0 {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'port' is invalid".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -399,13 +399,13 @@ pub async fn update_instance(
             });
         }
 
-        Result::<bool>::http_success(true)
+        Result::<String>::http_success("ok".to_string())
     } else {
-        Result::<bool>::http_response(
+        Result::<String>::http_response(
             500,
             error::SERVER_ERROR.code,
             "Failed to update instance".to_string(),
-            false,
+            String::new(),
         )
     }
 }
@@ -426,7 +426,7 @@ pub async fn get_instance(
     if params.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
             String::new(),
         );
@@ -435,7 +435,7 @@ pub async fn get_instance(
     if params.ip.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'ip' is missing".to_string(),
             String::new(),
         );
@@ -444,7 +444,7 @@ pub async fn get_instance(
     if params.port <= 0 {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'port' is invalid".to_string(),
             String::new(),
         );
@@ -499,7 +499,7 @@ pub async fn get_instance(
     } else {
         Result::<Option<InstanceResponse>>::http_response(
             404,
-            404,
+            error::INSTANCE_NOT_FOUND.code,
             format!(
                 "instance not found, ip={}, port={}, cluster={}",
                 params.ip, params.port, cluster_name
@@ -525,7 +525,7 @@ pub async fn get_instance_list(
     if params.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
             String::new(),
         );
@@ -533,7 +533,7 @@ pub async fn get_instance_list(
 
     let namespace_id = params.namespace_id_or_default();
     let group_name = params.group_name_or_default();
-    let clusters = params.clusters.as_deref().unwrap_or("");
+    let clusters = params.cluster_name.as_deref().unwrap_or("");
     let healthy_only = params.healthy_only.unwrap_or(false);
 
     // Check authorization
@@ -612,20 +612,20 @@ pub async fn batch_update_metadata(
 ) -> impl Responder {
     // Validate required parameters
     if form.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if form.instances.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'instances' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -650,11 +650,11 @@ pub async fn batch_update_metadata(
         serde_json::from_str(&form.metadata).unwrap_or_default();
 
     if metadata.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Invalid metadata format".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -673,11 +673,11 @@ pub async fn batch_update_metadata(
         .collect();
 
     if instance_keys.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Invalid instances format. Expected: ip:port,ip:port,...".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -717,7 +717,7 @@ pub async fn batch_update_metadata(
         "Batch metadata update completed"
     );
 
-    Result::<bool>::http_success(true)
+    Result::<String>::http_success("ok".to_string())
 }
 
 /// Batch delete instance metadata
@@ -734,20 +734,20 @@ pub async fn batch_delete_metadata(
 ) -> impl Responder {
     // Validate required parameters
     if params.service_name.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
     if params.instances.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'instances' is missing".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -771,11 +771,11 @@ pub async fn batch_delete_metadata(
     let keys_to_delete: Vec<String> = serde_json::from_str(&params.metadata).unwrap_or_default();
 
     if keys_to_delete.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Invalid metadata format. Expected JSON array of keys".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -794,11 +794,11 @@ pub async fn batch_delete_metadata(
         .collect();
 
     if instance_keys.is_empty() {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Invalid instances format".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -837,7 +837,7 @@ pub async fn batch_delete_metadata(
         "Batch metadata delete completed"
     );
 
-    Result::<bool>::http_success(true)
+    Result::<String>::http_success("ok".to_string())
 }
 
 /// Patch instance (partial update)
@@ -853,11 +853,11 @@ pub async fn patch_instance(
     form: web::Form<InstanceUpdateParam>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
-        return Result::<bool>::http_response(
+        return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
-            false,
+            String::new(),
         );
     }
 
@@ -918,24 +918,24 @@ pub async fn patch_instance(
         );
 
         if result {
-            Result::<bool>::http_success(true)
+            Result::<String>::http_success("ok".to_string())
         } else {
-            Result::<bool>::http_response(
+            Result::<String>::http_response(
                 500,
                 error::SERVER_ERROR.code,
                 "Failed to patch instance".to_string(),
-                false,
+                String::new(),
             )
         }
     } else {
-        Result::<bool>::http_response(
+        Result::<String>::http_response(
             404,
-            404,
+            error::INSTANCE_NOT_FOUND.code,
             format!(
                 "instance not found, ip={}, port={}, cluster={}",
                 form.ip, form.port, cluster_name
             ),
-            false,
+            String::new(),
         )
     }
 }
@@ -955,7 +955,7 @@ pub async fn beat_instance(
     if form.service_name.is_empty() {
         return Result::<BeatResponse>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
             BeatResponse::default(),
         );
@@ -1045,7 +1045,7 @@ pub async fn beat_instance(
     } else {
         Result::<BeatResponse>::http_response(
             400,
-            400,
+            error::PARAMETER_MISSING.code,
             "Either 'beat' JSON or 'ip'+'port' parameters are required".to_string(),
             BeatResponse::default(),
         )
@@ -1074,7 +1074,7 @@ pub async fn get_instance_statuses(
         _ => {
             return Result::<HashMap<String, bool>>::http_response(
                 400,
-                400,
+                error::PARAMETER_MISSING.code,
                 format!("Invalid service key format: {}", key),
                 HashMap::<String, bool>::new(),
             );
