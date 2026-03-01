@@ -12,6 +12,12 @@ batata-common = { workspace = true }
 batata-api = { workspace = true }
 batata-persistence = { workspace = true }
 batata-consistency = { workspace = true }
+batata-auth = { workspace = true }
+batata-server-common = { workspace = true }
+batata-core = { workspace = true }
+
+# Web framework
+actix-web = { workspace = true }
 
 # Concurrency
 dashmap = { workspace = true }
@@ -31,6 +37,9 @@ serde_yaml = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
+# gRPC
+tonic = { workspace = true }
+
 # Logging
 tracing = { workspace = true }
 
@@ -42,3 +51,6 @@ chrono = { workspace = true }
 
 # Pattern matching
 regex = { workspace = true }
+
+# System info
+sysinfo = { workspace = true }

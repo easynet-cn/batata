@@ -104,7 +104,11 @@ fn extract_token(req: &ServiceRequest) -> Option<String> {
 /// Try to get the token secret key from any registered TokenSecretProvider
 /// in the request's app_data. Tries common types in priority order.
 fn get_secret_key(req: &ServiceRequest) -> Option<String> {
-    // Try Configuration directly
+    // Try AppState first (used by main server and console server)
+    if let Some(app_state) = req.app_data::<Data<crate::model::AppState>>() {
+        return Some(app_state.configuration.token_secret_key());
+    }
+    // Try Configuration directly (used by standalone or test apps)
     if let Some(config) = req.app_data::<Data<Configuration>>() {
         return Some(config.token_secret_key());
     }

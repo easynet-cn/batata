@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, put, web};
+use actix_web::{HttpRequest, Responder, Scope, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use batata_api::naming::model::Instance;

@@ -13,10 +13,11 @@ use batata_core::{
     GrpcAuthService,
     service::{
         cluster_client::{ClusterClientConfig, ClusterClientManager},
-        distro::{DistroConfig, DistroProtocol, NamingInstanceDistroHandler},
+        distro::{DistroConfig, DistroProtocol},
         remote::{ConnectionManager, context_interceptor},
     },
 };
+use batata_naming::handler::distro::NamingInstanceDistroHandler;
 
 use crate::model::tls::validate_tls_config;
 use crate::startup::AIServices;
@@ -212,7 +213,11 @@ fn register_distro_handlers(registry: &mut HandlerRegistry, distro_protocol: Arc
 
 /// Registers the cluster member report handler.
 fn register_cluster_handlers(registry: &mut HandlerRegistry, app_state: Arc<AppState>) {
-    registry.register_handler(Arc::new(MemberReportHandler { app_state }));
+    if let Some(member_manager) = app_state.try_member_manager() {
+        registry.register_handler(Arc::new(MemberReportHandler {
+            member_manager: member_manager.clone(),
+        }));
+    }
 }
 
 /// Registers the lock operation handler.
@@ -454,7 +459,7 @@ pub fn start_grpc_servers(
         handler_registry_arc,
         connection_manager,
         app_state.config_subscriber_manager.clone(),
-        Some(naming_service.clone()),
+        Some(naming_service.clone() as Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>),
     );
 
     // Start SDK gRPC server

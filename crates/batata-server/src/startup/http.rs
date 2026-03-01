@@ -29,7 +29,7 @@ use crate::{
     api::v3::admin::route::admin_routes as v3_admin_routes,
     api::v3::client::route::client_routes as v3_client_routes,
     auth,
-    console::v3::{a2a as console_a2a, mcp as console_mcp, plugin as console_plugin},
+    console::v3::{ai_a2a as console_a2a, ai_mcp as console_mcp, ai_plugin as console_plugin},
     middleware::{
         auth::Authentication, rate_limit::RateLimiter, traffic_revise::TrafficReviseFilter,
     },

@@ -8,7 +8,7 @@
 //! - DELETE /nacos/v2/core/cluster/nodes - Remove nodes
 //! - PUT /nacos/v2/core/cluster/lookup - Switch lookup mode
 
-use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, put, web};
+use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, put, web};
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType, api::model::Member, error, model::common::AppState,

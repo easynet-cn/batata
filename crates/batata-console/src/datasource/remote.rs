@@ -15,15 +15,15 @@ use batata_core::cluster::ServerMemberManager;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
-use batata_config::{ConfigAllInfo, ImportResult, Namespace, SameConfigPolicy};
 use batata_maintainer_client::{MaintainerClient, MaintainerClientConfig};
 use batata_naming::Instance;
 use batata_server_common::console::api_model::{
-    ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+    ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+    ConfigHistoryDetailInfo, ImportResult, SameConfigPolicy,
 };
 use batata_server_common::console::datasource::ConsoleDataSource;
 use batata_server_common::console::model::{
-    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, Member,
+    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, Member, Namespace,
     SelfMemberResponse,
 };
 use batata_server_common::model::config::Configuration;
@@ -138,7 +138,7 @@ fn convert_page<S, T>(v: batata_maintainer_client::model::Page<S>, f: fn(S) -> T
 }
 
 fn convert_import_result(v: batata_maintainer_client::model::ImportResult) -> ImportResult {
-    use batata_config::ImportFailItem;
+    use batata_server_common::console::api_model::ImportFailItem;
 
     ImportResult {
         success_count: v.success_count,
@@ -199,33 +199,16 @@ fn convert_self_member(
     }
 }
 
-fn convert_config_detail_to_all_info(
+fn convert_config_detail_info(
     v: batata_maintainer_client::model::ConfigDetailInfo,
-) -> ConfigAllInfo {
-    use batata_config::model::{ConfigInfo, ConfigInfoBase};
-
-    ConfigAllInfo {
-        config_info: ConfigInfo {
-            config_info_base: ConfigInfoBase {
-                id: v.config_basic_info.id,
-                data_id: v.config_basic_info.data_id,
-                group: v.config_basic_info.group_name,
-                content: v.content,
-                md5: v.config_basic_info.md5,
-                encrypted_data_key: v.encrypted_data_key,
-            },
-            tenant: v.config_basic_info.namespace_id,
-            app_name: v.config_basic_info.app_name,
-            r#type: v.config_basic_info.r#type,
-        },
-        create_time: v.config_basic_info.create_time,
-        modify_time: v.config_basic_info.modify_time,
+) -> ConfigDetailInfo {
+    ConfigDetailInfo {
+        config_basic_info: convert_config_basic_info(v.config_basic_info),
+        content: v.content,
+        desc: v.desc,
+        encrypted_data_key: v.encrypted_data_key,
         create_user: v.create_user,
         create_ip: v.create_ip,
-        desc: v.desc,
-        r#use: String::new(),
-        effect: String::new(),
-        schema: String::new(),
         config_tags: v.config_tags,
     }
 }
@@ -512,13 +495,13 @@ impl ConsoleDataSource for RemoteDataSource {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-    ) -> anyhow::Result<Option<ConfigAllInfo>> {
+    ) -> anyhow::Result<Option<ConfigDetailInfo>> {
         let data = self
             .client
             .config_get(data_id, group_name, namespace_id)
             .await?;
 
-        Ok(data.map(convert_config_detail_to_all_info))
+        Ok(data.map(convert_config_detail_info))
     }
 
     async fn config_search_page(

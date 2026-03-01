@@ -1,19 +1,28 @@
 //! AI Capabilities API
 //!
-//! This module provides API endpoints for AI model server management,
-//! including MCP (Model Content Protocol) server registration and
-//! A2A (Agent-to-Agent) communication.
+//! Re-exports from the batata-ai crate.
 
-pub mod a2a;
-pub mod mcp;
-pub mod mcp_registry;
-pub mod model;
+pub mod model {
+    pub use batata_ai::model::*;
+}
+
+pub mod mcp {
+    pub use batata_ai::registry::mcp::*;
+}
+
+pub mod a2a {
+    pub use batata_ai::registry::a2a::*;
+}
+
+pub mod mcp_registry {
+    pub use batata_ai::registry::mcp_registry::*;
+}
 
 // Re-export registry types
 pub use a2a::{AgentRegistry, AgentRegistryStats};
 pub use mcp::{McpRegistryStats, McpServerRegistry};
 
 // Re-export configure functions for route setup
-pub use a2a::configure as configure_a2a;
-pub use mcp::configure as configure_mcp;
-pub use mcp_registry::configure_mcp_registry;
+pub use batata_ai::configure_a2a;
+pub use batata_ai::configure_mcp;
+pub use batata_ai::configure_mcp_registry;

@@ -1,0 +1,39 @@
+[package]
+name = "batata-ai"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AI capabilities (MCP/A2A) for Batata - models, registries, and services"
+
+[dependencies]
+# Internal crates
+batata-api = { workspace = true }
+batata-core = { workspace = true }
+batata-persistence = { workspace = true }
+batata-naming = { workspace = true }
+batata-server-common = { workspace = true }
+
+# Web framework
+actix-web = { workspace = true }
+
+# gRPC
+tonic = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# Caching
+dashmap = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }

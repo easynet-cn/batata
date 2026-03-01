@@ -2,6 +2,13 @@
 
 This document describes the gRPC handler architecture, all registered handlers, protocol details, and authentication mechanisms in Batata.
 
+## Changelog
+
+| Date | Description |
+|------|-------------|
+| 2026-03-01 | Re-verified all 25 Nacos handlers against Nacos source (`~/work/github/easynet-cn/nacos`). All handler type strings, auth levels, and message type mappings confirmed accurate. No corrections needed. |
+| 2026-02-28 | Initial document created with full handler registry, protocol details, auth mechanisms, and Nacos comparison table (25 Nacos handlers + 15 Batata-only handlers = 40 total). |
+
 ## Table of Contents
 
 - [Architecture Overview](#architecture-overview)

@@ -1,4 +1,4 @@
-use actix_web::{HttpMessage, HttpRequest, Responder, Scope, get, post, web};
+use actix_web::{HttpRequest, Responder, Scope, get, post, web};
 use serde::{Deserialize, Serialize};
 
 use batata_api::model::Page;

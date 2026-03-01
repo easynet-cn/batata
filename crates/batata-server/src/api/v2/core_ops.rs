@@ -5,7 +5,7 @@
 //! - GET /nacos/v2/core/ops/ids - Get ID generator health
 //! - PUT /nacos/v2/core/ops/log - Update log level
 
-use actix_web::{HttpMessage, HttpRequest, Responder, get, post, put, web};
+use actix_web::{HttpRequest, Responder, get, post, put, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{

@@ -10,15 +10,16 @@ use batata_persistence::PersistenceService;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
-use batata_config::{ConfigAllInfo, ImportResult, NacosExportItem, Namespace, SameConfigPolicy};
+use batata_config::model::config::ConfigAllInfo;
+use batata_config::model::export::NacosExportItem;
 use batata_naming::Instance;
 use batata_server_common::console::api_model::{
     ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
-    ConfigHistoryDetailInfo,
+    ConfigHistoryDetailInfo, ImportFailItem, ImportResult, SameConfigPolicy,
 };
 use batata_server_common::console::datasource::ConsoleDataSource;
 use batata_server_common::console::model::{
-    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, Member,
+    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, Member, Namespace,
     SelfMemberResponse,
 };
 
@@ -128,12 +129,12 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-    ) -> anyhow::Result<Option<ConfigAllInfo>> {
+    ) -> anyhow::Result<Option<ConfigDetailInfo>> {
         let storage = self
             .persistence
             .config_find_one(data_id, group_name, namespace_id)
             .await?;
-        Ok(storage.map(ConfigAllInfo::from))
+        Ok(storage.map(ConfigDetailInfo::from))
     }
 
     async fn config_search_page(
@@ -1170,7 +1171,7 @@ impl EmbeddedLocalDataSource {
             if existing.is_some() {
                 match policy {
                     SameConfigPolicy::Abort => {
-                        result.fail_data.push(batata_config::model::ImportFailItem {
+                        result.fail_data.push(ImportFailItem {
                             data_id: data_id.clone(),
                             group: group.clone(),
                             reason: "Config already exists".to_string(),
@@ -1209,7 +1210,7 @@ impl EmbeddedLocalDataSource {
             {
                 Ok(_) => result.success_count += 1,
                 Err(e) => {
-                    result.fail_data.push(batata_config::model::ImportFailItem {
+                    result.fail_data.push(ImportFailItem {
                         data_id: data_id.clone(),
                         group: group.clone(),
                         reason: e.to_string(),

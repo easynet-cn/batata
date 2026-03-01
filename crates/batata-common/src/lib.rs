@@ -9,6 +9,8 @@
 
 pub mod crypto;
 pub mod error;
+#[macro_use]
+pub mod macros;
 pub mod traits;
 pub mod utils;
 

@@ -2,8 +2,6 @@
 // This file re-exports security models and common types from batata-server-common
 
 // Module declarations
-#[macro_use]
-mod macros; // Internal macros
 pub mod api; // API handlers and models
 pub mod auth; // Authentication and authorization
 pub mod config; // Configuration management
@@ -29,3 +27,10 @@ pub use batata_server_common::{
 // Re-export the secured! macro (it's #[macro_export] in server-common, so it's available
 // as batata_server_common::secured, but we also need it at crate level for backward compat)
 pub use batata_server_common::secured;
+
+// Re-export gRPC handler macros from batata-core (they use #[macro_export])
+pub use batata_core::define_handler;
+pub use batata_core::error_response;
+pub use batata_core::impl_ack_handler;
+pub use batata_core::impl_can_handle;
+pub use batata_core::success_response;

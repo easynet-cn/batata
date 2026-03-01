@@ -5,14 +5,14 @@ use async_trait::async_trait;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
-use batata_config::{ConfigAllInfo, ImportResult, Namespace, SameConfigPolicy};
+use batata_api::naming::model::Instance;
 use batata_core::cluster::ServerMemberManager;
-use batata_naming::Instance;
 
 use super::api_model::{
-    ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+    ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+    ConfigHistoryDetailInfo, ImportResult, SameConfigPolicy,
 };
-use super::model::{ClusterHealthResponse, Member, SelfMemberResponse};
+use super::model::{ClusterHealthResponse, Member, Namespace, SelfMemberResponse};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ pub trait ConsoleDataSource: Send + Sync {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-    ) -> anyhow::Result<Option<ConfigAllInfo>>;
+    ) -> anyhow::Result<Option<ConfigDetailInfo>>;
 
     /// Search configs with pagination
     #[allow(clippy::too_many_arguments)]

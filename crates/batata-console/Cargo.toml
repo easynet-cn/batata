@@ -17,6 +17,7 @@ batata-config = { workspace = true }
 batata-naming = { workspace = true }
 batata-client = { workspace = true }
 batata-maintainer-client = { workspace = true }
+batata-ai = { workspace = true }
 batata-server-common = { workspace = true }
 
 # Web framework

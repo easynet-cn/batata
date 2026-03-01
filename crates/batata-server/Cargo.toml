@@ -26,25 +26,21 @@ batata-core = { workspace = true }
 batata-config = { workspace = true }
 batata-naming = { workspace = true }
 batata-console = { workspace = true }
+batata-ai = { workspace = true }
 batata-server-common = { workspace = true }
 batata-plugin-consul = { workspace = true }
 batata-plugin-apollo = { workspace = true }
+batata-plugin-cloud = { workspace = true }
 batata-maintainer-client = { workspace = true }
 batata-mesh = { workspace = true }
 
 # Web framework
-actix = { workspace = true }
 actix-web = { workspace = true }
 actix-rt = { workspace = true }
-actix-multipart = { workspace = true }
-actix-service = { workspace = true }
-actix-utils = { workspace = true }
 
 # gRPC
 tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
 prost = { workspace = true }
-prost-types = { workspace = true }
-tonic-prost = { workspace = true }
 tower = { workspace = true }
 http = { workspace = true }
 
@@ -58,16 +54,12 @@ clap = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_urlencoded = { workspace = true }
-serde_with = { workspace = true }
 serde_yaml = { workspace = true }
 
 # Async
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true }
 async-trait = { workspace = true }
-futures = { workspace = true }
-pin-project-lite = { workspace = true }
 
 # Logging & Telemetry
 tracing = { workspace = true }
@@ -89,14 +81,9 @@ thiserror = { workspace = true }
 
 # Metrics
 metrics = { workspace = true }
-metrics-exporter-prometheus = { workspace = true }
 
 # Auth
 jsonwebtoken = { workspace = true }
-bcrypt = { workspace = true }
-
-# System info
-sysinfo = { workspace = true }
 
 # Utils
 chrono = { workspace = true }
@@ -105,10 +92,6 @@ regex = { workspace = true }
 base64 = { workspace = true }
 md5 = { workspace = true }
 bytes = { workspace = true }
-byteorder = { workspace = true }
-zip = { workspace = true }
-if-addrs = { workspace = true }
-htmlescape = { workspace = true }
 
 # HTTP client
 reqwest = { workspace = true }
@@ -123,10 +106,6 @@ parking_lot = { workspace = true }
 # Consensus
 openraft = { workspace = true }
 rocksdb = { workspace = true }
-
-# Kubernetes
-kube = { workspace = true }
-k8s-openapi = { workspace = true }
 
 [dev-dependencies]
 batata-client = { workspace = true }

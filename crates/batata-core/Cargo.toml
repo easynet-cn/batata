@@ -11,11 +11,11 @@ description = "Core cluster and connection management for Batata"
 batata-common = { workspace = true }
 batata-api = { workspace = true }
 batata-consistency = { workspace = true }
-batata-naming = { workspace = true }
 
 # Concurrency
 dashmap = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "net"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "net", "fs"] }
+tokio-stream = { workspace = true }
 
 # gRPC
 tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
@@ -54,3 +54,6 @@ moka = { workspace = true }
 
 # JWT
 jsonwebtoken = { workspace = true }
+
+# System info (for handler metrics)
+sysinfo = { workspace = true }

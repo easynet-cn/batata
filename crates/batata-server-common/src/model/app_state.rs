@@ -2,12 +2,11 @@
 //!
 //! This module defines the central application state shared across all handlers.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{any::Any, collections::HashMap, sync::Arc};
 
 use batata_auth::service::oauth::OAuthService;
 use batata_consistency::RaftNode;
 use batata_core::cluster::ServerMemberManager;
-use batata_naming::healthcheck::HealthCheckManager;
 use batata_persistence::PersistenceService;
 
 use crate::console::datasource::ConsoleDataSource;
@@ -46,7 +45,8 @@ pub struct AppState {
     /// Unified persistence service (SQL, embedded RocksDB, or distributed Raft)
     pub persistence: Option<Arc<dyn PersistenceService>>,
     /// Health check manager for tracking instance heartbeats and expiration
-    pub health_check_manager: Option<Arc<HealthCheckManager>>,
+    /// Stored as `Arc<dyn Any>` to avoid circular dependency (actual type: `batata_naming::healthcheck::HealthCheckManager`)
+    pub health_check_manager: Option<Arc<dyn Any + Send + Sync>>,
     /// Raft consensus node (only in DistributedEmbedded mode)
     pub raft_node: Option<Arc<RaftNode>>,
     /// Server lifecycle status (Starting → Up / Down)

@@ -1,13 +1,2 @@
-use actix_web::{Scope, web};
-
-use super::{client, cluster, health, instance, ops, service};
-
-pub fn routes() -> Scope {
-    web::scope("/ns")
-        .service(service::routes())
-        .service(instance::routes())
-        .service(cluster::routes())
-        .service(health::routes())
-        .service(client::routes())
-        .service(ops::routes())
-}
+//! V3 Admin Naming routes - re-exported from batata-naming
+pub use batata_naming::api::v3::admin::route::*;

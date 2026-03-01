@@ -4,9 +4,7 @@
 
 use std::collections::HashMap;
 
-use actix_web::{
-    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web,
-};
+use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
 use serde::Deserialize;
 
 use batata_server_common::{

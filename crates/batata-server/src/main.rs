@@ -285,7 +285,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         console_datasource,
         oauth_service,
         persistence,
-        health_check_manager,
+        health_check_manager: health_check_manager
+            .map(|m| m as Arc<dyn std::any::Any + Send + Sync>),
         raft_node: raft_node.clone(),
         server_status: server_status.clone(),
     });
@@ -357,7 +358,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Start health check manager (unhealthy and expired instance checkers)
-    if let Some(hc_manager) = app_state.health_check_manager.as_ref() {
+    if let Some(hc_any) = app_state.health_check_manager.as_ref()
+        && let Ok(hc_manager) = Arc::clone(hc_any).downcast::<HealthCheckManager>()
+    {
         // Spawn in separate tasks - they will keep running in background
         let hc_manager_clone = hc_manager.clone();
         tokio::spawn(async move {
@@ -385,9 +388,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             loop {
                 interval.tick().await;
                 let db_ready = console_ds.server_readiness().await;
-                let raft_ready = match &raft_ref {
-                    Some(raft) => raft.leader_id().is_some(),
-                    None => true,
+                let (raft_ready, raft_reason) = match &raft_ref {
+                    Some(raft) => raft.is_ready(),
+                    None => (true, None),
                 };
 
                 if db_ready && raft_ready {
@@ -399,10 +402,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     let mut reasons = Vec::new();
                     if !db_ready {
-                        reasons.push("database not ready");
+                        reasons.push("database not ready".to_string());
                     }
-                    if !raft_ready {
-                        reasons.push("raft leader not elected");
+                    if let Some(reason) = raft_reason {
+                        reasons.push(reason);
                     }
                     let msg = reasons.join(", ");
                     status_mgr.set_down();

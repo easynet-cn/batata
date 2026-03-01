@@ -8,8 +8,17 @@
 //! - Abstraction layer for multi-registry support
 
 pub mod abstraction;
+pub mod handler;
 pub mod model;
 pub mod service;
+
+/// Re-exports from batata-api for handler macro compatibility.
+/// Handler macros use `$crate::api::grpc::Payload` etc.
+pub mod api {
+    pub use batata_api::distro;
+    pub use batata_api::grpc;
+    pub use batata_api::remote;
+}
 
 // Re-export cluster module
 pub mod cluster {

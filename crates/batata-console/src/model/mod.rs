@@ -3,19 +3,16 @@
 //! This module re-exports shared console types from batata-server-common
 //! and additional types from batata-config.
 
-// Re-export types from batata-config
-pub use batata_config::model::{Namespace, NamespaceForm};
-
 // Re-export all console model types from server-common
 pub use batata_server_common::console::model::{
-    ClusterHealthResponse, ClusterHealthSummary, ConfigAbility, Member, NamingAbility,
-    NodeAbilities, RemoteAbility, SelfMemberResponse,
+    ClusterHealthResponse, ClusterHealthSummary, ConfigAbility, Member, Namespace, NamespaceForm,
+    NamingAbility, NodeAbilities, RemoteAbility, SelfMemberResponse,
 };
 
 // Re-export console API config types from server-common
 pub use batata_server_common::console::api_model::{
     ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
-    ConfigHistoryDetailInfo,
+    ConfigHistoryDetailInfo, ImportFailItem, ImportResult, SameConfigPolicy,
 };
 
 #[cfg(test)]

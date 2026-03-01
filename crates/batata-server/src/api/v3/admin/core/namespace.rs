@@ -3,8 +3,7 @@
 use std::sync::LazyLock;
 
 use actix_web::{
-    HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, http::StatusCode, post, put,
-    web,
+    HttpRequest, HttpResponse, Responder, delete, get, http::StatusCode, post, put, web,
 };
 use serde::Deserialize;
 

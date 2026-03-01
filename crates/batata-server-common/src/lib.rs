@@ -15,6 +15,7 @@
 // - ConsoleDataSource trait (console data abstraction)
 // - Console model types (Member, ClusterHealthResponse, etc.)
 
+pub mod api; // HTTP API handlers (auth, etc.)
 pub mod console; // Console shared types (trait, models)
 pub mod error; // Error handling and types
 pub mod middleware; // HTTP middleware

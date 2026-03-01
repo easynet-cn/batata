@@ -1,6 +1,6 @@
 //! V3 Admin core cluster endpoints
 
-use actix_web::{HttpMessage, HttpRequest, Responder, get, put, web};
+use actix_web::{HttpRequest, Responder, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{

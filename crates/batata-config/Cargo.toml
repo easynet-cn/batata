@@ -10,8 +10,15 @@ description = "Configuration management service for Batata"
 [dependencies]
 batata-common = { workspace = true }
 batata-api = { workspace = true }
+batata-core = { workspace = true }
 batata-persistence = { workspace = true }
 batata-consistency = { workspace = true }
+batata-server-common = { workspace = true }
+batata-auth = { workspace = true }
+
+# Web framework
+actix-web = { workspace = true }
+actix-multipart = { workspace = true }
 
 # Database
 sea-orm = { workspace = true }
@@ -25,16 +32,23 @@ serde_with = { workspace = true }
 # Async
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+futures = { workspace = true }
 
 # Import/Export
 zip = { workspace = true }
 base64 = { workspace = true }
+
+# gRPC
+tonic = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
+
+# Concurrency
+dashmap = { workspace = true }
 
 # Utils
 md5 = { workspace = true }

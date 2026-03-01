@@ -7,17 +7,15 @@ use std::sync::Arc;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
-use batata_config::{ConfigAllInfo, ImportResult, SameConfigPolicy};
 use batata_core::cluster::ServerMemberManager;
-
-use batata_config::Namespace;
 use batata_naming::Instance;
 use batata_server_common::console::api_model::{
-    ConfigBasicInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
+    ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
+    ConfigHistoryDetailInfo, ImportResult, SameConfigPolicy,
 };
 use batata_server_common::console::datasource::ConsoleDataSource;
 use batata_server_common::console::model::{
-    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, Member,
+    ClusterHealthResponse, ClusterHealthSummary as ClusterHealthSummaryResponse, Member, Namespace,
     SelfMemberResponse,
 };
 
@@ -66,7 +64,11 @@ impl ConsoleDataSource for LocalDataSource {
     // ============== Namespace Operations ==============
 
     async fn namespace_find_all(&self) -> Vec<Namespace> {
-        batata_config::service::namespace::find_all(&self.database_connection).await
+        batata_config::service::namespace::find_all(&self.database_connection)
+            .await
+            .into_iter()
+            .map(convert_namespace)
+            .collect()
     }
 
     async fn namespace_get_by_id(
@@ -74,12 +76,13 @@ impl ConsoleDataSource for LocalDataSource {
         namespace_id: &str,
         tenant_id: &str,
     ) -> anyhow::Result<Namespace> {
-        batata_config::service::namespace::get_by_namespace_id(
+        let ns = batata_config::service::namespace::get_by_namespace_id(
             &self.database_connection,
             namespace_id,
             tenant_id,
         )
-        .await
+        .await?;
+        Ok(convert_namespace(ns))
     }
 
     async fn namespace_create(
@@ -151,14 +154,15 @@ impl ConsoleDataSource for LocalDataSource {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-    ) -> anyhow::Result<Option<ConfigAllInfo>> {
-        batata_config::service::config::find_one(
+    ) -> anyhow::Result<Option<ConfigDetailInfo>> {
+        let result = batata_config::service::config::find_one(
             &self.database_connection,
             data_id,
             group_name,
             namespace_id,
         )
-        .await
+        .await?;
+        Ok(result.map(convert_config_all_info_to_detail))
     }
 
     async fn config_search_page(
@@ -187,7 +191,7 @@ impl ConsoleDataSource for LocalDataSource {
         )
         .await?;
 
-        // Convert batata_config::ConfigBasicInfo to api::config::model::ConfigBasicInfo
+        // Convert batata_config::ConfigBasicInfo to batata_server_common ConfigBasicInfo
         Ok(Page::new(
             result.total_count,
             result.page_number,
@@ -195,7 +199,7 @@ impl ConsoleDataSource for LocalDataSource {
             result
                 .page_items
                 .into_iter()
-                .map(ConfigBasicInfo::from)
+                .map(convert_config_basic_info)
                 .collect(),
         ))
     }
@@ -274,7 +278,7 @@ impl ConsoleDataSource for LocalDataSource {
             namespace_id,
         )
         .await?;
-        Ok(result.map(ConfigGrayInfo::from))
+        Ok(result.map(convert_gray_wrapper_to_gray_info))
     }
 
     async fn config_create_or_update_gray(
@@ -365,15 +369,17 @@ impl ConsoleDataSource for LocalDataSource {
             return Err(anyhow::anyhow!("No configurations found in ZIP file"));
         }
 
-        batata_config::service::import::import_nacos_items(
+        let config_policy = convert_same_config_policy(&policy);
+        let result = batata_config::service::import::import_nacos_items(
             &self.database_connection,
             items,
             namespace_id,
-            policy,
+            config_policy,
             src_user,
             src_ip,
         )
-        .await
+        .await?;
+        Ok(convert_import_result(result))
     }
 
     async fn config_batch_delete(
@@ -438,7 +444,7 @@ impl ConsoleDataSource for LocalDataSource {
     ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
         let result =
             batata_config::service::history::find_by_id(&self.database_connection, nid).await?;
-        Ok(result.map(ConfigHistoryDetailInfo::from))
+        Ok(result.map(convert_history_info_to_detail))
     }
 
     async fn history_search_page(
@@ -466,7 +472,7 @@ impl ConsoleDataSource for LocalDataSource {
             result
                 .page_items
                 .into_iter()
-                .map(ConfigHistoryBasicInfo::from)
+                .map(convert_history_info_to_basic)
                 .collect(),
         ))
     }
@@ -481,7 +487,10 @@ impl ConsoleDataSource for LocalDataSource {
         )
         .await?;
 
-        Ok(result.into_iter().map(ConfigBasicInfo::from).collect())
+        Ok(result
+            .into_iter()
+            .map(convert_config_info_wrapper)
+            .collect())
     }
 
     async fn history_find_previous(
@@ -499,7 +508,7 @@ impl ConsoleDataSource for LocalDataSource {
             id as i64,
         )
         .await?;
-        Ok(result.map(ConfigHistoryDetailInfo::from))
+        Ok(result.map(convert_history_info_to_detail))
     }
 
     // ============== History Operations (Advanced) ==============
@@ -537,7 +546,7 @@ impl ConsoleDataSource for LocalDataSource {
             result
                 .page_items
                 .into_iter()
-                .map(ConfigHistoryBasicInfo::from)
+                .map(convert_history_info_to_basic)
                 .collect(),
         ))
     }
@@ -1160,5 +1169,181 @@ impl ConsoleDataSource for LocalDataSource {
 
     fn get_server_member_manager(&self) -> Option<Arc<ServerMemberManager>> {
         Some(self.server_member_manager.clone())
+    }
+}
+
+// ============== Conversion helpers ==============
+
+fn convert_namespace(ns: batata_config::model::Namespace) -> Namespace {
+    Namespace {
+        namespace: ns.namespace,
+        namespace_show_name: ns.namespace_show_name,
+        namespace_desc: ns.namespace_desc,
+        quota: ns.quota,
+        config_count: ns.config_count,
+        type_: ns.type_,
+    }
+}
+
+fn convert_config_basic_info(
+    info: batata_config::model::config::ConfigBasicInfo,
+) -> ConfigBasicInfo {
+    ConfigBasicInfo {
+        id: info.id,
+        namespace_id: info.namespace_id,
+        group_name: info.group_name,
+        data_id: info.data_id,
+        md5: info.md5,
+        r#type: info.r#type,
+        app_name: info.app_name,
+        create_time: info.create_time,
+        modify_time: info.modify_time,
+    }
+}
+
+fn convert_config_info_wrapper(
+    info: batata_config::model::config::ConfigInfoWrapper,
+) -> ConfigBasicInfo {
+    ConfigBasicInfo {
+        id: info.id.unwrap_or_default() as i64,
+        namespace_id: info.namespace_id,
+        group_name: info.group_name,
+        data_id: info.data_id,
+        md5: info.md5.unwrap_or_default(),
+        r#type: info.r#type,
+        app_name: info.app_name,
+        create_time: info.create_time,
+        modify_time: info.modify_time,
+    }
+}
+
+fn convert_config_all_info_to_detail(
+    info: batata_config::model::config::ConfigAllInfo,
+) -> ConfigDetailInfo {
+    ConfigDetailInfo {
+        config_basic_info: ConfigBasicInfo {
+            id: info.config_info.config_info_base.id,
+            namespace_id: info.config_info.tenant,
+            group_name: info.config_info.config_info_base.group,
+            data_id: info.config_info.config_info_base.data_id,
+            md5: info.config_info.config_info_base.md5,
+            r#type: info.config_info.r#type,
+            app_name: info.config_info.app_name,
+            create_time: info.create_time,
+            modify_time: info.modify_time,
+        },
+        content: info.config_info.config_info_base.content,
+        desc: info.desc,
+        encrypted_data_key: info.config_info.config_info_base.encrypted_data_key,
+        create_user: info.create_user,
+        create_ip: info.create_ip,
+        config_tags: info.config_tags,
+    }
+}
+
+fn convert_gray_wrapper_to_gray_info(
+    gray: batata_config::model::config::ConfigInfoGrayWrapper,
+) -> ConfigGrayInfo {
+    ConfigGrayInfo {
+        config_detail_info: ConfigDetailInfo {
+            config_basic_info: ConfigBasicInfo {
+                id: gray.config_info.config_info_base.id,
+                namespace_id: gray.config_info.tenant,
+                group_name: gray.config_info.config_info_base.group,
+                data_id: gray.config_info.config_info_base.data_id,
+                md5: gray.config_info.config_info_base.md5,
+                r#type: gray.config_info.r#type,
+                app_name: gray.config_info.app_name,
+                create_time: 0,
+                modify_time: gray.last_modified,
+            },
+            content: gray.config_info.config_info_base.content,
+            desc: String::new(),
+            encrypted_data_key: gray.config_info.config_info_base.encrypted_data_key,
+            create_user: gray.src_user,
+            create_ip: String::new(),
+            config_tags: String::new(),
+        },
+        gray_name: gray.gray_name,
+        gray_rule: gray.gray_rule,
+    }
+}
+
+fn convert_history_info_to_basic(
+    info: batata_config::model::config::ConfigHistoryInfo,
+) -> ConfigHistoryBasicInfo {
+    ConfigHistoryBasicInfo {
+        config_basic_info: ConfigBasicInfo {
+            id: info.id as i64,
+            namespace_id: info.tenant,
+            group_name: info.group,
+            data_id: info.data_id,
+            md5: info.md5,
+            r#type: String::default(),
+            app_name: info.app_name,
+            create_time: info.created_time,
+            modify_time: info.last_modified_time,
+        },
+        src_ip: info.src_ip,
+        src_user: info.src_user,
+        op_type: info.op_type,
+        publish_type: info.publish_type,
+    }
+}
+
+fn convert_history_info_to_detail(
+    info: batata_config::model::config::ConfigHistoryInfo,
+) -> ConfigHistoryDetailInfo {
+    ConfigHistoryDetailInfo {
+        config_history_basic_info: ConfigHistoryBasicInfo {
+            config_basic_info: ConfigBasicInfo {
+                id: info.id as i64,
+                namespace_id: info.tenant,
+                group_name: info.group,
+                data_id: info.data_id,
+                md5: info.md5,
+                r#type: String::default(),
+                app_name: info.app_name,
+                create_time: info.created_time,
+                modify_time: info.last_modified_time,
+            },
+            src_ip: info.src_ip,
+            src_user: info.src_user,
+            op_type: info.op_type,
+            publish_type: info.publish_type,
+        },
+        content: info.content,
+        encrypted_data_key: info.encrypted_data_key,
+        gray_name: info.gray_name,
+        ext_info: info.ext_info,
+    }
+}
+
+fn convert_same_config_policy(
+    policy: &SameConfigPolicy,
+) -> batata_config::model::export::SameConfigPolicy {
+    match policy {
+        SameConfigPolicy::Abort => batata_config::model::export::SameConfigPolicy::Abort,
+        SameConfigPolicy::Skip => batata_config::model::export::SameConfigPolicy::Skip,
+        SameConfigPolicy::Overwrite => batata_config::model::export::SameConfigPolicy::Overwrite,
+    }
+}
+
+fn convert_import_result(result: batata_config::model::export::ImportResult) -> ImportResult {
+    ImportResult {
+        success_count: result.success_count,
+        skip_count: result.skip_count,
+        fail_count: result.fail_count,
+        fail_data: result
+            .fail_data
+            .into_iter()
+            .map(
+                |item| batata_server_common::console::api_model::ImportFailItem {
+                    data_id: item.data_id,
+                    group: item.group,
+                    reason: item.reason,
+                },
+            )
+            .collect(),
     }
 }

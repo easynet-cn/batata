@@ -15,8 +15,6 @@ batata-persistence = { workspace = true }
 batata-auth = { workspace = true }
 batata-consistency = { workspace = true }
 batata-core = { workspace = true }
-batata-naming = { workspace = true }
-batata-config = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }
@@ -51,6 +49,8 @@ chrono = { workspace = true }
 
 # Auth
 jsonwebtoken = { workspace = true }
+bcrypt = { workspace = true }
+uuid = { workspace = true }
 
 # Rate limiting
 dashmap = { workspace = true }

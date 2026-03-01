@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use actix_web::{HttpMessage, HttpRequest, Responder, get, web};
+use actix_web::{HttpRequest, Responder, get, web};
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,

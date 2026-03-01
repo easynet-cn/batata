@@ -12,11 +12,13 @@ members = [
     "crates/batata-plugin",
     "crates/batata-plugin-consul",
     "crates/batata-plugin-apollo",
+    "crates/batata-plugin-cloud",
     "crates/batata-console",
     "crates/batata-server-common",
     "crates/batata-client",
     "crates/batata-mesh",
     "crates/batata-maintainer-client",
+    "crates/batata-ai",
     "crates/batata-server",
 ]
 
@@ -40,11 +42,13 @@ batata-naming = { path = "crates/batata-naming" }
 batata-plugin = { path = "crates/batata-plugin" }
 batata-plugin-consul = { path = "crates/batata-plugin-consul" }
 batata-plugin-apollo = { path = "crates/batata-plugin-apollo" }
+batata-plugin-cloud = { path = "crates/batata-plugin-cloud" }
 batata-console = { path = "crates/batata-console" }
 batata-server-common = { path = "crates/batata-server-common" }
 batata-client = { path = "crates/batata-client" }
 batata-maintainer-client = { path = "crates/batata-maintainer-client" }
 batata-mesh = { path = "crates/batata-mesh" }
+batata-ai = { path = "crates/batata-ai" }
 batata-server = { path = "crates/batata-server" }
 
 # Async runtime

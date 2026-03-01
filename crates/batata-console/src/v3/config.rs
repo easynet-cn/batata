@@ -21,9 +21,8 @@ use batata_server_common::{
 };
 
 use batata_api::model::Page;
-use batata_config::model::{
-    ConfigAllInfo, ConfigForm, ConfigType, ExportRequest, ImportRequest, ImportResult,
-};
+use batata_config::model::{ConfigForm, ConfigType, ExportRequest, ImportRequest};
+use batata_server_common::console::api_model::ImportResult;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,11 +67,11 @@ async fn find_one(
         .config_find_one(&params.data_id, &params.group_name, &namespace_id)
         .await
     {
-        Ok(config) => config.map(ConfigDetailInfo::from),
+        Ok(config) => config,
         Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
     };
 
-    model::common::Result::<Option<ConfigAllInfo>>::http_success(result)
+    model::common::Result::<Option<ConfigDetailInfo>>::http_success(result)
 }
 
 #[get("list")]
@@ -628,7 +627,17 @@ async fn import_configs(
         params.namespace_id.clone()
     };
 
-    let policy = params.get_policy();
+    let policy = {
+        use batata_server_common::console::api_model::SameConfigPolicy;
+        let config_policy = params.get_policy();
+        match config_policy {
+            batata_config::model::export::SameConfigPolicy::Abort => SameConfigPolicy::Abort,
+            batata_config::model::export::SameConfigPolicy::Skip => SameConfigPolicy::Skip,
+            batata_config::model::export::SameConfigPolicy::Overwrite => {
+                SameConfigPolicy::Overwrite
+            }
+        }
+    };
 
     // Get user info
     let auth_context = match req.extensions().get::<AuthContext>() {

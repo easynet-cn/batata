@@ -305,6 +305,39 @@ impl RaftNode {
         self.metrics().last_applied.map(|l| l.index)
     }
 
+    /// Check whether the Raft node is ready to serve reads.
+    ///
+    /// Ready means:
+    /// 1. A leader has been elected (cluster is functional).
+    /// 2. This node has applied all received log entries to its state machine
+    ///    (config, namespace, user data in RocksDB is up-to-date).
+    ///
+    /// Returns `(ready, reason)` where `reason` explains why the node is not ready.
+    pub fn is_ready(&self) -> (bool, Option<String>) {
+        let metrics = self.metrics();
+
+        // 1. Leader must exist
+        if metrics.current_leader.is_none() {
+            return (false, Some("raft leader not elected".to_string()));
+        }
+
+        // 2. All received logs must be applied to the state machine
+        let last_log = metrics.last_log_index.unwrap_or(0);
+        let last_applied = metrics.last_applied.map(|l| l.index).unwrap_or(0);
+
+        if last_applied < last_log {
+            return (
+                false,
+                Some(format!(
+                    "raft log replay in progress ({}/{})",
+                    last_applied, last_log
+                )),
+            );
+        }
+
+        (true, None)
+    }
+
     /// Get the current term
     pub fn current_term(&self) -> u64 {
         self.metrics().current_term

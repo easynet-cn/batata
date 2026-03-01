@@ -1,12 +1,11 @@
 use std::sync::LazyLock;
 
 use actix_web::{
-    HttpMessage, HttpRequest, HttpResponse, Responder, Scope, delete, get, http::StatusCode, post,
-    put, web,
+    HttpRequest, HttpResponse, Responder, Scope, delete, get, http::StatusCode, post, put, web,
 };
 use serde::Deserialize;
 
-use batata_config::Namespace;
+use crate::model::Namespace;
 
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType,

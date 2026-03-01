@@ -2,8 +2,10 @@
 //!
 //! This module provides the HTTP handlers for the v3 console API.
 //! These handlers use the AppState and ConsoleDataSource abstraction for data access.
-//! AI handlers (mcp, a2a, plugin) remain in batata-server.
 
+pub mod ai_a2a;
+pub mod ai_mcp;
+pub mod ai_plugin;
 pub mod cluster;
 pub mod config;
 pub mod health;

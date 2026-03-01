@@ -8,6 +8,8 @@
 //! - Service selector evaluation
 //! - Metadata persistence
 
+pub mod api;
+pub mod handler;
 pub mod health_checker;
 pub mod healthcheck;
 pub mod model;
@@ -29,3 +31,17 @@ pub use service::{
     ClusterConfig, ClusterStatistics, FuzzyWatchPattern, NamingService, ProtectionInfo,
     ServiceMetadata,
 };
+
+// Implement ConnectionCleanupHandler for NamingService
+use batata_core::handler::rpc::ConnectionCleanupHandler;
+
+#[tonic::async_trait]
+impl ConnectionCleanupHandler for NamingService {
+    fn deregister_all_by_connection(&self, connection_id: &str) -> Vec<String> {
+        self.deregister_all_by_connection(connection_id)
+    }
+
+    fn remove_subscriber(&self, connection_id: &str) {
+        self.remove_subscriber(connection_id)
+    }
+}

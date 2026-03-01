@@ -1,6 +1,6 @@
 //! V3 Admin server loader endpoints
 
-use actix_web::{HttpMessage, HttpRequest, Responder, get, post, web};
+use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{

@@ -1,6 +1,6 @@
 //! V3 Admin core operations endpoints
 
-use actix_web::{HttpMessage, HttpRequest, Responder, get, post, put, web};
+use actix_web::{HttpRequest, Responder, get, post, put, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{

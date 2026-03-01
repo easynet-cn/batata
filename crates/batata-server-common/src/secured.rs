@@ -174,9 +174,7 @@ macro_rules! secured {
 
             if !__skip_jwt {
                 let __auth_context_opt: Option<$crate::secured::AuthContext> = {
-                    __secured
-                        .req
-                        .extensions()
+                    actix_web::HttpMessage::extensions(__secured.req)
                         .get::<$crate::secured::AuthContext>()
                         .cloned()
                 };
