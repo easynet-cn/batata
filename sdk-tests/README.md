@@ -1,6 +1,6 @@
 # Batata SDK Compatibility Tests
 
-This directory contains integration tests using official client SDKs from Nacos, Consul, and Apollo projects to validate Batata's API compatibility.
+This directory contains integration tests using official client SDKs from Nacos and Consul projects to validate Batata's API compatibility.
 
 ## Test Structure
 
@@ -63,41 +63,15 @@ sdk-tests/
 │   ├── service_mesh_test.go                 # Service mesh features (18 tests)
 │   ├── discovery_test.go                    # Service discovery patterns (15 tests)
 │   └── maintenance_test.go                  # Maintenance mode & lifecycle (14 tests) NEW
-├── apollo-java-tests/         # Apollo Java SDK tests (403 tests)
-│   ├── pom.xml
-│   └── src/test/java/io/batata/tests/
-│       ├── ApolloConfigTest.java            # Config SDK
-│       ├── ApolloOpenApiTest.java           # OpenAPI CRUD
-│       ├── ApolloAdvancedApiTest.java       # Gray release, locks, keys (20 tests)
-│       ├── ApolloFileFormatTest.java        # JSON/YAML/XML/Properties (20 tests)
-│       ├── ApolloTypeConversionTest.java    # Type conversion (22 tests)
-│       ├── ApolloLongPollingTest.java       # Long polling notifications (10 tests)
-│       ├── ApolloConfigChangeTest.java      # Config change listeners (15 tests)
-│       ├── ApolloLocalCacheTest.java        # Local cache & fallback (15 tests)
-│       ├── ApolloErrorHandlingTest.java     # Error handling & edge cases (20 tests)
-│       ├── ApolloNamespaceTest.java         # Namespace functionality (15 tests)
-│       ├── ApolloMultiEnvTest.java          # Multi-environment/cluster (20 tests)
-│       ├── ApolloConfigRefreshTest.java     # Config refresh/reload (18 tests)
-│       ├── ApolloDefaultValueTest.java      # Default value handling (24 tests)
-│       ├── ApolloAsyncConfigTest.java       # Async config access (18 tests)
-│       ├── ApolloConfigPriorityTest.java    # Config priority & override (16 tests)
-│       ├── ApolloSecretConfigTest.java      # Secret & sensitive config (18 tests)
-│       ├── ApolloBatchConfigTest.java       # Batch config operations (20 tests)
-│       ├── ApolloConfigVersionTest.java     # Config versioning & releases (18 tests) NEW
-│       ├── ApolloPropertyPlaceholderTest.java # Property placeholders (18 tests) NEW
-│       ├── ApolloConfigFileTest.java        # ConfigFile API (18 tests)
-│       ├── ApolloConfigListenerAdvancedTest.java # Advanced listeners (18 tests) NEW
-│       ├── ApolloOpenApiAdvancedTest.java   # Advanced OpenAPI (20 tests) NEW
-│       └── ApolloIntegrationTest.java       # E2E integration (18 tests) NEW
 ├── docker-compose.yml         # Test environment
 └── README.md                  # This file
 
-Total: 1086 SDK compatibility tests
+Total: 683 SDK compatibility tests
 ```
 
 ## Prerequisites
 
-- Java 21+ (for Nacos and Apollo tests)
+- Java 21+ (for Nacos tests)
 - Go 1.21+ (for Consul tests)
 - Docker and Docker Compose
 - Maven 3.8+
@@ -124,12 +98,6 @@ cd sdk-tests/consul-go-tests
 go test -v ./...
 ```
 
-4. Run Apollo Java tests:
-```bash
-cd sdk-tests/apollo-java-tests
-mvn test
-```
-
 ### Option 2: Docker Compose
 
 ```bash
@@ -143,7 +111,6 @@ docker-compose --profile tests up
 # Run specific test suite
 docker-compose --profile tests up nacos-tests
 docker-compose --profile tests up consul-tests
-docker-compose --profile tests up apollo-tests
 
 # Cleanup
 docker-compose down -v
@@ -162,15 +129,6 @@ docker-compose down -v
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONSUL_HTTP_ADDR` | `127.0.0.1:8848` | Batata server address |
-
-### Apollo Tests
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APOLLO_META` | `http://127.0.0.1:8848` | Apollo meta service URL |
-| `APOLLO_CONFIG_SERVICE` | `http://127.0.0.1:8848` | Config service URL |
-| `APOLLO_APP_ID` | `test-app` | Application ID |
-| `APOLLO_ENV` | `DEV` | Environment |
-| `APOLLO_CLUSTER` | `default` | Cluster name |
 
 ## Test Categories
 
@@ -233,30 +191,6 @@ Advanced features that are less commonly used.
 - **Discovery**: Lookup, Tags, Health filter, Datacenter, Blocking, Failover
 - **Maintenance**: Node/service maintenance, Health impact, Discovery impact
 
-### Apollo SDK (403 tests)
-- **Config API**: Get Config, Properties, Long polling, Notifications
-- **OpenAPI**: Apps, Items, Releases, Namespaces, Gray release
-- **File Formats**: Properties, JSON, YAML, XML, TXT parsing
-- **Type Conversion**: Primitives, Date/Duration, Arrays, Collections
-- **Long Polling**: Notifications, Multi-namespace, Timeout handling
-- **Config Change**: Listeners, Interested keys, Change types, Concurrent listeners
-- **Config Refresh**: Manual refresh, Auto refresh, Refresh callbacks, Performance
-- **Default Values**: String/Int/Long/Float/Boolean defaults, Arrays, Edge cases
-- **Async Config**: Async loading, Parallel access, CompletableFuture, Thread safety
-- **Local Cache**: Cache directory, Fallback, Persistence, Multi-namespace cache
-- **Error Handling**: Missing keys, Type errors, Null handling, Concurrent access
-- **Namespace**: Default/custom namespaces, Public namespaces, Isolation, ConfigFile
-- **Multi-Env/Cluster**: Environment switching, Cluster config, Datacenter, Feature flags
-- **Config Priority**: Namespace priority, Override order, Merge strategy, Inheritance
-- **Secret Config**: Sensitive values, Encryption, Masking, Rotation, Permissions
-- **Batch Operations**: Multi-key access, Parallel loading, Large batch, Performance
-- **Config Versioning**: Release key, Version tracking, Rollback, Release history
-- **Property Placeholders**: Resolution, Nesting, Defaults, Cross-namespace, Precedence
-- **ConfigFile API**: File formats, Change listener, Caching, Source type
-- **Advanced Listeners**: Key filters, Multiple listeners, Exception handling, Async
-- **Advanced OpenAPI**: Gray release, Namespace lock, Batch ops, Rollback
-- **Integration**: Full lifecycle, Hot reload, Failover, Feature flags, A/B testing
-
 ## Compatibility Matrix
 
 | Protocol | API | Status | Tests |
@@ -277,10 +211,6 @@ Advanced features that are less commonly used.
 | Consul Snapshot | Partial | :warning: | 9 |
 | Consul Watch | Full | :white_check_mark: | 16 |
 | Consul Service Mesh | Full | :white_check_mark: | 18 |
-| Apollo Config | Full | :white_check_mark: | 93 |
-| Apollo OpenAPI | Full | :white_check_mark: | 52 |
-| Apollo Namespace | Full | :white_check_mark: | 51 |
-| Apollo Priority | Full | :white_check_mark: | 16 |
 
 ## Troubleshooting
 
@@ -301,9 +231,6 @@ cd nacos-java-tests && mvn dependency:resolve
 
 # Consul tests
 cd consul-go-tests && go mod download
-
-# Apollo tests
-cd apollo-java-tests && mvn dependency:resolve
 ```
 
 ## Contributing

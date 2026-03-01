@@ -1201,24 +1201,6 @@ impl Configuration {
     }
 
     // ========================================================================
-    // Apollo Compatibility Plugin Configuration
-    // ========================================================================
-
-    /// Check if Apollo compatibility server is enabled
-    pub fn apollo_enabled(&self) -> bool {
-        self.config
-            .get_bool("batata.plugin.apollo.enabled")
-            .unwrap_or(false)
-    }
-
-    /// Get Apollo compatibility server port (default: 8080)
-    pub fn apollo_server_port(&self) -> u16 {
-        self.config
-            .get_int("batata.plugin.apollo.port")
-            .unwrap_or(8080) as u16
-    }
-
-    // ========================================================================
     // MCP Registry Configuration
     // ========================================================================
 
@@ -1448,30 +1430,6 @@ mod tests {
     fn test_consul_register_self_false() {
         let cfg = build_config(vec![("batata.plugin.consul.register_self", false.into())]);
         assert!(!cfg.consul_register_self());
-    }
-
-    #[test]
-    fn test_apollo_enabled_default_false() {
-        let cfg = build_config(vec![]);
-        assert!(!cfg.apollo_enabled());
-    }
-
-    #[test]
-    fn test_apollo_enabled_false() {
-        let cfg = build_config(vec![("batata.plugin.apollo.enabled", false.into())]);
-        assert!(!cfg.apollo_enabled());
-    }
-
-    #[test]
-    fn test_apollo_server_port_default() {
-        let cfg = build_config(vec![]);
-        assert_eq!(cfg.apollo_server_port(), 8080);
-    }
-
-    #[test]
-    fn test_apollo_server_port_custom() {
-        let cfg = build_config(vec![("batata.plugin.apollo.port", 9080_i64.into())]);
-        assert_eq!(cfg.apollo_server_port(), 9080);
     }
 
     // Rate Limit Configuration Tests

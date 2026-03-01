@@ -21,7 +21,6 @@
 
 - **Nacos API** - Full compatibility with Nacos V2 and V3 APIs (V1 intentionally not supported)
 - **Consul API** - Compatible with Consul Agent, Health, Catalog, KV, and ACL APIs
-- **Apollo API** - Full compatibility with Apollo Config client SDK and Open API
 - **gRPC Support** - High-performance bidirectional streaming for SDK clients
 
 ### Advanced Features
@@ -97,7 +96,6 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | Nacos V1 API | ✅ | ❌ | **Intentionally not supported** |
 | gRPC Bi-directional Streaming | ✅ | ✅ | Full |
 | Consul API Compatibility | ❌ | ✅ | **Extra** |
-| Apollo API Compatibility | ❌ | ✅ | **Extra** |
 | **Observability** | | | |
 | Prometheus Metrics | ✅ | ✅ | Full |
 | Health Endpoint | ✅ | ✅ | Full |
@@ -109,7 +107,6 @@ Batata implements **~98% of Nacos features** and can serve as a production-ready
 | Feature | Description |
 |---------|-------------|
 | **Consul API Compatibility** | Full support for Agent, Health, Catalog, KV, ACL APIs |
-| **Apollo API Compatibility** | Full support for Apollo client SDK and Open API |
 | **PostgreSQL Support** | In addition to MySQL |
 | **Consul JSON Import/Export** | Migration support for Consul KV store |
 | **Built-in Circuit Breaker** | Resilience pattern for cluster health checks |
@@ -150,7 +147,6 @@ batata/
 │   ├── batata-naming/            # Service discovery
 │   ├── batata-plugin/            # Plugin interfaces
 │   ├── batata-plugin-consul/     # Consul compatibility plugin
-│   ├── batata-plugin-apollo/     # Apollo compatibility plugin
 │   ├── batata-console/           # Console backend service
 │   ├── batata-client/            # Client SDK
 │   ├── batata-mesh/              # Service mesh (xDS, Istio MCP)
@@ -185,7 +181,6 @@ batata-server (main binary)
 ├── batata-core (cluster, connections, datacenter)
 ├── batata-mesh (xDS, Istio MCP)
 ├── batata-plugin-consul (Consul API)
-├── batata-plugin-apollo (Apollo API)
 └── batata-persistence (database)
 ```
 
@@ -206,7 +201,6 @@ cd batata
 # Initialize database
 mysql -u root -p < conf/mysql-schema.sql
 mysql -u root -p < conf/consul-mysql-schema.sql
-mysql -u root -p < conf/apollo-mysql-schema.sql
 
 # Configure application
 cp conf/application.yml.example conf/application.yml
@@ -379,25 +373,6 @@ xds:
 | `/v1/kv/{key}` | DELETE | Delete KV value |
 | `/v1/kv/export` | GET | Export KV (JSON) |
 | `/v1/kv/import` | PUT | Import KV (JSON) |
-
-### Apollo API
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/configs/{appId}/{cluster}/{namespace}` | GET | Get configuration |
-| `/configfiles/{appId}/{cluster}/{namespace}` | GET | Get config as text |
-| `/configfiles/json/{appId}/{cluster}/{namespace}` | GET | Get config as JSON |
-| `/notifications/v2` | GET | Long polling for updates |
-| `/openapi/v1/apps` | GET | List all apps |
-| `/openapi/v1/apps/{appId}/envclusters` | GET | Get env clusters |
-| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces` | GET | List namespaces |
-| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items` | GET | List items |
-| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/items` | POST | Create item |
-| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/releases` | POST | Publish release |
-| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/lock` | POST | Acquire lock |
-| `/openapi/v1/envs/{env}/apps/{appId}/clusters/{cluster}/namespaces/{namespace}/gray` | POST | Create gray release |
-| `/openapi/v1/apps/{appId}/accesskeys` | POST | Create access key |
-| `/openapi/v1/metrics/clients` | GET | Get client metrics |
 
 ### Console API (v3)
 
@@ -613,28 +588,6 @@ client = nacos.NacosClient(server_addresses="localhost:8848")
 config = client.get_config("dataId", "group")
 ```
 
-### Java (Apollo SDK)
-
-```java
-Config config = ConfigService.getAppConfig();
-String value = config.getProperty("key", "defaultValue");
-
-// With custom namespace
-Config applicationConfig = ConfigService.getConfig("application");
-```
-
-### Go (Apollo SDK)
-
-```go
-client, _ := agollo.Start(&config.AppConfig{
-    AppID:         "your-app-id",
-    Cluster:       "default",
-    NamespaceName: "application",
-    IP:            "localhost:8848",
-})
-value := client.GetValue("key")
-```
-
 ## Monitoring
 
 Prometheus metrics available at `/nacos/actuator/prometheus`:
@@ -673,7 +626,6 @@ batata_cluster_member_count 3
 - [x] DNS-based service discovery
 - [x] Gray/Beta release API
 - [x] Operation audit logs
-- [x] Apollo Config API compatibility
 - [ ] Kubernetes Operator
 - [ ] Web UI (backend API only, use Nacos UI or custom frontend)
 
@@ -695,7 +647,6 @@ This project is licensed under the Apache-2.0 License - see the [LICENSE](LICENS
 
 - [Nacos](https://nacos.io/) - For the original design and API specification
 - [Consul](https://www.consul.io/) - For the KV store and service discovery API design
-- [Apollo](https://www.apolloconfig.com/) - For the configuration management API design
 - [OpenRaft](https://github.com/datafuselabs/openraft) - For the Raft consensus implementation
 - [SeaORM](https://www.sea-ql.org/SeaORM/) - For the async ORM framework
 - [Actix-web](https://actix.rs/) - For the high-performance web framework

@@ -1,6 +1,5 @@
 //! Compatibility layer integration tests
 //!
-//! Tests for Consul and Apollo API compatibility
+//! Tests for Consul API compatibility
 
-pub mod apollo_api_test;
 pub mod consul_api_test;

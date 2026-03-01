@@ -99,11 +99,7 @@ const COMPONENT_LOGS: &[ComponentLogDef] = &[
     // Nacos: plugin-control.log
     ComponentLogDef {
         file_name: "plugin-control.log",
-        targets: &[
-            "batata_plugin",
-            "batata_plugin_consul",
-            "batata_plugin_apollo",
-        ],
+        targets: &["batata_plugin", "batata_plugin_consul"],
     },
     // Nacos: istio-main.log
     ComponentLogDef {

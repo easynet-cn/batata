@@ -12,20 +12,3 @@ pub mod roles;
 pub mod tenant_capacity;
 pub mod tenant_info;
 pub mod users;
-
-// Apollo Config entities
-pub mod apollo_access_key;
-pub mod apollo_app;
-pub mod apollo_app_namespace;
-pub mod apollo_audit;
-pub mod apollo_cluster;
-pub mod apollo_commit;
-pub mod apollo_gray_release_rule;
-pub mod apollo_instance;
-pub mod apollo_instance_config;
-pub mod apollo_item;
-pub mod apollo_namespace;
-pub mod apollo_namespace_lock;
-pub mod apollo_release;
-pub mod apollo_release_history;
-pub mod apollo_release_message;

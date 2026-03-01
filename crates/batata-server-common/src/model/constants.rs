@@ -198,8 +198,6 @@ pub const DATASOURCE_PLATFORM_PROPERTY_STATE: &str = "datasource_platform";
 
 pub const CONSUL_ENABLED_STATE: &str = "consul_enabled";
 pub const CONSUL_PORT_STATE: &str = "consul_port";
-pub const APOLLO_ENABLED_STATE: &str = "apollo_enabled";
-pub const APOLLO_PORT_STATE: &str = "apollo_port";
 
 // ============================================================================
 // Config Model Constants

@@ -13,7 +13,6 @@ services:
     volumes:
       - ../conf/mysql-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
       - ../conf/consul-mysql-schema.sql:/docker-entrypoint-initdb.d/02-consul-schema.sql
-      - ../conf/apollo-mysql-schema.sql:/docker-entrypoint-initdb.d/03-apollo-schema.sql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
@@ -74,26 +73,6 @@ services:
     container_name: consul-sdk-tests
     environment:
       - CONSUL_HTTP_ADDR=batata:8848
-    depends_on:
-      batata:
-        condition: service_healthy
-    networks:
-      - batata-test
-    profiles:
-      - tests
-
-  # Apollo Java SDK Tests
-  apollo-tests:
-    build:
-      context: ./apollo-java-tests
-      dockerfile: Dockerfile
-    container_name: apollo-sdk-tests
-    environment:
-      - APOLLO_META=http://batata:8848
-      - APOLLO_CONFIG_SERVICE=http://batata:8848
-      - APOLLO_APP_ID=test-app
-      - APOLLO_ENV=DEV
-      - APOLLO_CLUSTER=default
     depends_on:
       batata:
         condition: service_healthy

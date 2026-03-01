@@ -15,10 +15,6 @@ use crate::{
     api::ai::{
         AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp, configure_mcp_registry,
     },
-    api::apollo::{
-        ApolloAdvancedService, ApolloBranchService, ApolloNotificationService,
-        ApolloOpenApiService, apollo_config_routes, apollo_openapi_routes,
-    },
     api::cloud::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
     },
@@ -270,37 +266,6 @@ pub fn consul_server(
     .run())
 }
 
-/// Creates and binds the Apollo compatibility HTTP server.
-///
-/// The Apollo server provides Apollo Config-compatible API endpoints for
-/// configuration management clients that speak the Apollo protocol. It runs
-/// on a dedicated port (default 8080) without Nacos authentication middleware,
-/// since Apollo uses its own access key system.
-pub fn apollo_server(
-    app_state: Arc<AppState>,
-    apollo_services: ApolloServices,
-    address: String,
-    port: u16,
-) -> Result<Server, std::io::Error> {
-    let rate_limit_config = app_state.configuration.rate_limit_config();
-
-    Ok(HttpServer::new(move || {
-        App::new()
-            .wrap(Logger::default())
-            .wrap(RateLimiter::new(rate_limit_config.clone()))
-            .app_data(web::Data::from(app_state.clone()))
-            .app_data(web::Data::new(apollo_services.db.clone()))
-            .app_data(web::Data::new(apollo_services.notification_service.clone()))
-            .app_data(web::Data::new(apollo_services.openapi_service.clone()))
-            .app_data(web::Data::new(apollo_services.advanced_service.clone()))
-            .app_data(web::Data::new(apollo_services.branch_service.clone()))
-            .service(apollo_openapi_routes())
-            .service(apollo_config_routes())
-    })
-    .bind((address, port))?
-    .run())
-}
-
 /// Creates and binds the MCP Registry HTTP server.
 ///
 /// The MCP Registry server implements the official MCP Registry OpenAPI spec
@@ -400,35 +365,12 @@ impl Default for CloudServices {
     }
 }
 
-/// Apollo services for Apollo Config client compatibility.
-#[derive(Clone)]
-pub struct ApolloServices {
-    pub db: Arc<sea_orm::DatabaseConnection>,
-    pub notification_service: Arc<ApolloNotificationService>,
-    pub openapi_service: Arc<ApolloOpenApiService>,
-    pub advanced_service: Arc<ApolloAdvancedService>,
-    pub branch_service: Arc<ApolloBranchService>,
-}
-
-impl ApolloServices {
-    /// Creates Apollo service adapters from a database connection.
-    pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
-        Self {
-            db: db.clone(),
-            notification_service: Arc::new(ApolloNotificationService::new(db.clone())),
-            openapi_service: Arc::new(ApolloOpenApiService::new(db.clone())),
-            advanced_service: Arc::new(ApolloAdvancedService::new(db.clone())),
-            branch_service: Arc::new(ApolloBranchService::new(db)),
-        }
-    }
-}
-
 /// Creates and binds the main HTTP server.
 ///
 /// The main server provides core Nacos-compatible API endpoints
 /// including config management, service discovery, AI capabilities,
 /// cloud native integrations, and metrics.
-/// Consul and Apollo compatibility are served on dedicated ports.
+/// Consul compatibility is served on a dedicated port.
 #[allow(clippy::too_many_arguments)]
 pub fn main_server(
     app_state: Arc<AppState>,

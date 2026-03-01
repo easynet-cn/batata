@@ -138,15 +138,9 @@ impl TestDatabase {
     pub async fn run_migrations(&self) -> Result<(), TestDatabaseError> {
         // Load schema based on database type
         let schemas: Vec<&str> = if self.is_mysql() {
-            vec![
-                include_str!("../../../../conf/mysql-schema.sql"),
-                include_str!("../../../../conf/apollo-mysql-schema.sql"),
-            ]
+            vec![include_str!("../../../../conf/mysql-schema.sql")]
         } else if self.is_postgres() {
-            vec![
-                include_str!("../../../../conf/postgresql-schema.sql"),
-                include_str!("../../../../conf/apollo-postgresql-schema.sql"),
-            ]
+            vec![include_str!("../../../../conf/postgresql-schema.sql")]
         } else {
             return Err(TestDatabaseError::UnsupportedDatabase);
         };

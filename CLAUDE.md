@@ -136,13 +136,11 @@ Batata supports both MySQL and PostgreSQL databases.
 ### MySQL Setup
 ```bash
 mysql -u user -p database < conf/mysql-schema.sql
-mysql -u user -p database < conf/apollo-mysql-schema.sql
 ```
 
 ### PostgreSQL Setup
 ```bash
 psql -U user -d batata -f conf/postgresql-schema.sql
-psql -U user -d batata -f conf/apollo-postgresql-schema.sql
 ```
 
 ### Configuration
@@ -190,7 +188,6 @@ batata/
 │   ├── batata-naming/               # Service discovery service
 │   ├── batata-plugin/               # Plugin SPI definitions
 │   ├── batata-plugin-consul/        # Consul compatibility plugin
-│   ├── batata-plugin-apollo/        # Apollo Config compatibility plugin
 │   ├── batata-console/              # Management console backend
 │   ├── batata-client/               # Rust SDK for clients
 │   ├── batata-mesh/                 # Service mesh (xDS, Istio MCP)
@@ -269,6 +266,5 @@ batata-server (main binary)
 ├── batata-core (cluster, connections, datacenter)
 ├── batata-mesh (xDS, Istio MCP)
 ├── batata-plugin-consul (Consul API)
-├── batata-plugin-apollo (Apollo Config API)
 └── batata-persistence (database)
 ```

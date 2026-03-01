@@ -18,8 +18,8 @@ use batata_server::{
     middleware::rate_limit,
     model::{self, common::AppState},
     startup::{
-        self, AIServices, ApolloServices, ConsulServices, GracefulShutdown, OtelConfig,
-        XdsServerHandle, start_xds_service,
+        self, AIServices, ConsulServices, GracefulShutdown, OtelConfig, XdsServerHandle,
+        start_xds_service,
     },
 };
 use batata_server_common::ServerStatusManager;
@@ -99,9 +99,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consul_acl_enabled = configuration.consul_acl_enabled();
     let consul_server_port = configuration.consul_server_port();
     let consul_server_address = server_address.clone();
-    let apollo_enabled = configuration.apollo_enabled();
-    let apollo_server_port = configuration.apollo_server_port();
-    let apollo_server_address = server_address.clone();
     let mcp_registry_enabled = configuration.mcp_registry_enabled()
         || deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP;
     let mcp_registry_port = configuration.mcp_registry_port();
@@ -735,21 +732,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Create Apollo service adapters (only if enabled and external DB is available)
-    let apollo_services = if apollo_enabled {
-        if let Some(ref db_conn) = database_connection {
-            Some(ApolloServices::new(Arc::new(db_conn.clone())))
-        } else {
-            tracing::warn!(
-                "Apollo compatibility is enabled but no external database is available (embedded mode). Apollo server will be disabled."
-            );
-            None
-        }
-    } else {
-        info!("Apollo compatibility server is disabled");
-        None
-    };
-
     // Prepare distro protocol for HTTP server (only in cluster mode for distro sync)
     let distro_for_http = if !app_state.configuration.is_standalone() {
         Some(grpc_servers.distro_protocol.clone())
@@ -815,21 +797,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .transpose()?;
 
-            let apollo_opt = apollo_services
-                .map(|svc| {
-                    info!(
-                        "Starting Apollo compatibility server on {}:{}",
-                        apollo_server_address, apollo_server_port
-                    );
-                    startup::apollo_server(
-                        app_state.clone(),
-                        svc,
-                        apollo_server_address.clone(),
-                        apollo_server_port,
-                    )
-                })
-                .transpose()?;
-
             let mcp_registry_opt = if mcp_registry_enabled {
                 info!(
                     "Starting MCP Registry server on {}:{}",
@@ -849,7 +816,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tokio::try_join!(
                         main,
                         async { match consul_opt { Some(s) => s.await, None => std::future::pending().await } },
-                        async { match apollo_opt { Some(s) => s.await, None => std::future::pending().await } },
                         async { match mcp_registry_opt { Some(s) => s.await, None => std::future::pending().await } }
                     )
                 } => {
@@ -866,7 +832,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let naming_service = grpc_servers.naming_service.clone();
             let mcp_registry_for_server = ai_services.mcp_registry.clone();
 
-            // Start console, main, and optionally Consul/Apollo servers
+            // Start console, main, and optionally Consul servers
             info!(
                 "Starting Console server on {}:{}",
                 console_server_address, console_server_port
@@ -911,21 +877,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .transpose()?;
 
-            let apollo_opt = apollo_services
-                .map(|svc| {
-                    info!(
-                        "Starting Apollo compatibility server on {}:{}",
-                        apollo_server_address, apollo_server_port
-                    );
-                    startup::apollo_server(
-                        app_state.clone(),
-                        svc,
-                        apollo_server_address.clone(),
-                        apollo_server_port,
-                    )
-                })
-                .transpose()?;
-
             let mcp_registry_opt = if mcp_registry_enabled {
                 info!(
                     "Starting MCP Registry server on {}:{}",
@@ -946,7 +897,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         console,
                         main,
                         async { match consul_opt { Some(s) => s.await, None => std::future::pending().await } },
-                        async { match apollo_opt { Some(s) => s.await, None => std::future::pending().await } },
                         async { match mcp_registry_opt { Some(s) => s.await, None => std::future::pending().await } }
                     )
                 } => {

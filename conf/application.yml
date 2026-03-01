@@ -410,12 +410,6 @@ nacos.plugin.consul.acl.enabled: false
 ### Only deregisters services that have deregister_critical_service_after configured
 nacos.plugin.consul.check_reap_interval: 30
 
-#*************** Apollo Compatibility Plugin Configurations ***************#
-### Enable Apollo Config API compatibility server on its own port
-nacos.plugin.apollo.enabled: false
-### Apollo compatibility server port (default: 8080)
-nacos.plugin.apollo.port: 8080
-
 #*************** MCP Registry Configurations ***************#
 ### Enable MCP Registry server (official MCP Registry OpenAPI on separate port)
 ### Automatically enabled when deployment type is 'serverWithMcp'
