@@ -548,3 +548,65 @@ pub async fn delete_group_capacity(
 
     Ok(result.rows_affected > 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_capacity_info_default() {
+        let info = CapacityInfo::default();
+        assert!(info.id.is_none());
+        assert!(info.identifier.is_empty());
+        assert_eq!(info.quota, 200);
+        assert_eq!(info.usage, 0);
+        assert_eq!(info.max_size, 100 * 1024); // 100KB
+        assert_eq!(info.max_aggr_count, 10000);
+        assert_eq!(info.max_aggr_size, 1024);
+        assert_eq!(info.max_history_count, 100);
+    }
+
+    #[test]
+    fn test_capacity_check_result_allowed() {
+        let result = CapacityCheckResult::allowed();
+        assert!(result.allowed);
+        assert!(result.message.is_none());
+        assert_eq!(result.usage, 0);
+        assert_eq!(result.quota, 0);
+    }
+
+    #[test]
+    fn test_capacity_check_result_denied() {
+        let result = CapacityCheckResult::denied("quota exceeded", 150, 200);
+        assert!(!result.allowed);
+        assert_eq!(result.message, Some("quota exceeded".to_string()));
+        assert_eq!(result.usage, 150);
+        assert_eq!(result.quota, 200);
+    }
+
+    #[test]
+    fn test_capacity_info_serialization() {
+        let info = CapacityInfo {
+            id: Some(42),
+            identifier: "test-tenant".to_string(),
+            quota: 500,
+            usage: 123,
+            max_size: 204800,
+            max_aggr_count: 5000,
+            max_aggr_size: 2048,
+            max_history_count: 50,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        let deserialized: CapacityInfo = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.id, Some(42));
+        assert_eq!(deserialized.identifier, "test-tenant");
+        assert_eq!(deserialized.quota, 500);
+        assert_eq!(deserialized.usage, 123);
+        assert_eq!(deserialized.max_size, 204800);
+        assert_eq!(deserialized.max_aggr_count, 5000);
+        assert_eq!(deserialized.max_aggr_size, 2048);
+        assert_eq!(deserialized.max_history_count, 50);
+    }
+}

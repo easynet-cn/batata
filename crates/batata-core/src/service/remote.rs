@@ -146,3 +146,98 @@ impl ConnectionManager {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_client() -> GrpcClient {
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
+        GrpcClient::new(Connection::default(), tx)
+    }
+
+    #[test]
+    fn test_connection_manager_new() {
+        let mgr = ConnectionManager::new();
+        assert_eq!(mgr.connection_count(), 0);
+        assert!(mgr.get_all_connection_ids().is_empty());
+    }
+
+    #[test]
+    fn test_connection_manager_default() {
+        let mgr = ConnectionManager::default();
+        assert_eq!(mgr.connection_count(), 0);
+    }
+
+    #[test]
+    fn test_connection_manager_register_unregister() {
+        let mgr = ConnectionManager::new();
+        let client = make_test_client();
+
+        mgr.register("conn-1", client);
+        assert_eq!(mgr.connection_count(), 1);
+        assert!(mgr.has_connection("conn-1"));
+
+        mgr.unregister("conn-1");
+        assert_eq!(mgr.connection_count(), 0);
+        assert!(!mgr.has_connection("conn-1"));
+    }
+
+    #[test]
+    fn test_connection_manager_duplicate_register() {
+        let mgr = ConnectionManager::new();
+        let client1 = make_test_client();
+        let client2 = make_test_client();
+
+        let result1 = mgr.register("conn-1", client1);
+        assert!(result1);
+
+        // Second register with same ID returns true (already exists)
+        let result2 = mgr.register("conn-1", client2);
+        assert!(result2);
+
+        // Only one connection exists
+        assert_eq!(mgr.connection_count(), 1);
+    }
+
+    #[test]
+    fn test_connection_manager_unregister_nonexistent() {
+        let mgr = ConnectionManager::new();
+        // Should not panic
+        mgr.unregister("nonexistent");
+        assert_eq!(mgr.connection_count(), 0);
+    }
+
+    #[test]
+    fn test_connection_manager_get_all_connection_ids() {
+        let mgr = ConnectionManager::new();
+        mgr.register("conn-a", make_test_client());
+        mgr.register("conn-b", make_test_client());
+        mgr.register("conn-c", make_test_client());
+
+        let mut ids = mgr.get_all_connection_ids();
+        ids.sort();
+        assert_eq!(ids, vec!["conn-a", "conn-b", "conn-c"]);
+    }
+
+    #[test]
+    fn test_connection_manager_has_connection() {
+        let mgr = ConnectionManager::new();
+        assert!(!mgr.has_connection("conn-1"));
+
+        mgr.register("conn-1", make_test_client());
+        assert!(mgr.has_connection("conn-1"));
+
+        mgr.unregister("conn-1");
+        assert!(!mgr.has_connection("conn-1"));
+    }
+
+    #[test]
+    fn test_connection_manager_get_client() {
+        let mgr = ConnectionManager::new();
+        assert!(mgr.get_client("conn-1").is_none());
+
+        mgr.register("conn-1", make_test_client());
+        assert!(mgr.get_client("conn-1").is_some());
+    }
+}

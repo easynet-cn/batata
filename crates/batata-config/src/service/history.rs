@@ -257,4 +257,28 @@ mod tests {
         let offset = (page_no - 1) * page_size;
         assert_eq!(offset, 10);
     }
+
+    #[test]
+    fn test_page_calculation_first_page() {
+        let page_no = 1u64;
+        let page_size = 10u64;
+        let offset = (page_no - 1) * page_size;
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_page_calculation_large_page() {
+        let page_no = 1000u64;
+        let page_size = 50u64;
+        let offset = (page_no - 1) * page_size;
+        assert_eq!(offset, 49950);
+    }
+
+    #[test]
+    fn test_page_calculation_single_item_page() {
+        let page_no = 5u64;
+        let page_size = 1u64;
+        let offset = (page_no - 1) * page_size;
+        assert_eq!(offset, 4);
+    }
 }

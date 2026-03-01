@@ -252,4 +252,76 @@ mod tests {
         assert_eq!(state_event.change_type, MemberChangeType::MemberStateChange);
         assert!(state_event.previous_state.is_some());
     }
+
+    #[test]
+    fn test_member_change_type_display() {
+        assert_eq!(MemberChangeType::MemberJoin.to_string(), "MEMBER_JOIN");
+        assert_eq!(MemberChangeType::MemberLeave.to_string(), "MEMBER_LEAVE");
+        assert_eq!(
+            MemberChangeType::MemberStateChange.to_string(),
+            "MEMBER_STATE_CHANGE"
+        );
+        assert_eq!(
+            MemberChangeType::MemberMetaUpdate.to_string(),
+            "MEMBER_META_UPDATE"
+        );
+    }
+
+    #[test]
+    fn test_member_meta_update_event() {
+        let member = MemberBuilder::new("10.0.0.1".to_string(), 8848).build();
+        let event = MemberChangeEvent::member_meta_update(member.clone());
+
+        assert_eq!(event.change_type, MemberChangeType::MemberMetaUpdate);
+        assert!(event.previous_state.is_none());
+        assert_eq!(event.member.address, member.address);
+    }
+
+    #[tokio::test]
+    async fn test_publisher_multiple_subscribers() {
+        let publisher = MemberChangeEventPublisher::new(100);
+        publisher.start().await;
+
+        let mut receiver1 = publisher.subscribe();
+        let mut receiver2 = publisher.subscribe();
+
+        let member = MemberBuilder::new("127.0.0.1".to_string(), 8848).build();
+        let event = MemberChangeEvent::member_join(member);
+        publisher.publish(event).await;
+
+        let r1 = receiver1.try_recv();
+        let r2 = receiver2.try_recv();
+        assert!(r1.is_ok());
+        assert!(r2.is_ok());
+        assert_eq!(r1.unwrap().change_type, MemberChangeType::MemberJoin);
+        assert_eq!(r2.unwrap().change_type, MemberChangeType::MemberJoin);
+    }
+
+    #[tokio::test]
+    async fn test_publisher_no_subscribers() {
+        let publisher = MemberChangeEventPublisher::new(100);
+        publisher.start().await;
+
+        let member = MemberBuilder::new("127.0.0.1".to_string(), 8848).build();
+        let event = MemberChangeEvent::member_join(member);
+        // Should not panic when publishing with no subscribers
+        publisher.publish(event).await;
+    }
+
+    #[test]
+    fn test_event_timestamp_positive() {
+        let member = MemberBuilder::new("127.0.0.1".to_string(), 8848).build();
+
+        let join = MemberChangeEvent::member_join(member.clone());
+        assert!(join.timestamp > 0);
+
+        let leave = MemberChangeEvent::member_leave(member.clone());
+        assert!(leave.timestamp > 0);
+
+        let state = MemberChangeEvent::member_state_change(member.clone(), NodeState::Up);
+        assert!(state.timestamp > 0);
+
+        let meta = MemberChangeEvent::member_meta_update(member);
+        assert!(meta.timestamp > 0);
+    }
 }

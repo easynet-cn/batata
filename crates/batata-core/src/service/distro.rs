@@ -781,4 +781,99 @@ mod tests {
         assert_eq!(data.source, "192.168.1.1:8848");
         assert!(data.version > 0);
     }
+
+    #[test]
+    fn test_distro_config_defaults() {
+        let config = DistroConfig::default();
+        assert_eq!(config.sync_delay, Duration::from_millis(1000));
+        assert_eq!(config.sync_timeout, Duration::from_millis(3000));
+        assert_eq!(config.sync_retry_delay, Duration::from_millis(3000));
+        assert_eq!(config.verify_interval, Duration::from_millis(5000));
+        assert_eq!(config.verify_timeout, Duration::from_millis(3000));
+        assert_eq!(config.load_retry_delay, Duration::from_millis(30000));
+    }
+
+    #[test]
+    fn test_distro_data_type_equality() {
+        assert_eq!(
+            DistroDataType::NamingInstance,
+            DistroDataType::NamingInstance
+        );
+        assert_eq!(
+            DistroDataType::Custom("a".to_string()),
+            DistroDataType::Custom("a".to_string())
+        );
+        assert_ne!(
+            DistroDataType::NamingInstance,
+            DistroDataType::Custom("naming_instance".to_string())
+        );
+        assert_ne!(
+            DistroDataType::Custom("a".to_string()),
+            DistroDataType::Custom("b".to_string())
+        );
+    }
+
+    #[test]
+    fn test_distro_data_serialization() {
+        let data = DistroData {
+            data_type: DistroDataType::NamingInstance,
+            key: "test-key".to_string(),
+            content: b"hello".to_vec(),
+            version: 12345,
+            source: "10.0.0.1:8848".to_string(),
+        };
+
+        let json = serde_json::to_string(&data).unwrap();
+        let deserialized: DistroData = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.data_type, DistroDataType::NamingInstance);
+        assert_eq!(deserialized.key, "test-key");
+        assert_eq!(deserialized.content, b"hello");
+        assert_eq!(deserialized.version, 12345);
+        assert_eq!(deserialized.source, "10.0.0.1:8848");
+    }
+
+    #[test]
+    fn test_distro_data_type_serialization() {
+        let naming = DistroDataType::NamingInstance;
+        let json = serde_json::to_string(&naming).unwrap();
+        let deserialized: DistroDataType = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, DistroDataType::NamingInstance);
+
+        let custom = DistroDataType::Custom("mytype".to_string());
+        let json = serde_json::to_string(&custom).unwrap();
+        let deserialized: DistroDataType = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, DistroDataType::Custom("mytype".to_string()));
+    }
+
+    #[test]
+    fn test_distro_sync_task_creation() {
+        let task = DistroSyncTask {
+            data_type: DistroDataType::NamingInstance,
+            key: "service-a".to_string(),
+            target_address: "192.168.1.2:8848".to_string(),
+            scheduled_time: 1000000,
+            retry_count: 0,
+        };
+
+        assert_eq!(task.data_type, DistroDataType::NamingInstance);
+        assert_eq!(task.key, "service-a");
+        assert_eq!(task.target_address, "192.168.1.2:8848");
+        assert_eq!(task.scheduled_time, 1000000);
+        assert_eq!(task.retry_count, 0);
+    }
+
+    #[test]
+    fn test_distro_data_type_hash() {
+        use std::collections::HashSet;
+
+        let mut set = HashSet::new();
+        set.insert(DistroDataType::NamingInstance);
+        set.insert(DistroDataType::Custom("a".to_string()));
+        set.insert(DistroDataType::Custom("b".to_string()));
+        // Duplicate should not increase size
+        set.insert(DistroDataType::NamingInstance);
+
+        assert_eq!(set.len(), 3);
+    }
 }

@@ -1,57 +1,66 @@
 //! Connection handler tests
 //!
-//! Tests for gRPC connection management handlers
+//! Tests for gRPC connection management request/response serialization
 
-#[allow(unused_imports)]
-use std::collections::HashMap;
+use batata_api::remote::model::{
+    ConnectionSetupRequest, HealthCheckRequest, RequestTrait, ServerCheckRequest,
+};
 
-/// Test health check handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_health_check_handler() {
-    // This test would require a gRPC client
-    // For now, we document the expected behavior
+#[test]
+fn test_connection_setup_request_serialization() {
+    let mut req = ConnectionSetupRequest::new();
+    req.client_version = "3.1.0".to_string();
+    req.tenant = "public".to_string();
+    req.labels.insert("source".to_string(), "sdk".to_string());
+    req.labels
+        .insert("appName".to_string(), "my-app".to_string());
 
-    // Expected: HealthCheckRequest -> HealthCheckResponse
-    // The handler should return server health status
+    let payload = req.build_server_push_payload();
+    assert_eq!(
+        payload.metadata.as_ref().unwrap().r#type,
+        "ConnectionSetupRequest"
+    );
+    assert!(payload.body.is_some());
+
+    let deserialized = ConnectionSetupRequest::from(&payload);
+    assert_eq!(deserialized.client_version, "3.1.0");
+    assert_eq!(deserialized.tenant, "public");
+    assert_eq!(deserialized.labels.get("source"), Some(&"sdk".to_string()));
+    assert_eq!(
+        deserialized.labels.get("appName"),
+        Some(&"my-app".to_string())
+    );
 }
 
-/// Test server check handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_server_check_handler() {
-    // ServerCheckRequest -> ServerCheckResponse
-    // Should return server version and capabilities
+#[test]
+fn test_health_check_request_serialization() {
+    let req = HealthCheckRequest::new();
+
+    let payload = req.build_server_push_payload();
+    assert_eq!(
+        payload.metadata.as_ref().unwrap().r#type,
+        "HealthCheckRequest"
+    );
+    assert!(payload.body.is_some());
+
+    // Round-trip: should deserialize without error
+    let deserialized = HealthCheckRequest::from(&payload);
+    // HealthCheckRequest has no additional fields beyond internal_request
+    assert_eq!(deserialized.request_type(), "HealthCheckRequest");
 }
 
-/// Test connection setup handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_connection_setup_handler() {
-    // ConnectionSetupRequest -> ConnectionSetupResponse
-    // Should establish client connection with metadata
-}
+#[test]
+fn test_server_check_request_serialization() {
+    let req = ServerCheckRequest::new();
 
-/// Test client detection handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_client_detection_handler() {
-    // ClientDetectionRequest -> ClientDetectionResponse
-    // Should detect and report client status
-}
+    let payload = req.build_server_push_payload();
+    assert_eq!(
+        payload.metadata.as_ref().unwrap().r#type,
+        "ServerCheckRequest"
+    );
+    assert!(payload.body.is_some());
 
-/// Test setup ack handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_setup_ack_handler() {
-    // SetupAckRequest -> SetupAckResponse
-    // Should acknowledge connection setup
+    // Round-trip: should deserialize without error
+    let deserialized = ServerCheckRequest::from(&payload);
+    assert_eq!(deserialized.request_type(), "ServerCheckRequest");
 }
-
-// Note: Full gRPC testing would require:
-// 1. A gRPC client implementation
-// 2. Proper Payload encoding/decoding
-// 3. Connection state management
-//
-// Consider using tonic::transport::Channel for client connections
-// and implementing proper PayloadHandler message serialization

@@ -1,61 +1,123 @@
 //! Configuration gRPC handler tests
 //!
-//! Tests for config-related PayloadHandler implementations
+//! Tests for config-related request/response serialization round-trips
 
-/// Test config query handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_config_query_handler() {
-    // ConfigQueryRequest -> ConfigQueryResponse
-    // Should query configuration by dataId, group, tenant
+use batata_api::config::model::{
+    ConfigBatchListenRequest, ConfigListenContext, ConfigPublishRequest, ConfigQueryRequest,
+    ConfigRemoveRequest,
+};
+use batata_api::remote::model::RequestTrait;
+
+#[test]
+fn test_config_query_request_serialization() {
+    let mut req = ConfigQueryRequest::new();
+    req.config_request.data_id = "test-config.yaml".to_string();
+    req.config_request.group = "DEFAULT_GROUP".to_string();
+    req.config_request.tenant = "public".to_string();
+    req.tag = "v1".to_string();
+
+    // Serialize to Payload
+    let payload = req.build_server_push_payload();
+    assert!(payload.metadata.is_some());
+    assert_eq!(
+        payload.metadata.as_ref().unwrap().r#type,
+        "ConfigQueryRequest"
+    );
+    assert!(payload.body.is_some());
+
+    // Deserialize from Payload
+    let deserialized = ConfigQueryRequest::from(&payload);
+    assert_eq!(deserialized.config_request.data_id, "test-config.yaml");
+    assert_eq!(deserialized.config_request.group, "DEFAULT_GROUP");
+    assert_eq!(deserialized.config_request.tenant, "public");
+    assert_eq!(deserialized.tag, "v1");
 }
 
-/// Test config publish handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_config_publish_handler() {
-    // ConfigPublishRequest -> ConfigPublishResponse
-    // Should publish configuration and return success
+#[test]
+fn test_config_publish_request_serialization() {
+    let mut req = ConfigPublishRequest::new();
+    req.config_request.data_id = "app.properties".to_string();
+    req.config_request.group = "PROD_GROUP".to_string();
+    req.config_request.tenant = "tenant-1".to_string();
+    req.content = "server.port=8080\napp.name=test".to_string();
+    req.cas_md5 = "abc123".to_string();
+    req.addition_map
+        .insert("type".to_string(), "properties".to_string());
+
+    let payload = req.build_server_push_payload();
+    assert_eq!(
+        payload.metadata.as_ref().unwrap().r#type,
+        "ConfigPublishRequest"
+    );
+
+    let deserialized = ConfigPublishRequest::from(&payload);
+    assert_eq!(deserialized.config_request.data_id, "app.properties");
+    assert_eq!(deserialized.config_request.group, "PROD_GROUP");
+    assert_eq!(deserialized.content, "server.port=8080\napp.name=test");
+    assert_eq!(deserialized.cas_md5, "abc123");
+    assert_eq!(
+        deserialized.addition_map.get("type"),
+        Some(&"properties".to_string())
+    );
 }
 
-/// Test config remove handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_config_remove_handler() {
-    // ConfigRemoveRequest -> ConfigRemoveResponse
-    // Should remove configuration
+#[test]
+fn test_config_remove_request_serialization() {
+    let mut req = ConfigRemoveRequest::new();
+    req.config_request.data_id = "old-config.yaml".to_string();
+    req.config_request.group = "DEFAULT_GROUP".to_string();
+    req.config_request.tenant = "public".to_string();
+    req.tag = "deprecated".to_string();
+
+    let payload = req.build_server_push_payload();
+    assert_eq!(
+        payload.metadata.as_ref().unwrap().r#type,
+        "ConfigRemoveRequest"
+    );
+
+    let deserialized = ConfigRemoveRequest::from(&payload);
+    assert_eq!(deserialized.config_request.data_id, "old-config.yaml");
+    assert_eq!(deserialized.config_request.group, "DEFAULT_GROUP");
+    assert_eq!(deserialized.tag, "deprecated");
 }
 
-/// Test config batch listen handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_config_batch_listen_handler() {
-    // ConfigBatchListenRequest -> ConfigBatchListenResponse
-    // Should register listeners for multiple configs
-}
+#[test]
+fn test_config_batch_listen_request_serialization() {
+    let mut req = ConfigBatchListenRequest::new();
+    req.listen = true;
+    req.config_listen_contexts = vec![
+        ConfigListenContext {
+            group: "DEFAULT_GROUP".to_string(),
+            data_id: "config-1.yaml".to_string(),
+            md5: "md5hash1".to_string(),
+            tenant: "public".to_string(),
+        },
+        ConfigListenContext {
+            group: "DEFAULT_GROUP".to_string(),
+            data_id: "config-2.yaml".to_string(),
+            md5: "md5hash2".to_string(),
+            tenant: "public".to_string(),
+        },
+    ];
 
-/// Test config change notify handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_config_change_notify_handler() {
-    // ConfigChangeNotifyRequest -> ConfigChangeNotifyResponse
-    // Should notify clients of config changes (server push)
-}
+    let payload = req.build_server_push_payload();
+    assert_eq!(
+        payload.metadata.as_ref().unwrap().r#type,
+        "ConfigBatchListenRequest"
+    );
 
-/// Test config fuzzy watch handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_config_fuzzy_watch_handler() {
-    // ConfigFuzzyWatchRequest -> ConfigFuzzyWatchResponse
-    // Should register pattern-based config watching
-}
-
-/// Test client config metric handler
-#[tokio::test]
-#[ignore = "requires running gRPC server"]
-async fn test_client_config_metric_handler() {
-    // ClientConfigMetricRequest -> ClientConfigMetricResponse
-    // Should return client configuration metrics
+    let deserialized = ConfigBatchListenRequest::from(&payload);
+    assert!(deserialized.listen);
+    assert_eq!(deserialized.config_listen_contexts.len(), 2);
+    assert_eq!(
+        deserialized.config_listen_contexts[0].data_id,
+        "config-1.yaml"
+    );
+    assert_eq!(deserialized.config_listen_contexts[0].md5, "md5hash1");
+    assert_eq!(
+        deserialized.config_listen_contexts[1].data_id,
+        "config-2.yaml"
+    );
 }
 
 // Integration test scenario: Full config lifecycle

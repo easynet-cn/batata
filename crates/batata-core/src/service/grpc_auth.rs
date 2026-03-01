@@ -566,4 +566,97 @@ mod tests {
         wrong_headers.insert("serverIdentity".to_string(), "wrong-value".to_string());
         assert!(!service.check_server_identity(&wrong_headers));
     }
+
+    #[test]
+    fn test_grpc_resource_config() {
+        let resource = GrpcResource::config("tenant-1", "group-a", "app.properties");
+        assert_eq!(resource.namespace_id, "tenant-1");
+        assert_eq!(resource.group, "group-a");
+        assert_eq!(resource.name, "app.properties");
+        assert_eq!(resource.resource_type, "config");
+        assert_eq!(
+            resource.to_permission_string(),
+            "tenant-1:group-a:config/app.properties"
+        );
+    }
+
+    #[test]
+    fn test_grpc_resource_naming() {
+        let resource = GrpcResource::naming("public", "DEFAULT_GROUP", "my-service");
+        assert_eq!(resource.namespace_id, "public");
+        assert_eq!(resource.group, "DEFAULT_GROUP");
+        assert_eq!(resource.name, "my-service");
+        assert_eq!(resource.resource_type, "naming");
+        assert_eq!(
+            resource.to_permission_string(),
+            "public:DEFAULT_GROUP:naming/my-service"
+        );
+    }
+
+    #[test]
+    fn test_grpc_resource_ai_uses_wildcard_group() {
+        let resource = GrpcResource::ai("dev-ns", "my-mcp");
+        assert_eq!(resource.group, "*");
+        assert_eq!(resource.to_permission_string(), "dev-ns:*:ai/my-mcp");
+    }
+
+    #[test]
+    fn test_grpc_resource_lock_uses_wildcards() {
+        let resource = GrpcResource::lock("distributed-lock-1");
+        assert_eq!(resource.namespace_id, "*");
+        assert_eq!(resource.group, "*");
+        assert_eq!(
+            resource.to_permission_string(),
+            "*:*:lock/distributed-lock-1"
+        );
+    }
+
+    #[test]
+    fn test_permission_string_format() {
+        // Format: namespace_id:group:resource_type/name
+        let resource = GrpcResource::new("ns", "grp", "res", ResourceType::Config);
+        let perm = resource.to_permission_string();
+        let parts: Vec<&str> = perm.splitn(3, ':').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "ns");
+        assert_eq!(parts[1], "grp");
+        assert!(parts[2].contains('/'));
+        assert_eq!(parts[2], "config/res");
+    }
+
+    #[test]
+    fn test_grpc_auth_context_defaults() {
+        let ctx = GrpcAuthContext::default();
+        assert!(ctx.username.is_empty());
+        assert!(!ctx.is_global_admin);
+        assert!(ctx.roles.is_empty());
+        assert!(ctx.auth_error.is_none());
+        assert!(!ctx.auth_enabled);
+    }
+
+    #[test]
+    fn test_grpc_auth_context_has_admin_role_via_roles() {
+        let ctx = GrpcAuthContext::authenticated(
+            "user1".to_string(),
+            false,
+            vec![GLOBAL_ADMIN_ROLE.to_string()],
+        );
+        assert!(ctx.has_admin_role());
+    }
+
+    #[test]
+    fn test_grpc_auth_context_has_admin_role_via_flag() {
+        let ctx = GrpcAuthContext::authenticated("admin".to_string(), true, vec![]);
+        assert!(ctx.has_admin_role());
+    }
+
+    #[test]
+    fn test_grpc_auth_context_no_admin_role() {
+        let ctx = GrpcAuthContext::authenticated(
+            "user1".to_string(),
+            false,
+            vec!["ROLE_USER".to_string()],
+        );
+        assert!(!ctx.has_admin_role());
+    }
 }

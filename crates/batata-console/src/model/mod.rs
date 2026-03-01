@@ -91,4 +91,61 @@ mod tests {
         assert!(json.contains("\"remoteAbility\""));
         assert!(json.contains("\"supportRemoteConnection\":true"));
     }
+
+    #[test]
+    fn test_cluster_health_summary_with_values() {
+        let summary = ClusterHealthSummary {
+            total: 5,
+            up: 3,
+            down: 1,
+            suspicious: 1,
+            starting: 0,
+            isolation: 0,
+        };
+        assert_eq!(summary.total, 5);
+        assert_eq!(summary.up, 3);
+        assert_eq!(summary.down, 1);
+        assert_eq!(summary.suspicious, 1);
+        assert_eq!(summary.starting, 0);
+        assert_eq!(summary.isolation, 0);
+    }
+
+    #[test]
+    fn test_node_abilities_default() {
+        let abilities = NodeAbilities::default();
+        // Default should have remote ability enabled
+        let json = serde_json::to_string(&abilities).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            parsed["remoteAbility"]["supportRemoteConnection"]
+                .as_bool()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_self_member_response_fields() {
+        let response = SelfMemberResponse {
+            ip: "10.0.0.1".to_string(),
+            port: 9848,
+            address: "10.0.0.1:9848".to_string(),
+            state: "DOWN".to_string(),
+            is_standalone: true,
+            version: "3.1.0".to_string(),
+        };
+
+        assert_eq!(response.ip, "10.0.0.1");
+        assert_eq!(response.port, 9848);
+        assert_eq!(response.address, "10.0.0.1:9848");
+        assert_eq!(response.state, "DOWN");
+        assert!(response.is_standalone);
+        assert_eq!(response.version, "3.1.0");
+
+        // Round-trip serialization
+        let json = serde_json::to_string(&response).unwrap();
+        let deserialized: SelfMemberResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.ip, response.ip);
+        assert_eq!(deserialized.port, response.port);
+        assert_eq!(deserialized.is_standalone, response.is_standalone);
+    }
 }

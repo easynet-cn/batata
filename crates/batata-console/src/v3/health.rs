@@ -113,3 +113,54 @@ pub fn routes() -> Scope {
         .service(liveness)
         .service(readiness)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_component_status_up() {
+        let status = ComponentStatus::up();
+        assert_eq!(status.status, "UP");
+        assert!(status.message.is_none());
+    }
+
+    #[test]
+    fn test_component_status_down() {
+        let status = ComponentStatus::down("connection refused".to_string());
+        assert_eq!(status.status, "DOWN");
+        assert_eq!(status.message, Some("connection refused".to_string()));
+    }
+
+    #[test]
+    fn test_health_status_serialization() {
+        let health = HealthStatus {
+            status: "UP".to_string(),
+            database: ComponentStatus::up(),
+            cluster: ClusterStatus {
+                status: "UP".to_string(),
+                member_count: 3,
+                is_leader: true,
+            },
+        };
+
+        let json = serde_json::to_string(&health).unwrap();
+        assert!(json.contains("\"status\":\"UP\""));
+        assert!(json.contains("\"memberCount\":3"));
+        assert!(json.contains("\"isLeader\":true"));
+    }
+
+    #[test]
+    fn test_cluster_status_serialization() {
+        let cluster = ClusterStatus {
+            status: "DOWN".to_string(),
+            member_count: 0,
+            is_leader: false,
+        };
+
+        let json = serde_json::to_string(&cluster).unwrap();
+        assert!(json.contains("\"status\":\"DOWN\""));
+        assert!(json.contains("\"memberCount\":0"));
+        assert!(json.contains("\"isLeader\":false"));
+    }
+}

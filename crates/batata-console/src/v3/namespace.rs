@@ -302,3 +302,82 @@ pub fn routes() -> Scope {
         .service(delete)
         .service(exist)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_namespace_id_regex_valid() {
+        let valid_ids = ["test-ns", "abc_123", "myNamespace", "ns1", "a-b-c_d"];
+        for id in &valid_ids {
+            assert!(
+                NAMESPACE_ID_REGEX.is_match(id),
+                "Expected '{}' to be a valid namespace ID",
+                id
+            );
+        }
+    }
+
+    #[test]
+    fn test_namespace_id_regex_invalid() {
+        // Empty string should not match
+        assert!(!NAMESPACE_ID_REGEX.is_match(""));
+    }
+
+    #[test]
+    fn test_namespace_id_max_length() {
+        // 128 chars is OK
+        let valid_id: String = "a".repeat(NAMESPACE_ID_MAX_LENGTH);
+        assert!(valid_id.chars().count() <= NAMESPACE_ID_MAX_LENGTH);
+
+        // 129 chars exceeds limit
+        let invalid_id: String = "a".repeat(NAMESPACE_ID_MAX_LENGTH + 1);
+        assert!(invalid_id.chars().count() > NAMESPACE_ID_MAX_LENGTH);
+    }
+
+    #[test]
+    fn test_namespace_name_check_valid() {
+        assert!(namespace_name_check("my-namespace"));
+        assert!(namespace_name_check("test_ns_123"));
+        assert!(namespace_name_check("Production Environment"));
+        assert!(namespace_name_check("ns-with-dashes"));
+    }
+
+    #[test]
+    fn test_namespace_name_check_invalid() {
+        assert!(!namespace_name_check("ns@special"));
+        assert!(!namespace_name_check("ns#tag"));
+        assert!(!namespace_name_check("ns$money"));
+        assert!(!namespace_name_check("ns%percent"));
+        assert!(!namespace_name_check("ns^caret"));
+        assert!(!namespace_name_check("ns&and"));
+        assert!(!namespace_name_check("ns*star"));
+    }
+
+    #[test]
+    fn test_create_form_data_deserialization() {
+        let json = r#"{
+            "customNamespaceId": "my-ns",
+            "namespaceName": "My Namespace",
+            "namespaceDesc": "A test namespace"
+        }"#;
+
+        let form: CreateFormData = serde_json::from_str(json).unwrap();
+        assert_eq!(form.custom_namespace_id, Some("my-ns".to_string()));
+        assert_eq!(form.namespace_name, "My Namespace");
+        assert_eq!(form.namespace_desc, Some("A test namespace".to_string()));
+    }
+
+    #[test]
+    fn test_create_form_data_defaults() {
+        let json = r#"{
+            "namespaceName": "Test"
+        }"#;
+
+        let form: CreateFormData = serde_json::from_str(json).unwrap();
+        assert!(form.custom_namespace_id.is_none());
+        assert_eq!(form.namespace_name, "Test");
+        assert!(form.namespace_desc.is_none());
+    }
+}
