@@ -193,7 +193,7 @@ async fn list_instances(
 async fn update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Form<InstanceUpdateForm>,
+    form: web::Json<InstanceUpdateForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();
     let group_name = form.group_name_or_default();

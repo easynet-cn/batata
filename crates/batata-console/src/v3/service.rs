@@ -94,9 +94,9 @@ struct ServiceForm {
     #[serde(default)]
     protect_threshold: Option<f32>,
     #[serde(default)]
-    metadata: Option<String>,
+    metadata: Option<serde_json::Value>,
     #[serde(default)]
-    selector: Option<String>,
+    selector: Option<serde_json::Value>,
 }
 
 impl ServiceForm {
@@ -156,7 +156,7 @@ struct UpdateClusterForm {
     service_name: String,
     cluster_name: String,
     #[serde(default)]
-    health_checker: Option<String>,
+    health_checker: Option<serde_json::Value>,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
     #[serde(default)]
@@ -269,7 +269,7 @@ async fn get_service(
 async fn create_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Form<ServiceForm>,
+    form: web::Json<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
         return Result::<String>::http_response(
@@ -296,8 +296,16 @@ async fn create_service(
     );
 
     let threshold = form.protect_threshold.unwrap_or(0.0);
-    let metadata_str = form.metadata.as_deref().unwrap_or("");
-    let selector_str = form.selector.as_deref().unwrap_or("");
+    let metadata_str = form
+        .metadata
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_default();
+    let selector_str = form
+        .selector
+        .as_ref()
+        .map(|v| v.to_string())
+        .unwrap_or_default();
 
     match data
         .console_datasource
@@ -306,8 +314,8 @@ async fn create_service(
             group_name,
             &form.service_name,
             threshold,
-            metadata_str,
-            selector_str,
+            &metadata_str,
+            &selector_str,
         )
         .await
     {
@@ -321,7 +329,7 @@ async fn create_service(
 async fn update_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Form<ServiceForm>,
+    form: web::Json<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
         return Result::<String>::http_response(
@@ -347,6 +355,9 @@ async fn update_service(
             .build()
     );
 
+    let metadata_str = form.metadata.as_ref().map(|v| v.to_string());
+    let selector_str = form.selector.as_ref().map(|v| v.to_string());
+
     match data
         .console_datasource
         .service_update(
@@ -354,8 +365,8 @@ async fn update_service(
             group_name,
             &form.service_name,
             form.protect_threshold,
-            form.metadata.as_deref(),
-            form.selector.as_deref(),
+            metadata_str.as_deref(),
+            selector_str.as_deref(),
         )
         .await
     {
@@ -462,7 +473,7 @@ async fn get_selector_types() -> impl Responder {
 async fn update_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
-    form: web::Form<UpdateClusterForm>,
+    form: web::Json<UpdateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();
     let group_name = form.group_name_or_default();
@@ -482,14 +493,10 @@ async fn update_cluster(
     let health_checker_type = form
         .health_checker
         .as_ref()
-        .and_then(|s| {
-            serde_json::from_str::<serde_json::Value>(s)
-                .ok()
-                .and_then(|v| {
-                    v.get("type")
-                        .and_then(|t| t.as_str())
-                        .map(|s| s.to_string())
-                })
+        .and_then(|v| {
+            v.get("type")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string())
         })
         .unwrap_or_else(|| "TCP".to_string());
 
