@@ -166,6 +166,13 @@ pub struct IntentionMatchQuery {
     pub name: String,
 }
 
+/// Query parameters for exact intention lookup
+#[derive(Debug, Deserialize)]
+pub struct IntentionExactQuery {
+    pub source: Option<String>,
+    pub destination: Option<String>,
+}
+
 /// Agent authorize request
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -453,6 +460,50 @@ impl ConsulConnectCAService {
         }
     }
 
+    /// Find an intention by exact source and destination name match
+    pub fn get_intention_exact(&self, source: &str, destination: &str) -> Option<Intention> {
+        self.intentions
+            .iter()
+            .find(|r| r.value().source_name == source && r.value().destination_name == destination)
+            .map(|r| r.value().clone())
+    }
+
+    /// Delete an intention by exact source and destination name match
+    pub fn delete_intention_exact(&self, source: &str, destination: &str) -> bool {
+        let key_to_remove = self
+            .intentions
+            .iter()
+            .find(|r| r.value().source_name == source && r.value().destination_name == destination)
+            .map(|r| r.key().clone());
+        if let Some(key) = key_to_remove {
+            self.intentions.remove(&key);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Create or update an intention by exact source and destination name match
+    pub fn upsert_intention_exact(&self, req: IntentionRequest) -> Intention {
+        // Find existing intention with same source/destination
+        let existing_id = self
+            .intentions
+            .iter()
+            .find(|r| {
+                r.value().source_name == req.source_name
+                    && r.value().destination_name == req.destination_name
+            })
+            .map(|r| r.key().clone());
+
+        if let Some(id) = existing_id {
+            // Update existing
+            self.update_intention(&id, req).unwrap()
+        } else {
+            // Create new
+            self.create_intention(req)
+        }
+    }
+
     pub fn authorize(&self, target: &str, client_cert_uri: &str) -> AgentAuthorizeResponse {
         // Extract source service from SPIFFE URI
         let source = client_cert_uri.rsplit('/').next().unwrap_or("unknown");
@@ -701,6 +752,63 @@ pub async fn connect_authorize(
     HttpResponse::Ok().json(response)
 }
 
+/// GET /v1/connect/intentions/exact - Get intention by exact source/destination
+pub async fn get_intention_exact(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    query: web::Query<IntentionExactQuery>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let source = query.source.as_deref().unwrap_or("*");
+    let destination = query.destination.as_deref().unwrap_or("*");
+    match ca_service.get_intention_exact(source, destination) {
+        Some(intention) => HttpResponse::Ok().json(intention),
+        None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
+    }
+}
+
+/// PUT /v1/connect/intentions/exact - Upsert intention by exact source/destination
+pub async fn upsert_intention_exact(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    body: web::Json<IntentionRequest>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let intention = ca_service.upsert_intention_exact(body.into_inner());
+    HttpResponse::Ok().json(serde_json::json!({ "Created": true, "ID": intention.id }))
+}
+
+/// DELETE /v1/connect/intentions/exact - Delete intention by exact source/destination
+pub async fn delete_intention_exact(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    query: web::Query<IntentionExactQuery>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let source = query.source.as_deref().unwrap_or("*");
+    let destination = query.destination.as_deref().unwrap_or("*");
+    if ca_service.delete_intention_exact(source, destination) {
+        HttpResponse::Ok().json(true)
+    } else {
+        HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
+    }
+}
+
 // ============================================================================
 // HTTP Handlers (Persistent)
 // ============================================================================
@@ -909,6 +1017,63 @@ pub async fn connect_authorize_persistent(
     let auth_req = body.into_inner();
     let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri);
     HttpResponse::Ok().json(response)
+}
+
+/// GET /v1/connect/intentions/exact (persistent)
+pub async fn get_intention_exact_persistent(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    query: web::Query<IntentionExactQuery>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let source = query.source.as_deref().unwrap_or("*");
+    let destination = query.destination.as_deref().unwrap_or("*");
+    match ca_service.get_intention_exact(source, destination) {
+        Some(intention) => HttpResponse::Ok().json(intention),
+        None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
+    }
+}
+
+/// PUT /v1/connect/intentions/exact (persistent)
+pub async fn upsert_intention_exact_persistent(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    body: web::Json<IntentionRequest>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let intention = ca_service.upsert_intention_exact(body.into_inner());
+    HttpResponse::Ok().json(serde_json::json!({ "Created": true, "ID": intention.id }))
+}
+
+/// DELETE /v1/connect/intentions/exact (persistent)
+pub async fn delete_intention_exact_persistent(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    query: web::Query<IntentionExactQuery>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let source = query.source.as_deref().unwrap_or("*");
+    let destination = query.destination.as_deref().unwrap_or("*");
+    if ca_service.delete_intention_exact(source, destination) {
+        HttpResponse::Ok().json(true)
+    } else {
+        HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
+    }
 }
 
 #[cfg(test)]

@@ -32,6 +32,7 @@ pub mod connect_ca;
 pub mod coordinate;
 pub mod event;
 pub mod health;
+pub mod internal;
 pub mod kv;
 pub mod lock;
 pub mod model;
@@ -63,6 +64,7 @@ pub use route::{
     consul_event_routes,
     consul_event_routes_persistent,
     consul_health_routes,
+    consul_internal_routes,
     consul_kv_routes,
     consul_lock_routes,
     consul_operator_routes,

@@ -2052,6 +2052,82 @@ pub async fn preview_templated_policy(
     HttpResponse::Ok().json(serde_json::json!({ "Rules": rules }))
 }
 
+// ============================================================================
+// ACL Authorize Endpoint
+// ============================================================================
+
+/// ACL authorization check request
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AclAuthorizationCheck {
+    pub resource: String,
+    #[serde(default)]
+    pub segment: Option<String>,
+    pub access: String,
+}
+
+/// ACL authorization response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AclAuthorizationResponse {
+    pub allow: bool,
+    pub resource: String,
+    pub access: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub error: String,
+}
+
+/// POST /v1/acl/authorize - Authorize a batch of ACL checks
+/// POST /v1/internal/acl/authorize - Same endpoint on internal path
+pub async fn acl_authorize(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    body: web::Json<Vec<AclAuthorizationCheck>>,
+) -> HttpResponse {
+    let checks = body.into_inner();
+
+    // Max 64 checks per request
+    if checks.len() > 64 {
+        return HttpResponse::BadRequest()
+            .json(AclError::new("Too many authorization checks (max 64)"));
+    }
+
+    let responses: Vec<AclAuthorizationResponse> = checks
+        .into_iter()
+        .map(|check| {
+            let resource_type = match check.resource.as_str() {
+                "service" => ResourceType::Service,
+                "node" | "agent" => ResourceType::Agent,
+                "key" => ResourceType::Key,
+                "operator" => ResourceType::Operator,
+                "session" => ResourceType::Session,
+                "query" => ResourceType::Query,
+                _ => ResourceType::Agent,
+            };
+            let read_only = check.access == "read";
+            let authz = acl_service.authorize_request(
+                &req,
+                resource_type,
+                check.segment.as_deref().unwrap_or(""),
+                !read_only,
+            );
+
+            AclAuthorizationResponse {
+                allow: authz.allowed,
+                resource: check.resource,
+                access: check.access,
+                error: if authz.allowed {
+                    String::new()
+                } else {
+                    authz.reason
+                },
+            }
+        })
+        .collect();
+
+    HttpResponse::Ok().json(responses)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

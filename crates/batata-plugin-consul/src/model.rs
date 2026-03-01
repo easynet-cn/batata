@@ -555,6 +555,15 @@ pub struct AgentService {
     pub namespace: Option<String>,
 }
 
+/// Agent health service response combining service info with aggregated check status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AgentServiceChecksInfo {
+    pub aggregated_status: String,
+    pub service: AgentService,
+    pub checks: Vec<HealthCheck>,
+}
+
 /// Full agent service response with checks
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentServiceWithChecks {

@@ -579,6 +579,27 @@ impl ConsulOperatorServiceReal {
 }
 
 // ============================================================================
+// Usage / Utilization Models
+// ============================================================================
+
+/// Service usage statistics
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ServiceUsage {
+    pub nodes: i64,
+    pub services: i64,
+    pub service_instances: i64,
+    pub connect_service_instances: i64,
+}
+
+/// Operator usage response
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct OperatorUsageResponse {
+    pub usage: HashMap<String, ServiceUsage>,
+}
+
+// ============================================================================
 // HTTP Handlers (In-Memory)
 // ============================================================================
 
@@ -787,6 +808,49 @@ pub async fn keyring_remove(
     }
 }
 
+/// GET /v1/operator/usage - Get cluster usage statistics
+pub async fn get_operator_usage(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    operator_service: web::Data<ConsulOperatorService>,
+    _query: web::Query<OperatorQueryParams>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let node_count = operator_service.servers.len() as i64;
+    let mut usage = HashMap::new();
+    usage.insert(
+        "dc1".to_string(),
+        ServiceUsage {
+            nodes: node_count,
+            services: 0,
+            service_instances: 0,
+            connect_service_instances: 0,
+        },
+    );
+
+    HttpResponse::Ok().json(OperatorUsageResponse { usage })
+}
+
+/// GET /v1/operator/utilization - Get cluster utilization (Enterprise stub)
+pub async fn get_operator_utilization(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    _query: web::Query<OperatorQueryParams>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "message": "no utilization data available"
+    }))
+}
+
 // ============================================================================
 // HTTP Handlers (Real Cluster)
 // ============================================================================
@@ -989,6 +1053,49 @@ pub async fn keyring_remove_real(
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
+}
+
+/// GET /v1/operator/usage (real cluster)
+pub async fn get_operator_usage_real(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    operator_service: web::Data<ConsulOperatorServiceReal>,
+    _query: web::Query<OperatorQueryParams>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let members = operator_service.member_manager.all_members();
+    let mut usage = HashMap::new();
+    usage.insert(
+        "dc1".to_string(),
+        ServiceUsage {
+            nodes: members.len() as i64,
+            services: 0,
+            service_instances: 0,
+            connect_service_instances: 0,
+        },
+    );
+
+    HttpResponse::Ok().json(OperatorUsageResponse { usage })
+}
+
+/// GET /v1/operator/utilization (real cluster, Enterprise stub)
+pub async fn get_operator_utilization_real(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    _query: web::Query<OperatorQueryParams>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "message": "no utilization data available"
+    }))
 }
 
 #[cfg(test)]

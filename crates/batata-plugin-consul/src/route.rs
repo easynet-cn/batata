@@ -4,8 +4,8 @@
 use actix_web::web;
 
 use crate::{
-    acl, agent, catalog, config_entry, connect, connect_ca, coordinate, event, health, kv, lock,
-    operator, peering, query, session, snapshot, status,
+    acl, agent, catalog, config_entry, connect, connect_ca, coordinate, event, health, internal,
+    kv, lock, operator, peering, query, session, snapshot, status,
 };
 
 /// Configure Consul Agent API routes (in-memory storage)
@@ -61,6 +61,15 @@ pub fn consul_agent_routes() -> actix_web::Scope {
             web::put().to(health::update_check),
         )
         .route("/checks", web::get().to(health::list_agent_checks))
+        // Agent health service endpoints
+        .route(
+            "/health/service/id/{service_id}",
+            web::get().to(agent::agent_health_service_by_id),
+        )
+        .route(
+            "/health/service/name/{service_name}",
+            web::get().to(agent::agent_health_service_by_name),
+        )
 }
 
 /// Configure Consul Agent API routes (persistent database storage for checks)
@@ -112,6 +121,15 @@ pub fn consul_agent_routes_persistent() -> actix_web::Scope {
             web::put().to(health::update_check),
         )
         .route("/checks", web::get().to(health::list_agent_checks))
+        // Agent health service endpoints
+        .route(
+            "/health/service/id/{service_id}",
+            web::get().to(agent::agent_health_service_by_id),
+        )
+        .route(
+            "/health/service/name/{service_name}",
+            web::get().to(agent::agent_health_service_by_name),
+        )
 }
 
 /// Configure Consul Agent API routes (real cluster version)
@@ -163,6 +181,15 @@ pub fn consul_agent_routes_real() -> actix_web::Scope {
             web::put().to(health::update_check),
         )
         .route("/checks", web::get().to(health::list_agent_checks))
+        // Agent health service endpoints
+        .route(
+            "/health/service/id/{service_id}",
+            web::get().to(agent::agent_health_service_by_id),
+        )
+        .route(
+            "/health/service/name/{service_name}",
+            web::get().to(agent::agent_health_service_by_name),
+        )
 }
 
 /// Configure Consul Health API routes (in-memory storage)
@@ -223,9 +250,62 @@ pub fn consul_catalog_routes() -> actix_web::Scope {
         )
 }
 
-/// Configure Consul UI API routes
+/// Configure Consul UI API routes (existing, kept for backwards compatibility)
 pub fn consul_ui_routes() -> actix_web::Scope {
     web::scope("/v1/internal/ui").route("/services", web::get().to(catalog::ui_services))
+}
+
+/// Configure all Consul Internal API routes (UI, Federation, VIP, ACL Authorize)
+pub fn consul_internal_routes() -> actix_web::Scope {
+    web::scope("/v1/internal")
+        // UI endpoints
+        .route("/ui/services", web::get().to(catalog::ui_services))
+        .route("/ui/nodes", web::get().to(internal::ui_nodes))
+        .route("/ui/node/{node}", web::get().to(internal::ui_node_info))
+        .route(
+            "/ui/exported-services",
+            web::get().to(internal::ui_exported_services),
+        )
+        .route(
+            "/ui/catalog-overview",
+            web::get().to(internal::ui_catalog_overview),
+        )
+        .route(
+            "/ui/gateway-services-nodes/{gateway}",
+            web::get().to(internal::ui_gateway_services_nodes),
+        )
+        .route(
+            "/ui/gateway-intentions/{gateway}",
+            web::get().to(internal::ui_gateway_intentions),
+        )
+        .route(
+            "/ui/service-topology/{service}",
+            web::get().to(internal::ui_service_topology),
+        )
+        .route(
+            "/ui/metrics-proxy/{path:.*}",
+            web::get().to(internal::ui_metrics_proxy),
+        )
+        // Federation state endpoints
+        .route(
+            "/federation-states",
+            web::get().to(internal::federation_state_list),
+        )
+        .route(
+            "/federation-states/mesh-gateways",
+            web::get().to(internal::federation_state_mesh_gateways),
+        )
+        .route(
+            "/federation-state/{dc}",
+            web::get().to(internal::federation_state_get),
+        )
+        // Service virtual IP
+        .route(
+            "/service-virtual-ip",
+            web::put().to(internal::assign_service_virtual_ip),
+        )
+        // ACL authorize
+        .route("/acl/authorize", web::post().to(acl::acl_authorize))
 }
 
 /// Configure Consul ACL API routes (in-memory)
@@ -237,6 +317,8 @@ pub fn consul_acl_routes() -> actix_web::Scope {
         .route("/logout", web::post().to(acl::acl_logout))
         // Replication status
         .route("/replication", web::get().to(acl::acl_replication))
+        // Authorization
+        .route("/authorize", web::post().to(acl::acl_authorize))
         // Token management
         .route("/tokens", web::get().to(acl::list_tokens))
         .route("/token/self", web::get().to(acl::get_token_self))
@@ -433,6 +515,12 @@ pub fn consul_operator_routes() -> actix_web::Scope {
         .route("/keyring", web::post().to(operator::keyring_install))
         .route("/keyring", web::put().to(operator::keyring_use))
         .route("/keyring", web::delete().to(operator::keyring_remove))
+        // Usage & Utilization
+        .route("/usage", web::get().to(operator::get_operator_usage))
+        .route(
+            "/utilization",
+            web::get().to(operator::get_operator_utilization),
+        )
 }
 
 /// Configure Consul Operator API routes (real cluster)
@@ -473,6 +561,12 @@ pub fn consul_operator_routes_real() -> actix_web::Scope {
         .route("/keyring", web::post().to(operator::keyring_install_real))
         .route("/keyring", web::put().to(operator::keyring_use_real))
         .route("/keyring", web::delete().to(operator::keyring_remove_real))
+        // Usage & Utilization
+        .route("/usage", web::get().to(operator::get_operator_usage_real))
+        .route(
+            "/utilization",
+            web::get().to(operator::get_operator_utilization_real),
+        )
 }
 
 /// Configure Consul Config Entry API routes (in-memory)
@@ -600,6 +694,10 @@ pub fn consul_connect_routes() -> actix_web::Scope {
             web::get().to(connect::get_discovery_chain),
         )
         .route(
+            "/discovery-chain/{service}",
+            web::post().to(connect::post_discovery_chain),
+        )
+        .route(
             "/exported-services",
             web::get().to(connect::list_exported_services),
         )
@@ -615,6 +713,10 @@ pub fn consul_connect_routes_persistent() -> actix_web::Scope {
         .route(
             "/discovery-chain/{service}",
             web::get().to(connect::get_discovery_chain_persistent),
+        )
+        .route(
+            "/discovery-chain/{service}",
+            web::post().to(connect::post_discovery_chain_persistent),
         )
         .route(
             "/exported-services",
@@ -661,6 +763,19 @@ pub fn consul_connect_ca_routes() -> actix_web::Scope {
         .route(
             "/connect/intentions/match",
             web::get().to(connect_ca::match_intentions),
+        )
+        // Intentions - exact must come before {id}
+        .route(
+            "/connect/intentions/exact",
+            web::get().to(connect_ca::get_intention_exact),
+        )
+        .route(
+            "/connect/intentions/exact",
+            web::put().to(connect_ca::upsert_intention_exact),
+        )
+        .route(
+            "/connect/intentions/exact",
+            web::delete().to(connect_ca::delete_intention_exact),
         )
         // Intentions CRUD
         .route(
@@ -720,6 +835,19 @@ pub fn consul_connect_ca_routes_persistent() -> actix_web::Scope {
             "/connect/intentions/match",
             web::get().to(connect_ca::match_intentions_persistent),
         )
+        // Intentions - exact must come before {id}
+        .route(
+            "/connect/intentions/exact",
+            web::get().to(connect_ca::get_intention_exact_persistent),
+        )
+        .route(
+            "/connect/intentions/exact",
+            web::put().to(connect_ca::upsert_intention_exact_persistent),
+        )
+        .route(
+            "/connect/intentions/exact",
+            web::delete().to(connect_ca::delete_intention_exact_persistent),
+        )
         // Intentions CRUD
         .route(
             "/connect/intentions",
@@ -768,7 +896,7 @@ pub fn consul_routes() -> actix_web::Scope {
         .service(consul_peering_routes())
         .service(consul_connect_routes())
         .service(consul_connect_ca_routes())
-        .service(consul_ui_routes())
+        .service(consul_internal_routes())
 }
 
 /// Configure all Consul API routes with database persistence
@@ -792,7 +920,7 @@ pub fn consul_routes_persistent() -> actix_web::Scope {
         .service(consul_peering_routes_persistent())
         .service(consul_connect_routes_persistent())
         .service(consul_connect_ca_routes_persistent())
-        .service(consul_ui_routes())
+        .service(consul_internal_routes())
 }
 
 /// Configure a subset of Consul API routes for testing with the given data dependencies
@@ -840,7 +968,7 @@ pub fn consul_routes_full() -> actix_web::Scope {
         .service(consul_peering_routes_persistent())
         .service(consul_connect_routes_persistent())
         .service(consul_connect_ca_routes_persistent())
-        .service(consul_ui_routes())
+        .service(consul_internal_routes())
 }
 
 #[cfg(test)]

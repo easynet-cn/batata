@@ -17,9 +17,10 @@ use crate::acl::{AclService, ResourceType};
 use crate::health::ConsulHealthService;
 use crate::model::{
     AgentConfig, AgentHostInfo, AgentMaintenanceRequest, AgentMember, AgentMembersParams,
-    AgentSelf, AgentService, AgentServiceRegistration, AgentServiceWithChecks, AgentStats,
-    AgentVersion, CheckRegistration, ConsulError, CounterMetric, GaugeMetric, HostCPU, HostDisk,
-    HostInfo, HostMemory, MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
+    AgentSelf, AgentService, AgentServiceChecksInfo, AgentServiceRegistration,
+    AgentServiceWithChecks, AgentStats, AgentVersion, CheckRegistration, ConsulError,
+    CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo, HostMemory,
+    MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
 };
 
 /// Consul Agent service adapter
@@ -470,6 +471,155 @@ fn create_service_health_check(
         service_id: instance.instance_id.clone(),
         service_name: service_name.to_string(),
         check_type: "service".to_string(),
+    }
+}
+
+/// Aggregate the worst status from a list of health checks
+fn aggregate_status(checks: &[HealthCheck]) -> String {
+    let mut worst = "passing";
+    for check in checks {
+        match check.status.as_str() {
+            "critical" => return "critical".to_string(),
+            "warning" => worst = "warning",
+            _ => {}
+        }
+    }
+    worst.to_string()
+}
+
+/// GET /v1/agent/health/service/id/{service_id}
+/// Returns the aggregated health status of a service by its ID
+pub async fn agent_health_service_by_id(
+    req: HttpRequest,
+    agent: web::Data<ConsulAgentService>,
+    health_service: web::Data<ConsulHealthService>,
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    query: web::Query<ServiceQueryParams>,
+) -> HttpResponse {
+    let service_id = path.into_inner();
+    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, &service_id, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    // Search for the service instance by ID across all services
+    let (_, service_names) =
+        agent
+            .naming_service
+            .list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+
+    for service_name in service_names {
+        let instances = agent.naming_service.get_instances(
+            &namespace,
+            "DEFAULT_GROUP",
+            &service_name,
+            "",
+            false,
+        );
+
+        for instance in &instances {
+            if instance.instance_id == service_id {
+                let agent_service = AgentService::from(instance);
+                let checks = health_service.get_service_checks(&service_id).await;
+                let status = if checks.is_empty() {
+                    if instance.healthy && instance.enabled {
+                        "passing".to_string()
+                    } else {
+                        "critical".to_string()
+                    }
+                } else {
+                    aggregate_status(&checks)
+                };
+
+                let info = AgentServiceChecksInfo {
+                    aggregated_status: status.clone(),
+                    service: agent_service,
+                    checks,
+                };
+
+                return match status.as_str() {
+                    "passing" => HttpResponse::Ok().json(info),
+                    "warning" => HttpResponse::TooManyRequests().json(info),
+                    _ => HttpResponse::ServiceUnavailable().json(info),
+                };
+            }
+        }
+    }
+
+    HttpResponse::NotFound().json(ConsulError::new(format!(
+        "Service ID '{}' not found",
+        service_id
+    )))
+}
+
+/// GET /v1/agent/health/service/name/{service_name}
+/// Returns the aggregated health status of all instances of a service by name
+pub async fn agent_health_service_by_name(
+    req: HttpRequest,
+    agent: web::Data<ConsulAgentService>,
+    health_service: web::Data<ConsulHealthService>,
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    query: web::Query<ServiceQueryParams>,
+) -> HttpResponse {
+    let service_name = path.into_inner();
+    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, &service_name, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let instances =
+        agent
+            .naming_service
+            .get_instances(&namespace, "DEFAULT_GROUP", &service_name, "", false);
+
+    if instances.is_empty() {
+        return HttpResponse::NotFound().json(ConsulError::new(format!(
+            "Service '{}' not found",
+            service_name
+        )));
+    }
+
+    let mut results = Vec::new();
+    let mut worst_status = "passing";
+
+    for instance in &instances {
+        let agent_service = AgentService::from(instance);
+        let checks = health_service
+            .get_service_checks(&instance.instance_id)
+            .await;
+        let status = if checks.is_empty() {
+            if instance.healthy && instance.enabled {
+                "passing".to_string()
+            } else {
+                "critical".to_string()
+            }
+        } else {
+            aggregate_status(&checks)
+        };
+
+        if status == "critical" {
+            worst_status = "critical";
+        } else if status == "warning" && worst_status != "critical" {
+            worst_status = "warning";
+        }
+
+        results.push(AgentServiceChecksInfo {
+            aggregated_status: status,
+            service: agent_service,
+            checks,
+        });
+    }
+
+    match worst_status {
+        "passing" => HttpResponse::Ok().json(results),
+        "warning" => HttpResponse::TooManyRequests().json(results),
+        _ => HttpResponse::ServiceUnavailable().json(results),
     }
 }
 

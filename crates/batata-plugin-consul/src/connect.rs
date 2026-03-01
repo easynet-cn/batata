@@ -251,6 +251,18 @@ pub struct DiscoveryChainQueryParams {
     pub compile_dc: Option<String>,
 }
 
+/// Request body for POST /v1/discovery-chain/{service} with overrides
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct DiscoveryChainOverrides {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub override_protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub override_connect_timeout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub override_mesh_gateway: Option<MeshGatewayConfig>,
+}
+
 /// Query parameters for exported/imported services
 #[derive(Debug, Deserialize)]
 pub struct ServiceVisibilityQueryParams {
@@ -337,6 +349,41 @@ impl ConsulConnectService {
                 targets,
             },
         }
+    }
+
+    /// Get the compiled discovery chain with optional overrides applied.
+    pub fn get_discovery_chain_with_overrides(
+        &self,
+        service_name: &str,
+        overrides: &DiscoveryChainOverrides,
+    ) -> DiscoveryChainResponse {
+        let mut response = self.get_discovery_chain(service_name);
+
+        // Apply protocol override
+        if let Some(ref protocol) = overrides.override_protocol {
+            response.chain.protocol = protocol.clone();
+        }
+
+        // Apply connect_timeout override to all resolvers and targets
+        if let Some(ref timeout) = overrides.override_connect_timeout {
+            for node in response.chain.nodes.values_mut() {
+                if let Some(ref mut resolver) = node.resolver {
+                    resolver.connect_timeout = timeout.clone();
+                }
+            }
+            for target in response.chain.targets.values_mut() {
+                target.connect_timeout = timeout.clone();
+            }
+        }
+
+        // Apply mesh gateway override to all targets
+        if let Some(ref mesh_gw) = overrides.override_mesh_gateway {
+            for target in response.chain.targets.values_mut() {
+                target.mesh_gateway = mesh_gw.clone();
+            }
+        }
+
+        response
     }
 
     pub fn list_exported_services(&self) -> Vec<ResolvedExportedService> {
@@ -431,6 +478,25 @@ pub async fn list_imported_services(
     HttpResponse::Ok().json(connect_service.list_imported_services())
 }
 
+/// POST /v1/discovery-chain/{service} - Read discovery chain with overrides
+pub async fn post_discovery_chain(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    connect_service: web::Data<ConsulConnectService>,
+    path: web::Path<String>,
+    _query: web::Query<DiscoveryChainQueryParams>,
+    body: web::Json<DiscoveryChainOverrides>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let service_name = path.into_inner();
+    HttpResponse::Ok()
+        .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
+}
+
 // ============================================================================
 // HTTP Handlers (Persistent)
 // ============================================================================
@@ -450,6 +516,25 @@ pub async fn get_discovery_chain_persistent(
 
     let service_name = path.into_inner();
     HttpResponse::Ok().json(connect_service.get_discovery_chain(&service_name))
+}
+
+/// POST /v1/discovery-chain/{service} (persistent)
+pub async fn post_discovery_chain_persistent(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    connect_service: web::Data<ConsulConnectService>,
+    path: web::Path<String>,
+    _query: web::Query<DiscoveryChainQueryParams>,
+    body: web::Json<DiscoveryChainOverrides>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    let service_name = path.into_inner();
+    HttpResponse::Ok()
+        .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
 /// GET /v1/exported-services (persistent)
