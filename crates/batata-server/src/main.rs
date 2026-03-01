@@ -585,74 +585,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create Consul service adapters (only if enabled)
-    // Consul uses independent RocksDB for persistence, separate from Nacos storage
+    // In cluster mode, Consul uses Raft for data replication across nodes.
+    // In standalone mode, Consul uses independent RocksDB for persistence.
     let consul_services = if consul_enabled {
-        let consul_rocks_db = if is_console_remote {
-            info!("Console remote mode: Consul will use in-memory storage");
-            None
-        } else {
-            // Create independent RocksDB for Consul KV storage
-            info!(
-                "Initializing Consul RocksDB persistence at: {}",
-                consul_data_dir_for_init
-            );
+        let is_cluster = !app_state.configuration.is_standalone() && !is_console_remote;
+        let consul_check_reap_interval = app_state.configuration.consul_check_reap_interval();
 
-            let mut db_opts = Options::default();
-            db_opts.create_if_missing(true);
-            db_opts.create_missing_column_families(true);
-
-            // Performance optimizations
-            db_opts.set_write_buffer_size(64 * 1024 * 1024);
-            db_opts.set_max_write_buffer_number(3);
-            db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-
-            // Block-based table options with block cache
-            let mut block_opts = BlockBasedOptions::default();
-            let cache = rocksdb::Cache::new_lru_cache(256 * 1024 * 1024);
-            block_opts.set_block_cache(&cache);
-            block_opts.set_bloom_filter(10.0, false);
-
-            // Column family options
-            let mut cf_opts = Options::default();
-            cf_opts.set_write_buffer_size(64 * 1024 * 1024);
-            cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-            cf_opts.set_block_based_table_factory(&block_opts);
-
-            let consul_cfs = vec![
-                ColumnFamilyDescriptor::new(CF_CONSUL_KV, cf_opts.clone()),
-                ColumnFamilyDescriptor::new(CF_CONSUL_ACL, cf_opts.clone()),
-                ColumnFamilyDescriptor::new(CF_CONSUL_SESSIONS, cf_opts.clone()),
-                ColumnFamilyDescriptor::new(CF_CONSUL_QUERIES, cf_opts),
-            ];
-
-            match rocksdb::DB::open_cf_descriptors(&db_opts, &consul_data_dir_for_init, consul_cfs)
-            {
-                Ok(db) => {
-                    info!("Consul RocksDB initialized successfully");
-                    Some(Arc::new(db))
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to initialize Consul RocksDB: {}, falling back to in-memory",
-                        e
-                    );
-                    None
+        let services = if is_cluster {
+            // Cluster mode: use Raft-replicated storage for Consul data
+            if let Some(ref raft) = app_state.raft_node {
+                // DistributedEmbedded: reuse main Raft node and its state machine DB
+                let db = _rocks_db
+                    .clone()
+                    .expect("DistributedEmbedded must have a RocksDB handle");
+                info!("Consul services using Raft-replicated storage (DistributedEmbedded mode)");
+                ConsulServices::with_raft(
+                    grpc_servers.naming_service.clone(),
+                    consul_acl_enabled,
+                    db,
+                    raft.clone(),
+                    consul_check_reap_interval,
+                )
+            } else {
+                // ExternalDb cluster: Consul doesn't have a Raft node yet.
+                // Fall back to independent RocksDB for now. A dedicated Consul Raft node
+                // can be added later for ExternalDb cluster replication.
+                info!("Consul services using standalone RocksDB persistence (ExternalDb cluster)");
+                let consul_rocks_db = open_consul_rocks_db(&consul_data_dir_for_init);
+                if let Some(db) = consul_rocks_db {
+                    ConsulServices::with_persistence(
+                        grpc_servers.naming_service.clone(),
+                        consul_acl_enabled,
+                        db,
+                        consul_check_reap_interval,
+                    )
+                } else {
+                    ConsulServices::new(
+                        grpc_servers.naming_service.clone(),
+                        consul_acl_enabled,
+                        consul_check_reap_interval,
+                    )
                 }
             }
-        };
-
-        // Always use persistent mode if RocksDB is available, otherwise in-memory
-        let consul_check_reap_interval = app_state.configuration.consul_check_reap_interval();
-        let services = if let Some(db) = consul_rocks_db {
-            info!("Consul services using RocksDB persistence");
-            ConsulServices::with_persistence(
-                grpc_servers.naming_service.clone(),
-                consul_acl_enabled,
-                db,
-                consul_check_reap_interval,
-            )
+        } else if !is_console_remote {
+            // Standalone mode: use independent RocksDB for Consul persistence
+            let consul_rocks_db = open_consul_rocks_db(&consul_data_dir_for_init);
+            if let Some(db) = consul_rocks_db {
+                info!("Consul services using RocksDB persistence");
+                ConsulServices::with_persistence(
+                    grpc_servers.naming_service.clone(),
+                    consul_acl_enabled,
+                    db,
+                    consul_check_reap_interval,
+                )
+            } else {
+                info!("Consul services using in-memory storage (no persistence)");
+                ConsulServices::new(
+                    grpc_servers.naming_service.clone(),
+                    consul_acl_enabled,
+                    consul_check_reap_interval,
+                )
+            }
         } else {
-            info!("Consul services using in-memory storage (no persistence)");
+            // Console remote mode: in-memory
+            info!("Console remote mode: Consul services using in-memory storage");
             ConsulServices::new(
                 grpc_servers.naming_service.clone(),
                 consul_acl_enabled,
@@ -682,6 +678,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let executor = HealthCheckExecutor::new(health, health_actor, naming_service_clone);
             executor.start().await;
         });
+
+        // Start session TTL cleanup task
+        {
+            let session_svc = services.session.clone();
+            let kv_svc = services.kv.clone();
+            let raft_for_cleanup = app_state.raft_node.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    if let Some(ref raft) = raft_for_cleanup {
+                        // Cluster mode: only leader performs cleanup via Raft
+                        if raft.is_leader() {
+                            let expired = session_svc.scan_expired_session_ids();
+                            if !expired.is_empty() {
+                                info!(
+                                    "Cleaning up {} expired Consul sessions (leader)",
+                                    expired.len()
+                                );
+                                for id in &expired {
+                                    kv_svc.release_session(id).await;
+                                }
+                                let _ = raft
+                                    .write(
+                                        batata_consistency::raft::request::RaftRequest::ConsulSessionCleanupExpired {
+                                            expired_session_ids: expired,
+                                        },
+                                    )
+                                    .await;
+                            }
+                        }
+                    } else {
+                        // Standalone mode: direct cleanup
+                        session_svc.cleanup_expired();
+                    }
+                }
+            });
+        }
 
         Some(services)
     } else {
@@ -936,4 +970,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Batata server shutdown complete");
     Ok(())
+}
+
+/// Open an independent RocksDB for Consul KV/Session/ACL storage (standalone mode).
+fn open_consul_rocks_db(data_dir: &str) -> Option<Arc<rocksdb::DB>> {
+    info!("Initializing Consul RocksDB persistence at: {}", data_dir);
+
+    let mut db_opts = Options::default();
+    db_opts.create_if_missing(true);
+    db_opts.create_missing_column_families(true);
+    db_opts.set_write_buffer_size(64 * 1024 * 1024);
+    db_opts.set_max_write_buffer_number(3);
+    db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+
+    let mut block_opts = BlockBasedOptions::default();
+    let cache = rocksdb::Cache::new_lru_cache(256 * 1024 * 1024);
+    block_opts.set_block_cache(&cache);
+    block_opts.set_bloom_filter(10.0, false);
+
+    let mut cf_opts = Options::default();
+    cf_opts.set_write_buffer_size(64 * 1024 * 1024);
+    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+    cf_opts.set_block_based_table_factory(&block_opts);
+
+    let consul_cfs = vec![
+        ColumnFamilyDescriptor::new(CF_CONSUL_KV, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_ACL, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_SESSIONS, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_QUERIES, cf_opts),
+    ];
+
+    match rocksdb::DB::open_cf_descriptors(&db_opts, data_dir, consul_cfs) {
+        Ok(db) => {
+            info!("Consul RocksDB initialized successfully");
+            Some(Arc::new(db))
+        }
+        Err(e) => {
+            error!(
+                "Failed to initialize Consul RocksDB: {}, falling back to in-memory",
+                e
+            );
+            None
+        }
+    }
 }

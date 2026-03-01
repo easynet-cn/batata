@@ -217,6 +217,92 @@ pub enum RaftRequest {
     /// Expire a lock (internal operation)
     LockExpire { namespace: String, name: String },
 
+    // ==================== Consul KV Operations ====================
+    /// Put a key-value pair into the Consul KV store
+    ConsulKVPut {
+        key: String,
+        /// JSON-serialized StoredKV (pre-computed by leader)
+        value: String,
+        /// Optional session index key to write (kidx:session_id:key)
+        session_index_key: Option<String>,
+    },
+
+    /// Delete a key from the Consul KV store
+    ConsulKVDelete {
+        key: String,
+        /// Optional session index key to clean up (kidx:session_id:key)
+        session_index_cleanup: Option<String>,
+    },
+
+    /// Delete all keys with a given prefix
+    ConsulKVDeletePrefix { prefix: String },
+
+    /// Acquire a session lock on a KV key
+    ConsulKVAcquireSession {
+        key: String,
+        session_id: String,
+        /// JSON-serialized StoredKV with session set
+        stored_kv_json: String,
+    },
+
+    /// Release a session lock on a single KV key
+    ConsulKVReleaseSessionKey {
+        key: String,
+        session_id: String,
+        /// JSON-serialized StoredKV with session cleared
+        stored_kv_json: String,
+    },
+
+    /// Release all KV keys held by a session (on session destroy)
+    ConsulKVReleaseSession {
+        session_id: String,
+        /// Vec of (kv_key, updated_stored_kv_json) pairs
+        updates: Vec<(String, String)>,
+        /// Session index keys to delete (kidx: entries)
+        index_keys_to_delete: Vec<String>,
+    },
+
+    /// Check-and-set: only update if modify_index matches
+    ConsulKVCas {
+        key: String,
+        /// JSON-serialized StoredKV
+        stored_kv_json: String,
+        expected_modify_index: u64,
+    },
+
+    /// Execute a batch transaction of KV puts and deletes
+    ConsulKVTransaction {
+        /// Vec of (key, stored_kv_json) puts
+        puts: Vec<(String, String)>,
+        /// Keys to delete
+        deletes: Vec<String>,
+        /// Session index keys to put (empty value)
+        session_index_puts: Vec<String>,
+        /// Session index keys to delete
+        session_index_deletes: Vec<String>,
+    },
+
+    // ==================== Consul Session Operations ====================
+    /// Create a new Consul session
+    ConsulSessionCreate {
+        session_id: String,
+        /// JSON-serialized StoredSession
+        stored_session_json: String,
+    },
+
+    /// Destroy a Consul session
+    ConsulSessionDestroy { session_id: String },
+
+    /// Renew a Consul session
+    ConsulSessionRenew {
+        session_id: String,
+        /// JSON-serialized StoredSession with renewed TTL
+        stored_session_json: String,
+    },
+
+    /// Clean up expired sessions (leader-only periodic task)
+    ConsulSessionCleanupExpired { expired_session_ids: Vec<String> },
+
     // ==================== No-op for membership changes ====================
     /// No-operation command, used internally
     Noop,
@@ -251,6 +337,18 @@ impl RaftRequest {
             RaftRequest::LockRenew { .. } => "LockRenew",
             RaftRequest::LockForceRelease { .. } => "LockForceRelease",
             RaftRequest::LockExpire { .. } => "LockExpire",
+            RaftRequest::ConsulKVPut { .. } => "ConsulKVPut",
+            RaftRequest::ConsulKVDelete { .. } => "ConsulKVDelete",
+            RaftRequest::ConsulKVDeletePrefix { .. } => "ConsulKVDeletePrefix",
+            RaftRequest::ConsulKVAcquireSession { .. } => "ConsulKVAcquireSession",
+            RaftRequest::ConsulKVReleaseSessionKey { .. } => "ConsulKVReleaseSessionKey",
+            RaftRequest::ConsulKVReleaseSession { .. } => "ConsulKVReleaseSession",
+            RaftRequest::ConsulKVCas { .. } => "ConsulKVCas",
+            RaftRequest::ConsulKVTransaction { .. } => "ConsulKVTransaction",
+            RaftRequest::ConsulSessionCreate { .. } => "ConsulSessionCreate",
+            RaftRequest::ConsulSessionDestroy { .. } => "ConsulSessionDestroy",
+            RaftRequest::ConsulSessionRenew { .. } => "ConsulSessionRenew",
+            RaftRequest::ConsulSessionCleanupExpired { .. } => "ConsulSessionCleanupExpired",
             RaftRequest::Noop => "Noop",
         }
     }

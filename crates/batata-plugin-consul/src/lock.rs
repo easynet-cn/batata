@@ -247,7 +247,7 @@ impl ConsulLockService {
             ..Default::default()
         };
 
-        let session = self.session_service.create_session(session_req);
+        let session = self.session_service.create_session(session_req).await;
         let session_id = session.id.clone();
 
         // Try to acquire the lock using CAS
@@ -284,7 +284,7 @@ impl ConsulLockService {
 
             // Could not acquire lock
             // Destroy the session we created
-            self.session_service.destroy_session(&session_id);
+            self.session_service.destroy_session(&session_id).await;
             return LockAcquireResult {
                 acquired: false,
                 lock: None,
@@ -303,7 +303,7 @@ impl ConsulLockService {
         value: &str,
     ) -> LockAcquireResult {
         // Create lock entry with session
-        let pair = self.kv_service.put(lock_key.to_string(), value, None);
+        let pair = self.kv_service.put(lock_key.to_string(), value, None).await;
 
         // Simulate session locking by storing session ID in a special way
         // In a full implementation, we'd modify KVPair to track session
@@ -348,10 +348,10 @@ impl ConsulLockService {
 
         // Remove the lock
         self.active_locks.remove(&lock_key);
-        self.kv_service.delete(&lock_key);
+        self.kv_service.delete(&lock_key).await;
 
         // Destroy the session
-        self.session_service.destroy_session(session_id);
+        self.session_service.destroy_session(session_id).await;
 
         // Notify waiters
         self.notify_waiters(&lock_key).await;
@@ -366,11 +366,11 @@ impl ConsulLockService {
         // Remove from active locks
         if let Some((_, active)) = self.active_locks.remove(&lock_key) {
             // Destroy the session
-            self.session_service.destroy_session(&active.session);
+            self.session_service.destroy_session(&active.session).await;
         }
 
         // Delete the KV entry
-        self.kv_service.delete(&lock_key);
+        self.kv_service.delete(&lock_key).await;
 
         // Clear any waiters
         {
@@ -414,7 +414,7 @@ impl ConsulLockService {
     }
 
     /// Renew the lock's session TTL
-    pub fn renew_lock(&self, key: &str, session_id: &str) -> bool {
+    pub async fn renew_lock(&self, key: &str, session_id: &str) -> bool {
         let lock_key = format!("{}.lock", key);
 
         // Verify lock holder
@@ -428,7 +428,10 @@ impl ConsulLockService {
         }
 
         // Renew the session
-        self.session_service.renew_session(session_id).is_some()
+        self.session_service
+            .renew_session(session_id)
+            .await
+            .is_some()
     }
 }
 
@@ -465,7 +468,7 @@ impl ConsulSemaphoreService {
             ..Default::default()
         };
 
-        let session = self.session_service.create_session(session_req);
+        let session = self.session_service.create_session(session_req).await;
         let session_id = session.id.clone();
 
         let lock_key = format!("{}/.lock", opts.prefix);
@@ -479,7 +482,8 @@ impl ConsulSemaphoreService {
         };
         let contender_json = serde_json::to_string(&contender).ok()?;
         self.kv_service
-            .put(contender_key.clone(), &contender_json, None);
+            .put(contender_key.clone(), &contender_json, None)
+            .await;
 
         // Try to acquire a slot
         let acquired = self
@@ -497,8 +501,8 @@ impl ConsulSemaphoreService {
             })
         } else {
             // Cleanup: remove contender entry and destroy session
-            self.kv_service.delete(&contender_key);
-            self.session_service.destroy_session(&session_id);
+            self.kv_service.delete(&contender_key).await;
+            self.session_service.destroy_session(&session_id).await;
             None
         }
     }
@@ -530,7 +534,9 @@ impl ConsulSemaphoreService {
 
         // Update the lock entry
         let lock_json = serde_json::to_string(&lock_entry).unwrap_or_default();
-        self.kv_service.put(lock_key.to_string(), &lock_json, None);
+        self.kv_service
+            .put(lock_key.to_string(), &lock_json, None)
+            .await;
 
         true
     }
@@ -580,14 +586,14 @@ impl ConsulSemaphoreService {
         {
             entry.holders.remove(session_id);
             let lock_json = serde_json::to_string(&entry).unwrap_or_default();
-            self.kv_service.put(lock_key, &lock_json, None);
+            self.kv_service.put(lock_key, &lock_json, None).await;
         }
 
         // Remove contender entry
-        self.kv_service.delete(&contender_key);
+        self.kv_service.delete(&contender_key).await;
 
         // Destroy session
-        self.session_service.destroy_session(session_id);
+        self.session_service.destroy_session(session_id).await;
 
         true
     }
@@ -731,7 +737,7 @@ pub async fn renew_lock(
         }
     };
 
-    let success = lock_service.renew_lock(&key, &session_id);
+    let success = lock_service.renew_lock(&key, &session_id).await;
     HttpResponse::Ok().json(success)
 }
 
@@ -969,13 +975,13 @@ mod tests {
         let session_id = result.session.unwrap();
 
         // Renew lock
-        assert!(lock_svc.renew_lock("renew/me", &session_id));
+        assert!(lock_svc.renew_lock("renew/me", &session_id).await);
 
         // Renew with wrong session
-        assert!(!lock_svc.renew_lock("renew/me", "wrong-session"));
+        assert!(!lock_svc.renew_lock("renew/me", "wrong-session").await);
 
         // Renew nonexistent lock
-        assert!(!lock_svc.renew_lock("nonexistent", &session_id));
+        assert!(!lock_svc.renew_lock("nonexistent", &session_id).await);
     }
 
     #[tokio::test]

@@ -1,169 +1,206 @@
 //! Consul Session API HTTP handlers
 //!
 //! Implements Consul-compatible session management for distributed locking.
+//! Uses RocksDB as the sole storage backend with unix-timestamp-based TTL.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use actix_web::{HttpRequest, HttpResponse, web};
-use dashmap::DashMap;
-use rocksdb::DB;
+use rocksdb::{DB, WriteBatch};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
+use batata_consistency::RaftNode;
+use batata_consistency::raft::request::RaftRequest;
 use batata_consistency::raft::state_machine::CF_CONSUL_SESSIONS;
 
 use crate::acl::{AclService, ResourceType};
 use crate::kv::ConsulKVService;
 use crate::model::{ConsulError, Session, SessionCreateRequest, SessionCreateResponse};
 
-/// Session storage with TTL tracking
-#[derive(Clone)]
-pub struct SessionEntry {
-    pub session: Session,
-    pub created_at: Instant,
-    pub ttl: Duration,
-}
-
-/// Serializable session data for RocksDB persistence
+/// Serializable session data stored in RocksDB.
+/// Uses unix timestamps (survives restarts correctly).
 #[derive(Clone, Serialize, Deserialize)]
-struct SessionPersist {
+struct StoredSession {
     session: Session,
     created_at_unix: u64,
     ttl_secs: u64,
+    #[serde(default = "default_zero")]
+    last_renewed_unix: u64,
+}
+
+fn default_zero() -> u64 {
+    0
+}
+
+impl StoredSession {
+    fn is_expired(&self) -> bool {
+        let effective_renewed = if self.last_renewed_unix > 0 {
+            self.last_renewed_unix
+        } else {
+            self.created_at_unix
+        };
+        current_unix_secs() > effective_renewed + self.ttl_secs
+    }
 }
 
 /// Consul Session service
-/// Provides distributed locking via session management.
-/// When `rocks_db` is `Some`, writes are persisted to RocksDB (write-through cache).
+/// Uses RocksDB as the sole storage backend.
 #[derive(Clone)]
 pub struct ConsulSessionService {
-    sessions: Arc<DashMap<String, SessionEntry>>,
+    /// RocksDB handle (always present)
+    db: Arc<DB>,
     node_name: String,
-    /// Optional RocksDB handle for persistence
-    rocks_db: Option<Arc<DB>>,
+    /// Keeps temp directory alive for tests/in-memory mode
+    _temp_dir: Option<Arc<tempfile::TempDir>>,
+    /// Optional Raft node for cluster-mode replication
+    raft_node: Option<Arc<RaftNode>>,
 }
 
 impl ConsulSessionService {
+    /// Create a new session service with a temporary RocksDB (for tests/in-memory mode).
     pub fn new() -> Self {
+        let (db, temp_dir) = crate::kv::open_temp_consul_db();
         let node_name = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "batata-node".to_string());
 
         Self {
-            sessions: Arc::new(DashMap::new()),
+            db,
             node_name,
-            rocks_db: None,
+            _temp_dir: Some(temp_dir),
+            raft_node: None,
         }
     }
 
-    /// Create a new session service with RocksDB persistence.
-    /// Loads existing sessions from RocksDB, skipping expired ones.
+    /// Create a new session service backed by an existing RocksDB instance.
+    /// Cleans up expired sessions on startup.
     pub fn with_rocks(db: Arc<DB>) -> Self {
         let node_name = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "batata-node".to_string());
 
-        let sessions = Arc::new(DashMap::new());
-        let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
+        // Clean up expired sessions on startup
         if let Some(cf) = db.cf_handle(CF_CONSUL_SESSIONS) {
             let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut expired_keys = Vec::new();
             let mut loaded = 0u64;
-            let mut expired = 0u64;
 
             for item in iter.flatten() {
                 let (key_bytes, value_bytes) = item;
-                if let Ok(persist) = serde_json::from_slice::<SessionPersist>(&value_bytes) {
-                    // Skip expired sessions
-                    if now_unix > persist.created_at_unix + persist.ttl_secs {
-                        expired += 1;
-                        // Delete expired entry from RocksDB
-                        let _ = db.delete_cf(cf, &key_bytes);
-                        continue;
+                let key = match String::from_utf8(key_bytes.to_vec()) {
+                    Ok(k) => k,
+                    Err(_) => continue,
+                };
+
+                // Skip session-to-key index entries
+                if key.starts_with("kidx:") {
+                    continue;
+                }
+
+                if let Ok(stored) = serde_json::from_slice::<StoredSession>(&value_bytes) {
+                    if stored.is_expired() {
+                        expired_keys.push(key);
+                    } else {
+                        loaded += 1;
                     }
-
-                    // Reconstruct Instant: approximate by computing remaining TTL
-                    let elapsed = now_unix.saturating_sub(persist.created_at_unix);
-                    let created_at = Instant::now() - Duration::from_secs(elapsed);
-
-                    let entry = SessionEntry {
-                        session: persist.session.clone(),
-                        created_at,
-                        ttl: Duration::from_secs(persist.ttl_secs),
-                    };
-                    sessions.insert(persist.session.id.clone(), entry);
-                    loaded += 1;
-                } else if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
-                    warn!("Failed to deserialize session entry: {}", key);
                 }
             }
-            info!(
-                "Loaded {} sessions from RocksDB ({} expired sessions cleaned up)",
-                loaded, expired
-            );
+
+            if !expired_keys.is_empty() {
+                let count = expired_keys.len();
+                let mut batch = WriteBatch::default();
+                for key in &expired_keys {
+                    batch.delete_cf(cf, key.as_bytes());
+                }
+                let _ = db.write(batch);
+                info!(
+                    "Loaded {} sessions from RocksDB ({} expired sessions cleaned up)",
+                    loaded, count
+                );
+            } else {
+                info!("Loaded {} sessions from RocksDB", loaded);
+            }
         }
 
         Self {
-            sessions,
+            db,
             node_name,
-            rocks_db: Some(db),
+            _temp_dir: None,
+            raft_node: None,
         }
     }
 
-    /// Persist a session to RocksDB
-    fn persist_session(&self, session_id: &str, entry: &SessionEntry) {
-        if let Some(ref db) = self.rocks_db
-            && let Some(cf) = db.cf_handle(CF_CONSUL_SESSIONS)
-        {
-            let now_unix = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let elapsed = entry.created_at.elapsed().as_secs();
-            let created_at_unix = now_unix.saturating_sub(elapsed);
+    /// Create a new session service backed by a Raft-replicated RocksDB.
+    /// Does NOT clean up expired sessions locally on startup — cleanup goes through Raft.
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<RaftNode>) -> Self {
+        let node_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
 
-            let persist = SessionPersist {
-                session: entry.session.clone(),
-                created_at_unix,
-                ttl_secs: entry.ttl.as_secs(),
-            };
-            match serde_json::to_vec(&persist) {
+        // In Raft mode, skip startup cleanup — expired session cleanup is leader-only via Raft
+        if let Some(cf) = db.cf_handle(CF_CONSUL_SESSIONS) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut count = 0u64;
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                let key = match String::from_utf8(key_bytes.to_vec()) {
+                    Ok(k) => k,
+                    Err(_) => continue,
+                };
+                if key.starts_with("kidx:") {
+                    continue;
+                }
+                if let Ok(stored) = serde_json::from_slice::<StoredSession>(&value_bytes)
+                    && !stored.is_expired()
+                {
+                    count += 1;
+                }
+            }
+            info!("Loaded {} sessions from Raft RocksDB (Raft mode)", count);
+        }
+
+        Self {
+            db,
+            node_name,
+            _temp_dir: None,
+            raft_node: Some(raft_node),
+        }
+    }
+
+    // ========================================================================
+    // Internal helpers
+    // ========================================================================
+
+    /// Read a stored session from RocksDB
+    fn get_stored(&self, session_id: &str) -> Option<StoredSession> {
+        let cf = self.db.cf_handle(CF_CONSUL_SESSIONS)?;
+        let bytes = self.db.get_cf(cf, session_id.as_bytes()).ok()??;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Write a stored session to RocksDB
+    fn put_stored(&self, session_id: &str, stored: &StoredSession) {
+        if let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
+            match serde_json::to_vec(stored) {
                 Ok(bytes) => {
-                    if let Err(e) = db.put_cf(cf, session_id.as_bytes(), &bytes) {
-                        error!("Failed to persist session '{}': {}", session_id, e);
+                    if let Err(e) = self.db.put_cf(cf, session_id.as_bytes(), &bytes) {
+                        error!("Failed to write session '{}': {}", session_id, e);
                     }
                 }
-                Err(e) => {
-                    error!("Failed to serialize session '{}': {}", session_id, e);
-                }
+                Err(e) => error!("Failed to serialize session '{}': {}", session_id, e),
             }
         }
     }
 
-    /// Delete a session from RocksDB
-    fn delete_session_rocks(&self, session_id: &str) {
-        if let Some(ref db) = self.rocks_db
-            && let Some(cf) = db.cf_handle(CF_CONSUL_SESSIONS)
-            && let Err(e) = db.delete_cf(cf, session_id.as_bytes())
-        {
-            error!(
-                "Failed to delete session '{}' from RocksDB: {}",
-                session_id, e
-            );
-        }
-    }
+    // ========================================================================
+    // Public API
+    // ========================================================================
 
     /// Create a new session
-    pub fn create_session(&self, req: SessionCreateRequest) -> Session {
+    pub async fn create_session(&self, req: SessionCreateRequest) -> Session {
         let session_id = uuid::Uuid::new_v4().to_string();
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let now = current_unix_secs();
 
         let ttl_str = req.ttl.clone().unwrap_or_else(|| "15s".to_string());
         let ttl_secs = parse_duration(&ttl_str).unwrap_or(15);
@@ -182,87 +219,238 @@ impl ConsulSessionService {
             modify_index: now,
         };
 
-        let entry = SessionEntry {
+        let stored = StoredSession {
             session: session.clone(),
-            created_at: Instant::now(),
-            ttl: Duration::from_secs(ttl_secs),
+            created_at_unix: now,
+            ttl_secs,
+            last_renewed_unix: now,
         };
 
-        self.sessions.insert(session_id.clone(), entry.clone());
-        self.persist_session(&session_id, &entry);
+        if let Some(ref raft) = self.raft_node {
+            let stored_json = serde_json::to_string(&stored).unwrap();
+            match raft
+                .write(RaftRequest::ConsulSessionCreate {
+                    session_id: session_id.clone(),
+                    stored_session_json: stored_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ConsulSessionCreate rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ConsulSessionCreate failed: {}", e);
+                }
+                _ => {}
+            }
+        } else {
+            self.put_stored(&session_id, &stored);
+        }
+
         session
     }
 
     /// Destroy a session
-    pub fn destroy_session(&self, session_id: &str) -> bool {
-        let removed = self.sessions.remove(session_id).is_some();
-        if removed {
-            self.delete_session_rocks(session_id);
+    pub async fn destroy_session(&self, session_id: &str) -> bool {
+        if let Some(ref raft) = self.raft_node {
+            match raft
+                .write(RaftRequest::ConsulSessionDestroy {
+                    session_id: session_id.to_string(),
+                })
+                .await
+            {
+                Ok(r) => r.success,
+                Err(e) => {
+                    error!("Raft ConsulSessionDestroy failed: {}", e);
+                    false
+                }
+            }
+        } else {
+            let cf = match self.db.cf_handle(CF_CONSUL_SESSIONS) {
+                Some(cf) => cf,
+                None => return false,
+            };
+
+            // Check if session exists
+            match self.db.get_cf(cf, session_id.as_bytes()) {
+                Ok(Some(_)) => {
+                    if let Err(e) = self.db.delete_cf(cf, session_id.as_bytes()) {
+                        error!("Failed to delete session '{}': {}", session_id, e);
+                        return false;
+                    }
+                    true
+                }
+                _ => false,
+            }
         }
-        removed
     }
 
-    /// Get session info
+    /// Get session info (with lazy expiration)
     pub fn get_session(&self, session_id: &str) -> Option<Session> {
-        self.sessions.get(session_id).map(|e| {
-            // Check if session has expired
-            if e.created_at.elapsed() > e.ttl {
-                None
-            } else {
-                Some(e.session.clone())
-            }
-        })?
-    }
+        let stored = self.get_stored(session_id)?;
 
-    /// Renew a session
-    pub fn renew_session(&self, session_id: &str) -> Option<Session> {
-        let result = self.sessions.get_mut(session_id).and_then(|mut entry| {
-            if entry.created_at.elapsed() > entry.ttl {
-                None
-            } else {
-                entry.created_at = Instant::now();
-                Some(entry.clone())
+        if stored.is_expired() {
+            // Lazy expire: delete the expired session directly from local DB
+            // In Raft mode, the leader's cleanup task will handle proper replication
+            if let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
+                let _ = self.db.delete_cf(cf, session_id.as_bytes());
             }
-        });
-        if let Some(ref entry) = result {
-            self.persist_session(session_id, entry);
+            return None;
         }
-        result.map(|e| e.session)
+
+        Some(stored.session)
     }
 
-    /// List all sessions
+    /// Renew a session (reset last_renewed_unix)
+    pub async fn renew_session(&self, session_id: &str) -> Option<Session> {
+        let mut stored = self.get_stored(session_id)?;
+
+        if stored.is_expired() {
+            self.destroy_session(session_id).await;
+            return None;
+        }
+
+        stored.last_renewed_unix = current_unix_secs();
+
+        if let Some(ref raft) = self.raft_node {
+            let stored_json = serde_json::to_string(&stored).unwrap();
+            match raft
+                .write(RaftRequest::ConsulSessionRenew {
+                    session_id: session_id.to_string(),
+                    stored_session_json: stored_json,
+                })
+                .await
+            {
+                Ok(r) if !r.success => {
+                    error!("Raft ConsulSessionRenew rejected: {:?}", r.message);
+                }
+                Err(e) => {
+                    error!("Raft ConsulSessionRenew failed: {}", e);
+                    return None;
+                }
+                _ => {}
+            }
+        } else {
+            self.put_stored(session_id, &stored);
+        }
+
+        Some(stored.session)
+    }
+
+    /// List all active sessions (skips kidx: index entries and expired sessions)
     pub fn list_sessions(&self) -> Vec<Session> {
-        let now = Instant::now();
-        self.sessions
-            .iter()
-            .filter(|e| now.duration_since(e.created_at) <= e.ttl)
-            .map(|e| e.session.clone())
-            .collect()
+        let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) else {
+            return Vec::new();
+        };
+
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        let mut sessions = Vec::new();
+        let mut expired_keys = Vec::new();
+
+        for item in iter.flatten() {
+            let (key_bytes, value_bytes) = item;
+            let key = match String::from_utf8(key_bytes.to_vec()) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+
+            // Skip session-to-key index entries
+            if key.starts_with("kidx:") {
+                continue;
+            }
+
+            if let Ok(stored) = serde_json::from_slice::<StoredSession>(&value_bytes) {
+                if stored.is_expired() {
+                    expired_keys.push(key);
+                } else {
+                    sessions.push(stored.session);
+                }
+            }
+        }
+
+        // Clean up expired sessions
+        if !expired_keys.is_empty() {
+            let mut batch = WriteBatch::default();
+            for key in &expired_keys {
+                batch.delete_cf(cf, key.as_bytes());
+            }
+            let _ = self.db.write(batch);
+        }
+
+        sessions
     }
 
     /// List sessions for a specific node
     pub fn list_node_sessions(&self, node: &str) -> Vec<Session> {
-        let now = Instant::now();
-        self.sessions
-            .iter()
-            .filter(|e| e.session.node == node && now.duration_since(e.created_at) <= e.ttl)
-            .map(|e| e.session.clone())
+        self.list_sessions()
+            .into_iter()
+            .filter(|s| s.node == node)
             .collect()
     }
 
     /// Clean up expired sessions
     pub fn cleanup_expired(&self) {
-        let now = Instant::now();
-        let expired_ids: Vec<String> = self
-            .sessions
-            .iter()
-            .filter(|e| now.duration_since(e.created_at) > e.ttl)
-            .map(|e| e.key().clone())
-            .collect();
-        for id in &expired_ids {
-            self.sessions.remove(id);
-            self.delete_session_rocks(id);
+        let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) else {
+            return;
+        };
+
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        let mut batch = WriteBatch::default();
+        let mut count = 0u64;
+
+        for item in iter.flatten() {
+            let (key_bytes, value_bytes) = item;
+            let key = match String::from_utf8(key_bytes.to_vec()) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+
+            // Skip session-to-key index entries
+            if key.starts_with("kidx:") {
+                continue;
+            }
+
+            if let Ok(stored) = serde_json::from_slice::<StoredSession>(&value_bytes)
+                && stored.is_expired()
+            {
+                batch.delete_cf(cf, key.as_bytes());
+                count += 1;
+            }
         }
+
+        if count > 0
+            && let Err(e) = self.db.write(batch)
+        {
+            error!("Failed to cleanup expired sessions: {}", e);
+        }
+    }
+
+    /// Scan and return IDs of expired sessions (read-only, for leader-only Raft cleanup)
+    pub fn scan_expired_session_ids(&self) -> Vec<String> {
+        let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) else {
+            return Vec::new();
+        };
+
+        let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+        let mut expired = Vec::new();
+
+        for item in iter.flatten() {
+            let (key_bytes, value_bytes) = item;
+            let key = match String::from_utf8(key_bytes.to_vec()) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            if key.starts_with("kidx:") {
+                continue;
+            }
+            if let Ok(stored) = serde_json::from_slice::<StoredSession>(&value_bytes)
+                && stored.is_expired()
+            {
+                expired.push(key);
+            }
+        }
+
+        expired
     }
 }
 
@@ -297,6 +485,13 @@ fn parse_duration(s: &str) -> Option<u64> {
     Some(num * multiplier / 1000)
 }
 
+fn current_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 /// Query parameters for session endpoints
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct SessionQueryParams {
@@ -322,7 +517,7 @@ pub async fn create_session(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let session = session_service.create_session(body.into_inner());
+    let session = session_service.create_session(body.into_inner()).await;
     let response = SessionCreateResponse {
         id: session.id.clone(),
     };
@@ -348,9 +543,9 @@ pub async fn destroy_session(
     }
 
     // Release all KV keys held by this session (Consul "release" behavior)
-    kv_service.release_session(&session_id);
+    kv_service.release_session(&session_id).await;
 
-    let destroyed = session_service.destroy_session(&session_id);
+    let destroyed = session_service.destroy_session(&session_id).await;
     HttpResponse::Ok().json(destroyed)
 }
 
@@ -432,7 +627,7 @@ pub async fn renew_session(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    match session_service.renew_session(&session_id) {
+    match session_service.renew_session(&session_id).await {
         Some(session) => HttpResponse::Ok().json(vec![session]),
         None => HttpResponse::NotFound().json(ConsulError::new("Session not found or expired")),
     }
@@ -451,8 +646,8 @@ mod tests {
         assert_eq!(parse_duration("30"), Some(30));
     }
 
-    #[test]
-    fn test_session_lifecycle() {
+    #[tokio::test]
+    async fn test_session_lifecycle() {
         let service = ConsulSessionService::new();
 
         // Create session
@@ -461,7 +656,7 @@ mod tests {
             ttl: Some("60s".to_string()),
             ..Default::default()
         };
-        let session = service.create_session(req);
+        let session = service.create_session(req).await;
         assert!(!session.id.is_empty());
         assert_eq!(session.name, "test-session");
 
@@ -470,11 +665,11 @@ mod tests {
         assert!(retrieved.is_some());
 
         // Renew session
-        let renewed = service.renew_session(&session.id);
+        let renewed = service.renew_session(&session.id).await;
         assert!(renewed.is_some());
 
         // Destroy session
-        let destroyed = service.destroy_session(&session.id);
+        let destroyed = service.destroy_session(&session.id).await;
         assert!(destroyed);
 
         // Should not exist anymore
@@ -482,10 +677,10 @@ mod tests {
         assert!(gone.is_none());
     }
 
-    #[test]
-    fn test_destroy_nonexistent_session() {
+    #[tokio::test]
+    async fn test_destroy_nonexistent_session() {
         let service = ConsulSessionService::new();
-        assert!(!service.destroy_session("nonexistent-id"));
+        assert!(!service.destroy_session("nonexistent-id").await);
     }
 
     #[test]
@@ -494,14 +689,14 @@ mod tests {
         assert!(service.get_session("nonexistent-id").is_none());
     }
 
-    #[test]
-    fn test_renew_nonexistent_session() {
+    #[tokio::test]
+    async fn test_renew_nonexistent_session() {
         let service = ConsulSessionService::new();
-        assert!(service.renew_session("nonexistent-id").is_none());
+        assert!(service.renew_session("nonexistent-id").await.is_none());
     }
 
-    #[test]
-    fn test_list_sessions() {
+    #[tokio::test]
+    async fn test_list_sessions() {
         let service = ConsulSessionService::new();
 
         // Initially empty
@@ -517,15 +712,15 @@ mod tests {
             ttl: Some("60s".to_string()),
             ..Default::default()
         };
-        service.create_session(req1);
-        service.create_session(req2);
+        service.create_session(req1).await;
+        service.create_session(req2).await;
 
         let sessions = service.list_sessions();
         assert_eq!(sessions.len(), 2);
     }
 
-    #[test]
-    fn test_list_node_sessions() {
+    #[tokio::test]
+    async fn test_list_node_sessions() {
         let service = ConsulSessionService::new();
         let node_name = &service.node_name.clone();
 
@@ -535,7 +730,7 @@ mod tests {
             node: Some(node_name.clone()),
             ..Default::default()
         };
-        service.create_session(req);
+        service.create_session(req).await;
 
         let node_sessions = service.list_node_sessions(node_name);
         assert_eq!(node_sessions.len(), 1);
@@ -544,8 +739,8 @@ mod tests {
         assert!(other.is_empty());
     }
 
-    #[test]
-    fn test_session_behavior_release() {
+    #[tokio::test]
+    async fn test_session_behavior_release() {
         let service = ConsulSessionService::new();
 
         let req = SessionCreateRequest {
@@ -554,12 +749,12 @@ mod tests {
             ttl: Some("60s".to_string()),
             ..Default::default()
         };
-        let session = service.create_session(req);
+        let session = service.create_session(req).await;
         assert_eq!(session.behavior, "release");
     }
 
-    #[test]
-    fn test_session_behavior_delete() {
+    #[tokio::test]
+    async fn test_session_behavior_delete() {
         let service = ConsulSessionService::new();
 
         let req = SessionCreateRequest {
@@ -568,24 +763,24 @@ mod tests {
             ttl: Some("60s".to_string()),
             ..Default::default()
         };
-        let session = service.create_session(req);
+        let session = service.create_session(req).await;
         assert_eq!(session.behavior, "delete");
     }
 
-    #[test]
-    fn test_session_default_ttl() {
+    #[tokio::test]
+    async fn test_session_default_ttl() {
         let service = ConsulSessionService::new();
 
         let req = SessionCreateRequest {
             name: Some("default-ttl".to_string()),
             ..Default::default()
         };
-        let session = service.create_session(req);
+        let session = service.create_session(req).await;
         assert_eq!(session.ttl, "15s"); // default
     }
 
-    #[test]
-    fn test_session_lock_delay() {
+    #[tokio::test]
+    async fn test_session_lock_delay() {
         let service = ConsulSessionService::new();
 
         let req = SessionCreateRequest {
@@ -594,12 +789,12 @@ mod tests {
             ttl: Some("60s".to_string()),
             ..Default::default()
         };
-        let session = service.create_session(req);
+        let session = service.create_session(req).await;
         assert_eq!(session.lock_delay, 30);
     }
 
-    #[test]
-    fn test_session_with_checks() {
+    #[tokio::test]
+    async fn test_session_with_checks() {
         let service = ConsulSessionService::new();
 
         let req = SessionCreateRequest {
@@ -609,7 +804,7 @@ mod tests {
             service_checks: Some(vec!["service:web".to_string()]),
             ..Default::default()
         };
-        let session = service.create_session(req);
+        let session = service.create_session(req).await;
         assert_eq!(session.node_checks, Some(vec!["serfHealth".to_string()]));
         assert_eq!(
             session.service_checks,
@@ -617,19 +812,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_session_unique_ids() {
+    #[tokio::test]
+    async fn test_session_unique_ids() {
         let service = ConsulSessionService::new();
 
-        let ids: Vec<String> = (0..10)
-            .map(|_| {
-                let req = SessionCreateRequest {
-                    ttl: Some("60s".to_string()),
-                    ..Default::default()
-                };
-                service.create_session(req).id
-            })
-            .collect();
+        let mut ids = Vec::new();
+        for _ in 0..10 {
+            let req = SessionCreateRequest {
+                ttl: Some("60s".to_string()),
+                ..Default::default()
+            };
+            ids.push(service.create_session(req).await.id);
+        }
 
         // All IDs should be unique
         let mut deduped = ids.clone();
@@ -638,18 +832,20 @@ mod tests {
         assert_eq!(ids.len(), deduped.len());
     }
 
-    #[test]
-    fn test_destroy_then_list() {
+    #[tokio::test]
+    async fn test_destroy_then_list() {
         let service = ConsulSessionService::new();
 
-        let session = service.create_session(SessionCreateRequest {
-            name: Some("to-destroy".to_string()),
-            ttl: Some("60s".to_string()),
-            ..Default::default()
-        });
+        let session = service
+            .create_session(SessionCreateRequest {
+                name: Some("to-destroy".to_string()),
+                ttl: Some("60s".to_string()),
+                ..Default::default()
+            })
+            .await;
         assert_eq!(service.list_sessions().len(), 1);
 
-        service.destroy_session(&session.id);
+        service.destroy_session(&session.id).await;
         assert_eq!(service.list_sessions().len(), 0);
     }
 }

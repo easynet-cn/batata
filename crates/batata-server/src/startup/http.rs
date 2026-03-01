@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
 
+use batata_consistency::RaftNode;
 use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;
 use rocksdb::DB;
@@ -53,7 +54,8 @@ pub struct ConsulServices {
 }
 
 impl ConsulServices {
-    /// Creates Consul service adapters from a naming service (in-memory only).
+    /// Creates Consul service adapters from a naming service (in-memory mode).
+    /// Each service creates its own temporary RocksDB instance.
     pub fn new(
         naming_service: Arc<NamingService>,
         acl_enabled: bool,
@@ -92,8 +94,7 @@ impl ConsulServices {
     }
 
     /// Creates Consul service adapters with RocksDB persistence.
-    /// KV, ACL, Session, and Query data are persisted to RocksDB using
-    /// a write-through cache pattern (DashMap as L1, RocksDB as durable store).
+    /// KV, ACL, Session, and Query data are persisted directly to RocksDB.
     pub fn with_persistence(
         naming_service: Arc<NamingService>,
         acl_enabled: bool,
@@ -102,6 +103,47 @@ impl ConsulServices {
     ) -> Self {
         let session = ConsulSessionService::with_rocks(db.clone());
         let kv = ConsulKVService::with_rocks(db.clone());
+        let kv_arc = Arc::new(kv.clone());
+        let session_arc = Arc::new(session.clone());
+        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
+        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+
+        // Create health actor for lock-free operations
+        let health_actor = create_health_actor();
+
+        Self {
+            agent: ConsulAgentService::new(naming_service.clone()),
+            health: ConsulHealthService::new_with_monitor(
+                naming_service.clone(),
+                health_actor,
+                check_reap_interval_secs,
+            ),
+            kv,
+            catalog: ConsulCatalogService::new(naming_service),
+            acl: if acl_enabled {
+                AclService::with_rocks(db.clone())
+            } else {
+                AclService::disabled()
+            },
+            session,
+            event: ConsulEventService::new(),
+            query: ConsulQueryService::with_rocks(db),
+            lock,
+            semaphore,
+        }
+    }
+
+    /// Creates Consul service adapters with Raft-replicated RocksDB storage.
+    /// Used in cluster mode for data replication across nodes.
+    pub fn with_raft(
+        naming_service: Arc<NamingService>,
+        acl_enabled: bool,
+        db: Arc<DB>,
+        raft_node: Arc<RaftNode>,
+        check_reap_interval_secs: u64,
+    ) -> Self {
+        let session = ConsulSessionService::with_raft(db.clone(), raft_node.clone());
+        let kv = ConsulKVService::with_raft(db.clone(), raft_node);
         let kv_arc = Arc::new(kv.clone());
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());

@@ -61,5 +61,8 @@ hostname = { workspace = true }
 # HTTP client
 reqwest = { workspace = true }
 
+# Temp directory for tests
+tempfile = "3"
+
 [dev-dependencies]
 actix-http = { workspace = true }

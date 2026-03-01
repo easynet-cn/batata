@@ -217,6 +217,18 @@ impl RocksStateMachine {
             .expect("CF_CONFIG_GRAY must exist - database may be corrupted")
     }
 
+    fn cf_consul_kv(&self) -> &ColumnFamily {
+        self.db
+            .cf_handle(CF_CONSUL_KV)
+            .expect("CF_CONSUL_KV must exist - database may be corrupted")
+    }
+
+    fn cf_consul_sessions(&self) -> &ColumnFamily {
+        self.db
+            .cf_handle(CF_CONSUL_SESSIONS)
+            .expect("CF_CONSUL_SESSIONS must exist - database may be corrupted")
+    }
+
     fn cf_meta(&self) -> &ColumnFamily {
         self.db
             .cf_handle(CF_META)
@@ -527,6 +539,77 @@ impl RocksStateMachine {
             RaftRequest::LockExpire { namespace, name } => {
                 self.apply_lock_expire(&namespace, &name)
             }
+
+            // Consul KV operations
+            RaftRequest::ConsulKVPut {
+                key,
+                value,
+                session_index_key,
+            } => self.apply_consul_kv_put(&key, &value, session_index_key.as_deref()),
+
+            RaftRequest::ConsulKVDelete {
+                key,
+                session_index_cleanup,
+            } => self.apply_consul_kv_delete(&key, session_index_cleanup.as_deref()),
+
+            RaftRequest::ConsulKVDeletePrefix { prefix } => {
+                self.apply_consul_kv_delete_prefix(&prefix)
+            }
+
+            RaftRequest::ConsulKVAcquireSession {
+                key,
+                session_id,
+                stored_kv_json,
+            } => self.apply_consul_kv_acquire_session(&key, &session_id, &stored_kv_json),
+
+            RaftRequest::ConsulKVReleaseSessionKey {
+                key,
+                session_id,
+                stored_kv_json,
+            } => self.apply_consul_kv_release_session_key(&key, &session_id, &stored_kv_json),
+
+            RaftRequest::ConsulKVReleaseSession {
+                session_id,
+                updates,
+                index_keys_to_delete,
+            } => self.apply_consul_kv_release_session(&session_id, updates, index_keys_to_delete),
+
+            RaftRequest::ConsulKVCas {
+                key,
+                stored_kv_json,
+                expected_modify_index,
+            } => self.apply_consul_kv_cas(&key, &stored_kv_json, expected_modify_index),
+
+            RaftRequest::ConsulKVTransaction {
+                puts,
+                deletes,
+                session_index_puts,
+                session_index_deletes,
+            } => self.apply_consul_kv_transaction(
+                puts,
+                deletes,
+                session_index_puts,
+                session_index_deletes,
+            ),
+
+            // Consul Session operations
+            RaftRequest::ConsulSessionCreate {
+                session_id,
+                stored_session_json,
+            } => self.apply_consul_session_create(&session_id, &stored_session_json),
+
+            RaftRequest::ConsulSessionDestroy { session_id } => {
+                self.apply_consul_session_destroy(&session_id)
+            }
+
+            RaftRequest::ConsulSessionRenew {
+                session_id,
+                stored_session_json,
+            } => self.apply_consul_session_renew(&session_id, &stored_session_json),
+
+            RaftRequest::ConsulSessionCleanupExpired {
+                expired_session_ids,
+            } => self.apply_consul_session_cleanup_expired(expired_session_ids),
         }
     }
 
@@ -1493,6 +1576,396 @@ impl RocksStateMachine {
             Err(e) => {
                 error!("Failed to expire lock: {}", e);
                 RaftResponse::failure(format!("Failed to expire lock: {}", e))
+            }
+        }
+    }
+
+    // ========================================================================
+    // Consul KV operations
+    // ========================================================================
+
+    fn apply_consul_kv_put(
+        &self,
+        key: &str,
+        value: &str,
+        session_index_key: Option<&str>,
+    ) -> RaftResponse {
+        let cf_kv = self.cf_consul_kv();
+
+        if let Some(idx_key) = session_index_key {
+            // Use WriteBatch for atomicity when both KV and session index are updated
+            let mut batch = rocksdb::WriteBatch::default();
+            batch.put_cf(cf_kv, key.as_bytes(), value.as_bytes());
+            batch.put_cf(self.cf_consul_sessions(), idx_key.as_bytes(), b"");
+            match self.db.write(batch) {
+                Ok(_) => {
+                    debug!("Consul KV put: {} (with session index)", key);
+                    RaftResponse::success()
+                }
+                Err(e) => {
+                    error!("Failed to put Consul KV '{}': {}", key, e);
+                    RaftResponse::failure(format!("Failed to put Consul KV: {}", e))
+                }
+            }
+        } else {
+            match self.db.put_cf(cf_kv, key.as_bytes(), value.as_bytes()) {
+                Ok(_) => {
+                    debug!("Consul KV put: {}", key);
+                    RaftResponse::success()
+                }
+                Err(e) => {
+                    error!("Failed to put Consul KV '{}': {}", key, e);
+                    RaftResponse::failure(format!("Failed to put Consul KV: {}", e))
+                }
+            }
+        }
+    }
+
+    fn apply_consul_kv_delete(
+        &self,
+        key: &str,
+        session_index_cleanup: Option<&str>,
+    ) -> RaftResponse {
+        let cf_kv = self.cf_consul_kv();
+
+        if let Some(idx_key) = session_index_cleanup {
+            let mut batch = rocksdb::WriteBatch::default();
+            batch.delete_cf(cf_kv, key.as_bytes());
+            batch.delete_cf(self.cf_consul_sessions(), idx_key.as_bytes());
+            match self.db.write(batch) {
+                Ok(_) => {
+                    debug!("Consul KV deleted: {} (with session index cleanup)", key);
+                    RaftResponse::success()
+                }
+                Err(e) => {
+                    error!("Failed to delete Consul KV '{}': {}", key, e);
+                    RaftResponse::failure(format!("Failed to delete Consul KV: {}", e))
+                }
+            }
+        } else {
+            match self.db.delete_cf(cf_kv, key.as_bytes()) {
+                Ok(_) => {
+                    debug!("Consul KV deleted: {}", key);
+                    RaftResponse::success()
+                }
+                Err(e) => {
+                    error!("Failed to delete Consul KV '{}': {}", key, e);
+                    RaftResponse::failure(format!("Failed to delete Consul KV: {}", e))
+                }
+            }
+        }
+    }
+
+    fn apply_consul_kv_delete_prefix(&self, prefix: &str) -> RaftResponse {
+        let cf_kv = self.cf_consul_kv();
+        let cf_sessions = self.cf_consul_sessions();
+
+        let mode = if prefix.is_empty() {
+            rocksdb::IteratorMode::Start
+        } else {
+            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward)
+        };
+        let iter = self.db.iterator_cf(cf_kv, mode);
+
+        let mut batch = rocksdb::WriteBatch::default();
+        let mut count = 0u32;
+
+        for item in iter.flatten() {
+            let (key_bytes, value_bytes) = item;
+            let key = match String::from_utf8(key_bytes.to_vec()) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            if !prefix.is_empty() && !key.starts_with(prefix) {
+                break;
+            }
+
+            batch.delete_cf(cf_kv, key.as_bytes());
+
+            // Clean up session index if key had a session
+            if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&value_bytes)
+                && let Some(pair) = val.get("pair")
+                && let Some(session_id) = pair.get("Session").and_then(|s| s.as_str())
+            {
+                let idx_key = format!("kidx:{}:{}", session_id, key);
+                batch.delete_cf(cf_sessions, idx_key.as_bytes());
+            }
+
+            count += 1;
+        }
+
+        if count > 0 {
+            match self.db.write(batch) {
+                Ok(_) => {
+                    debug!("Consul KV prefix deleted: {} ({} entries)", prefix, count);
+                    RaftResponse::success()
+                }
+                Err(e) => {
+                    error!("Failed to delete Consul KV prefix '{}': {}", prefix, e);
+                    RaftResponse::failure(format!("Failed to delete Consul KV prefix: {}", e))
+                }
+            }
+        } else {
+            RaftResponse::success()
+        }
+    }
+
+    fn apply_consul_kv_acquire_session(
+        &self,
+        key: &str,
+        session_id: &str,
+        stored_kv_json: &str,
+    ) -> RaftResponse {
+        let cf_kv = self.cf_consul_kv();
+        let cf_sessions = self.cf_consul_sessions();
+
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(cf_kv, key.as_bytes(), stored_kv_json.as_bytes());
+        let idx_key = format!("kidx:{}:{}", session_id, key);
+        batch.put_cf(cf_sessions, idx_key.as_bytes(), b"");
+
+        match self.db.write(batch) {
+            Ok(_) => {
+                debug!("Consul KV session acquired: {} by {}", key, session_id);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to acquire Consul session on '{}': {}", key, e);
+                RaftResponse::failure(format!("Failed to acquire Consul session: {}", e))
+            }
+        }
+    }
+
+    fn apply_consul_kv_release_session_key(
+        &self,
+        key: &str,
+        session_id: &str,
+        stored_kv_json: &str,
+    ) -> RaftResponse {
+        let cf_kv = self.cf_consul_kv();
+        let cf_sessions = self.cf_consul_sessions();
+
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(cf_kv, key.as_bytes(), stored_kv_json.as_bytes());
+        let idx_key = format!("kidx:{}:{}", session_id, key);
+        batch.delete_cf(cf_sessions, idx_key.as_bytes());
+
+        match self.db.write(batch) {
+            Ok(_) => {
+                debug!("Consul KV session released: {} from {}", key, session_id);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to release Consul session on '{}': {}", key, e);
+                RaftResponse::failure(format!("Failed to release Consul session: {}", e))
+            }
+        }
+    }
+
+    fn apply_consul_kv_release_session(
+        &self,
+        session_id: &str,
+        updates: Vec<(String, String)>,
+        index_keys_to_delete: Vec<String>,
+    ) -> RaftResponse {
+        let cf_kv = self.cf_consul_kv();
+        let cf_sessions = self.cf_consul_sessions();
+
+        let mut batch = rocksdb::WriteBatch::default();
+
+        for (kv_key, stored_kv_json) in &updates {
+            batch.put_cf(cf_kv, kv_key.as_bytes(), stored_kv_json.as_bytes());
+        }
+
+        for idx_key in &index_keys_to_delete {
+            batch.delete_cf(cf_sessions, idx_key.as_bytes());
+        }
+
+        match self.db.write(batch) {
+            Ok(_) => {
+                debug!(
+                    "Consul session released: {} ({} KV entries updated)",
+                    session_id,
+                    updates.len()
+                );
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to release Consul session '{}': {}", session_id, e);
+                RaftResponse::failure(format!("Failed to release Consul session: {}", e))
+            }
+        }
+    }
+
+    fn apply_consul_kv_cas(
+        &self,
+        key: &str,
+        stored_kv_json: &str,
+        expected_modify_index: u64,
+    ) -> RaftResponse {
+        let cf_kv = self.cf_consul_kv();
+
+        // Read existing entry and check modify_index
+        if let Ok(Some(existing_bytes)) = self.db.get_cf(cf_kv, key.as_bytes()) {
+            if let Ok(existing) = serde_json::from_slice::<serde_json::Value>(&existing_bytes) {
+                let current_index = existing
+                    .get("pair")
+                    .and_then(|p| p.get("ModifyIndex"))
+                    .and_then(|i| i.as_u64())
+                    .unwrap_or(0);
+
+                if current_index != expected_modify_index {
+                    return RaftResponse::failure("CAS failed: index mismatch");
+                }
+            }
+        } else if expected_modify_index != 0 {
+            return RaftResponse::failure("CAS failed: key not found");
+        }
+
+        match self
+            .db
+            .put_cf(cf_kv, key.as_bytes(), stored_kv_json.as_bytes())
+        {
+            Ok(_) => {
+                debug!("Consul KV CAS succeeded: {}", key);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to CAS Consul KV '{}': {}", key, e);
+                RaftResponse::failure(format!("Failed to CAS Consul KV: {}", e))
+            }
+        }
+    }
+
+    fn apply_consul_kv_transaction(
+        &self,
+        puts: Vec<(String, String)>,
+        deletes: Vec<String>,
+        session_index_puts: Vec<String>,
+        session_index_deletes: Vec<String>,
+    ) -> RaftResponse {
+        let cf_kv = self.cf_consul_kv();
+        let cf_sessions = self.cf_consul_sessions();
+
+        let mut batch = rocksdb::WriteBatch::default();
+
+        for (key, value) in &puts {
+            batch.put_cf(cf_kv, key.as_bytes(), value.as_bytes());
+        }
+
+        for key in &deletes {
+            batch.delete_cf(cf_kv, key.as_bytes());
+        }
+
+        for idx_key in &session_index_puts {
+            batch.put_cf(cf_sessions, idx_key.as_bytes(), b"");
+        }
+
+        for idx_key in &session_index_deletes {
+            batch.delete_cf(cf_sessions, idx_key.as_bytes());
+        }
+
+        match self.db.write(batch) {
+            Ok(_) => {
+                debug!(
+                    "Consul KV transaction: {} puts, {} deletes",
+                    puts.len(),
+                    deletes.len()
+                );
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to execute Consul KV transaction: {}", e);
+                RaftResponse::failure(format!("Failed to execute Consul KV transaction: {}", e))
+            }
+        }
+    }
+
+    // ========================================================================
+    // Consul Session operations
+    // ========================================================================
+
+    fn apply_consul_session_create(
+        &self,
+        session_id: &str,
+        stored_session_json: &str,
+    ) -> RaftResponse {
+        let cf = self.cf_consul_sessions();
+
+        match self
+            .db
+            .put_cf(cf, session_id.as_bytes(), stored_session_json.as_bytes())
+        {
+            Ok(_) => {
+                debug!("Consul session created: {}", session_id);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to create Consul session '{}': {}", session_id, e);
+                RaftResponse::failure(format!("Failed to create Consul session: {}", e))
+            }
+        }
+    }
+
+    fn apply_consul_session_destroy(&self, session_id: &str) -> RaftResponse {
+        let cf = self.cf_consul_sessions();
+
+        match self.db.delete_cf(cf, session_id.as_bytes()) {
+            Ok(_) => {
+                debug!("Consul session destroyed: {}", session_id);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to destroy Consul session '{}': {}", session_id, e);
+                RaftResponse::failure(format!("Failed to destroy Consul session: {}", e))
+            }
+        }
+    }
+
+    fn apply_consul_session_renew(
+        &self,
+        session_id: &str,
+        stored_session_json: &str,
+    ) -> RaftResponse {
+        let cf = self.cf_consul_sessions();
+
+        match self
+            .db
+            .put_cf(cf, session_id.as_bytes(), stored_session_json.as_bytes())
+        {
+            Ok(_) => {
+                debug!("Consul session renewed: {}", session_id);
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to renew Consul session '{}': {}", session_id, e);
+                RaftResponse::failure(format!("Failed to renew Consul session: {}", e))
+            }
+        }
+    }
+
+    fn apply_consul_session_cleanup_expired(
+        &self,
+        expired_session_ids: Vec<String>,
+    ) -> RaftResponse {
+        let cf = self.cf_consul_sessions();
+
+        let mut batch = rocksdb::WriteBatch::default();
+        for id in &expired_session_ids {
+            batch.delete_cf(cf, id.as_bytes());
+        }
+
+        match self.db.write(batch) {
+            Ok(_) => {
+                debug!(
+                    "Consul expired sessions cleaned up: {} sessions",
+                    expired_session_ids.len()
+                );
+                RaftResponse::success()
+            }
+            Err(e) => {
+                error!("Failed to cleanup expired Consul sessions: {}", e);
+                RaftResponse::failure(format!("Failed to cleanup expired Consul sessions: {}", e))
             }
         }
     }
