@@ -10,6 +10,7 @@ use sysinfo::System;
 use batata_api::model::NodeState;
 use batata_api::naming::model::Instance;
 use batata_core::service::cluster::ServerMemberManager;
+use batata_naming::healthcheck::registry::InstanceCheckRegistry;
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
@@ -26,11 +27,15 @@ use crate::model::{
 #[derive(Clone)]
 pub struct ConsulAgentService {
     naming_service: Arc<NamingService>,
+    registry: Arc<InstanceCheckRegistry>,
 }
 
 impl ConsulAgentService {
-    pub fn new(naming_service: Arc<NamingService>) -> Self {
-        Self { naming_service }
+    pub fn new(naming_service: Arc<NamingService>, registry: Arc<InstanceCheckRegistry>) -> Self {
+        Self {
+            naming_service,
+            registry,
+        }
     }
 
     /// Register Consul itself as a service
@@ -230,46 +235,79 @@ pub async fn deregister_service(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Find the service by ID across all services
-    // We need to iterate through services to find the one with matching ID
-    let mut deregistered = false;
+    // Use registry O(1) lookup to find the service by Consul service ID
+    let deregistered = if let Some((_, instance_key)) =
+        agent.registry.lookup_consul_service_id(&service_id)
+    {
+        // Parse instance_key: namespace#group#service#ip#port#cluster
+        let parts: Vec<&str> = instance_key.splitn(6, '#').collect();
+        if parts.len() >= 6 {
+            let ip = parts[3];
+            let port: i32 = parts[4].parse().unwrap_or(0);
+            let cluster = parts[5];
+            let svc_name = parts[2];
+            let instance = Instance {
+                instance_id: service_id.clone(),
+                ip: ip.to_string(),
+                port,
+                cluster_name: cluster.to_string(),
+                ephemeral: false,
+                ..Default::default()
+            };
+            let success = agent.naming_service.deregister_instance(
+                &namespace,
+                "DEFAULT_GROUP",
+                svc_name,
+                &instance,
+            );
+            if success {
+                // Clean up registry entries
+                agent.registry.deregister_all_instance_checks(&instance_key);
+                agent.registry.remove_consul_service_id(&service_id);
+            }
+            success
+        } else {
+            false
+        }
+    } else {
+        // Fallback: O(n) scan for backward compatibility
+        let mut found = false;
+        let services = agent
+            .naming_service
+            .list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
 
-    // Get all services and find the one with matching instance_id
-    // Since we don't know the service name, we need to search
-    let services = agent
-        .naming_service
-        .list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+        for service_name in services.1 {
+            let instances = agent.naming_service.get_instances(
+                &namespace,
+                "DEFAULT_GROUP",
+                &service_name,
+                "",
+                false,
+            );
 
-    for service_name in services.1 {
-        let instances = agent.naming_service.get_instances(
-            &namespace,
-            "DEFAULT_GROUP",
-            &service_name,
-            "",
-            false,
-        );
-
-        for instance in instances {
-            if instance.instance_id == service_id {
-                let success = agent.naming_service.deregister_instance(
-                    &namespace,
-                    "DEFAULT_GROUP",
-                    &service_name,
-                    &instance,
-                );
-                if success {
-                    deregistered = true;
-                    break;
+            for instance in instances {
+                if instance.instance_id == service_id {
+                    let success = agent.naming_service.deregister_instance(
+                        &namespace,
+                        "DEFAULT_GROUP",
+                        &service_name,
+                        &instance,
+                    );
+                    if success {
+                        found = true;
+                        break;
+                    }
                 }
             }
+            if found {
+                break;
+            }
         }
-        if deregistered {
-            break;
-        }
-    }
+        found
+    };
 
     if deregistered {
-        // Clean up any associated health checks
+        // Clean up any associated health checks from old system
         let service_checks = health_service.get_service_checks(&service_id).await;
         for check in &service_checks {
             let _ = health_service.deregister_check(&check.check_id).await;
@@ -1320,7 +1358,8 @@ mod tests {
     fn test_consul_agent_service_creation() {
         let naming_service = Arc::new(NamingService::new());
         let naming_service_clone = naming_service.clone();
-        let agent = ConsulAgentService::new(naming_service);
+        let registry = Arc::new(InstanceCheckRegistry::new(naming_service.clone()));
+        let agent = ConsulAgentService::new(naming_service, registry);
         // Verify the service was stored correctly
         assert!(Arc::ptr_eq(&agent.naming_service, &naming_service_clone));
     }

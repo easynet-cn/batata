@@ -7,7 +7,6 @@ pub use batata_plugin_consul::agent;
 pub use batata_plugin_consul::catalog;
 pub use batata_plugin_consul::event;
 pub use batata_plugin_consul::health;
-pub use batata_plugin_consul::health_actor;
 pub use batata_plugin_consul::lock;
 pub use batata_plugin_consul::model;
 pub use batata_plugin_consul::query;

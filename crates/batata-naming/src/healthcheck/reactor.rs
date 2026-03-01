@@ -7,6 +7,8 @@ use super::config::HealthCheckConfig;
 use super::processor::{
     HealthCheckType, HttpHealthCheckProcessor, NoneHealthCheckProcessor, TcpHealthCheckProcessor,
 };
+use super::registry::InstanceCheckRegistry;
+use super::registry_task::RegistryCheckTask;
 use super::task::HealthCheckTask;
 use crate::service::{ClusterConfig, NamingService};
 use dashmap::DashMap;
@@ -25,6 +27,8 @@ pub enum ReactorMessage {
     Schedule { task: Box<HealthCheckTask> },
     /// Cancel a health check task
     Cancel { task_id: String },
+    /// Schedule a registry-driven check
+    ScheduleRegistryCheck { check_key: String },
     /// Shutdown the reactor
     Shutdown,
 }
@@ -35,6 +39,7 @@ pub enum ReactorMessage {
 /// - Scheduling health check tasks for all instances
 /// - Managing task lifecycle (create, update, cancel)
 /// - Adaptive check interval management
+/// - Scheduling registry-driven checks for unified health system
 pub struct HealthCheckReactor {
     /// Naming service for accessing instances
     naming_service: Arc<NamingService>,
@@ -50,6 +55,9 @@ pub struct HealthCheckReactor {
 
     /// Task handles (Arc<DashMap> doesn't support JoinHandle, so we use a simple RwLock wrapper)
     task_handles: Arc<tokio::sync::RwLock<std::collections::HashMap<String, JoinHandle<()>>>>,
+
+    /// Optional registry for unified health checks
+    registry: Option<Arc<InstanceCheckRegistry>>,
 }
 
 impl HealthCheckReactor {
@@ -63,6 +71,7 @@ impl HealthCheckReactor {
             tasks: Arc::new(DashMap::new()),
             sender,
             task_handles: Arc::new(RwLock::new(HashMap::new())),
+            registry: None,
         };
 
         // Start the reactor event loop
@@ -71,12 +80,18 @@ impl HealthCheckReactor {
         reactor
     }
 
+    /// Set the registry for unified health checks
+    pub fn set_registry(&mut self, registry: Arc<InstanceCheckRegistry>) {
+        self.registry = Some(registry);
+    }
+
     /// Start the reactor event loop
     fn start_event_loop(&self, mut receiver: mpsc::UnboundedReceiver<ReactorMessage>) {
         let naming_service = self.naming_service.clone();
         let config = self.config.clone();
         let tasks = self.tasks.clone();
         let task_handles = self.task_handles.clone();
+        let registry = self.registry.clone();
 
         tokio::spawn(async move {
             info!("Health check reactor started");
@@ -119,6 +134,50 @@ impl HealthCheckReactor {
                         tasks.remove(&task_id);
                         debug!("Cancelled health check task: {}", task_id);
                     }
+                    ReactorMessage::ScheduleRegistryCheck { check_key } => {
+                        if let Some(ref reg) = registry {
+                            let reg_clone = reg.clone();
+                            let check_key_clone = check_key.clone();
+
+                            // Cancel existing handle if present
+                            {
+                                let mut handles = task_handles.write().await;
+                                if let Some(handle) = handles.remove(&check_key) {
+                                    handle.abort();
+                                }
+                            }
+
+                            let task_handles_clone = task_handles.clone();
+                            let handle = tokio::spawn(async move {
+                                let task = RegistryCheckTask::new(check_key_clone, reg_clone);
+                                loop {
+                                    task.execute().await;
+
+                                    match task.interval() {
+                                        Some(interval) => {
+                                            tokio::time::sleep(interval).await;
+                                        }
+                                        None => {
+                                            // Check was removed from registry
+                                            debug!(
+                                                "Registry check {} removed, stopping",
+                                                task.check_key()
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
+                            });
+
+                            let mut handles = task_handles_clone.write().await;
+                            handles.insert(check_key, handle);
+                        } else {
+                            debug!(
+                                "Registry not set, skipping ScheduleRegistryCheck for {}",
+                                check_key
+                            );
+                        }
+                    }
                     ReactorMessage::Shutdown => {
                         // Cancel all tasks
                         let mut handles = task_handles.write().await;
@@ -154,7 +213,9 @@ impl HealthCheckReactor {
                 let result = match task.get_check_type() {
                     HealthCheckType::Tcp => task.do_check(&TcpHealthCheckProcessor::new()).await,
                     HealthCheckType::Http => task.do_check(&HttpHealthCheckProcessor::new()).await,
-                    HealthCheckType::None => task.do_check(&NoneHealthCheckProcessor::new()).await,
+                    HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => {
+                        task.do_check(&NoneHealthCheckProcessor::new()).await
+                    }
                 };
 
                 debug!(
@@ -209,6 +270,14 @@ impl HealthCheckReactor {
         debug!("Cancelling health check task: {}", task_id);
         let _ = self.sender.send(ReactorMessage::Cancel {
             task_id: task_id.to_string(),
+        });
+    }
+
+    /// Schedule a registry-driven check (for unified health system)
+    pub fn schedule_registry_check(&self, check_key: &str) {
+        debug!("Scheduling registry check: {}", check_key);
+        let _ = self.sender.send(ReactorMessage::ScheduleRegistryCheck {
+            check_key: check_key.to_string(),
         });
     }
 

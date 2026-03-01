@@ -7,11 +7,16 @@
 pub mod checker;
 pub mod config;
 pub mod configurer;
+pub mod deregister_monitor;
 pub mod factory;
 pub mod heartbeat;
 pub mod processor;
 pub mod reactor;
+pub mod registry;
+pub mod registry_task;
 pub mod task;
+pub mod ttl_monitor;
+pub mod ttl_processor;
 
 use std::sync::Arc;
 
@@ -26,16 +31,21 @@ pub use processor::{
     TcpHealthCheckProcessor,
 };
 pub use reactor::HealthCheckReactor;
+pub use registry::{
+    CheckOrigin, CheckStatus, CheckType, InstanceCheckConfig, InstanceCheckRegistry,
+    InstanceCheckStatus,
+};
 pub use task::HealthCheckTask;
 
 /// Health check manager that coordinates all health check components
 ///
 /// This struct manages the health check reactor, unhealthy instance checker,
-/// and expired instance checker together.
+/// expired instance checker, and the unified instance check registry.
 pub struct HealthCheckManager {
     reactor: HealthCheckReactor,
     unhealthy_checker: UnhealthyInstanceChecker,
     expired_checker: ExpiredInstanceChecker,
+    registry: Arc<InstanceCheckRegistry>,
 }
 
 impl HealthCheckManager {
@@ -53,12 +63,14 @@ impl HealthCheckManager {
             expire_enabled,
             unhealthy_checker.heartbeat_map.clone(),
         );
-        let reactor = HealthCheckReactor::new(naming_service, config);
+        let reactor = HealthCheckReactor::new(naming_service.clone(), config);
+        let registry = Arc::new(InstanceCheckRegistry::new(naming_service));
 
         Self {
             reactor,
             unhealthy_checker,
             expired_checker,
+            registry,
         }
     }
 
@@ -75,6 +87,11 @@ impl HealthCheckManager {
     /// Get reference to the expired instance checker
     pub fn expired_checker(&self) -> &ExpiredInstanceChecker {
         &self.expired_checker
+    }
+
+    /// Get the instance check registry
+    pub fn registry(&self) -> &Arc<InstanceCheckRegistry> {
+        &self.registry
     }
 
     /// Shutdown all health check components

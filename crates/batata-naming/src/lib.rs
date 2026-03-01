@@ -10,7 +10,6 @@
 
 pub mod api;
 pub mod handler;
-pub mod health_checker;
 pub mod healthcheck;
 pub mod model;
 pub mod persistence;
@@ -18,12 +17,12 @@ pub mod selector;
 pub mod service;
 
 // Re-export commonly used types
-pub use health_checker::{InstanceHealthCheckConfig, InstanceHealthChecker, InstanceHealthStatus};
 pub use healthcheck::{
-    ExpiredInstanceChecker, HealthCheckConfig, HealthCheckManager, HealthCheckProcessor,
-    HealthCheckReactor, HealthCheckResult, HealthCheckTask, HealthCheckType,
-    HttpHealthCheckProcessor, HttpHealthParams, TcpHealthCheckProcessor, TcpHealthParams,
-    UnhealthyInstanceChecker,
+    CheckOrigin, CheckStatus, CheckType, ExpiredInstanceChecker, HealthCheckConfig,
+    HealthCheckManager, HealthCheckProcessor, HealthCheckReactor, HealthCheckResult,
+    HealthCheckTask, HealthCheckType, HttpHealthCheckProcessor, HttpHealthParams,
+    InstanceCheckConfig, InstanceCheckRegistry, InstanceCheckStatus, TcpHealthCheckProcessor,
+    TcpHealthParams, UnhealthyInstanceChecker,
 };
 pub use model::{Instance, Service, ServiceInfo, ServiceQuery};
 pub use selector::{LabelOperator, LabelRequirement, SelectorBuilder, ServiceSelector};

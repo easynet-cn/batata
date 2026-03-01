@@ -10,9 +10,10 @@ use batata_consistency::raft::state_machine::{
     CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
 };
 use batata_core::cluster::ServerMemberManager;
+use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
+use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
 use batata_persistence::{PersistenceService, StorageMode};
-use batata_plugin_consul::HealthCheckExecutor;
 use batata_server::{
     middleware::rate_limit,
     model::{self, common::AppState},
@@ -589,7 +590,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // In standalone mode, Consul uses independent RocksDB for persistence.
     let consul_services = if consul_enabled {
         let is_cluster = !app_state.configuration.is_standalone() && !is_console_remote;
-        let consul_check_reap_interval = app_state.configuration.consul_check_reap_interval();
+        // Create unified health check registry for Consul
+        let consul_registry = Arc::new(InstanceCheckRegistry::new(
+            grpc_servers.naming_service.clone(),
+        ));
 
         let services = if is_cluster {
             // Cluster mode: use Raft-replicated storage for Consul data
@@ -601,10 +605,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!("Consul services using Raft-replicated storage (DistributedEmbedded mode)");
                 ConsulServices::with_raft(
                     grpc_servers.naming_service.clone(),
+                    consul_registry.clone(),
                     consul_acl_enabled,
                     db,
                     raft.clone(),
-                    consul_check_reap_interval,
                 )
             } else {
                 // ExternalDb cluster: Consul doesn't have a Raft node yet.
@@ -615,15 +619,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(db) = consul_rocks_db {
                     ConsulServices::with_persistence(
                         grpc_servers.naming_service.clone(),
+                        consul_registry.clone(),
                         consul_acl_enabled,
                         db,
-                        consul_check_reap_interval,
                     )
                 } else {
                     ConsulServices::new(
                         grpc_servers.naming_service.clone(),
+                        consul_registry.clone(),
                         consul_acl_enabled,
-                        consul_check_reap_interval,
                     )
                 }
             }
@@ -634,16 +638,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!("Consul services using RocksDB persistence");
                 ConsulServices::with_persistence(
                     grpc_servers.naming_service.clone(),
+                    consul_registry.clone(),
                     consul_acl_enabled,
                     db,
-                    consul_check_reap_interval,
                 )
             } else {
                 info!("Consul services using in-memory storage (no persistence)");
                 ConsulServices::new(
                     grpc_servers.naming_service.clone(),
+                    consul_registry.clone(),
                     consul_acl_enabled,
-                    consul_check_reap_interval,
                 )
             }
         } else {
@@ -651,8 +655,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Console remote mode: Consul services using in-memory storage");
             ConsulServices::new(
                 grpc_servers.naming_service.clone(),
+                consul_registry.clone(),
                 consul_acl_enabled,
-                consul_check_reap_interval,
             )
         };
 
@@ -669,14 +673,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
 
-        // Start health check executor
-        info!("Starting Consul health check executor...");
-        let health = Arc::new(services.health.clone());
-        let health_actor = services.health.health_actor_handle();
-        let naming_service_clone = grpc_servers.naming_service.clone();
+        // Start TTL monitor (checks for expired TTL-based health checks)
+        info!("Starting Consul TTL monitor...");
+        let ttl_monitor = TtlMonitor::new(consul_registry.clone());
         tokio::spawn(async move {
-            let executor = HealthCheckExecutor::new(health, health_actor, naming_service_clone);
-            executor.start().await;
+            ttl_monitor.start().await;
+        });
+
+        // Start DeregisterMonitor (auto-deregisters instances in Critical state past threshold)
+        info!("Starting Consul deregister monitor...");
+        let deregister_monitor = DeregisterMonitor::new(
+            consul_registry.clone(),
+            grpc_servers.naming_service.clone(),
+            30,
+        );
+        tokio::spawn(async move {
+            deregister_monitor.start().await;
         });
 
         // Start session TTL cleanup task

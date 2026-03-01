@@ -939,14 +939,20 @@ impl From<&AgentServiceRegistration> for NacosInstance {
             );
         }
 
+        // Store consul_service_id in metadata for O(1) lookup during deregistration
+        let service_id = reg.service_id();
+        metadata.insert("consul_service_id".to_string(), service_id.clone());
+
         NacosInstance {
-            instance_id: reg.service_id(),
+            instance_id: service_id,
             ip: reg.effective_address(),
             port: reg.effective_port() as i32,
             weight: reg.weight(),
             healthy: true,
             enabled: true,
-            ephemeral: true,
+            // Consul instances are persistent — server-side health checks manage them,
+            // not gRPC heartbeat (Consul clients don't speak gRPC)
+            ephemeral: false,
             cluster_name: "DEFAULT".to_string(),
             service_name: reg.name.clone(),
             metadata,

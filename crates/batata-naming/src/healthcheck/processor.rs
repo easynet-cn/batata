@@ -14,12 +14,16 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::debug;
 
-/// Health check types (matches Nacos HealthCheckType)
+/// Health check types (matches Nacos HealthCheckType, extended for Consul compatibility)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HealthCheckType {
     None,
     Tcp,
     Http,
+    /// TTL-based passive check (client calls /check/pass)
+    Ttl,
+    /// gRPC health protocol
+    Grpc,
 }
 
 impl HealthCheckType {
@@ -28,6 +32,8 @@ impl HealthCheckType {
         match s.to_uppercase().as_str() {
             "TCP" => Self::Tcp,
             "HTTP" => Self::Http,
+            "TTL" => Self::Ttl,
+            "GRPC" => Self::Grpc,
             _ => Self::None,
         }
     }
@@ -37,6 +43,8 @@ impl HealthCheckType {
             Self::None => "NONE",
             Self::Tcp => "TCP",
             Self::Http => "HTTP",
+            Self::Ttl => "TTL",
+            Self::Grpc => "GRPC",
         }
     }
 }

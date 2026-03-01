@@ -132,7 +132,9 @@ impl HealthCheckTask {
         let max = match check_type {
             HealthCheckType::Tcp => config.tcp_health_params.max,
             HealthCheckType::Http => config.http_health_params.max,
-            HealthCheckType::None => return Duration::from_secs(5),
+            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => {
+                return Duration::from_secs(5);
+            }
         };
 
         let random_delay = fastrand::u64(0..=UPPER_RANDOM_CHECK_RT);
@@ -246,7 +248,7 @@ impl HealthCheckTask {
         let factor = match self.check_type {
             HealthCheckType::Tcp => self.config.get_tcp_factor(),
             HealthCheckType::Http => self.config.get_http_factor(),
-            HealthCheckType::None => return,
+            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => return,
         };
 
         // Speed up checks when healthy (multiply by factor)
@@ -259,7 +261,7 @@ impl HealthCheckTask {
         let factor = match self.check_type {
             HealthCheckType::Tcp => self.config.get_tcp_factor(),
             HealthCheckType::Http => self.config.get_http_factor(),
-            HealthCheckType::None => return,
+            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => return,
         };
 
         // Slow down checks when failing (increase interval)
@@ -267,7 +269,7 @@ impl HealthCheckTask {
         let max = match self.check_type {
             HealthCheckType::Tcp => self.config.tcp_health_params.max as f64,
             HealthCheckType::Http => self.config.http_health_params.max as f64,
-            HealthCheckType::None => 5000.0,
+            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => 5000.0,
         };
 
         let new_interval = (current * (1.0 - factor) + factor * max) as u64;
@@ -285,7 +287,7 @@ impl HealthCheckTask {
                 self.config.http_health_params.min,
                 self.config.http_health_params.max,
             ),
-            HealthCheckType::None => (2000, 5000),
+            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => (2000, 5000),
         };
 
         let current = self.check_rt_normalized.as_millis() as u64;

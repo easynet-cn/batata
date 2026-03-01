@@ -98,35 +98,20 @@ pub fn consul_agent_routes_persistent() -> actix_web::Scope {
             "/service/maintenance/{service_id}",
             web::put().to(agent::set_service_maintenance),
         )
-        // Check endpoints - persistent versions
-        .route(
-            "/check/register",
-            web::put().to(health::register_check_persistent),
-        )
+        // Check endpoints (unified via InstanceCheckRegistry)
+        .route("/check/register", web::put().to(health::register_check))
         .route(
             "/check/deregister/{check_id}",
-            web::put().to(health::deregister_check_persistent),
+            web::put().to(health::deregister_check),
         )
-        .route(
-            "/check/pass/{check_id}",
-            web::put().to(health::pass_check_persistent),
-        )
-        .route(
-            "/check/warn/{check_id}",
-            web::put().to(health::warn_check_persistent),
-        )
-        .route(
-            "/check/fail/{check_id}",
-            web::put().to(health::fail_check_persistent),
-        )
+        .route("/check/pass/{check_id}", web::put().to(health::pass_check))
+        .route("/check/warn/{check_id}", web::put().to(health::warn_check))
+        .route("/check/fail/{check_id}", web::put().to(health::fail_check))
         .route(
             "/check/update/{check_id}",
-            web::put().to(health::update_check_persistent),
+            web::put().to(health::update_check),
         )
-        .route(
-            "/checks",
-            web::get().to(health::list_agent_checks_persistent),
-        )
+        .route("/checks", web::get().to(health::list_agent_checks))
 }
 
 /// Configure Consul Agent API routes (real cluster version)
@@ -164,35 +149,20 @@ pub fn consul_agent_routes_real() -> actix_web::Scope {
             "/service/maintenance/{service_id}",
             web::put().to(agent::set_service_maintenance),
         )
-        // Check endpoints - use persistent versions for real cluster mode
-        .route(
-            "/check/register",
-            web::put().to(health::register_check_persistent),
-        )
+        // Check endpoints (unified via InstanceCheckRegistry)
+        .route("/check/register", web::put().to(health::register_check))
         .route(
             "/check/deregister/{check_id}",
-            web::put().to(health::deregister_check_persistent),
+            web::put().to(health::deregister_check),
         )
-        .route(
-            "/check/pass/{check_id}",
-            web::put().to(health::pass_check_persistent),
-        )
-        .route(
-            "/check/warn/{check_id}",
-            web::put().to(health::warn_check_persistent),
-        )
-        .route(
-            "/check/fail/{check_id}",
-            web::put().to(health::fail_check_persistent),
-        )
+        .route("/check/pass/{check_id}", web::put().to(health::pass_check))
+        .route("/check/warn/{check_id}", web::put().to(health::warn_check))
+        .route("/check/fail/{check_id}", web::put().to(health::fail_check))
         .route(
             "/check/update/{check_id}",
-            web::put().to(health::update_check_persistent),
+            web::put().to(health::update_check),
         )
-        .route(
-            "/checks",
-            web::get().to(health::list_agent_checks_persistent),
-        )
+        .route("/checks", web::get().to(health::list_agent_checks))
 }
 
 /// Configure Consul Health API routes (in-memory storage)
@@ -208,35 +178,6 @@ pub fn consul_health_routes() -> actix_web::Scope {
         )
         .route("/state/{state}", web::get().to(health::get_checks_by_state))
         .route("/node/{node}", web::get().to(health::get_node_checks))
-        .route(
-            "/connect/{service}",
-            web::get().to(health::get_connect_health),
-        )
-        .route(
-            "/ingress/{service}",
-            web::get().to(health::get_ingress_health),
-        )
-}
-
-/// Configure Consul Health API routes (persistent database storage)
-pub fn consul_health_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1/health")
-        .route(
-            "/service/{service}",
-            web::get().to(health::get_service_health_persistent),
-        )
-        .route(
-            "/checks/{service}",
-            web::get().to(health::get_service_checks_persistent),
-        )
-        .route(
-            "/state/{state}",
-            web::get().to(health::get_checks_by_state_persistent),
-        )
-        .route(
-            "/node/{node}",
-            web::get().to(health::get_node_checks_persistent),
-        )
         .route(
             "/connect/{service}",
             web::get().to(health::get_connect_health),
@@ -836,7 +777,7 @@ pub fn consul_routes() -> actix_web::Scope {
 pub fn consul_routes_persistent() -> actix_web::Scope {
     web::scope("")
         .service(consul_agent_routes_persistent())
-        .service(consul_health_routes_persistent())
+        .service(consul_health_routes())
         .service(consul_kv_routes())
         .service(consul_catalog_routes())
         .service(consul_acl_routes())
@@ -884,7 +825,7 @@ fn consul_test_routes() -> actix_web::Scope {
 pub fn consul_routes_full() -> actix_web::Scope {
     web::scope("")
         .service(consul_agent_routes_real())
-        .service(consul_health_routes_persistent())
+        .service(consul_health_routes())
         .service(consul_kv_routes())
         .service(consul_catalog_routes())
         .service(consul_acl_routes())
@@ -914,7 +855,6 @@ mod tests {
     use crate::agent::ConsulAgentService;
     use crate::event::ConsulEventService;
     use crate::health::ConsulHealthService;
-    use crate::health_actor::create_health_actor;
     use crate::kv::ConsulKVService;
     use crate::lock::{ConsulLockService, ConsulSemaphoreService};
     use crate::query::ConsulQueryService;
@@ -930,11 +870,13 @@ mod tests {
         Error = actix_web::Error,
     > {
         let naming_service = Arc::new(NamingService::new());
+        let registry = Arc::new(batata_naming::InstanceCheckRegistry::new(
+            naming_service.clone(),
+        ));
         let kv_service = ConsulKVService::new();
         let session_service = ConsulSessionService::new();
-        let health_actor = create_health_actor();
-        let health_service = ConsulHealthService::new(naming_service.clone(), health_actor);
-        let agent_service = ConsulAgentService::new(naming_service.clone());
+        let health_service = ConsulHealthService::new(naming_service.clone(), registry.clone());
+        let agent_service = ConsulAgentService::new(naming_service.clone(), registry);
         let acl_service = AclService::disabled();
         let event_service = ConsulEventService::new();
         let snapshot_service = ConsulSnapshotService::new();

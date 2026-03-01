@@ -9,6 +9,8 @@ use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;
 use rocksdb::DB;
 
+use batata_naming::InstanceCheckRegistry;
+
 use crate::{
     api::ai::{
         AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp, configure_mcp_registry,
@@ -23,8 +25,8 @@ use crate::{
     api::consul::{
         AclService, ConsulEventService, ConsulLockService, ConsulQueryService,
         ConsulSemaphoreService, ConsulSessionService, agent::ConsulAgentService,
-        catalog::ConsulCatalogService, health::ConsulHealthService,
-        health_actor::create_health_actor, kv::ConsulKVService, route::consul_routes,
+        catalog::ConsulCatalogService, health::ConsulHealthService, kv::ConsulKVService,
+        route::consul_routes,
     },
     api::v2::route::{cluster_routes, config_routes, naming_routes},
     api::v3::admin::route::admin_routes as v3_admin_routes,
@@ -55,11 +57,10 @@ pub struct ConsulServices {
 
 impl ConsulServices {
     /// Creates Consul service adapters from a naming service (in-memory mode).
-    /// Each service creates its own temporary RocksDB instance.
     pub fn new(
         naming_service: Arc<NamingService>,
+        registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
-        check_reap_interval_secs: u64,
     ) -> Self {
         let session = ConsulSessionService::new();
         let kv = ConsulKVService::new();
@@ -68,16 +69,9 @@ impl ConsulServices {
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
 
-        // Create health actor for lock-free operations
-        let health_actor = create_health_actor();
-
         Self {
-            agent: ConsulAgentService::new(naming_service.clone()),
-            health: ConsulHealthService::new_with_monitor(
-                naming_service.clone(),
-                health_actor,
-                check_reap_interval_secs,
-            ),
+            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
+            health: ConsulHealthService::new(naming_service.clone(), registry),
             kv,
             catalog: ConsulCatalogService::new(naming_service),
             acl: if acl_enabled {
@@ -97,9 +91,9 @@ impl ConsulServices {
     /// KV, ACL, Session, and Query data are persisted directly to RocksDB.
     pub fn with_persistence(
         naming_service: Arc<NamingService>,
+        registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
-        check_reap_interval_secs: u64,
     ) -> Self {
         let session = ConsulSessionService::with_rocks(db.clone());
         let kv = ConsulKVService::with_rocks(db.clone());
@@ -108,16 +102,9 @@ impl ConsulServices {
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
 
-        // Create health actor for lock-free operations
-        let health_actor = create_health_actor();
-
         Self {
-            agent: ConsulAgentService::new(naming_service.clone()),
-            health: ConsulHealthService::new_with_monitor(
-                naming_service.clone(),
-                health_actor,
-                check_reap_interval_secs,
-            ),
+            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
+            health: ConsulHealthService::new(naming_service.clone(), registry),
             kv,
             catalog: ConsulCatalogService::new(naming_service),
             acl: if acl_enabled {
@@ -137,10 +124,10 @@ impl ConsulServices {
     /// Used in cluster mode for data replication across nodes.
     pub fn with_raft(
         naming_service: Arc<NamingService>,
+        registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
         raft_node: Arc<RaftNode>,
-        check_reap_interval_secs: u64,
     ) -> Self {
         let session = ConsulSessionService::with_raft(db.clone(), raft_node.clone());
         let kv = ConsulKVService::with_raft(db.clone(), raft_node);
@@ -149,16 +136,9 @@ impl ConsulServices {
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
 
-        // Create health actor for lock-free operations
-        let health_actor = create_health_actor();
-
         Self {
-            agent: ConsulAgentService::new(naming_service.clone()),
-            health: ConsulHealthService::new_with_monitor(
-                naming_service.clone(),
-                health_actor,
-                check_reap_interval_secs,
-            ),
+            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
+            health: ConsulHealthService::new(naming_service.clone(), registry),
             kv,
             catalog: ConsulCatalogService::new(naming_service),
             acl: if acl_enabled {
