@@ -933,6 +933,9 @@ fn consul_test_routes() -> actix_web::Scope {
         .service(consul_session_routes())
         .service(consul_event_routes())
         .service(consul_status_routes())
+        .service(consul_catalog_routes())
+        .service(consul_internal_routes())
+        .service(consul_config_entry_routes())
         // Merge KV and snapshot into a single /v1 scope (actix-web cannot have
         // two scopes with the same path prefix)
         .service(
@@ -981,6 +984,10 @@ mod tests {
 
     use crate::acl::AclService;
     use crate::agent::ConsulAgentService;
+    use crate::catalog::ConsulCatalogService;
+    use crate::config_entry::ConsulConfigEntryService;
+    use crate::connect::ConsulConnectService;
+    use crate::connect_ca::ConsulConnectCAService;
     use crate::event::ConsulEventService;
     use crate::health::ConsulHealthService;
     use crate::kv::ConsulKVService;
@@ -1013,6 +1020,10 @@ mod tests {
         let session_arc = Arc::new(session_service.clone());
         let lock_service = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore_service = ConsulSemaphoreService::new(kv_arc, session_arc);
+        let catalog_service = ConsulCatalogService::new(naming_service.clone());
+        let config_entry_service = ConsulConfigEntryService::new();
+        let connect_service = ConsulConnectService::new();
+        let connect_ca_service = ConsulConnectCAService::new();
 
         test::init_service(
             App::new()
@@ -1026,6 +1037,11 @@ mod tests {
                 .app_data(web::Data::new(query_service))
                 .app_data(web::Data::new(lock_service))
                 .app_data(web::Data::new(semaphore_service))
+                .app_data(web::Data::new(catalog_service))
+                .app_data(web::Data::new(config_entry_service))
+                .app_data(web::Data::new(connect_service))
+                .app_data(web::Data::new(connect_ca_service))
+                .app_data(web::Data::new(naming_service))
                 .service(consul_test_routes()),
         )
         .await
@@ -1587,5 +1603,1286 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), 200);
+    }
+
+    // ========================================================================
+    // Catalog HTTP Tests
+    // ========================================================================
+
+    #[actix_web::test]
+    async fn test_http_catalog_register_service() {
+        let app = create_test_app().await;
+
+        let reg = serde_json::json!({
+            "Node": "cat-reg-node",
+            "Address": "10.1.0.1",
+            "Service": {
+                "Service": "cat-reg-svc",
+                "ID": "cat-reg-svc-1",
+                "Port": 9090,
+                "Tags": ["v1"]
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_register_with_checks() {
+        let app = create_test_app().await;
+
+        let reg = serde_json::json!({
+            "Node": "cat-chk-node",
+            "Address": "10.1.0.2",
+            "Service": {
+                "Service": "cat-chk-svc",
+                "ID": "cat-chk-svc-1",
+                "Port": 8080
+            },
+            "Check": {
+                "Name": "svc-health",
+                "Status": "passing",
+                "ServiceID": "cat-chk-svc-1"
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_deregister_service() {
+        let app = create_test_app().await;
+
+        // Register first
+        let reg = serde_json::json!({
+            "Node": "cat-dereg-node",
+            "Address": "10.1.0.3",
+            "Service": {
+                "Service": "cat-dereg-svc",
+                "ID": "cat-dereg-svc-1",
+                "Port": 7070
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Deregister
+        let dereg = serde_json::json!({
+            "Node": "cat-dereg-node",
+            "ServiceID": "cat-dereg-svc-1"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/deregister")
+            .set_json(&dereg)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_deregister_nonexistent() {
+        let app = create_test_app().await;
+
+        let dereg = serde_json::json!({
+            "Node": "nonexistent-node",
+            "ServiceID": "nonexistent-svc"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/deregister")
+            .set_json(&dereg)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        // Deregister returns 200 even for nonexistent (idempotent)
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_list_services() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/services")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_object());
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_list_services_with_filter() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/services?dc=dc1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_object());
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_get_service() {
+        let app = create_test_app().await;
+
+        // Register a service first
+        let reg = serde_json::json!({
+            "Node": "cat-get-node",
+            "Address": "10.1.0.10",
+            "Service": {
+                "Service": "cat-get-svc",
+                "ID": "cat-get-svc-1",
+                "Port": 5050
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/service/cat-get-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+        let services = body.as_array().unwrap();
+        assert!(!services.is_empty());
+        assert_eq!(services[0]["ServiceName"], "cat-get-svc");
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_get_service_nonexistent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/service/no-such-service")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+        assert!(body.as_array().unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_list_nodes() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/nodes")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_get_node() {
+        let app = create_test_app().await;
+
+        // Register a service so a node exists
+        let reg = serde_json::json!({
+            "Node": "cat-node-detail",
+            "Address": "10.1.0.20",
+            "Service": {
+                "Service": "cat-node-svc",
+                "ID": "cat-node-svc-1",
+                "Port": 4040
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Get node by IP-based name
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/node/node-10-1-0-20")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.get("Node").is_some());
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_get_node_nonexistent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/node/no-such-node-xyz")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        // Non-existent node returns 404
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_list_datacenters() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/datacenters")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+        let dcs = body.as_array().unwrap();
+        assert!(!dcs.is_empty());
+        assert_eq!(dcs[0], "dc1");
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_connect_service() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/connect/some-service")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_node_services() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/node-services/batata-node")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        // Returns 200 with node or 404
+        assert!(resp.status() == 200 || resp.status() == 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_gateway_services() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/gateway-services/my-gateway")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_ui_services() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/services")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_register_then_list() {
+        let app = create_test_app().await;
+
+        // Register
+        let reg = serde_json::json!({
+            "Node": "cat-list-node",
+            "Address": "10.1.0.30",
+            "Service": {
+                "Service": "cat-list-svc",
+                "ID": "cat-list-svc-1",
+                "Port": 3030,
+                "Tags": ["web"]
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // List services
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/services")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let services = body.as_object().unwrap();
+        assert!(services.contains_key("cat-list-svc"));
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_register_then_get() {
+        let app = create_test_app().await;
+
+        // Register
+        let reg = serde_json::json!({
+            "Node": "cat-rget-node",
+            "Address": "10.1.0.31",
+            "Service": {
+                "Service": "cat-rget-svc",
+                "ID": "cat-rget-svc-1",
+                "Port": 3031
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Get service by name
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/service/cat-rget-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let services = body.as_array().unwrap();
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0]["ServiceName"], "cat-rget-svc");
+        assert_eq!(services[0]["ServicePort"], 3031);
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_register_deregister_lifecycle() {
+        let app = create_test_app().await;
+
+        // Register
+        let reg = serde_json::json!({
+            "Node": "cat-life-node",
+            "Address": "10.1.0.32",
+            "Service": {
+                "Service": "cat-life-svc",
+                "ID": "cat-life-svc-1",
+                "Port": 3032
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/register")
+            .set_json(&reg)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Verify it exists
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/service/cat-life-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(!body.as_array().unwrap().is_empty());
+
+        // Deregister
+        let dereg = serde_json::json!({
+            "Node": "cat-life-node",
+            "ServiceID": "cat-life-svc-1"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/catalog/deregister")
+            .set_json(&dereg)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Verify it is gone
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/service/cat-life-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.as_array().unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn test_http_catalog_register_multiple_services() {
+        let app = create_test_app().await;
+
+        // Register two services
+        for (name, id, port) in &[
+            ("cat-multi-svc-a", "cat-multi-a-1", 4001),
+            ("cat-multi-svc-b", "cat-multi-b-1", 4002),
+        ] {
+            let reg = serde_json::json!({
+                "Node": "cat-multi-node",
+                "Address": "10.1.0.40",
+                "Service": {
+                    "Service": name,
+                    "ID": id,
+                    "Port": port
+                }
+            });
+            let req = test::TestRequest::put()
+                .uri("/v1/catalog/register")
+                .set_json(&reg)
+                .to_request();
+            test::call_service(&app, req).await;
+        }
+
+        // List should contain both
+        let req = test::TestRequest::get()
+            .uri("/v1/catalog/services")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let services = body.as_object().unwrap();
+        assert!(services.contains_key("cat-multi-svc-a"));
+        assert!(services.contains_key("cat-multi-svc-b"));
+    }
+
+    // ========================================================================
+    // Agent Additional HTTP Tests
+    // ========================================================================
+
+    #[actix_web::test]
+    async fn test_http_agent_service_deregister() {
+        let app = create_test_app().await;
+
+        // Register a service
+        let svc = serde_json::json!({
+            "Name": "agt-dereg-svc",
+            "ID": "agt-dereg-svc-1",
+            "Port": 6060,
+            "Address": "10.2.0.1"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Deregister
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/deregister/agt-dereg-svc-1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_service_deregister_nonexistent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/deregister/nonexistent-svc-xyz")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        // Agent deregister returns 404 for nonexistent service
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_get_service() {
+        let app = create_test_app().await;
+
+        // Register a service
+        let svc = serde_json::json!({
+            "Name": "agt-getsvc",
+            "ID": "agt-getsvc-1",
+            "Port": 6061,
+            "Address": "10.2.0.2"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/service/agt-getsvc-1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_get_service_nonexistent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/service/nonexistent-svc-abc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_service_maintenance_enable() {
+        let app = create_test_app().await;
+
+        // Register service first
+        let svc = serde_json::json!({
+            "Name": "agt-maint-svc",
+            "ID": "agt-maint-svc-1",
+            "Port": 6062,
+            "Address": "10.2.0.3"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/maintenance/agt-maint-svc-1?enable=true&reason=testing")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_service_maintenance_disable() {
+        let app = create_test_app().await;
+
+        // Register and enable maintenance
+        let svc = serde_json::json!({
+            "Name": "agt-maint-dis-svc",
+            "ID": "agt-maint-dis-1",
+            "Port": 6063,
+            "Address": "10.2.0.4"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/maintenance/agt-maint-dis-1?enable=true")
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Disable maintenance
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/maintenance/agt-maint-dis-1?enable=false")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_register_multiple_services() {
+        let app = create_test_app().await;
+
+        for (name, id, port) in &[
+            ("agt-multi-a", "agt-multi-a-1", 7001),
+            ("agt-multi-b", "agt-multi-b-1", 7002),
+            ("agt-multi-c", "agt-multi-c-1", 7003),
+        ] {
+            let svc = serde_json::json!({
+                "Name": name,
+                "ID": id,
+                "Port": port,
+                "Address": "10.2.0.10"
+            });
+            let req = test::TestRequest::put()
+                .uri("/v1/agent/service/register")
+                .set_json(&svc)
+                .to_request();
+            test::call_service(&app, req).await;
+        }
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/services")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let services = body.as_object().unwrap();
+        assert!(services.len() >= 3);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_service_with_checks() {
+        let app = create_test_app().await;
+
+        let svc = serde_json::json!({
+            "Name": "agt-chk-svc",
+            "ID": "agt-chk-svc-1",
+            "Port": 7010,
+            "Address": "10.2.0.11",
+            "Check": {
+                "TTL": "15s",
+                "DeregisterCriticalServiceAfter": "90m"
+            }
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_health_by_id() {
+        let app = create_test_app().await;
+
+        // Register a service
+        let svc = serde_json::json!({
+            "Name": "agt-hid-svc",
+            "ID": "agt-hid-svc-1",
+            "Port": 7020,
+            "Address": "10.2.0.12"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/health/service/id/agt-hid-svc-1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_health_by_id_nonexistent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/health/service/id/nonexistent-health-id")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_health_by_name() {
+        let app = create_test_app().await;
+
+        // Register a service
+        let svc = serde_json::json!({
+            "Name": "agt-hname-svc",
+            "ID": "agt-hname-svc-1",
+            "Port": 7030,
+            "Address": "10.2.0.13"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/health/service/name/agt-hname-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_health_by_name_nonexistent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/health/service/name/nonexistent-health-name")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_update_token() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/token/default")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_update_token_agent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/token/agent")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_monitor() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/monitor")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_monitor_with_loglevel() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/monitor?loglevel=debug")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_check_update() {
+        let app = create_test_app().await;
+
+        // Register a TTL check first
+        let check_json = serde_json::json!({
+            "Name": "agt-upd-check",
+            "CheckID": "agt-upd-chk-1",
+            "TTL": "30s"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/check/register")
+            .set_json(&check_json)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Update check status
+        let update = serde_json::json!({
+            "Status": "passing",
+            "Output": "all good"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/check/update/agt-upd-chk-1")
+            .set_json(&update)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_agent_list_checks() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/agent/checks")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_object());
+    }
+
+    // ========================================================================
+    // Internal/UI HTTP Tests
+    // ========================================================================
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_nodes() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/nodes")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_node_info() {
+        let app = create_test_app().await;
+
+        // Register a service via agent so a node is known
+        let svc = serde_json::json!({
+            "Name": "int-node-svc",
+            "ID": "int-node-svc-1",
+            "Port": 8001,
+            "Address": "10.3.0.1"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/agent/service/register")
+            .set_json(&svc)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/node/10.3.0.1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_node_info_nonexistent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/node/nonexistent-ui-node")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_exported_services() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/exported-services")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_catalog_overview() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/catalog-overview")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.get("Nodes").is_some());
+        assert!(body.get("Services").is_some());
+        assert!(body.get("Checks").is_some());
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_gateway_services_nodes() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/gateway-services-nodes/my-gw")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_gateway_intentions() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/gateway-intentions/my-gw")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_service_topology() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/service-topology/my-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.get("Protocol").is_some());
+        assert!(body.get("Upstreams").is_some());
+        assert!(body.get("Downstreams").is_some());
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_ui_metrics_proxy() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/ui/metrics-proxy/test")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        // Metrics proxy returns 404 (not implemented)
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_federation_states() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/federation-states")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_federation_state_get() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/internal/federation-state/dc1")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["Datacenter"], "dc1");
+    }
+
+    #[actix_web::test]
+    async fn test_http_internal_service_virtual_ip() {
+        let app = create_test_app().await;
+
+        let body = serde_json::json!({
+            "ServiceName": "vip-test-svc",
+            "ManualVIPs": ["10.0.0.1"]
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/internal/service-virtual-ip")
+            .set_json(&body)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["ServiceName"], "vip-test-svc");
+    }
+
+    // ========================================================================
+    // Config Entry HTTP Tests
+    // ========================================================================
+
+    #[actix_web::test]
+    async fn test_http_config_entry_apply() {
+        let app = create_test_app().await;
+
+        let entry = serde_json::json!({
+            "Kind": "service-defaults",
+            "Name": "cfg-apply-svc"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/config")
+            .set_json(&entry)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_config_entry_apply_cas() {
+        let app = create_test_app().await;
+
+        let entry = serde_json::json!({
+            "Kind": "service-defaults",
+            "Name": "cfg-cas-svc"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/config?cas=0")
+            .set_json(&entry)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+    }
+
+    #[actix_web::test]
+    async fn test_http_config_entry_get() {
+        let app = create_test_app().await;
+
+        // Apply first
+        let entry = serde_json::json!({
+            "Kind": "service-defaults",
+            "Name": "cfg-get-svc"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/config")
+            .set_json(&entry)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Get
+        let req = test::TestRequest::get()
+            .uri("/v1/config/service-defaults/cfg-get-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["Kind"], "service-defaults");
+        assert_eq!(body["Name"], "cfg-get-svc");
+    }
+
+    #[actix_web::test]
+    async fn test_http_config_entry_get_nonexistent() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/config/service-defaults/nonexistent-cfg-entry")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_config_entry_list() {
+        let app = create_test_app().await;
+
+        // Apply an entry first
+        let entry = serde_json::json!({
+            "Kind": "service-defaults",
+            "Name": "cfg-list-svc"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/config")
+            .set_json(&entry)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // List by kind
+        let req = test::TestRequest::get()
+            .uri("/v1/config/service-defaults")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+        assert!(!body.as_array().unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn test_http_config_entry_list_empty() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/config/jwt-provider")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+        assert!(body.as_array().unwrap().is_empty());
+    }
+
+    #[actix_web::test]
+    async fn test_http_config_entry_delete() {
+        let app = create_test_app().await;
+
+        // Apply
+        let entry = serde_json::json!({
+            "Kind": "service-defaults",
+            "Name": "cfg-del-svc"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/config")
+            .set_json(&entry)
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // Delete
+        let req = test::TestRequest::delete()
+            .uri("/v1/config/service-defaults/cfg-del-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        // Verify deleted
+        let req = test::TestRequest::get()
+            .uri("/v1/config/service-defaults/cfg-del-svc")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    #[actix_web::test]
+    async fn test_http_config_entry_lifecycle() {
+        let app = create_test_app().await;
+
+        // Apply
+        let entry = serde_json::json!({
+            "Kind": "proxy-defaults",
+            "Name": "global"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/config")
+            .set_json(&entry)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        // Get
+        let req = test::TestRequest::get()
+            .uri("/v1/config/proxy-defaults/global")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        // List
+        let req = test::TestRequest::get()
+            .uri("/v1/config/proxy-defaults")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(!body.as_array().unwrap().is_empty());
+
+        // Delete
+        let req = test::TestRequest::delete()
+            .uri("/v1/config/proxy-defaults/global")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        // Verify deleted
+        let req = test::TestRequest::get()
+            .uri("/v1/config/proxy-defaults/global")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 404);
+    }
+
+    // ========================================================================
+    // Status Additional HTTP Tests
+    // ========================================================================
+
+    #[actix_web::test]
+    async fn test_http_status_leader_response_format() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/status/leader")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_string());
+        let leader = body.as_str().unwrap();
+        // Leader should be in "ip:port" format
+        assert!(leader.contains(':'));
+    }
+
+    #[actix_web::test]
+    async fn test_http_status_peers_response_format() {
+        let app = create_test_app().await;
+
+        let req = test::TestRequest::get()
+            .uri("/v1/status/peers")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+        let peers = body.as_array().unwrap();
+        assert!(!peers.is_empty());
+        // Each peer should be a string in "ip:port" format
+        for peer in peers {
+            assert!(peer.is_string());
+            assert!(peer.as_str().unwrap().contains(':'));
+        }
+    }
+
+    // ========================================================================
+    // Event Additional HTTP Tests
+    // ========================================================================
+
+    #[actix_web::test]
+    async fn test_http_event_fire_with_payload() {
+        let app = create_test_app().await;
+
+        let payload = serde_json::json!({
+            "Payload": "dGVzdCBwYXlsb2Fk"
+        });
+        let req = test::TestRequest::put()
+            .uri("/v1/event/fire/payload-evt")
+            .set_json(&payload)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["Name"], "payload-evt");
+    }
+
+    #[actix_web::test]
+    async fn test_http_event_list_filter_by_name() {
+        let app = create_test_app().await;
+
+        // Fire a named event
+        let req = test::TestRequest::put()
+            .uri("/v1/event/fire/filter-evt-name")
+            .to_request();
+        test::call_service(&app, req).await;
+
+        // List with filter
+        let req = test::TestRequest::get()
+            .uri("/v1/event/list?name=filter-evt-name")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert!(body.is_array());
+        let events = body.as_array().unwrap();
+        for evt in events {
+            assert_eq!(evt["Name"], "filter-evt-name");
+        }
+    }
+
+    #[actix_web::test]
+    async fn test_http_event_fire_and_list_multiple() {
+        let app = create_test_app().await;
+
+        // Fire 3 events
+        for name in &["multi-evt-a", "multi-evt-b", "multi-evt-c"] {
+            let req = test::TestRequest::put()
+                .uri(&format!("/v1/event/fire/{}", name))
+                .to_request();
+            let resp = test::call_service(&app, req).await;
+            assert_eq!(resp.status(), 200);
+        }
+
+        // List all events
+        let req = test::TestRequest::get().uri("/v1/event/list").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200);
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let events = body.as_array().unwrap();
+        assert!(events.len() >= 3);
     }
 }

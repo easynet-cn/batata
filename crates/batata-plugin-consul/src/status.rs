@@ -142,4 +142,33 @@ mod tests {
         // IPv6 address
         assert_eq!(to_consul_raft_address("[::1]:8848"), "[::1]:8300");
     }
+
+    #[test]
+    fn test_leader_format() {
+        // Leader response should be a quoted IP:port string
+        let leader = "127.0.0.1:8300";
+        let json = serde_json::to_string(&leader).unwrap();
+        assert_eq!(json, "\"127.0.0.1:8300\"");
+        assert!(leader.contains(':'));
+    }
+
+    #[test]
+    fn test_peers_format() {
+        // Peers response should be a JSON array of strings
+        let peers = vec!["127.0.0.1:8300"];
+        let json = serde_json::to_string(&peers).unwrap();
+        assert_eq!(json, "[\"127.0.0.1:8300\"]");
+        let parsed: Vec<String> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert!(parsed[0].contains(':'));
+    }
+
+    #[test]
+    fn test_to_consul_raft_address_with_port() {
+        // Test address conversion with various custom ports
+        assert_eq!(to_consul_raft_address("10.0.0.1:3000"), "10.0.0.1:8300");
+        assert_eq!(to_consul_raft_address("10.0.0.1:443"), "10.0.0.1:8300");
+        // IP only (no port)
+        assert_eq!(to_consul_raft_address("10.0.0.1"), "10.0.0.1:8300");
+    }
 }

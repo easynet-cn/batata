@@ -570,4 +570,31 @@ mod tests {
         assert_eq!(json["Node"], "node-1");
         assert_eq!(json["Address"], "10.0.0.1");
     }
+
+    #[test]
+    fn test_ui_node_from_member_data() {
+        // Verify UINode can be constructed from member-like data
+        let node = UINode {
+            id: uuid::Uuid::new_v4().to_string(),
+            node: "member-node-1".to_string(),
+            address: "192.168.1.100".to_string(),
+            datacenter: "dc1".to_string(),
+            meta: Some(HashMap::from([
+                ("role".to_string(), "server".to_string()),
+                ("version".to_string(), "1.0.0".to_string()),
+            ])),
+            create_index: 5,
+            modify_index: 10,
+        };
+        let json = serde_json::to_value(&node).unwrap();
+        assert_eq!(json["Node"], "member-node-1");
+        assert_eq!(json["Address"], "192.168.1.100");
+        assert_eq!(json["Datacenter"], "dc1");
+        assert_eq!(json["CreateIndex"], 5);
+        assert_eq!(json["ModifyIndex"], 10);
+        // Meta should be present
+        let meta = json["Meta"].as_object().unwrap();
+        assert_eq!(meta["role"], "server");
+        assert_eq!(meta["version"], "1.0.0");
+    }
 }
