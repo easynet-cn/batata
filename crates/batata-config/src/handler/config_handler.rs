@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use futures::future::join_all;
 use tonic::Status;
 use tracing::{debug, info, warn};
 
@@ -514,29 +515,27 @@ impl ConfigPublishHandler {
                 group_key
             );
 
-            // Push notification to each fuzzy watcher
-            for connection_id in &fuzzy_watchers {
-                // Mark the group key as received by this connection
-                self.fuzzy_watch_manager
-                    .mark_received(connection_id, &group_key);
-
-                // Push the actual notification payload
-                if self
-                    .connection_manager
-                    .push_message(connection_id, payload.clone())
-                    .await
-                {
-                    debug!(
-                        "Pushed config change notification to connection {} (fuzzy watch): {}",
-                        connection_id, group_key
-                    );
-                } else {
-                    warn!(
-                        "Failed to push config change notification to connection {}: {}",
-                        connection_id, group_key
-                    );
-                }
-            }
+            // Push notification to each fuzzy watcher in parallel
+            let futs: Vec<_> = fuzzy_watchers
+                .iter()
+                .map(|connection_id| {
+                    self.fuzzy_watch_manager
+                        .mark_received(connection_id, &group_key);
+                    let cm = &self.connection_manager;
+                    let p = payload.clone();
+                    let cid = connection_id.clone();
+                    let gk = group_key.clone();
+                    async move {
+                        if !cm.push_message(&cid, p).await {
+                            warn!(
+                                "Failed to push config change notification to connection {}: {}",
+                                cid, gk
+                            );
+                        }
+                    }
+                })
+                .collect();
+            join_all(futs).await;
 
             info!(
                 "Notified {} fuzzy watchers for config change: {}",
@@ -561,26 +560,24 @@ impl ConfigPublishHandler {
                 data_id
             );
 
-            // Push notification to each subscriber
-            for subscriber in &subscribers {
-                if self
-                    .connection_manager
-                    .push_message(&subscriber.connection_id, payload.clone())
-                    .await
-                {
-                    debug!(
-                        "Pushed config change notification to connection {} (subscriber): {}",
-                        subscriber.connection_id,
-                        config_key.to_key_string()
-                    );
-                } else {
-                    warn!(
-                        "Failed to push config change notification to connection {}: {}",
-                        subscriber.connection_id,
-                        config_key.to_key_string()
-                    );
-                }
-            }
+            // Push notification to each subscriber in parallel
+            let futs: Vec<_> = subscribers
+                .iter()
+                .map(|subscriber| {
+                    let cm = &self.connection_manager;
+                    let p = payload.clone();
+                    let cid = subscriber.connection_id.clone();
+                    async move {
+                        if !cm.push_message(&cid, p).await {
+                            warn!(
+                                "Failed to push config change notification to connection {}",
+                                cid
+                            );
+                        }
+                    }
+                })
+                .collect();
+            join_all(futs).await;
 
             info!(
                 "Notified {} regular subscribers for config change: {}",
@@ -728,29 +725,27 @@ impl ConfigRemoveHandler {
                 group_key
             );
 
-            // Push notification to each fuzzy watcher
-            for connection_id in &fuzzy_watchers {
-                // Mark the group key as received by this connection
-                self.fuzzy_watch_manager
-                    .mark_received(connection_id, &group_key);
-
-                // Push the actual notification payload
-                if self
-                    .connection_manager
-                    .push_message(connection_id, payload.clone())
-                    .await
-                {
-                    debug!(
-                        "Pushed config removal notification to connection {} (fuzzy watch): {}",
-                        connection_id, group_key
-                    );
-                } else {
-                    warn!(
-                        "Failed to push config removal notification to connection {}: {}",
-                        connection_id, group_key
-                    );
-                }
-            }
+            // Push notification to each fuzzy watcher in parallel
+            let futs: Vec<_> = fuzzy_watchers
+                .iter()
+                .map(|connection_id| {
+                    self.fuzzy_watch_manager
+                        .mark_received(connection_id, &group_key);
+                    let cm = &self.connection_manager;
+                    let p = payload.clone();
+                    let cid = connection_id.clone();
+                    let gk = group_key.clone();
+                    async move {
+                        if !cm.push_message(&cid, p).await {
+                            warn!(
+                                "Failed to push config removal notification to connection {}: {}",
+                                cid, gk
+                            );
+                        }
+                    }
+                })
+                .collect();
+            join_all(futs).await;
 
             info!(
                 "Notified {} fuzzy watchers for config removal: {}",
@@ -775,26 +770,24 @@ impl ConfigRemoveHandler {
                 data_id
             );
 
-            // Push notification to each subscriber
-            for subscriber in &subscribers {
-                if self
-                    .connection_manager
-                    .push_message(&subscriber.connection_id, payload.clone())
-                    .await
-                {
-                    debug!(
-                        "Pushed config removal notification to connection {} (subscriber): {}",
-                        subscriber.connection_id,
-                        config_key.to_key_string()
-                    );
-                } else {
-                    warn!(
-                        "Failed to push config removal notification to connection {}: {}",
-                        subscriber.connection_id,
-                        config_key.to_key_string()
-                    );
-                }
-            }
+            // Push notification to each subscriber in parallel
+            let futs: Vec<_> = subscribers
+                .iter()
+                .map(|subscriber| {
+                    let cm = &self.connection_manager;
+                    let p = payload.clone();
+                    let cid = subscriber.connection_id.clone();
+                    async move {
+                        if !cm.push_message(&cid, p).await {
+                            warn!(
+                                "Failed to push config removal notification to connection {}",
+                                cid
+                            );
+                        }
+                    }
+                })
+                .collect();
+            join_all(futs).await;
 
             info!(
                 "Notified {} regular subscribers for config removal: {}",
@@ -1042,26 +1035,26 @@ impl ConfigChangeClusterSyncHandler {
                 source_ip
             );
 
-            for connection_id in &fuzzy_watchers {
-                self.fuzzy_watch_manager
-                    .mark_received(connection_id, &group_key);
-
-                if self
-                    .connection_manager
-                    .push_message(connection_id, payload.clone())
-                    .await
-                {
-                    debug!(
-                        "Pushed cluster sync config notification to connection {} (fuzzy watch): {}",
-                        connection_id, group_key
-                    );
-                } else {
-                    warn!(
-                        "Failed to push cluster sync config notification to connection {}: {}",
-                        connection_id, group_key
-                    );
-                }
-            }
+            let futs: Vec<_> = fuzzy_watchers
+                .iter()
+                .map(|connection_id| {
+                    self.fuzzy_watch_manager
+                        .mark_received(connection_id, &group_key);
+                    let cm = &self.connection_manager;
+                    let p = payload.clone();
+                    let cid = connection_id.clone();
+                    let gk = group_key.clone();
+                    async move {
+                        if !cm.push_message(&cid, p).await {
+                            warn!(
+                                "Failed to push cluster sync config notification to connection {}: {}",
+                                cid, gk
+                            );
+                        }
+                    }
+                })
+                .collect();
+            join_all(futs).await;
         }
 
         // Notify regular subscribers via ConfigSubscriberManager
@@ -1079,25 +1072,23 @@ impl ConfigChangeClusterSyncHandler {
                 source_ip
             );
 
-            for subscriber in &subscribers {
-                if self
-                    .connection_manager
-                    .push_message(&subscriber.connection_id, payload.clone())
-                    .await
-                {
-                    debug!(
-                        "Pushed cluster sync config notification to connection {} (subscriber): {}",
-                        subscriber.connection_id,
-                        config_key.to_key_string()
-                    );
-                } else {
-                    warn!(
-                        "Failed to push cluster sync config notification to connection {}: {}",
-                        subscriber.connection_id,
-                        config_key.to_key_string()
-                    );
-                }
-            }
+            let futs: Vec<_> = subscribers
+                .iter()
+                .map(|subscriber| {
+                    let cm = &self.connection_manager;
+                    let p = payload.clone();
+                    let cid = subscriber.connection_id.clone();
+                    async move {
+                        if !cm.push_message(&cid, p).await {
+                            warn!(
+                                "Failed to push cluster sync config notification to connection {}",
+                                cid
+                            );
+                        }
+                    }
+                })
+                .collect();
+            join_all(futs).await;
         }
 
         Ok(())

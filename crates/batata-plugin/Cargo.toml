@@ -35,8 +35,8 @@ hmac = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 
-# Random for jitter (uses rand 0.9, different from workspace rand 0.8)
-rand = "0.9"
+# Random for jitter
+rand = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

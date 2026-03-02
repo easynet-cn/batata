@@ -138,7 +138,14 @@ impl Default for ClusterConfig {
 
 /// Build service key format: namespace@@groupName@@serviceName
 fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {
-    format!("{}@@{}@@{}", namespace, group_name, service_name)
+    let mut key =
+        String::with_capacity(namespace.len() + group_name.len() + service_name.len() + 4);
+    key.push_str(namespace);
+    key.push_str("@@");
+    key.push_str(group_name);
+    key.push_str("@@");
+    key.push_str(service_name);
+    key
 }
 
 /// Build instance key format: ip#port#clusterName
@@ -285,24 +292,24 @@ impl NamingService {
     ) -> Vec<Instance> {
         let service_key = build_service_key(namespace, group_name, service_name);
 
-        if let Some(instances) = self.services.get(&service_key) {
-            instances
-                .iter()
-                .filter(|entry| {
-                    let inst = entry.value();
-                    // Filter by cluster if specified (supports comma-separated list)
-                    let cluster_match = cluster.is_empty()
-                        || cluster == "*"
-                        || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
-                    // Filter by health if required
-                    let health_match = !healthy_only || inst.healthy;
-                    cluster_match && health_match
-                })
-                .map(|entry| entry.value().clone())
-                .collect()
-        } else {
-            Vec::new()
-        }
+        // Snapshot all instances first to minimize outer DashMap shard lock hold time.
+        // The outer Ref (shard read lock) is released as soon as collect() completes.
+        let snapshot: Vec<Instance> = match self.services.get(&service_key) {
+            Some(instances) => instances.iter().map(|e| e.value().clone()).collect(),
+            None => return Vec::new(),
+        };
+
+        // Filter on the snapshot (no locks held)
+        snapshot
+            .into_iter()
+            .filter(|inst| {
+                let cluster_match = cluster.is_empty()
+                    || cluster == "*"
+                    || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
+                let health_match = !healthy_only || inst.healthy;
+                cluster_match && health_match
+            })
+            .collect()
     }
 
     /// Get service info with instances
@@ -320,56 +327,52 @@ impl NamingService {
     ) -> Service {
         let service_key = build_service_key(namespace, group_name, service_name);
 
-        // Get protection threshold from service metadata
+        // Get protection threshold from service metadata (brief lock)
         let protect_threshold = self
             .service_metadata
             .get(&service_key)
             .map(|m| m.protect_threshold)
             .unwrap_or(0.0);
 
-        let (instances, has_any_instances, reach_protection) = if let Some(all_instances) =
-            self.services.get(&service_key)
-        {
-            let has_any = !all_instances.is_empty();
+        // Snapshot all instances first to minimize outer DashMap shard lock hold time.
+        // The outer Ref is released as soon as collect() completes.
+        let (snapshot, has_any_instances) = match self.services.get(&service_key) {
+            Some(all_instances) => {
+                let has_any = !all_instances.is_empty();
+                let snap: Vec<Instance> = all_instances.iter().map(|e| e.value().clone()).collect();
+                (snap, has_any)
+            }
+            None => (Vec::new(), false),
+        };
+        // --- outer shard lock released here ---
 
-            // First filter by cluster
-            let cluster_filtered: Vec<Instance> = all_instances
-                .iter()
-                .filter(|entry| {
-                    let inst = entry.value();
-                    cluster.is_empty()
-                        || cluster == "*"
-                        || cluster.split(',').any(|c| c.trim() == inst.cluster_name)
-                })
-                .map(|entry| entry.value().clone())
-                .collect();
+        // All computation below operates on owned data, no locks held
+        let cluster_filtered: Vec<Instance> = snapshot
+            .into_iter()
+            .filter(|inst| {
+                cluster.is_empty()
+                    || cluster == "*"
+                    || cluster.split(',').any(|c| c.trim() == inst.cluster_name)
+            })
+            .collect();
 
-            let total = cluster_filtered.len();
-            let healthy_count = cluster_filtered.iter().filter(|i| i.healthy).count();
+        let total = cluster_filtered.len();
+        let healthy_count = cluster_filtered.iter().filter(|i| i.healthy).count();
 
-            // Check if protection threshold is reached
-            let healthy_ratio = if total > 0 {
-                healthy_count as f32 / total as f32
-            } else {
-                1.0 // No instances means 100% healthy ratio
-            };
-
-            let protection_triggered = protect_threshold > 0.0 && healthy_ratio < protect_threshold;
-
-            // If protection is triggered, return all instances regardless of health
-            // Otherwise, filter by health if requested
-            let final_instances = if protection_triggered {
-                // Return all instances including unhealthy to prevent total service outage
-                cluster_filtered
-            } else if healthy_only {
-                cluster_filtered.into_iter().filter(|i| i.healthy).collect()
-            } else {
-                cluster_filtered
-            };
-
-            (final_instances, has_any, protection_triggered)
+        let healthy_ratio = if total > 0 {
+            healthy_count as f32 / total as f32
         } else {
-            (Vec::new(), false, false)
+            1.0
+        };
+
+        let protection_triggered = protect_threshold > 0.0 && healthy_ratio < protect_threshold;
+
+        let instances = if protection_triggered {
+            cluster_filtered
+        } else if healthy_only {
+            cluster_filtered.into_iter().filter(|i| i.healthy).collect()
+        } else {
+            cluster_filtered
         };
 
         let now = SystemTime::now()
@@ -386,7 +389,7 @@ impl NamingService {
             last_ref_time: now,
             checksum: String::new(),
             all_ips: has_any_instances,
-            reach_protection_threshold: reach_protection,
+            reach_protection_threshold: protection_triggered,
         }
     }
 
@@ -403,55 +406,75 @@ impl NamingService {
     ) -> (Service, ProtectionInfo) {
         let service_key = build_service_key(namespace, group_name, service_name);
 
-        // Get protection threshold from service metadata
+        // Get protection threshold from service metadata (brief lock)
         let protect_threshold = self
             .service_metadata
             .get(&service_key)
             .map(|m| m.protect_threshold)
             .unwrap_or(0.0);
 
-        let mut protection_info = ProtectionInfo {
-            threshold: protect_threshold,
-            total_instances: 0,
-            healthy_instances: 0,
-            healthy_ratio: 1.0,
-            triggered: false,
+        // Snapshot all instances once (brief outer shard lock)
+        let snapshot: Vec<Instance> = self
+            .services
+            .get(&service_key)
+            .map(|inner| inner.iter().map(|e| e.value().clone()).collect())
+            .unwrap_or_default();
+        // --- outer shard lock released ---
+
+        // Compute everything from the snapshot (no locks held)
+        let cluster_filtered: Vec<Instance> = snapshot
+            .into_iter()
+            .filter(|inst| {
+                cluster.is_empty()
+                    || cluster == "*"
+                    || cluster.split(',').any(|c| c.trim() == inst.cluster_name)
+            })
+            .collect();
+
+        let total = cluster_filtered.len();
+        let healthy_count = cluster_filtered.iter().filter(|i| i.healthy).count();
+        let has_any = !cluster_filtered.is_empty();
+
+        let healthy_ratio = if total > 0 {
+            healthy_count as f32 / total as f32
+        } else {
+            1.0
         };
 
-        let service = self.get_service(namespace, group_name, service_name, cluster, healthy_only);
+        let protection_triggered = protect_threshold > 0.0 && healthy_ratio < protect_threshold;
 
-        // Calculate protection info by counting directly (avoids collecting references)
-        if let Some(all_instances) = self.services.get(&service_key) {
-            let total: usize = all_instances
-                .iter()
-                .filter(|entry| {
-                    let inst = entry.value();
-                    cluster.is_empty()
-                        || cluster == "*"
-                        || cluster.split(',').any(|c| c.trim() == inst.cluster_name)
-                })
-                .count();
+        let instances = if protection_triggered {
+            cluster_filtered
+        } else if healthy_only {
+            cluster_filtered.into_iter().filter(|i| i.healthy).collect()
+        } else {
+            cluster_filtered
+        };
 
-            let healthy: usize = all_instances
-                .iter()
-                .filter(|entry| {
-                    let inst = entry.value();
-                    let cluster_match = cluster.is_empty()
-                        || cluster == "*"
-                        || cluster.split(',').any(|c| c.trim() == inst.cluster_name);
-                    cluster_match && inst.healthy
-                })
-                .count();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
 
-            protection_info.total_instances = total;
-            protection_info.healthy_instances = healthy;
-            protection_info.healthy_ratio = if total > 0 {
-                healthy as f32 / total as f32
-            } else {
-                1.0
-            };
-            protection_info.triggered = service.reach_protection_threshold;
-        }
+        let service = Service {
+            name: service_name.to_string(),
+            group_name: group_name.to_string(),
+            clusters: cluster.to_string(),
+            cache_millis: 10000,
+            hosts: instances,
+            last_ref_time: now,
+            checksum: String::new(),
+            all_ips: has_any,
+            reach_protection_threshold: protection_triggered,
+        };
+
+        let protection_info = ProtectionInfo {
+            threshold: protect_threshold,
+            total_instances: total,
+            healthy_instances: healthy_count,
+            healthy_ratio,
+            triggered: protection_triggered,
+        };
 
         (service, protection_info)
     }
@@ -463,7 +486,7 @@ impl NamingService {
     }
 
     /// List all services in a namespace
-    /// Uses iterator-based pagination to avoid allocating intermediate Vec for large service counts
+    /// Single-pass iteration to minimize DashMap lock hold time
     pub fn list_services(
         &self,
         namespace: &str,
@@ -477,7 +500,6 @@ impl NamingService {
             format!("{}@@{}@@", namespace, group_name)
         };
 
-        // Extract service name from key (third part after "@@")
         fn extract_service_name(key: &str) -> String {
             key.split("@@")
                 .nth(2)
@@ -485,22 +507,22 @@ impl NamingService {
                 .unwrap_or_else(|| key.to_string())
         }
 
-        // Count total matching services (single pass)
-        let total = self
+        // Single pass: collect all matching service names, then paginate on owned data.
+        // This avoids iterating the DashMap twice (which holds shard read locks each time).
+        let all_names: Vec<String> = self
             .services
             .iter()
             .filter(|entry| entry.key().starts_with(&prefix))
-            .count() as i32;
+            .map(|entry| extract_service_name(entry.key()))
+            .collect();
+        // --- all shard locks released ---
 
-        // Paginate directly on iterator to avoid intermediate allocation
+        let total = all_names.len() as i32;
         let start = ((page_no - 1) * page_size) as usize;
-        let paginated: Vec<String> = self
-            .services
-            .iter()
-            .filter(|entry| entry.key().starts_with(&prefix))
+        let paginated = all_names
+            .into_iter()
             .skip(start)
             .take(page_size as usize)
-            .map(|entry| extract_service_name(entry.key()))
             .collect();
 
         (total, paginated)
@@ -593,15 +615,21 @@ impl NamingService {
     /// Called when a gRPC connection disconnects to clean up orphan ephemeral instances.
     /// Returns the set of affected service keys (for subscriber notification).
     pub fn deregister_all_by_connection(&self, connection_id: &str) -> Vec<String> {
-        let mut affected_service_keys = HashSet::new();
+        // Remove connection tracking first (releases connection_instances lock)
+        let instances_to_remove: Vec<(String, String)> =
+            match self.connection_instances.remove(connection_id) {
+                Some((_, instances)) => instances.into_iter().collect(),
+                None => Vec::new(),
+            };
+        // --- connection_instances lock released ---
 
-        if let Some((_, instances)) = self.connection_instances.remove(connection_id) {
-            for (service_key, instance_key) in instances {
-                if let Some(service_instances) = self.services.get(&service_key)
-                    && service_instances.remove(&instance_key).is_some()
-                {
-                    affected_service_keys.insert(service_key);
-                }
+        // Now process removals one by one (each get() is a brief shard lock)
+        let mut affected_service_keys = HashSet::new();
+        for (service_key, instance_key) in instances_to_remove {
+            if let Some(service_instances) = self.services.get(&service_key)
+                && service_instances.remove(&instance_key).is_some()
+            {
+                affected_service_keys.insert(service_key);
             }
         }
 
@@ -742,15 +770,25 @@ impl NamingService {
 
     /// Get all service keys that a connection is fuzzy-watching
     pub fn get_fuzzy_watched_services(&self, connection_id: &str) -> Vec<String> {
-        let Some(patterns) = self.fuzzy_watchers.get(connection_id) else {
-            return vec![];
+        // Clone patterns to release fuzzy_watchers lock before iterating services
+        let patterns: Vec<FuzzyWatchPattern> = match self.fuzzy_watchers.get(connection_id) {
+            Some(entry) => entry.clone(),
+            None => return vec![],
         };
+        // --- fuzzy_watchers lock released ---
 
+        // Snapshot service keys to release services lock before pattern matching
+        let service_keys: Vec<String> = self
+            .services
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+        // --- services locks released ---
+
+        // Pattern matching on owned data (no locks held)
         let mut matched_services = HashSet::new();
-
-        for pattern in patterns.iter() {
-            for entry in self.services.iter() {
-                let key = entry.key();
+        for pattern in &patterns {
+            for key in &service_keys {
                 let parts: Vec<&str> = key.split("@@").collect();
                 if parts.len() == 3 {
                     let (ns, group, service) = (parts[0], parts[1], parts[2]);
@@ -901,6 +939,7 @@ impl NamingService {
     ) -> usize {
         let service_key = build_service_key(namespace, group_name, service_name);
 
+        // Brief lock: count directly during iteration (no nested access)
         self.services
             .get(&service_key)
             .map(|instances| instances.iter().filter(|e| e.value().healthy).count())
@@ -1140,24 +1179,19 @@ impl NamingService {
         let service_key = build_service_key(namespace, group_name, service_name);
 
         if let Some(instances_map) = self.services.get(&service_key) {
-            let instances: Vec<Instance> = instances_map
-                .iter()
-                .map(|entry| entry.value().clone())
-                .collect();
-
-            // Group by cluster
+            // Group by cluster directly from DashMap, skipping intermediate Vec
             let mut cluster_map: HashMap<String, Vec<Instance>> = HashMap::new();
-            for instance in instances {
+            for entry in instances_map.iter() {
                 cluster_map
-                    .entry(instance.cluster_name.clone())
+                    .entry(entry.value().cluster_name.clone())
                     .or_default()
-                    .push(instance);
+                    .push(entry.value().clone());
             }
 
             cluster_map
-                .iter()
+                .into_iter()
                 .map(|(cluster_name, cluster_instances)| {
-                    ClusterStatistics::from_instances(cluster_name, cluster_instances)
+                    ClusterStatistics::from_instances(&cluster_name, &cluster_instances)
                 })
                 .collect()
         } else {
@@ -2033,5 +2067,396 @@ mod tests {
         let service = naming.get_service("public", "DEFAULT_GROUP", "test-service", "", true);
         assert!(service.reach_protection_threshold);
         assert_eq!(service.hosts.len(), 4); // All instances
+    }
+
+    // ============== Concurrent Stress Tests ==============
+    //
+    // These tests exercise concurrent read/write paths to detect deadlocks.
+    // They use a timeout-based approach: if a test hangs beyond the timeout,
+    // it indicates a deadlock.
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_register_and_get_instances() {
+        let naming = Arc::new(NamingService::new());
+        let barrier = Arc::new(tokio::sync::Barrier::new(8));
+
+        let mut handles = Vec::new();
+
+        // 4 writers: register instances
+        for i in 0..4 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for j in 0..50 {
+                    let instance = Instance {
+                        instance_id: format!("inst-{}-{}#8080#DEFAULT#svc", i, j),
+                        ip: format!("10.0.{}.{}", i, j),
+                        port: 8080,
+                        weight: 1.0,
+                        healthy: true,
+                        enabled: true,
+                        ephemeral: true,
+                        cluster_name: "DEFAULT".to_string(),
+                        service_name: "stress-svc".to_string(),
+                        metadata: HashMap::new(),
+                    };
+                    naming.register_instance("public", "DEFAULT_GROUP", "stress-svc", instance);
+                }
+            }));
+        }
+
+        // 4 readers: get instances concurrently
+        for _ in 0..4 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for _ in 0..50 {
+                    let _ = naming.get_instances("public", "DEFAULT_GROUP", "stress-svc", "", true);
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for h in handles {
+                h.await.unwrap();
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Deadlock detected: concurrent register + get_instances timed out"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_register_deregister_list() {
+        let naming = Arc::new(NamingService::new());
+        let barrier = Arc::new(tokio::sync::Barrier::new(6));
+
+        let mut handles = Vec::new();
+
+        // 2 writers: register
+        for i in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for j in 0..30 {
+                    let svc_name = format!("svc-{}-{}", i, j);
+                    let instance = Instance {
+                        instance_id: format!("inst#8080#DEFAULT#{}", svc_name),
+                        ip: format!("10.1.{}.{}", i, j),
+                        port: 8080,
+                        weight: 1.0,
+                        healthy: true,
+                        enabled: true,
+                        ephemeral: true,
+                        cluster_name: "DEFAULT".to_string(),
+                        service_name: svc_name.clone(),
+                        metadata: HashMap::new(),
+                    };
+                    naming.register_instance("public", "DEFAULT_GROUP", &svc_name, instance);
+                }
+            }));
+        }
+
+        // 2 deregisters
+        for i in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for j in 0..30 {
+                    let svc_name = format!("svc-{}-{}", i, j);
+                    let instance = Instance {
+                        ip: format!("10.1.{}.{}", i, j),
+                        port: 8080,
+                        cluster_name: "DEFAULT".to_string(),
+                        ..Default::default()
+                    };
+                    naming.deregister_instance("public", "DEFAULT_GROUP", &svc_name, &instance);
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 readers: list services
+        for _ in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for _ in 0..30 {
+                    let _ = naming.list_services("public", "DEFAULT_GROUP", 1, 100);
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for h in handles {
+                h.await.unwrap();
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Deadlock detected: concurrent register + deregister + list_services timed out"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_get_service_and_heartbeat() {
+        let naming = Arc::new(NamingService::new());
+
+        // Pre-register some instances
+        for i in 0..10 {
+            let instance = Instance {
+                instance_id: format!("hb-inst-{}#8080#DEFAULT#hb-svc", i),
+                ip: format!("10.2.0.{}", i),
+                port: 8080,
+                weight: 1.0,
+                healthy: true,
+                enabled: true,
+                ephemeral: true,
+                cluster_name: "DEFAULT".to_string(),
+                service_name: "hb-svc".to_string(),
+                metadata: HashMap::new(),
+            };
+            naming.register_instance("public", "DEFAULT_GROUP", "hb-svc", instance);
+        }
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(6));
+        let mut handles = Vec::new();
+
+        // 2 get_service readers
+        for _ in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for _ in 0..50 {
+                    let _ = naming.get_service("public", "DEFAULT_GROUP", "hb-svc", "", true);
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 heartbeat writers
+        for _ in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for i in 0..50 {
+                    let idx = i % 10;
+                    naming.heartbeat(
+                        "public",
+                        "DEFAULT_GROUP",
+                        "hb-svc",
+                        &format!("10.2.0.{}", idx),
+                        8080,
+                        "DEFAULT",
+                    );
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 protection info readers
+        for _ in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for _ in 0..50 {
+                    let _ = naming.get_service_with_protection_info(
+                        "public",
+                        "DEFAULT_GROUP",
+                        "hb-svc",
+                        "",
+                        true,
+                    );
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for h in handles {
+                h.await.unwrap();
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Deadlock detected: concurrent get_service + heartbeat + protection_info timed out"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_connection_lifecycle() {
+        let naming = Arc::new(NamingService::new());
+
+        let service_key = "public@@DEFAULT_GROUP@@cl-svc";
+
+        // Pre-register instances via connections
+        for c in 0..4 {
+            let conn_id = format!("conn-{}", c);
+            for i in 0..5 {
+                let instance = Instance {
+                    instance_id: format!("cl-inst-{}-{}#8080#DEFAULT#cl-svc", c, i),
+                    ip: format!("10.3.{}.{}", c, i),
+                    port: 8080,
+                    weight: 1.0,
+                    healthy: true,
+                    enabled: true,
+                    ephemeral: true,
+                    cluster_name: "DEFAULT".to_string(),
+                    service_name: "cl-svc".to_string(),
+                    metadata: HashMap::new(),
+                };
+                let instance_key = format!("10.3.{}.{}#8080#DEFAULT", c, i);
+                naming.register_instance("public", "DEFAULT_GROUP", "cl-svc", instance);
+                naming.add_connection_instance(&conn_id, service_key, &instance_key);
+            }
+        }
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(6));
+        let mut handles = Vec::new();
+
+        // 2 deregister-all-by-connection
+        for c in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                naming.deregister_all_by_connection(&format!("conn-{}", c));
+            }));
+        }
+
+        // 2 readers: get instances
+        for _ in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for _ in 0..20 {
+                    let _ = naming.get_instances("public", "DEFAULT_GROUP", "cl-svc", "", true);
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 new registrations (different connections)
+        for c in 4..6 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            let svc_key = service_key.to_string();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for i in 0..5 {
+                    let instance = Instance {
+                        instance_id: format!("cl-inst-{}-{}#8080#DEFAULT#cl-svc", c, i),
+                        ip: format!("10.3.{}.{}", c, i),
+                        port: 8080,
+                        weight: 1.0,
+                        healthy: true,
+                        enabled: true,
+                        ephemeral: true,
+                        cluster_name: "DEFAULT".to_string(),
+                        service_name: "cl-svc".to_string(),
+                        metadata: HashMap::new(),
+                    };
+                    let instance_key = format!("10.3.{}.{}#8080#DEFAULT", c, i);
+                    naming.register_instance("public", "DEFAULT_GROUP", "cl-svc", instance);
+                    naming.add_connection_instance(&format!("conn-{}", c), &svc_key, &instance_key);
+                }
+            }));
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for h in handles {
+                h.await.unwrap();
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Deadlock detected: concurrent connection lifecycle operations timed out"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_fuzzy_watch_with_register() {
+        let naming = Arc::new(NamingService::new());
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(4));
+        let mut handles = Vec::new();
+
+        // 2 writers: register services + fuzzy watches
+        for i in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for j in 0..10 {
+                    let svc_name = format!("fw-svc-{}-{}", i, j);
+                    let instance = Instance {
+                        instance_id: format!("fw-inst#8080#DEFAULT#{}", svc_name),
+                        ip: format!("10.4.{}.{}", i, j),
+                        port: 8080,
+                        weight: 1.0,
+                        healthy: true,
+                        enabled: true,
+                        ephemeral: true,
+                        cluster_name: "DEFAULT".to_string(),
+                        service_name: svc_name.clone(),
+                        metadata: HashMap::new(),
+                    };
+                    naming.register_instance("public", "DEFAULT_GROUP", &svc_name, instance);
+                    naming.register_fuzzy_watch(
+                        &format!("conn-fw-{}", i),
+                        "public",
+                        "DEFAULT_GROUP",
+                        &format!("fw-svc-{}*", i),
+                        "SUBSCRIBE_SERVICE",
+                    );
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 readers: get fuzzy watched services
+        for i in 0..2 {
+            let naming = naming.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for _ in 0..10 {
+                    let _ = naming.get_fuzzy_watched_services(&format!("conn-fw-{}", i));
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            for h in handles {
+                h.await.unwrap();
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Deadlock detected: concurrent fuzzy_watch + register timed out"
+        );
     }
 }

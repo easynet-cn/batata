@@ -4,8 +4,8 @@
 
 use batata_api::naming::model::Instance;
 use batata_api::naming::model::ServiceInfo;
-use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::seq::IndexedRandom;
 use tracing::debug;
 
 /// Weighted pair for load balancing
@@ -58,8 +58,8 @@ impl Balancer {
 
         // Random weighted selection
         let total_weight: f64 = host_with_weight.iter().map(|h| h.weight).sum();
-        let mut rng = rand::thread_rng();
-        let random = rng.gen::<f64>() * total_weight;
+        let mut rng = rand::rng();
+        let random = rng.random::<f64>() * total_weight;
 
         let mut weight_sum = 0.0;
         for weighted in &host_with_weight {
@@ -109,7 +109,7 @@ impl Balancer {
             return None;
         }
 
-        healthy.choose(&mut rand::thread_rng()).cloned().cloned()
+        healthy.choose(&mut rand::rng()).cloned().cloned()
     }
 }
 

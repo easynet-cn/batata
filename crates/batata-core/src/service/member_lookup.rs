@@ -6,12 +6,14 @@ use std::{
     fs::File,
     io::{BufRead, BufReader},
     path::Path,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 use dashmap::DashMap;
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use batata_api::model::{Member, MemberBuilder};
@@ -61,7 +63,7 @@ pub struct FileMemberLookup {
     config: Configuration,
     members: Arc<DashMap<String, Member>>,
     cluster_conf_path: String,
-    running: Arc<RwLock<bool>>,
+    running: Arc<AtomicBool>,
 }
 
 impl FileMemberLookup {
@@ -70,7 +72,7 @@ impl FileMemberLookup {
             config,
             members: Arc::new(DashMap::new()),
             cluster_conf_path: "conf/cluster.conf".to_string(),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -79,7 +81,7 @@ impl FileMemberLookup {
             config,
             members: Arc::new(DashMap::new()),
             cluster_conf_path: path.to_string(),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -214,21 +216,19 @@ impl FileMemberLookup {
 #[tonic::async_trait]
 impl MemberLookup for FileMemberLookup {
     async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut running = self.running.write().await;
-        if *running {
+        if self.running.load(Ordering::Relaxed) {
             return Ok(());
         }
 
         info!("Starting file-based member lookup");
         self.load_members();
-        *running = true;
+        self.running.store(true, Ordering::Relaxed);
 
         Ok(())
     }
 
     async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
+        self.running.store(false, Ordering::Relaxed);
         info!("Stopped file-based member lookup");
     }
 
@@ -242,7 +242,8 @@ impl MemberLookup for FileMemberLookup {
 pub struct AddressServerMemberLookup {
     config: Configuration,
     members: Arc<DashMap<String, Member>>,
-    running: Arc<RwLock<bool>>,
+    running: Arc<AtomicBool>,
+    client: reqwest::Client,
     address_server_url: String,
     refresh_interval: Duration,
 }
@@ -261,10 +262,16 @@ impl AddressServerMemberLookup {
 
         let url = format!("http://{}:{}{}", domain, port, path);
 
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap_or_default();
+
         Self {
             config,
             members: Arc::new(DashMap::new()),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
+            client,
             address_server_url: url,
             refresh_interval: Duration::from_secs(30),
         }
@@ -272,11 +279,7 @@ impl AddressServerMemberLookup {
 
     /// Fetch member list from address server
     async fn fetch_members(&self) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()?;
-
-        let response = client.get(&self.address_server_url).send().await?;
+        let response = self.client.get(&self.address_server_url).send().await?;
 
         if !response.status().is_success() {
             return Err(format!("Address server returned status: {}", response.status()).into());
@@ -332,28 +335,15 @@ impl AddressServerMemberLookup {
     async fn start_refresh_task(&self) {
         let members = self.members.clone();
         let running = self.running.clone();
+        let client = self.client.clone();
         let url = self.address_server_url.clone();
         let interval = self.refresh_interval;
         let default_port = self.config.server_main_port();
 
         tokio::spawn(async move {
-            let client = match reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to create HTTP client: {}", e);
-                    return;
-                }
-            };
-
             loop {
-                {
-                    let is_running = running.read().await;
-                    if !*is_running {
-                        break;
-                    }
+                if !running.load(Ordering::Relaxed) {
+                    break;
                 }
 
                 tokio::time::sleep(interval).await;
@@ -418,8 +408,7 @@ impl AddressServerMemberLookup {
 #[tonic::async_trait]
 impl MemberLookup for AddressServerMemberLookup {
     async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut running = self.running.write().await;
-        if *running {
+        if self.running.load(Ordering::Relaxed) {
             return Ok(());
         }
 
@@ -463,8 +452,7 @@ impl MemberLookup for AddressServerMemberLookup {
             warn!("Failed to fetch initial members from address server: {}", e);
         }
 
-        *running = true;
-        drop(running);
+        self.running.store(true, Ordering::Relaxed);
 
         // Start background refresh
         self.start_refresh_task().await;
@@ -473,8 +461,7 @@ impl MemberLookup for AddressServerMemberLookup {
     }
 
     async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
+        self.running.store(false, Ordering::Relaxed);
         info!("Stopped address server based member lookup");
     }
 

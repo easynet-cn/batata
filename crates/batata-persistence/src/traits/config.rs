@@ -2,6 +2,8 @@
 //!
 //! Defines the interface for configuration storage operations.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 
 use crate::model::{ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData, Page};
@@ -188,4 +190,21 @@ pub trait ConfigPersistence: Send + Sync {
         config_tags: &str,
         desc: &str,
     ) -> anyhow::Result<bool>;
+
+    /// Batch find config MD5 hashes for multiple (data_id, group, namespace_id) tuples.
+    /// Returns a map of group_key (data_id+group+namespace_id) -> md5.
+    /// Default implementation falls back to N individual config_find_one calls.
+    async fn config_find_md5_batch(
+        &self,
+        keys: &[(String, String, String)],
+    ) -> anyhow::Result<HashMap<String, String>> {
+        let mut result = HashMap::with_capacity(keys.len());
+        for (data_id, group, namespace_id) in keys {
+            if let Ok(Some(config)) = self.config_find_one(data_id, group, namespace_id).await {
+                let group_key = format!("{}+{}+{}", data_id, group, namespace_id);
+                result.insert(group_key, config.md5);
+            }
+        }
+        Ok(result)
+    }
 }

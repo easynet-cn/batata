@@ -504,21 +504,33 @@ impl InstanceCheckRegistry {
         &self,
         consul_svc_id: &str,
     ) -> Vec<(InstanceCheckConfig, InstanceCheckStatus)> {
-        if let Some(entry) = self.consul_service_index.get(consul_svc_id) {
-            let (_, instance_key) = entry.value();
-            self.get_instance_checks(instance_key)
-        } else {
-            Vec::new()
+        // Clone the instance_key to release consul_service_index lock before
+        // calling get_instance_checks (which accesses instance_checks + configs + statuses)
+        let instance_key = self
+            .consul_service_index
+            .get(consul_svc_id)
+            .map(|entry| entry.value().1.clone());
+        // --- consul_service_index lock released ---
+
+        match instance_key {
+            Some(key) => self.get_instance_checks(&key),
+            None => Vec::new(),
         }
     }
 
     /// Get all registered checks
     pub fn get_all_checks(&self) -> Vec<(InstanceCheckConfig, InstanceCheckStatus)> {
+        // Collect keys first to release configs lock before accessing statuses.
+        // This prevents holding locks on two DashMaps simultaneously.
+        let keys: Vec<String> = self.configs.iter().map(|e| e.key().clone()).collect();
+        // --- configs lock released ---
+
         let mut result = Vec::new();
-        for entry in self.configs.iter() {
-            let check_key = entry.key();
-            if let Some(status) = self.statuses.get(check_key) {
-                result.push((entry.value().clone(), status.clone()));
+        for key in &keys {
+            if let Some(config) = self.configs.get(key)
+                && let Some(status) = self.statuses.get(key)
+            {
+                result.push((config.clone(), status.clone()));
             }
         }
         result
@@ -529,13 +541,21 @@ impl InstanceCheckRegistry {
         &self,
         status: &CheckStatus,
     ) -> Vec<(InstanceCheckConfig, InstanceCheckStatus)> {
+        // Collect matching keys first to release statuses lock before accessing configs.
+        // This prevents holding locks on two DashMaps simultaneously and avoids
+        // reverse lock ordering (statuses→configs) vs get_all_checks (configs→statuses).
+        let matching_keys: Vec<(String, InstanceCheckStatus)> = self
+            .statuses
+            .iter()
+            .filter(|e| &e.value().status == status)
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        // --- statuses lock released ---
+
         let mut result = Vec::new();
-        for entry in self.statuses.iter() {
-            if &entry.value().status == status {
-                let check_key = entry.key();
-                if let Some(config) = self.configs.get(check_key) {
-                    result.push((config.clone(), entry.value().clone()));
-                }
+        for (key, check_status) in matching_keys {
+            if let Some(config) = self.configs.get(&key) {
+                result.push((config.clone(), check_status));
             }
         }
         result
@@ -563,15 +583,24 @@ impl InstanceCheckRegistry {
         &self,
         service_id: &str,
     ) -> Vec<(InstanceCheckConfig, InstanceCheckStatus)> {
+        // Collect matching keys first to release configs lock before accessing statuses
+        let matching: Vec<(String, InstanceCheckConfig)> = self
+            .configs
+            .iter()
+            .filter(|e| {
+                e.value()
+                    .consul_service_id
+                    .as_deref()
+                    .is_some_and(|id| id == service_id)
+            })
+            .map(|e| (e.key().clone(), e.value().clone()))
+            .collect();
+        // --- configs lock released ---
+
         let mut result = Vec::new();
-        for entry in self.configs.iter() {
-            if let Some(ref svc_id) = entry.value().consul_service_id
-                && svc_id == service_id
-            {
-                let check_key = entry.key();
-                if let Some(status) = self.statuses.get(check_key) {
-                    result.push((entry.value().clone(), status.clone()));
-                }
+        for (key, config) in matching {
+            if let Some(status) = self.statuses.get(&key) {
+                result.push((config, status.clone()));
             }
         }
         result
@@ -966,5 +995,231 @@ mod tests {
 
         // An instance with no checks should be considered healthy
         assert!(registry.aggregate_instance_health("nonexistent#instance"));
+    }
+
+    // ============== Concurrent Stress Tests ==============
+
+    fn make_stress_config(
+        check_id: &str,
+        service_name: &str,
+        ip: &str,
+        consul_service_id: Option<String>,
+    ) -> InstanceCheckConfig {
+        InstanceCheckConfig {
+            check_id: check_id.to_string(),
+            name: check_id.to_string(),
+            check_type: CheckType::Ttl,
+            namespace: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: service_name.to_string(),
+            ip: ip.to_string(),
+            port: 8080,
+            cluster_name: "DEFAULT".to_string(),
+            http_url: None,
+            tcp_addr: None,
+            grpc_addr: None,
+            interval: Duration::from_secs(10),
+            timeout: Duration::from_secs(5),
+            ttl: Some(Duration::from_secs(30)),
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: None,
+            origin: CheckOrigin::ConsulService,
+            initial_status: CheckStatus::Passing,
+            consul_service_id,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_register_and_get_all_checks() {
+        let ns = test_naming_service();
+        let registry = Arc::new(InstanceCheckRegistry::new(ns));
+        let barrier = Arc::new(tokio::sync::Barrier::new(4));
+
+        let mut handles = Vec::new();
+
+        // 2 writers: register checks
+        for i in 0..2 {
+            let registry = registry.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for j in 0..30 {
+                    let config = make_stress_config(
+                        &format!("check-{}-{}", i, j),
+                        &format!("svc-{}", i),
+                        &format!("10.0.{}.{}", i, j),
+                        Some(format!("svc-{}-{}", i, j)),
+                    );
+                    registry.register_check(config);
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 readers: get all checks
+        for _ in 0..2 {
+            let registry = registry.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for _ in 0..30 {
+                    let _ = registry.get_all_checks();
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for h in handles {
+                h.await.unwrap();
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Deadlock detected: concurrent register + get_all_checks timed out"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_update_status_and_get_by_status() {
+        let ns = test_naming_service();
+        let registry = Arc::new(InstanceCheckRegistry::new(ns));
+
+        // Pre-register checks
+        for i in 0..20 {
+            let config = make_stress_config(
+                &format!("upd-check-{}", i),
+                "upd-svc",
+                &format!("10.1.0.{}", i),
+                Some(format!("upd-svc-{}", i)),
+            );
+            registry.register_check(config);
+        }
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(4));
+        let mut handles = Vec::new();
+
+        // 2 writers: update statuses
+        for t in 0..2 {
+            let registry = registry.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for round in 0..20 {
+                    let idx = (t * 10 + round) % 20;
+                    let success = round % 2 != 0;
+                    registry.update_check_result(
+                        &format!("upd-check-{}", idx),
+                        success,
+                        format!("round-{}", round),
+                        1,
+                    );
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 readers: get by status
+        for _ in 0..2 {
+            let registry = registry.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for _ in 0..20 {
+                    let _ = registry.get_checks_by_status(&CheckStatus::Passing);
+                    let _ = registry.get_checks_by_status(&CheckStatus::Critical);
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for h in handles {
+                h.await.unwrap();
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Deadlock detected: concurrent update_status + get_by_status timed out"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_register_deregister_and_consul_queries() {
+        let ns = test_naming_service();
+        let registry = Arc::new(InstanceCheckRegistry::new(ns));
+
+        // Pre-register checks
+        for i in 0..20 {
+            let config = make_stress_config(
+                &format!("cd-check-{}", i),
+                "cd-svc",
+                &format!("10.2.0.{}", i),
+                Some(format!("cd-svc-{}", i)),
+            );
+            registry.register_check(config);
+        }
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(6));
+        let mut handles = Vec::new();
+
+        // 2 deregister threads
+        for t in 0..2 {
+            let registry = registry.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for j in 0..10 {
+                    let idx = t * 10 + j;
+                    registry.deregister_check(&format!("cd-check-{}", idx));
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 consul service queries
+        for _ in 0..2 {
+            let registry = registry.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for i in 0..20 {
+                    let _ = registry.get_checks_for_consul_service("cd-svc");
+                    let _ = registry.get_checks_by_consul_service_id(&format!("cd-svc-{}", i));
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        // 2 aggregate health queries
+        for _ in 0..2 {
+            let registry = registry.clone();
+            let barrier = barrier.clone();
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                for i in 0..20 {
+                    let _ =
+                        registry.aggregate_instance_health(&format!("10.2.0.{}#8080#DEFAULT", i));
+                    tokio::task::yield_now().await;
+                }
+            }));
+        }
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            for h in handles {
+                h.await.unwrap();
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Deadlock detected: concurrent register + deregister + consul queries timed out"
+        );
     }
 }

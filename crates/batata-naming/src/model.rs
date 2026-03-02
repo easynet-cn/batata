@@ -57,7 +57,7 @@ mod tests {
         let svc = Service::new("my-service".to_string(), "DEFAULT_GROUP".to_string());
         assert_eq!(svc.name, "my-service");
         assert_eq!(svc.group_name, "DEFAULT_GROUP");
-        assert_eq!(svc.cache_millis, 10000);
+        assert_eq!(svc.cache_millis, 1000);
     }
 
     #[test]

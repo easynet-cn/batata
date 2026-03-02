@@ -129,9 +129,9 @@ pub fn revoke_user_tokens(username: &str) {
     if let Ok(mut blacklist) = USER_BLACKLIST.write() {
         blacklist.insert(username.to_string());
     }
-    // Also invalidate any cached tokens for this user
-    // Note: This is O(n) but happens rarely (only on user revocation)
-    TOKEN_CACHE.invalidate_all();
+    // No need to invalidate_all(): decode_jwt_token_cached() already checks
+    // USER_BLACKLIST and invalidates individual tokens for blacklisted users
+    // on cache hit. New requests will be rejected immediately.
 }
 
 /// Remove a user from the blacklist (typically called after successful login)

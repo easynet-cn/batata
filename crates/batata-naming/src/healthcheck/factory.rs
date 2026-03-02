@@ -36,7 +36,7 @@ impl HealthCheckerFactory {
     /// Register a custom health checker
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let factory = HealthCheckerFactory::new();
     /// factory.register("REDIS", Arc::new(RedisHealthChecker));
     /// ```

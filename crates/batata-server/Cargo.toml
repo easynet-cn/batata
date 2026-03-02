@@ -56,7 +56,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 
 # Async
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "signal", "net", "io-util"] }
 tokio-stream = { workspace = true }
 async-trait = { workspace = true }
 

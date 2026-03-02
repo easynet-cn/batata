@@ -151,13 +151,19 @@ impl UnhealthyInstanceChecker {
 
             // Mark unhealthy instances
             for (key, elapsed) in &unhealthy_instances {
-                if let Some(entry) = heartbeat_map.get(key) {
+                // Clone entry data to release heartbeat_map lock before calling NamingService.
+                // This prevents holding heartbeat_map read lock during potentially slow
+                // NamingService operations (which acquire their own DashMap locks).
+                let entry_data = heartbeat_map.get(key).map(|e| e.clone());
+                // --- heartbeat_map lock released ---
+
+                if let Some(entry) = entry_data {
                     info!(
                         "Marking instance {}:{} as unhealthy due to heartbeat timeout (elapsed: {}ms, timeout: {}ms)",
                         entry.ip, entry.port, elapsed, entry.heartbeat_timeout
                     );
 
-                    // Update instance health status
+                    // Update instance health status (no heartbeat_map lock held)
                     let instances = naming_service.get_instances(
                         &entry.namespace,
                         &entry.group_name,
@@ -168,7 +174,6 @@ impl UnhealthyInstanceChecker {
 
                     for instance in instances {
                         if instance.ip == entry.ip && instance.port == entry.port {
-                            // Mark as unhealthy
                             if naming_service.heartbeat(
                                 &entry.namespace,
                                 &entry.group_name,
@@ -282,13 +287,16 @@ impl ExpiredInstanceChecker {
 
             // Delete expired instances
             for (key, elapsed) in &expired_instances {
-                if let Some(entry) = heartbeat_map.get(key) {
+                // Clone entry data to release heartbeat_map lock before calling NamingService
+                let entry_data = heartbeat_map.get(key).map(|e| e.clone());
+                // --- heartbeat_map lock released ---
+
+                if let Some(entry) = entry_data {
                     info!(
                         "Deleting expired instance {}:{} (elapsed: {}ms, timeout: {}ms)",
                         entry.ip, entry.port, elapsed, entry.ip_delete_timeout
                     );
 
-                    // Build instance for deregistration
                     let instance = crate::model::Instance {
                         ip: entry.ip.clone(),
                         port: entry.port,
@@ -296,7 +304,7 @@ impl ExpiredInstanceChecker {
                         ..Default::default()
                     };
 
-                    // Deregister the instance
+                    // Deregister the instance (no heartbeat_map lock held)
                     if naming_service.deregister_instance(
                         &entry.namespace,
                         &entry.group_name,
@@ -457,8 +465,11 @@ mod tests {
             30000,
         );
 
-        let first_key = checker.heartbeat_map.iter().next().unwrap();
-        let first_time = first_key.value().last_heartbeat;
+        let first_time = {
+            let entry = checker.heartbeat_map.iter().next().unwrap();
+            entry.value().last_heartbeat
+        };
+        // --- DashMap read lock released ---
 
         // Wait a bit and record another heartbeat (should update the entry)
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -478,8 +489,11 @@ mod tests {
         assert_eq!(checker.get_tracked_count(), 1);
 
         // Last heartbeat should be updated
-        let updated_key = checker.heartbeat_map.iter().next().unwrap();
-        assert!(updated_key.value().last_heartbeat > first_time);
+        let updated_time = {
+            let entry = checker.heartbeat_map.iter().next().unwrap();
+            entry.value().last_heartbeat
+        };
+        assert!(updated_time > first_time);
     }
 
     #[test]
@@ -623,7 +637,6 @@ mod tests {
 
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let heartbeat_map = Arc::new(DashMap::new());
 
         // Create unhealthy checker
         let unhealthy_checker =
@@ -641,15 +654,15 @@ mod tests {
             30000,
         );
 
-        // Create expired checker with expire disabled
+        // Create expired checker sharing the same heartbeat_map
         let expired_checker = ExpiredInstanceChecker::new(
             naming_service,
             config,
             false, // expire disabled
-            heartbeat_map,
+            unhealthy_checker.heartbeat_map.clone(),
         );
 
-        // Verify instance is tracked
+        // Verify instance is tracked in both (shared map)
         assert_eq!(unhealthy_checker.get_tracked_count(), 1);
         assert_eq!(expired_checker.get_tracked_count(), 1);
 
@@ -665,7 +678,6 @@ mod tests {
 
         let naming_service = Arc::new(NamingService::new());
         let config = Arc::new(HealthCheckConfig::default());
-        let heartbeat_map = Arc::new(DashMap::new());
 
         // Create unhealthy checker
         let unhealthy_checker =
@@ -683,12 +695,12 @@ mod tests {
             30000,
         );
 
-        // Create expired checker with expire enabled
+        // Create expired checker sharing the same heartbeat_map
         let expired_checker = ExpiredInstanceChecker::new(
             naming_service,
             config,
             true, // expire enabled
-            heartbeat_map,
+            unhealthy_checker.heartbeat_map.clone(),
         );
 
         // Verify instance is tracked

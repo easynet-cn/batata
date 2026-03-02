@@ -8,6 +8,7 @@ use batata_core::{
     model::Connection,
     service::distro::{DistroDataType, DistroProtocol},
 };
+use futures::future::join_all;
 use tonic::Status;
 use tracing::{debug, info, warn};
 
@@ -235,23 +236,25 @@ impl InstanceRequestHandler {
             service_name
         );
 
-        for connection_id in &subscribers {
-            if self
-                .connection_manager
-                .push_message(connection_id, payload.clone())
-                .await
-            {
-                debug!(
-                    "Pushed subscriber notification to connection {}",
-                    connection_id
-                );
-            } else {
-                warn!(
-                    "Failed to push subscriber notification to connection {}",
-                    connection_id
-                );
-            }
-        }
+        let futs: Vec<_> = subscribers
+            .iter()
+            .map(|connection_id| {
+                let cm = &self.connection_manager;
+                let p = payload.clone();
+                let cid = connection_id.clone();
+                async move {
+                    if cm.push_message(&cid, p).await {
+                        debug!("Pushed subscriber notification to connection {}", cid);
+                    } else {
+                        warn!(
+                            "Failed to push subscriber notification to connection {}",
+                            cid
+                        );
+                    }
+                }
+            })
+            .collect();
+        join_all(futs).await;
     }
 
     /// Notify fuzzy watchers about service change
@@ -294,31 +297,29 @@ impl InstanceRequestHandler {
             group_key
         );
 
-        // Push notification to each watcher
-        for connection_id in &watchers {
-            // Mark the group key as received by this connection
-            self.naming_fuzzy_watch_manager
-                .mark_received(connection_id, &group_key);
-
-            // Push the actual notification payload
-            if self
-                .connection_manager
-                .push_message(connection_id, payload.clone())
-                .await
-            {
-                tracing::debug!(
-                    "Pushed service {} notification to connection {}: {}",
-                    change_type,
-                    connection_id,
-                    group_key
-                );
-            } else {
-                warn!(
-                    "Failed to push service {} notification to connection {}: {}",
-                    change_type, connection_id, group_key
-                );
-            }
-        }
+        // Push notification to each watcher in parallel
+        let futs: Vec<_> = watchers
+            .iter()
+            .map(|connection_id| {
+                // mark_received is sync, call before spawning future
+                self.naming_fuzzy_watch_manager
+                    .mark_received(connection_id, &group_key);
+                let cm = &self.connection_manager;
+                let p = payload.clone();
+                let cid = connection_id.clone();
+                let gk = group_key.clone();
+                let ct = change_type.to_string();
+                async move {
+                    if !cm.push_message(&cid, p).await {
+                        warn!(
+                            "Failed to push service {} notification to connection {}: {}",
+                            ct, cid, gk
+                        );
+                    }
+                }
+            })
+            .collect();
+        join_all(futs).await;
 
         info!(
             "Notified {} fuzzy watchers for service {} change: {}",
@@ -515,18 +516,20 @@ impl BatchInstanceRequestHandler {
             service_name
         );
 
-        for connection_id in &subscribers {
-            if !self
-                .connection_manager
-                .push_message(connection_id, payload.clone())
-                .await
-            {
-                warn!(
-                    "Failed to push batch notification to connection {}",
-                    connection_id
-                );
-            }
-        }
+        let futs: Vec<_> = subscribers
+            .iter()
+            .map(|connection_id| {
+                let cm = &self.connection_manager;
+                let p = payload.clone();
+                let cid = connection_id.clone();
+                async move {
+                    if !cm.push_message(&cid, p).await {
+                        warn!("Failed to push batch notification to connection {}", cid);
+                    }
+                }
+            })
+            .collect();
+        join_all(futs).await;
     }
 }
 
@@ -820,18 +823,23 @@ impl PersistentInstanceRequestHandler {
             service_name
         );
 
-        for connection_id in &subscribers {
-            if !self
-                .connection_manager
-                .push_message(connection_id, payload.clone())
-                .await
-            {
-                warn!(
-                    "Failed to push persistent instance notification to connection {}",
-                    connection_id
-                );
-            }
-        }
+        let futs: Vec<_> = subscribers
+            .iter()
+            .map(|connection_id| {
+                let cm = &self.connection_manager;
+                let p = payload.clone();
+                let cid = connection_id.clone();
+                async move {
+                    if !cm.push_message(&cid, p).await {
+                        warn!(
+                            "Failed to push persistent instance notification to connection {}",
+                            cid
+                        );
+                    }
+                }
+            })
+            .collect();
+        join_all(futs).await;
     }
 }
 

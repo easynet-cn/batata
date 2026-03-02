@@ -48,38 +48,39 @@ fn parse_listening_configs(listening_configs: &str) -> Vec<(String, String, Stri
     configs
 }
 
-/// Check if any configuration has changed
+/// Check if any configuration has changed using batch MD5 query.
 ///
-/// Returns a map of changed configs with their group key as key
+/// Returns a map of changed configs with their group key as key.
 async fn check_config_changes(
     persistence: &dyn PersistenceService,
     configs: &[(String, String, String, u64)],
     namespace_id: &str,
 ) -> HashMap<String, String> {
-    let mut changed_configs = HashMap::new();
+    let keys: Vec<(String, String, String)> = configs
+        .iter()
+        .map(|(data_id, group, _, _)| (data_id.clone(), group.clone(), namespace_id.to_string()))
+        .collect();
 
-    for (data_id, group, client_md5, _timeout) in configs {
-        // Get current config from persistence service
-        match persistence
-            .config_find_one(data_id, group, namespace_id)
-            .await
-        {
-            Ok(Some(config)) => {
-                let server_md5 = &config.md5;
-                // MD5 mismatch means config has changed or doesn't exist
-                if server_md5 != client_md5 {
-                    let group_key = format!("{}+{}+{}", data_id, group, namespace_id);
-                    changed_configs.insert(group_key, server_md5.clone());
-                }
+    let server_md5s = match persistence.config_find_md5_batch(&keys).await {
+        Ok(md5s) => md5s,
+        Err(e) => {
+            warn!(error = %e, "Failed to batch check config changes");
+            return HashMap::new();
+        }
+    };
+
+    let mut changed_configs = HashMap::new();
+    for (data_id, group, client_md5, _) in configs {
+        let group_key = format!("{}+{}+{}", data_id, group, namespace_id);
+        match server_md5s.get(&group_key) {
+            Some(server_md5) if server_md5 != client_md5 => {
+                changed_configs.insert(group_key, server_md5.clone());
             }
-            Ok(None) => {
-                // Config doesn't exist, return empty MD5
-                let group_key = format!("{}+{}+{}", data_id, group, namespace_id);
+            None => {
+                // Config doesn't exist
                 changed_configs.insert(group_key, String::new());
             }
-            Err(e) => {
-                warn!(error = %e, "Failed to check config change");
-            }
+            _ => {} // MD5 matches, no change
         }
     }
 
