@@ -9,14 +9,15 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, Responder, get, web};
 use serde::Serialize;
 
-use batata_common::{ActionTypes, ApiType, SignType, impl_or_default};
+use batata_common::{
+    ActionTypes, ApiType, DEFAULT_NAMESPACE_ID, SignType, default_page_no, default_page_size_small,
+    impl_or_default,
+};
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
 use crate::service::NamingService;
-
-use super::model::DEFAULT_NAMESPACE_ID;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,16 +31,8 @@ struct CatalogInstancesQuery {
     cluster_name: Option<String>,
     #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size_small")]
     page_size: u64,
-}
-
-fn default_page_no() -> u64 {
-    1
-}
-
-fn default_page_size() -> u64 {
-    20
 }
 
 impl CatalogInstancesQuery {

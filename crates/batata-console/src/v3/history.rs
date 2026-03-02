@@ -9,9 +9,9 @@ use batata_server_common::{
     secured,
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct FindOneParam {
     data_id: String,
     group_name: String,

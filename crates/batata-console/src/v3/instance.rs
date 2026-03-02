@@ -8,13 +8,12 @@ use actix_web::{HttpRequest, Responder, Scope, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use batata_api::naming::model::Instance;
+use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, default_page_no, default_page_size};
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType, error, model::AppState, model::response::Result,
     secured,
 };
 
-const DEFAULT_NAMESPACE_ID: &str = "public";
-const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 const DEFAULT_CLUSTER: &str = "DEFAULT";
 
 #[derive(Debug, Deserialize)]
@@ -34,14 +33,6 @@ struct InstanceListQuery {
     page_size: u64,
     #[serde(default)]
     healthy_only: Option<bool>,
-}
-
-fn default_page_no() -> u64 {
-    1
-}
-
-fn default_page_size() -> u64 {
-    100
 }
 
 impl InstanceListQuery {

@@ -8,17 +8,17 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, Responder, delete, get, post, put, web};
 use serde::{Deserialize, Serialize};
 
-use batata_common::{ActionTypes, ApiType, SignType, impl_or_default};
+use batata_common::{
+    ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, default_page_no,
+    default_page_size_small, impl_or_default,
+};
 use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
 
 use crate::service::{NamingService, ServiceMetadata};
 
-const DEFAULT_NAMESPACE_ID: &str = "public";
-const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
-
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct ServiceListQuery {
     #[serde(default)]
     namespace_id: Option<String>,
@@ -28,16 +28,8 @@ struct ServiceListQuery {
     service_name: Option<String>,
     #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size_small")]
     page_size: u64,
-}
-
-fn default_page_no() -> u64 {
-    1
-}
-
-fn default_page_size() -> u64 {
-    20
 }
 
 impl ServiceListQuery {
@@ -495,7 +487,7 @@ struct SubscriberQuery {
     service_name: String,
     #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size_small")]
     page_size: u64,
 }
 
@@ -601,9 +593,9 @@ struct UpdateClusterForm {
     metadata: Option<HashMap<String, String>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct ClusterHealthCheckerForm {
     #[serde(default = "default_check_type")]
     r#type: String,

@@ -2,22 +2,10 @@
 //!
 //! These models follow the Nacos V2 API specification with camelCase JSON serialization.
 
-use batata_common::impl_or_default;
+use batata_common::{
+    DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, default_page_no, default_page_size_small, impl_or_default,
+};
 use serde::{Deserialize, Serialize};
-
-/// Default namespace ID used when none is specified
-pub const DEFAULT_NAMESPACE_ID: &str = "public";
-
-/// Default group name used when none is specified
-pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
-
-fn default_page_no() -> u64 {
-    1
-}
-
-fn default_service_page_size() -> u64 {
-    20
-}
 
 // =============================================================================
 // Naming API Models - Instance
@@ -435,7 +423,7 @@ pub struct ServiceListParam {
     #[serde(default = "default_page_no")]
     pub page_no: u64,
     /// Page size (defaults to 10)
-    #[serde(default = "default_service_page_size")]
+    #[serde(default = "default_page_size_small")]
     pub page_size: u64,
     /// Selector expression (optional)
     #[serde(default)]

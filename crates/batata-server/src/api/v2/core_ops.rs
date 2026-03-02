@@ -6,114 +6,37 @@
 //! - PUT /nacos/v2/core/ops/log - Update log level
 
 use actix_web::{HttpRequest, Responder, get, post, put, web};
-use serde::{Deserialize, Serialize};
 
-use crate::{
-    ActionTypes, ApiType, Secured, SignType, model::common::AppState, model::response::Result,
-    secured,
+use crate::{ApiType, model::common::AppState};
+
+use super::super::shared::core_ops::{
+    LogUpdateParam, RaftOpsParam, do_get_ids, do_raft_ops, do_set_log_level,
 };
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
-struct RaftOpsParam {
-    command: String,
-    #[serde(default)]
-    group_id: Option<String>,
-    #[serde(default)]
-    value: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LogUpdateParam {
-    log_name: String,
-    log_level: String,
-}
-
 /// POST /nacos/v2/core/ops/raft
-///
-/// Raft operations: transferLeader, doSnapshot, resetRaftCluster, removePeer.
 #[post("raft")]
 pub async fn raft_ops(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<RaftOpsParam>,
 ) -> impl Responder {
-    let resource = "*:*:*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Write)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
-
-    tracing::info!(
-        command = %params.command,
-        group_id = ?params.group_id,
-        "Raft operation requested via V2 core ops API"
-    );
-
-    Result::<String>::http_success(format!("Raft command '{}' acknowledged", params.command))
+    do_raft_ops(&req, &data, &params, ApiType::OpenApi).await
 }
 
 /// GET /nacos/v2/core/ops/ids
-///
-/// Get ID generator health information.
 #[get("ids")]
 pub async fn get_ids(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
-    let resource = "*:*:*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Read)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
-
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct IdsResponse {
-        node_id: String,
-        cluster_id: String,
-    }
-
-    let self_member = data.member_manager().get_self();
-
-    let response = IdsResponse {
-        node_id: self_member.address.clone(),
-        cluster_id: "batata-cluster".to_string(),
-    };
-
-    Result::<IdsResponse>::http_success(response)
+    do_get_ids(&req, &data, ApiType::OpenApi).await
 }
 
 /// PUT /nacos/v2/core/ops/log
-///
-/// Update log level for a specific logger.
 #[put("log")]
 pub async fn set_log_level(
     req: HttpRequest,
     data: web::Data<AppState>,
     params: web::Query<LogUpdateParam>,
 ) -> impl Responder {
-    let resource = "*:*:*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Write)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
-
-    tracing::info!(
-        log_name = %params.log_name,
-        log_level = %params.log_level,
-        "Log level change requested via V2 core ops API"
-    );
-
-    Result::<bool>::http_success(true)
+    do_set_log_level(&req, &data, &params, ApiType::OpenApi).await
 }
 
 pub fn routes() -> actix_web::Scope {

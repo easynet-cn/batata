@@ -13,10 +13,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID};
+
 // Client protocol version
 pub const CLIENT_VERSION: &str = "3.0.0";
 pub const DATA_IN_BODY_VERSION: i32 = 204;
-pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 
 // Header and parameter keys
 pub const APPNAME: &str = "AppName";
@@ -115,7 +116,6 @@ pub const DEFAULT_INSTANCE_WEIGHT: f64 = 1.0;
 
 // Default values
 pub const DEFAULT_CLUSTER_NAME: &str = "DEFAULT";
-pub const DEFAULT_NAMESPACE_ID: &str = "public";
 pub const DEFAULT_USE_CLOUD_NAMESPACE_PARSING: bool = true;
 pub const DEFAULT_USE_RAM_INFO_PARSING: &str = "true";
 pub const DEFAULT_INSTANCE_ID_GENERATOR: &str = "simple";

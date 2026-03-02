@@ -5,13 +5,13 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, Responder, get, put, web};
 use serde::{Deserialize, Serialize};
 
-use batata_common::{ActionTypes, ApiType, SignType, impl_or_default};
+use batata_common::{
+    ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, impl_or_default,
+};
 use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
 
 use crate::service::NamingService;
 
-const DEFAULT_NAMESPACE_ID: &str = "public";
-const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 const DEFAULT_CLUSTER: &str = "DEFAULT";
 
 #[derive(Debug, Deserialize)]

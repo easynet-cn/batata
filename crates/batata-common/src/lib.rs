@@ -25,6 +25,21 @@ pub const DEFAULT_NAMESPACE_ID: &str = "public";
 /// Default group name
 pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 
+/// Default page number for pagination (used with serde default)
+pub fn default_page_no() -> u64 {
+    1
+}
+
+/// Default page size for pagination - large (used with serde default)
+pub fn default_page_size() -> u64 {
+    100
+}
+
+/// Default page size for pagination - small (used with serde default)
+pub fn default_page_size_small() -> u64 {
+    20
+}
+
 /// Query parameter names
 pub const TENANT: &str = "tenant";
 pub const NAMESPACE_ID: &str = "namespaceId";

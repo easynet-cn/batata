@@ -6,7 +6,7 @@ use tracing::warn;
 
 use batata_api::Page;
 
-use batata_common::DEFAULT_NAMESPACE_ID;
+use batata_common::{DEFAULT_NAMESPACE_ID, default_page_no, default_page_size_small};
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType, model, model::AppState, secured,
 };
@@ -24,21 +24,13 @@ struct HistoryListParam {
     namespace_id: Option<String>,
     #[serde(default = "default_page_no")]
     page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size_small")]
     page_size: u64,
 }
 
-fn default_page_no() -> u64 {
-    1
-}
-
-fn default_page_size() -> u64 {
-    20
-}
-
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct HistoryDetailParam {
     data_id: String,
     group_name: String,

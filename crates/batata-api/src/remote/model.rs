@@ -181,19 +181,7 @@ impl InternalRequest {
     }
 }
 
-impl RequestTrait for InternalRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(base InternalRequest, request);
 
 /// Health check request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -211,23 +199,7 @@ impl HealthCheckRequest {
     }
 }
 
-impl RequestTrait for HealthCheckRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.internal_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "HealthCheckRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.internal_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.internal_request.request_id()
-    }
-}
+impl_request_trait!(HealthCheckRequest, internal_request);
 
 impl From<&Payload> for HealthCheckRequest {
     fn from(value: &Payload) -> Self {
@@ -369,23 +341,7 @@ impl HealthCheckResponse {
     }
 }
 
-impl ResponseTrait for HealthCheckResponse {
-    fn response_type(&self) -> &'static str {
-        "HealthCheckResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(HealthCheckResponse);
 
 impl From<HealthCheckResponse> for Any {
     fn from(val: HealthCheckResponse) -> Self {
@@ -432,23 +388,7 @@ impl ConnectResetRequest {
     }
 }
 
-impl RequestTrait for ConnectResetRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.internal_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConnectResetRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.internal_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.internal_request.request_id()
-    }
-}
+impl_request_trait!(ConnectResetRequest, internal_request);
 
 impl From<&Payload> for ConnectResetRequest {
     fn from(value: &Payload) -> Self {
@@ -472,23 +412,7 @@ impl ServerCheckRequest {
     }
 }
 
-impl RequestTrait for ServerCheckRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.internal_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ServerCheckRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.internal_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.internal_request.request_id()
-    }
-}
+impl_request_trait!(ServerCheckRequest, internal_request);
 
 impl From<&Payload> for ServerCheckRequest {
     fn from(value: &Payload) -> Self {
@@ -517,23 +441,7 @@ impl ConnectionSetupRequest {
     }
 }
 
-impl RequestTrait for ConnectionSetupRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.internal_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConnectionSetupRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.internal_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.internal_request.request_id()
-    }
-}
+impl_request_trait!(ConnectionSetupRequest, internal_request);
 
 impl From<&Payload> for ConnectionSetupRequest {
     fn from(value: &Payload) -> Self {
@@ -557,23 +465,7 @@ impl ServerLoaderInfoRequest {
     }
 }
 
-impl RequestTrait for ServerLoaderInfoRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.internal_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ServerLoaderInfoRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.internal_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.internal_request.request_id()
-    }
-}
+impl_request_trait!(ServerLoaderInfoRequest, internal_request);
 
 impl From<&Payload> for ServerLoaderInfoRequest {
     fn from(value: &Payload) -> Self {
@@ -597,23 +489,7 @@ impl ServerReloadRequest {
     }
 }
 
-impl RequestTrait for ServerReloadRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.internal_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ServerReloadRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.internal_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.internal_request.request_id()
-    }
-}
+impl_request_trait!(ServerReloadRequest, internal_request);
 
 impl From<&Payload> for ServerReloadRequest {
     fn from(value: &Payload) -> Self {
@@ -643,19 +519,7 @@ impl ServerRequest {
     }
 }
 
-impl RequestTrait for ServerRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(base ServerRequest, request);
 
 /// Client detection request for checking client status
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -665,23 +529,7 @@ pub struct ClientDetectionRequest {
     pub server_requst: ServerRequest,
 }
 
-impl RequestTrait for ClientDetectionRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.server_requst.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ClientDetectionRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.server_requst.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.server_requst.request_id()
-    }
-}
+impl_request_trait!(ClientDetectionRequest, server_requst);
 
 impl From<&Payload> for ClientDetectionRequest {
     fn from(value: &Payload) -> Self {
@@ -697,23 +545,7 @@ pub struct SetupAckRequest {
     pub server_requst: ServerRequest,
 }
 
-impl RequestTrait for SetupAckRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.server_requst.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "SetupAckRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.server_requst.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.server_requst.request_id()
-    }
-}
+impl_request_trait!(SetupAckRequest, server_requst);
 
 impl From<&Payload> for SetupAckRequest {
     fn from(value: &Payload) -> Self {
@@ -731,23 +563,7 @@ pub struct ServerCheckResponse {
     pub support_ability_negotiation: bool,
 }
 
-impl ResponseTrait for ServerCheckResponse {
-    fn response_type(&self) -> &'static str {
-        "ServerCheckResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ServerCheckResponse);
 
 impl From<ServerCheckResponse> for Any {
     fn from(val: ServerCheckResponse) -> Self {
@@ -771,23 +587,7 @@ impl ClientDetectionResponse {
     }
 }
 
-impl ResponseTrait for ClientDetectionResponse {
-    fn response_type(&self) -> &'static str {
-        "ClientDetectionResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ClientDetectionResponse);
 
 impl From<ClientDetectionResponse> for Any {
     fn from(val: ClientDetectionResponse) -> Self {
@@ -813,23 +613,7 @@ impl ServerLoaderInfoResponse {
     }
 }
 
-impl ResponseTrait for ServerLoaderInfoResponse {
-    fn response_type(&self) -> &'static str {
-        "ServerLoaderInfoResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ServerLoaderInfoResponse);
 
 impl From<ServerLoaderInfoResponse> for Any {
     fn from(val: ServerLoaderInfoResponse) -> Self {
@@ -853,23 +637,7 @@ impl ServerReloadResponse {
     }
 }
 
-impl ResponseTrait for ServerReloadResponse {
-    fn response_type(&self) -> &'static str {
-        "ServerReloadResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ServerReloadResponse);
 
 impl From<ServerReloadResponse> for Any {
     fn from(val: ServerReloadResponse) -> Self {
@@ -893,23 +661,7 @@ impl ConnectResetResponse {
     }
 }
 
-impl ResponseTrait for ConnectResetResponse {
-    fn response_type(&self) -> &'static str {
-        "ConnectResetResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConnectResetResponse);
 
 impl From<ConnectResetResponse> for Any {
     fn from(val: ConnectResetResponse) -> Self {
@@ -933,23 +685,7 @@ impl SetupAckResponse {
     }
 }
 
-impl ResponseTrait for SetupAckResponse {
-    fn response_type(&self) -> &'static str {
-        "SetupAckResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(SetupAckResponse);
 
 impl From<SetupAckResponse> for Any {
     fn from(val: SetupAckResponse) -> Self {
@@ -973,23 +709,7 @@ impl PushAckRequest {
     }
 }
 
-impl RequestTrait for PushAckRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.internal_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "PushAckRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.internal_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.internal_request.request_id()
-    }
-}
+impl_request_trait!(PushAckRequest, internal_request);
 
 impl From<&Payload> for PushAckRequest {
     fn from(value: &Payload) -> Self {
@@ -1010,23 +730,7 @@ pub struct MemberReportRequest {
     pub node: Option<Member>,
 }
 
-impl RequestTrait for MemberReportRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.internal_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "MemberReportRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.internal_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.internal_request.request_id()
-    }
-}
+impl_request_trait!(MemberReportRequest, internal_request);
 
 impl From<&Payload> for MemberReportRequest {
     fn from(value: &Payload) -> Self {
@@ -1052,23 +756,7 @@ impl MemberReportResponse {
     }
 }
 
-impl ResponseTrait for MemberReportResponse {
-    fn response_type(&self) -> &'static str {
-        "MemberReportResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(MemberReportResponse);
 
 impl From<MemberReportResponse> for Any {
     fn from(val: MemberReportResponse) -> Self {
@@ -1102,23 +790,7 @@ pub struct LockOperationRequest {
     pub lock_operation: String,
 }
 
-impl RequestTrait for LockOperationRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "LockOperationRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(LockOperationRequest, request);
 
 impl From<&Payload> for LockOperationRequest {
     fn from(value: &Payload) -> Self {
@@ -1144,23 +816,7 @@ impl LockOperationResponse {
     }
 }
 
-impl ResponseTrait for LockOperationResponse {
-    fn response_type(&self) -> &'static str {
-        "LockOperationResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(LockOperationResponse);
 
 impl From<LockOperationResponse> for Any {
     fn from(val: LockOperationResponse) -> Self {
@@ -1190,23 +846,7 @@ pub struct McpServerEndpointRequest {
     pub operation_type: String,
 }
 
-impl RequestTrait for McpServerEndpointRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "McpServerEndpointRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(McpServerEndpointRequest, request);
 
 impl From<&Payload> for McpServerEndpointRequest {
     fn from(value: &Payload) -> Self {
@@ -1233,23 +873,7 @@ impl McpServerEndpointResponse {
     }
 }
 
-impl ResponseTrait for McpServerEndpointResponse {
-    fn response_type(&self) -> &'static str {
-        "McpServerEndpointResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(McpServerEndpointResponse);
 
 impl From<McpServerEndpointResponse> for Any {
     fn from(val: McpServerEndpointResponse) -> Self {
@@ -1269,23 +893,7 @@ pub struct QueryMcpServerRequest {
     pub version: String,
 }
 
-impl RequestTrait for QueryMcpServerRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "QueryMcpServerRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(QueryMcpServerRequest, request);
 
 impl From<&Payload> for QueryMcpServerRequest {
     fn from(value: &Payload) -> Self {
@@ -1311,23 +919,7 @@ impl QueryMcpServerResponse {
     }
 }
 
-impl ResponseTrait for QueryMcpServerResponse {
-    fn response_type(&self) -> &'static str {
-        "QueryMcpServerResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(QueryMcpServerResponse);
 
 impl From<QueryMcpServerResponse> for Any {
     fn from(val: QueryMcpServerResponse) -> Self {
@@ -1351,23 +943,7 @@ pub struct ReleaseMcpServerRequest {
     pub endpoint_specification: serde_json::Value,
 }
 
-impl RequestTrait for ReleaseMcpServerRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ReleaseMcpServerRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(ReleaseMcpServerRequest, request);
 
 impl From<&Payload> for ReleaseMcpServerRequest {
     fn from(value: &Payload) -> Self {
@@ -1393,23 +969,7 @@ impl ReleaseMcpServerResponse {
     }
 }
 
-impl ResponseTrait for ReleaseMcpServerResponse {
-    fn response_type(&self) -> &'static str {
-        "ReleaseMcpServerResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ReleaseMcpServerResponse);
 
 impl From<ReleaseMcpServerResponse> for Any {
     fn from(val: ReleaseMcpServerResponse) -> Self {
@@ -1447,23 +1007,7 @@ pub struct AgentEndpointRequest {
     pub operation_type: String,
 }
 
-impl RequestTrait for AgentEndpointRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "AgentEndpointRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(AgentEndpointRequest, request);
 
 impl From<&Payload> for AgentEndpointRequest {
     fn from(value: &Payload) -> Self {
@@ -1490,23 +1034,7 @@ impl AgentEndpointResponse {
     }
 }
 
-impl ResponseTrait for AgentEndpointResponse {
-    fn response_type(&self) -> &'static str {
-        "AgentEndpointResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(AgentEndpointResponse);
 
 impl From<AgentEndpointResponse> for Any {
     fn from(val: AgentEndpointResponse) -> Self {
@@ -1528,23 +1056,7 @@ pub struct QueryAgentCardRequest {
     pub registration_type: String,
 }
 
-impl RequestTrait for QueryAgentCardRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "QueryAgentCardRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(QueryAgentCardRequest, request);
 
 impl From<&Payload> for QueryAgentCardRequest {
     fn from(value: &Payload) -> Self {
@@ -1570,23 +1082,7 @@ impl QueryAgentCardResponse {
     }
 }
 
-impl ResponseTrait for QueryAgentCardResponse {
-    fn response_type(&self) -> &'static str {
-        "QueryAgentCardResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(QueryAgentCardResponse);
 
 impl From<QueryAgentCardResponse> for Any {
     fn from(val: QueryAgentCardResponse) -> Self {
@@ -1613,23 +1109,7 @@ pub struct ReleaseAgentCardRequest {
     pub registration_type: String,
 }
 
-impl RequestTrait for ReleaseAgentCardRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ReleaseAgentCardRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(ReleaseAgentCardRequest, request);
 
 impl From<&Payload> for ReleaseAgentCardRequest {
     fn from(value: &Payload) -> Self {
@@ -1653,23 +1133,7 @@ impl ReleaseAgentCardResponse {
     }
 }
 
-impl ResponseTrait for ReleaseAgentCardResponse {
-    fn response_type(&self) -> &'static str {
-        "ReleaseAgentCardResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ReleaseAgentCardResponse);
 
 impl From<ReleaseAgentCardResponse> for Any {
     fn from(val: ReleaseAgentCardResponse) -> Self {

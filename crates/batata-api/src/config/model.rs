@@ -57,19 +57,7 @@ impl ConfigRequest {
     }
 }
 
-impl RequestTrait for ConfigRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(base ConfigRequest, request);
 
 /// Configuration clone information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -156,23 +144,7 @@ impl ConfigBatchListenRequest {
     }
 }
 
-impl RequestTrait for ConfigBatchListenRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.config_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigBatchListenRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.config_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.config_request.request_id()
-    }
-}
+impl_request_trait!(ConfigBatchListenRequest, config_request);
 
 impl From<&Payload> for ConfigBatchListenRequest {
     fn from(value: &Payload) -> Self {
@@ -201,23 +173,7 @@ impl ConfigPublishRequest {
     }
 }
 
-impl RequestTrait for ConfigPublishRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.config_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigPublishRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.config_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.config_request.request_id()
-    }
-}
+impl_request_trait!(ConfigPublishRequest, config_request);
 
 impl From<&Payload> for ConfigPublishRequest {
     fn from(value: &Payload) -> Self {
@@ -243,23 +199,7 @@ impl ConfigQueryRequest {
     }
 }
 
-impl RequestTrait for ConfigQueryRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.config_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigQueryRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.config_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.config_request.request_id()
-    }
-}
+impl_request_trait!(ConfigQueryRequest, config_request);
 
 impl From<&Payload> for ConfigQueryRequest {
     fn from(value: &Payload) -> Self {
@@ -285,23 +225,7 @@ impl ConfigRemoveRequest {
     }
 }
 
-impl RequestTrait for ConfigRemoveRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.config_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigRemoveRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.config_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.config_request.request_id()
-    }
-}
+impl_request_trait!(ConfigRemoveRequest, config_request);
 
 impl From<&Payload> for ConfigRemoveRequest {
     fn from(value: &Payload) -> Self {
@@ -331,19 +255,7 @@ impl FuzzyWatchNotifyRequest {
     }
 }
 
-impl RequestTrait for FuzzyWatchNotifyRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.server_request.headers()
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.server_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.server_request.request_id()
-    }
-}
+impl_request_trait!(base FuzzyWatchNotifyRequest, server_request);
 
 /// Configuration fuzzy watch change notify request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -364,23 +276,10 @@ impl ConfigFuzzyWatchChangeNotifyRequest {
     }
 }
 
-impl RequestTrait for ConfigFuzzyWatchChangeNotifyRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.fuzzy_watch_notify_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigFuzzyWatchChangeNotifyRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.fuzzy_watch_notify_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.fuzzy_watch_notify_request.request_id()
-    }
-}
+impl_request_trait!(
+    ConfigFuzzyWatchChangeNotifyRequest,
+    fuzzy_watch_notify_request
+);
 
 impl From<&Payload> for ConfigFuzzyWatchChangeNotifyRequest {
     fn from(value: &Payload) -> Self {
@@ -418,23 +317,7 @@ impl ConfigFuzzyWatchSyncRequest {
     }
 }
 
-impl RequestTrait for ConfigFuzzyWatchSyncRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.fuzzy_watch_notify_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigFuzzyWatchSyncRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.fuzzy_watch_notify_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.fuzzy_watch_notify_request.request_id()
-    }
-}
+impl_request_trait!(ConfigFuzzyWatchSyncRequest, fuzzy_watch_notify_request);
 
 impl From<&Payload> for ConfigFuzzyWatchSyncRequest {
     fn from(value: &Payload) -> Self {
@@ -483,23 +366,7 @@ impl ClientConfigMetricRequest {
     }
 }
 
-impl RequestTrait for ClientConfigMetricRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.server_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ClientConfigMetricRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.server_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.server_request.request_id()
-    }
-}
+impl_request_trait!(ClientConfigMetricRequest, server_request);
 
 impl From<&Payload> for ClientConfigMetricRequest {
     fn from(value: &Payload) -> Self {
@@ -543,23 +410,7 @@ impl ConfigChangeNotifyRequest {
     }
 }
 
-impl RequestTrait for ConfigChangeNotifyRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.server_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigChangeNotifyRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.server_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.server_request.request_id()
-    }
-}
+impl_request_trait!(ConfigChangeNotifyRequest, server_request);
 
 impl From<&Payload> for ConfigChangeNotifyRequest {
     fn from(value: &Payload) -> Self {
@@ -592,23 +443,7 @@ impl ConfigFuzzyWatchRequest {
     }
 }
 
-impl RequestTrait for ConfigFuzzyWatchRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigFuzzyWatchRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id()
-    }
-}
+impl_request_trait!(ConfigFuzzyWatchRequest, request);
 
 impl From<&Payload> for ConfigFuzzyWatchRequest {
     fn from(value: &Payload) -> Self {
@@ -635,23 +470,7 @@ impl ConfigChangeClusterSyncRequest {
     }
 }
 
-impl RequestTrait for ConfigChangeClusterSyncRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.config_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ConfigChangeClusterSyncRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.config_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.config_request.request_id()
-    }
-}
+impl_request_trait!(ConfigChangeClusterSyncRequest, config_request);
 
 impl From<&Payload> for ConfigChangeClusterSyncRequest {
     fn from(value: &Payload) -> Self {
@@ -686,23 +505,7 @@ impl ConfigChangeBatchListenResponse {
     }
 }
 
-impl ResponseTrait for ConfigChangeBatchListenResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigChangeBatchListenResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigChangeBatchListenResponse);
 
 impl From<ConfigChangeBatchListenResponse> for Any {
     fn from(val: ConfigChangeBatchListenResponse) -> Self {
@@ -726,23 +529,7 @@ impl ConfigPublishResponse {
     }
 }
 
-impl ResponseTrait for ConfigPublishResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigPublishResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigPublishResponse);
 
 impl From<ConfigPublishResponse> for Any {
     fn from(val: ConfigPublishResponse) -> Self {
@@ -778,23 +565,7 @@ impl ConfigQueryResponse {
     }
 }
 
-impl ResponseTrait for ConfigQueryResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigQueryResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigQueryResponse);
 
 impl From<ConfigQueryResponse> for Any {
     fn from(val: ConfigQueryResponse) -> Self {
@@ -818,23 +589,7 @@ impl ConfigRemoveResponse {
     }
 }
 
-impl ResponseTrait for ConfigRemoveResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigRemoveResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigRemoveResponse);
 
 impl From<ConfigRemoveResponse> for Any {
     fn from(val: ConfigRemoveResponse) -> Self {
@@ -858,23 +613,7 @@ impl ConfigFuzzyWatchChangeNotifyResponse {
     }
 }
 
-impl ResponseTrait for ConfigFuzzyWatchChangeNotifyResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigFuzzyWatchChangeNotifyResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigFuzzyWatchChangeNotifyResponse);
 
 impl From<ConfigFuzzyWatchChangeNotifyResponse> for Any {
     fn from(val: ConfigFuzzyWatchChangeNotifyResponse) -> Self {
@@ -898,23 +637,7 @@ impl ConfigFuzzyWatchSyncResponse {
     }
 }
 
-impl ResponseTrait for ConfigFuzzyWatchSyncResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigFuzzyWatchSyncResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigFuzzyWatchSyncResponse);
 
 impl From<ConfigFuzzyWatchSyncResponse> for Any {
     fn from(val: ConfigFuzzyWatchSyncResponse) -> Self {
@@ -940,23 +663,7 @@ impl ClientConfigMetricResponse {
     }
 }
 
-impl ResponseTrait for ClientConfigMetricResponse {
-    fn response_type(&self) -> &'static str {
-        "ClientConfigMetricResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ClientConfigMetricResponse);
 
 impl From<ClientConfigMetricResponse> for Any {
     fn from(val: ClientConfigMetricResponse) -> Self {
@@ -980,23 +687,7 @@ impl ConfigChangeNotifyResponse {
     }
 }
 
-impl ResponseTrait for ConfigChangeNotifyResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigChangeNotifyResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigChangeNotifyResponse);
 
 impl From<ConfigChangeNotifyResponse> for Any {
     fn from(val: ConfigChangeNotifyResponse) -> Self {
@@ -1020,23 +711,7 @@ impl ConfigFuzzyWatchResponse {
     }
 }
 
-impl ResponseTrait for ConfigFuzzyWatchResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigFuzzyWatchResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigFuzzyWatchResponse);
 
 impl From<ConfigFuzzyWatchResponse> for Any {
     fn from(val: ConfigFuzzyWatchResponse) -> Self {
@@ -1060,23 +735,7 @@ impl ConfigChangeClusterSyncResponse {
     }
 }
 
-impl ResponseTrait for ConfigChangeClusterSyncResponse {
-    fn response_type(&self) -> &'static str {
-        "ConfigChangeClusterSyncResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ConfigChangeClusterSyncResponse);
 
 impl From<ConfigChangeClusterSyncResponse> for Any {
     fn from(val: ConfigChangeClusterSyncResponse) -> Self {

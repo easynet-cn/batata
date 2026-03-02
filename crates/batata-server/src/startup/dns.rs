@@ -71,23 +71,15 @@ impl DnsConfig {
 const DNS_FLAG_QR: u16 = 0x8000; // Query/Response flag
 const DNS_FLAG_AA: u16 = 0x0400; // Authoritative Answer
 const DNS_FLAG_RD: u16 = 0x0100; // Recursion Desired
-#[allow(dead_code)]
-const DNS_FLAG_RA: u16 = 0x0080; // Recursion Available
 
 /// DNS record types
 const DNS_TYPE_A: u16 = 1;
-#[allow(dead_code)]
-const DNS_TYPE_AAAA: u16 = 28;
 const DNS_TYPE_SRV: u16 = 33;
-#[allow(dead_code)]
-const DNS_TYPE_TXT: u16 = 16;
 
 /// DNS class
 const DNS_CLASS_IN: u16 = 1;
 
 /// DNS response codes
-#[allow(dead_code)]
-const DNS_RCODE_OK: u16 = 0;
 const DNS_RCODE_NXDOMAIN: u16 = 3;
 
 /// DNS Server for service discovery

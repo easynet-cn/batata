@@ -338,9 +338,9 @@ async fn find_beta_one(
     model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct BetaPublishForm {
     pub data_id: String,
     #[serde(default)]
@@ -753,9 +753,9 @@ async fn batch_delete(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct SearchDetailParam {
     #[serde(flatten)]
     config_form: ConfigForm,
@@ -880,9 +880,9 @@ fn default_clone_policy() -> String {
     "ABORT".to_string()
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct CloneConfigBean {
     pub cfg_id: i64,
     #[serde(default)]

@@ -18,10 +18,9 @@ use batata_persistence::entity::{
     config_info, config_info_gray, config_tags_relation, his_config_info,
 };
 
-use crate::{
-    DEFAULT_NAMESPACE_ID,
-    model::{ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper},
-};
+use batata_common::DEFAULT_NAMESPACE_ID;
+
+use crate::model::{ConfigAllInfo, ConfigBasicInfo, ConfigInfoGrayWrapper};
 
 /// Escape SQL wildcard characters and convert user wildcards to SQL LIKE pattern.
 /// Escapes % and _ to prevent SQL wildcard injection, then converts * to %.

@@ -33,6 +33,9 @@ pub use batata_api::raft;
 // Distro protocol API - re-exported from batata-api crate
 pub use batata_api::distro;
 
+// Shared logic between V2 and V3 API implementations
+pub mod shared;
+
 // Nacos V2 Open API implementation
 // Note: V1 API is NOT supported. Batata follows Nacos 3.x direction
 // which focuses on V2 and V3 APIs for modern clients.

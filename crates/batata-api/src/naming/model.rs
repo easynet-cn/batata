@@ -204,19 +204,7 @@ impl NamingRequest {
     }
 }
 
-impl RequestTrait for NamingRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id.clone()
-    }
-}
+impl_request_trait!(base NamingRequest, request);
 
 // Instance registration/deregistration request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -237,23 +225,7 @@ impl InstanceRequest {
     }
 }
 
-impl RequestTrait for InstanceRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.naming_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "InstanceRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.naming_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.naming_request.request_id()
-    }
-}
+impl_request_trait!(InstanceRequest, naming_request);
 
 impl From<&Payload> for InstanceRequest {
     fn from(value: &Payload) -> Self {
@@ -280,23 +252,7 @@ impl BatchInstanceRequest {
     }
 }
 
-impl RequestTrait for BatchInstanceRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.naming_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "BatchInstanceRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.naming_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.naming_request.request_id()
-    }
-}
+impl_request_trait!(BatchInstanceRequest, naming_request);
 
 impl From<&Payload> for BatchInstanceRequest {
     fn from(value: &Payload) -> Self {
@@ -323,23 +279,7 @@ impl PersistentInstanceRequest {
     }
 }
 
-impl RequestTrait for PersistentInstanceRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.naming_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "PersistentInstanceRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.naming_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.naming_request.request_id()
-    }
-}
+impl_request_trait!(PersistentInstanceRequest, naming_request);
 
 impl From<&Payload> for PersistentInstanceRequest {
     fn from(value: &Payload) -> Self {
@@ -367,23 +307,7 @@ impl ServiceListRequest {
     }
 }
 
-impl RequestTrait for ServiceListRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.naming_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ServiceListRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.naming_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.naming_request.request_id()
-    }
-}
+impl_request_trait!(ServiceListRequest, naming_request);
 
 impl From<&Payload> for ServiceListRequest {
     fn from(value: &Payload) -> Self {
@@ -411,23 +335,7 @@ impl ServiceQueryRequest {
     }
 }
 
-impl RequestTrait for ServiceQueryRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.naming_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "ServiceQueryRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.naming_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.naming_request.request_id()
-    }
-}
+impl_request_trait!(ServiceQueryRequest, naming_request);
 
 impl From<&Payload> for ServiceQueryRequest {
     fn from(value: &Payload) -> Self {
@@ -455,23 +363,7 @@ impl SubscribeServiceRequest {
     }
 }
 
-impl RequestTrait for SubscribeServiceRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.naming_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "SubscribeServiceRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.naming_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.naming_request.request_id()
-    }
-}
+impl_request_trait!(SubscribeServiceRequest, naming_request);
 
 impl From<&Payload> for SubscribeServiceRequest {
     fn from(value: &Payload) -> Self {
@@ -522,23 +414,7 @@ impl NotifySubscriberRequest {
     }
 }
 
-impl RequestTrait for NotifySubscriberRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.server_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "NotifySubscriberRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.server_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.server_request.request_id()
-    }
-}
+impl_request_trait!(NotifySubscriberRequest, server_request);
 
 impl From<&Payload> for NotifySubscriberRequest {
     fn from(value: &Payload) -> Self {
@@ -567,19 +443,7 @@ impl FuzzyWatchNotifyRequest {
     }
 }
 
-impl RequestTrait for FuzzyWatchNotifyRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.server_request.headers()
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.server_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.server_request.request_id()
-    }
-}
+impl_request_trait!(base FuzzyWatchNotifyRequest, server_request);
 
 // Naming fuzzy watch request
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -612,23 +476,7 @@ impl NamingFuzzyWatchRequest {
     }
 }
 
-impl RequestTrait for NamingFuzzyWatchRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "NamingFuzzyWatchRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.request.request_id()
-    }
-}
+impl_request_trait!(NamingFuzzyWatchRequest, request);
 
 impl From<&Payload> for NamingFuzzyWatchRequest {
     fn from(value: &Payload) -> Self {
@@ -664,23 +512,10 @@ impl NamingFuzzyWatchChangeNotifyRequest {
     }
 }
 
-impl RequestTrait for NamingFuzzyWatchChangeNotifyRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.fuzzy_watch_notify_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "NamingFuzzyWatchChangeNotifyRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.fuzzy_watch_notify_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.fuzzy_watch_notify_request.request_id()
-    }
-}
+impl_request_trait!(
+    NamingFuzzyWatchChangeNotifyRequest,
+    fuzzy_watch_notify_request
+);
 
 impl From<&Payload> for NamingFuzzyWatchChangeNotifyRequest {
     fn from(value: &Payload) -> Self {
@@ -712,23 +547,7 @@ impl NamingFuzzyWatchSyncRequest {
     }
 }
 
-impl RequestTrait for NamingFuzzyWatchSyncRequest {
-    fn headers(&self) -> HashMap<String, String> {
-        self.fuzzy_watch_notify_request.headers()
-    }
-
-    fn request_type(&self) -> &'static str {
-        "NamingFuzzyWatchSyncRequest"
-    }
-
-    fn insert_headers(&mut self, headers: HashMap<String, String>) {
-        self.fuzzy_watch_notify_request.insert_headers(headers);
-    }
-
-    fn request_id(&self) -> String {
-        self.fuzzy_watch_notify_request.request_id()
-    }
-}
+impl_request_trait!(NamingFuzzyWatchSyncRequest, fuzzy_watch_notify_request);
 
 impl From<&Payload> for NamingFuzzyWatchSyncRequest {
     fn from(value: &Payload) -> Self {
@@ -756,23 +575,7 @@ impl InstanceResponse {
     }
 }
 
-impl ResponseTrait for InstanceResponse {
-    fn response_type(&self) -> &'static str {
-        "InstanceResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(InstanceResponse);
 
 impl From<InstanceResponse> for Any {
     fn from(val: InstanceResponse) -> Self {
@@ -798,23 +601,7 @@ impl BatchInstanceResponse {
     }
 }
 
-impl ResponseTrait for BatchInstanceResponse {
-    fn response_type(&self) -> &'static str {
-        "BatchInstanceResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(BatchInstanceResponse);
 
 impl From<BatchInstanceResponse> for Any {
     fn from(val: BatchInstanceResponse) -> Self {
@@ -841,23 +628,7 @@ impl ServiceListResponse {
     }
 }
 
-impl ResponseTrait for ServiceListResponse {
-    fn response_type(&self) -> &'static str {
-        "ServiceListResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(ServiceListResponse);
 
 impl From<ServiceListResponse> for Any {
     fn from(val: ServiceListResponse) -> Self {
@@ -883,23 +654,7 @@ impl QueryServiceResponse {
     }
 }
 
-impl ResponseTrait for QueryServiceResponse {
-    fn response_type(&self) -> &'static str {
-        "QueryServiceResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(QueryServiceResponse);
 
 impl From<QueryServiceResponse> for Any {
     fn from(val: QueryServiceResponse) -> Self {
@@ -925,23 +680,7 @@ impl SubscribeServiceResponse {
     }
 }
 
-impl ResponseTrait for SubscribeServiceResponse {
-    fn response_type(&self) -> &'static str {
-        "SubscribeServiceResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(SubscribeServiceResponse);
 
 impl From<SubscribeServiceResponse> for Any {
     fn from(val: SubscribeServiceResponse) -> Self {
@@ -965,23 +704,7 @@ impl NotifySubscriberResponse {
     }
 }
 
-impl ResponseTrait for NotifySubscriberResponse {
-    fn response_type(&self) -> &'static str {
-        "NotifySubscriberResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(NotifySubscriberResponse);
 
 impl From<NotifySubscriberResponse> for Any {
     fn from(val: NotifySubscriberResponse) -> Self {
@@ -1005,23 +728,7 @@ impl NamingFuzzyWatchResponse {
     }
 }
 
-impl ResponseTrait for NamingFuzzyWatchResponse {
-    fn response_type(&self) -> &'static str {
-        "NamingFuzzyWatchResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(NamingFuzzyWatchResponse);
 
 impl From<NamingFuzzyWatchResponse> for Any {
     fn from(val: NamingFuzzyWatchResponse) -> Self {
@@ -1045,23 +752,7 @@ impl NamingFuzzyWatchChangeNotifyResponse {
     }
 }
 
-impl ResponseTrait for NamingFuzzyWatchChangeNotifyResponse {
-    fn response_type(&self) -> &'static str {
-        "NamingFuzzyWatchChangeNotifyResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(NamingFuzzyWatchChangeNotifyResponse);
 
 impl From<NamingFuzzyWatchChangeNotifyResponse> for Any {
     fn from(val: NamingFuzzyWatchChangeNotifyResponse) -> Self {
@@ -1085,23 +776,7 @@ impl NamingFuzzyWatchSyncResponse {
     }
 }
 
-impl ResponseTrait for NamingFuzzyWatchSyncResponse {
-    fn response_type(&self) -> &'static str {
-        "NamingFuzzyWatchSyncResponse"
-    }
-
-    fn request_id(&mut self, request_id: String) {
-        self.response.request_id = request_id;
-    }
-
-    fn error_code(&self) -> i32 {
-        self.response.error_code
-    }
-
-    fn result_code(&self) -> i32 {
-        self.response.result_code
-    }
-}
+impl_response_trait!(NamingFuzzyWatchSyncResponse);
 
 impl From<NamingFuzzyWatchSyncResponse> for Any {
     fn from(val: NamingFuzzyWatchSyncResponse) -> Self {

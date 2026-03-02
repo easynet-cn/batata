@@ -2,14 +2,8 @@
 //!
 //! These models follow the Nacos V2 API specification with camelCase JSON serialization.
 
-use batata_common::impl_or_default;
+use batata_common::{DEFAULT_NAMESPACE_ID, default_page_no, default_page_size, impl_or_default};
 use serde::{Deserialize, Serialize};
-
-/// Default namespace ID used when none is specified
-pub const DEFAULT_NAMESPACE_ID: &str = "public";
-
-/// Default group name used when none is specified
-pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 
 // =============================================================================
 // Config API Models
@@ -215,14 +209,6 @@ pub struct HistoryListParam {
     /// Page size (defaults to 100)
     #[serde(default = "default_page_size")]
     pub page_size: u64,
-}
-
-fn default_page_no() -> u64 {
-    1
-}
-
-fn default_page_size() -> u64 {
-    100
 }
 
 fn default_search() -> String {

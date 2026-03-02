@@ -4,15 +4,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use batata_api::naming::model::Instance;
-use batata_common::{ActionTypes, ApiType, SignType, impl_or_default};
+use batata_common::{
+    ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, impl_or_default,
+};
 use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
 
 use crate::service::NamingService;
 use actix_web::{HttpRequest, Responder, delete, get, post, web};
 use serde::{Deserialize, Serialize};
 
-const DEFAULT_NAMESPACE_ID: &str = "public";
-const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 const DEFAULT_CLUSTER: &str = "DEFAULT";
 
 #[derive(Debug, Deserialize)]

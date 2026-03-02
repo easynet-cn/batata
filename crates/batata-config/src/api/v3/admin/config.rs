@@ -14,7 +14,7 @@ use futures::StreamExt;
 use serde::Deserialize;
 
 use batata_auth::model::AuthContext;
-use batata_common::{DEFAULT_NAMESPACE_ID, is_valid};
+use batata_common::{DEFAULT_NAMESPACE_ID, default_page_no, default_page_size_small, is_valid};
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType, error, model, model::AppState, secured,
 };
@@ -28,9 +28,9 @@ use crate::{
     service,
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct SearchPageParam {
     #[serde(flatten)]
     config_form: ConfigForm,
@@ -45,20 +45,12 @@ struct ListConfigParam {
     config_form: ConfigForm,
     #[serde(default = "default_page_no")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size_small")]
     pub page_size: u64,
     #[serde(default = "default_search")]
     pub _search: String,
     #[serde(default)]
     pub config_detail: String,
-}
-
-fn default_page_no() -> u64 {
-    1
-}
-
-fn default_page_size() -> u64 {
-    20
 }
 
 fn default_search() -> String {
@@ -672,9 +664,9 @@ struct BetaQueryParam {
     pub namespace_id: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct BetaPublishForm {
     pub data_id: String,
     #[serde(default)]

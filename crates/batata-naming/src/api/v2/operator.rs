@@ -60,28 +60,12 @@ fn build_switches_response(config: &batata_server_common::Configuration) -> Swit
     }
 }
 
-/// Get system switches
-///
-/// GET /nacos/v2/ns/operator/switches
-///
-/// Returns the current system configuration switches.
-#[get("")]
-pub async fn get_switches(data: web::Data<AppState>) -> impl Responder {
-    let response = build_switches_response(&data.configuration);
-    Result::<SwitchesResponse>::http_success(response)
-}
-
-/// Update system switches
-///
-/// PUT /nacos/v2/ns/operator/switches
-///
-/// Updates a specific system configuration switch.
-#[put("")]
-pub async fn update_switches(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-    form: web::Form<SwitchUpdateParam>,
-) -> impl Responder {
+/// Shared implementation for updating switches.
+async fn do_update_switches(
+    req: &HttpRequest,
+    data: &web::Data<AppState>,
+    form: &SwitchUpdateParam,
+) -> actix_web::HttpResponse {
     if form.entry.is_empty() {
         return Result::<bool>::http_response(
             400,
@@ -103,16 +87,12 @@ pub async fn update_switches(
     // Check authorization for operator operations
     let resource = "*:*:naming/*";
     secured!(
-        Secured::builder(&req, &data, resource)
+        Secured::builder(req, data, resource)
             .action(ActionTypes::Write)
             .sign_type(SignType::Naming)
             .api_type(ApiType::OpenApi)
             .build()
     );
-
-    // Note: In a full implementation, switches would be stored in a mutable state
-    // and synchronized across the cluster. For now, we acknowledge the update
-    // but don't persist it since configuration is loaded at startup.
 
     tracing::info!(
         entry = %form.entry,
@@ -121,26 +101,20 @@ pub async fn update_switches(
         "Switch update requested (not persisted - configuration is read-only)"
     );
 
-    // Return success - actual switch persistence would require additional infrastructure
     Result::<String>::http_success(format!("ok, entry: {}, value: {}", form.entry, form.value))
 }
 
-/// Get naming service metrics
-///
-/// GET /nacos/v2/ns/operator/metrics
-///
-/// Returns metrics about the naming service including counts and resource usage.
-#[get("metrics")]
-pub async fn get_metrics(
-    req: HttpRequest,
-    data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
-    params: web::Query<MetricsParam>,
-) -> impl Responder {
+/// Shared implementation for getting metrics.
+async fn do_get_metrics(
+    req: &HttpRequest,
+    data: &web::Data<AppState>,
+    naming_service: &web::Data<Arc<NamingService>>,
+    params: &MetricsParam,
+) -> actix_web::HttpResponse {
     // Check authorization for operator operations
     let resource = "*:*:naming/*";
     secured!(
-        Secured::builder(&req, &data, resource)
+        Secured::builder(req, data, resource)
             .action(ActionTypes::Read)
             .sign_type(SignType::Naming)
             .api_type(ApiType::OpenApi)
@@ -211,6 +185,46 @@ pub async fn get_metrics(
     Result::<NamingMetricsResponse>::http_success(response)
 }
 
+/// Get system switches
+///
+/// GET /nacos/v2/ns/operator/switches
+///
+/// Returns the current system configuration switches.
+#[get("")]
+pub async fn get_switches(data: web::Data<AppState>) -> impl Responder {
+    let response = build_switches_response(&data.configuration);
+    Result::<SwitchesResponse>::http_success(response)
+}
+
+/// Update system switches
+///
+/// PUT /nacos/v2/ns/operator/switches
+///
+/// Updates a specific system configuration switch.
+#[put("")]
+pub async fn update_switches(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<SwitchUpdateParam>,
+) -> impl Responder {
+    do_update_switches(&req, &data, &form).await
+}
+
+/// Get naming service metrics
+///
+/// GET /nacos/v2/ns/operator/metrics
+///
+/// Returns metrics about the naming service including counts and resource usage.
+#[get("metrics")]
+pub async fn get_metrics(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    naming_service: web::Data<Arc<NamingService>>,
+    params: web::Query<MetricsParam>,
+) -> impl Responder {
+    do_get_metrics(&req, &data, &naming_service, &params).await
+}
+
 // Plain handler functions for /v2/ns/ops/* dual-path registration (without attribute macros).
 // These delegate to the same logic as the macro-annotated handlers above.
 
@@ -224,37 +238,7 @@ pub async fn update_switches_handler(
     data: web::Data<AppState>,
     form: web::Form<SwitchUpdateParam>,
 ) -> impl Responder {
-    if form.entry.is_empty() {
-        return Result::<bool>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'entry' is missing".to_string(),
-            false,
-        );
-    }
-    if form.value.is_empty() {
-        return Result::<bool>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'value' is missing".to_string(),
-            false,
-        );
-    }
-    let resource = "*:*:naming/*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Write)
-            .sign_type(SignType::Naming)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
-    tracing::info!(
-        entry = %form.entry,
-        value = %form.value,
-        debug = ?form.debug,
-        "Switch update requested via /ops alias (not persisted)"
-    );
-    Result::<String>::http_success(format!("ok, entry: {}, value: {}", form.entry, form.value))
+    do_update_switches(&req, &data, &form).await
 }
 
 pub async fn get_metrics_handler(
@@ -263,60 +247,5 @@ pub async fn get_metrics_handler(
     naming_service: web::Data<Arc<NamingService>>,
     params: web::Query<MetricsParam>,
 ) -> impl Responder {
-    let resource = "*:*:naming/*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Read)
-            .sign_type(SignType::Naming)
-            .api_type(ApiType::OpenApi)
-            .build()
-    );
-
-    // If onlyStatus is true (default), return only the status string
-    if params.only_status {
-        let status = data.server_status.status().to_string();
-        return Result::<String>::http_success(status);
-    }
-
-    let service_keys = naming_service.get_all_service_keys();
-    let service_count = service_keys.len() as i32;
-    let mut instance_count = 0;
-    for key in &service_keys {
-        let parts: Vec<&str> = key.split("@@").collect();
-        if parts.len() == 3 {
-            instance_count +=
-                naming_service.get_instance_count(parts[0], parts[1], parts[2]) as i32;
-        }
-    }
-    let subscriber_ids = naming_service.get_all_subscriber_ids();
-    let subscribe_count = subscriber_ids.len() as i32;
-    let cluster_node_count = data.member_manager().all_members().len() as i32;
-    let is_standalone = data.configuration.is_standalone();
-    let (responsible_service_count, responsible_instance_count) = if is_standalone {
-        (service_count, instance_count)
-    } else {
-        let divisor = cluster_node_count.max(1);
-        (service_count / divisor, instance_count / divisor)
-    };
-    let sys_info = sysinfo::System::new_all();
-    let cpu_usage = sys_info.global_cpu_usage() as f64;
-    let total_memory = sys_info.total_memory() as f64;
-    let used_memory = sys_info.used_memory() as f64;
-    let memory_usage = if total_memory > 0.0 {
-        (used_memory / total_memory) * 100.0
-    } else {
-        0.0
-    };
-    let response = NamingMetricsResponse {
-        service_count,
-        instance_count,
-        subscribe_count,
-        cluster_node_count,
-        responsible_service_count,
-        responsible_instance_count,
-        cpu: cpu_usage,
-        load: memory_usage,
-        mem: used_memory,
-    };
-    Result::<NamingMetricsResponse>::http_success(response)
+    do_get_metrics(&req, &data, &naming_service, &params).await
 }

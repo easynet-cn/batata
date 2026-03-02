@@ -16,24 +16,24 @@ struct ServerLoaderInfo {
     loader_count: i32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct ReloadCurrentParam {
     count: Option<i32>,
     redirect_address: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct SmartReloadParam {
     loader_factor: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct ReloadClientParam {
     connection_id: Option<String>,
     redirect_address: Option<String>,

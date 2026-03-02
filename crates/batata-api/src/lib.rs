@@ -6,6 +6,8 @@
 //! - HTTP API request/response models
 //! - Input validation utilities
 
+#[macro_use]
+pub mod macros;
 pub mod config;
 pub mod distro;
 pub mod grpc;

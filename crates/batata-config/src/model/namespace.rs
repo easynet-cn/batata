@@ -4,10 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use batata_common::DEFAULT_NAMESPACE_ID;
 use batata_persistence::entity::tenant_info;
-
-/// Default namespace ID
-pub const DEFAULT_NAMESPACE_ID: &str = "public";
 /// Default namespace display name
 pub const DEFAULT_NAMESPACE_SHOW_NAME: &str = "Public";
 /// Default namespace description

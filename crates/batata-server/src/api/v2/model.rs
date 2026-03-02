@@ -4,11 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Default namespace ID used when none is specified
-pub const DEFAULT_NAMESPACE_ID: &str = "public";
-
-/// Default group name used when none is specified
-pub const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
+pub use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID};
 
 // Re-export config/history V2 model types from batata-config
 pub use batata_config::api::v2::model::{

@@ -7,17 +7,14 @@ use std::collections::HashMap;
 use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
 use serde::Deserialize;
 
+use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, default_page_no, default_page_size};
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType, error, model::AppState, model::response::Result,
     secured,
 };
 
-const DEFAULT_NAMESPACE_ID: &str = "public";
-const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct ServiceListQuery {
     #[serde(default)]
     namespace_id: Option<String>,
@@ -31,14 +28,6 @@ struct ServiceListQuery {
     page_size: u64,
     #[serde(default)]
     has_ip_count: Option<bool>,
-}
-
-fn default_page_no() -> u64 {
-    1
-}
-
-fn default_page_size() -> u64 {
-    100
 }
 
 impl ServiceListQuery {
@@ -145,9 +134,9 @@ impl SubscriberQuery {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct UpdateClusterForm {
     #[serde(default)]
     namespace_id: Option<String>,

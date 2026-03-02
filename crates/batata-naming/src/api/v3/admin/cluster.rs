@@ -7,14 +7,13 @@ use actix_web::{HttpRequest, Responder, get, post, put, web};
 use serde::Deserialize;
 
 use batata_api::naming::model::CreateClusterForm;
-use batata_common::{ActionTypes, ApiType, SignType, impl_or_default};
+use batata_common::{
+    ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, impl_or_default,
+};
 use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
 
 use crate::ClusterStatistics;
 use crate::service::NamingService;
-
-const DEFAULT_NAMESPACE_ID: &str = "public";
-const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -31,9 +30,9 @@ struct UpdateClusterForm {
     metadata: Option<HashMap<String, String>>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct HealthCheckerForm {
     #[serde(default = "default_check_type")]
     r#type: String,

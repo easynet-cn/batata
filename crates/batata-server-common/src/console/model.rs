@@ -2,8 +2,11 @@
 //!
 //! This module defines data structures specific to the console APIs.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use batata_common::DEFAULT_NAMESPACE_ID;
 
 /// Namespace information
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,8 +21,6 @@ pub struct Namespace {
     pub type_: i32,
 }
 
-/// Default namespace ID
-pub const DEFAULT_NAMESPACE_ID: &str = "public";
 /// Default namespace display name
 pub const DEFAULT_NAMESPACE_SHOW_NAME: &str = "Public";
 /// Default namespace description

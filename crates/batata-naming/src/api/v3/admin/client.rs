@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use batata_core::service::remote::ConnectionManager;
 
-use batata_common::{ActionTypes, ApiType, SignType, impl_or_default};
+use batata_common::{
+    ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, impl_or_default,
+};
 use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
 
 use crate::service::NamingService;
@@ -244,12 +246,9 @@ fn parse_service_key(key: &str) -> Option<ClientServiceInfo> {
     }
 }
 
-const DEFAULT_NAMESPACE_ID: &str = "public";
-const DEFAULT_GROUP: &str = "DEFAULT_GROUP";
-
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct ServiceClientQuery {
     #[serde(default)]
     namespace_id: Option<String>,
@@ -403,9 +402,9 @@ async fn get_service_subscribers(
     Result::<ServiceClientListResponse>::http_success(response)
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 struct DistroQuery {
     ip: String,
     port: String,
