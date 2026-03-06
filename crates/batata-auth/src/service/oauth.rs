@@ -99,7 +99,7 @@ fn default_scopes() -> Vec<String> {
 }
 
 /// User info claim mapping
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserInfoMapping {
     /// Claim for username (default: "sub")
@@ -116,6 +116,17 @@ pub struct UserInfoMapping {
     pub groups_claim: Option<String>,
 }
 
+impl Default for UserInfoMapping {
+    fn default() -> Self {
+        Self {
+            username_claim: default_username_claim(),
+            email_claim: default_email_claim(),
+            name_claim: default_name_claim(),
+            groups_claim: None,
+        }
+    }
+}
+
 fn default_username_claim() -> String {
     "sub".to_string()
 }
@@ -129,7 +140,7 @@ fn default_name_claim() -> String {
 }
 
 /// Global OAuth2 configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthConfig {
     /// Whether OAuth2 authentication is enabled
@@ -147,6 +158,18 @@ pub struct OAuthConfig {
     /// Default redirect URI template
     #[serde(default)]
     pub redirect_uri: Option<String>,
+}
+
+impl Default for OAuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            providers: HashMap::new(),
+            user_creation: default_user_creation(),
+            role_sync: default_role_sync(),
+            redirect_uri: None,
+        }
+    }
 }
 
 fn default_user_creation() -> String {
@@ -265,13 +288,13 @@ pub struct OAuthService {
 
 impl OAuthService {
     /// Create a new OAuth2 service
-    pub fn new(config: OAuthConfig) -> Self {
+    pub fn new(config: OAuthConfig) -> anyhow::Result<Self> {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .expect("Failed to create HTTP client");
+            .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
-        Self {
+        Ok(Self {
             config,
             http_client,
             discovery_cache: Cache::builder()
@@ -282,7 +305,7 @@ impl OAuthService {
                 .time_to_live(Duration::from_secs(600)) // 10 minutes
                 .max_capacity(10000)
                 .build(),
-        }
+        })
     }
 
     /// Check if OAuth is enabled

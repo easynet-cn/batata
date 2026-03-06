@@ -58,8 +58,6 @@ struct LockWaiter {
     owner: String,
     tx: mpsc::Sender<LockAcquireResult>,
     deadline: Instant,
-    #[allow(dead_code)]
-    request: LockAcquireRequest,
 }
 
 struct LockStatsCollector {
@@ -239,7 +237,6 @@ impl DistributedLockService for MemoryLockService {
             owner: request.owner.clone(),
             tx,
             deadline,
-            request: request.clone(),
         };
 
         self.waiters.entry(key.clone()).or_default().push(waiter);

@@ -30,7 +30,7 @@ use tracing::{error, info};
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize configuration and logging
-    let configuration = model::common::Configuration::new();
+    let configuration = model::common::Configuration::new()?;
 
     // Validate JWT secret key when auth is enabled
     if configuration.auth_enabled() && configuration.token_secret_key().is_empty() {
@@ -41,6 +41,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Set 'nacos.core.auth.plugin.nacos.token.secret.key' to a non-empty Base64-encoded secret."
         );
         std::process::exit(1);
+    }
+
+    // Warn if using the default JWT secret key (insecure for production)
+    const DEFAULT_SECRET_KEYS: &[&str] = &[
+        "NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm",
+        "VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=",
+    ];
+    if configuration.auth_enabled()
+        && DEFAULT_SECRET_KEYS.contains(&configuration.token_secret_key().as_str())
+    {
+        eprintln!("WARNING: Using the default JWT secret key. This is insecure for production!");
+        eprintln!("Generate a new key with: openssl rand -base64 32");
+        eprintln!("Set it via: nacos.core.auth.plugin.nacos.token.secret.key=<your-key>");
     }
 
     // Initialize multi-file logging with optional OpenTelemetry support
@@ -242,7 +255,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "OAuth2/OIDC authentication enabled with {} providers",
             oauth_config.providers.len()
         );
-        Some(Arc::new(OAuthService::new(oauth_config)))
+        Some(Arc::new(OAuthService::new(oauth_config)?))
     } else {
         None
     };

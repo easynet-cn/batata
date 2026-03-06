@@ -2,9 +2,7 @@
 
 use std::sync::LazyLock;
 
-use actix_web::{
-    HttpRequest, HttpResponse, Responder, delete, get, http::StatusCode, post, put, web,
-};
+use actix_web::{HttpRequest, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
 use batata_config::Namespace;
@@ -59,7 +57,7 @@ async fn list_namespaces(req: HttpRequest, data: web::Data<AppState>) -> impl Re
         Ok(ns_list) => ns_list.into_iter().map(Namespace::from).collect(),
         Err(e) => {
             tracing::error!(error = %e, "Failed to list namespaces");
-            return HttpResponse::InternalServerError().body(e.to_string());
+            return common::Result::<String>::http_internal_error(e);
         }
     };
 
@@ -87,13 +85,11 @@ async fn get_namespace(
         .await
     {
         Ok(Some(ns_info)) => common::Result::<Namespace>::http_success(Namespace::from(ns_info)),
-        Ok(None) => common::Result::<String>::http_response(
-            StatusCode::NOT_FOUND.as_u16(),
-            error::NAMESPACE_NOT_EXIST.code,
-            error::NAMESPACE_NOT_EXIST.message.to_string(),
+        Ok(None) => common::Result::<String>::http_not_found(
+            &error::NAMESPACE_NOT_EXIST,
             format!("namespace [{}] not exist", params.namespace_id),
         ),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => common::Result::<String>::http_internal_error(e),
     }
 }
 
@@ -126,28 +122,22 @@ async fn create_namespace(
     }
 
     if !NAMESPACE_ID_REGEX.is_match(&namespace_id) {
-        return common::Result::<String>::http_response(
-            StatusCode::NOT_FOUND.as_u16(),
-            error::ILLEGAL_NAMESPACE.code,
-            error::ILLEGAL_NAMESPACE.message.to_string(),
+        return common::Result::<String>::http_not_found(
+            &error::ILLEGAL_NAMESPACE,
             format!("namespaceId [{}] mismatch the pattern", namespace_id),
         );
     }
 
     if namespace_id.chars().count() > NAMESPACE_ID_MAX_LENGTH {
-        return common::Result::<String>::http_response(
-            StatusCode::NOT_FOUND.as_u16(),
-            error::ILLEGAL_NAMESPACE.code,
-            error::ILLEGAL_NAMESPACE.message.to_string(),
+        return common::Result::<String>::http_not_found(
+            &error::ILLEGAL_NAMESPACE,
             format!("too long namespaceId, over {}", namespace_id),
         );
     }
 
     if !namespace_name_check(&namespace_name) {
-        return common::Result::<String>::http_response(
-            StatusCode::NOT_FOUND.as_u16(),
-            error::ILLEGAL_NAMESPACE.code,
-            error::ILLEGAL_NAMESPACE.message.to_string(),
+        return common::Result::<String>::http_not_found(
+            &error::ILLEGAL_NAMESPACE,
             format!("namespaceName [{}] contains illegal char", namespace_name),
         );
     }
@@ -176,28 +166,22 @@ async fn update_namespace(
     );
 
     if form.namespace_id.is_empty() {
-        return common::Result::<String>::http_response(
-            StatusCode::BAD_REQUEST.as_u16(),
-            error::PARAMETER_MISSING.code,
-            error::PARAMETER_MISSING.message.to_string(),
-            "required parameter 'namespaceId' is missing".to_string(),
+        return common::Result::<String>::http_bad_request(
+            &error::PARAMETER_MISSING,
+            "required parameter 'namespaceId' is missing",
         );
     }
 
     if form.namespace_name.is_empty() {
-        return common::Result::<String>::http_response(
-            StatusCode::BAD_REQUEST.as_u16(),
-            error::PARAMETER_MISSING.code,
-            error::PARAMETER_MISSING.message.to_string(),
-            "required parameter 'namespaceName' is missing".to_string(),
+        return common::Result::<String>::http_bad_request(
+            &error::PARAMETER_MISSING,
+            "required parameter 'namespaceName' is missing",
         );
     }
 
     if !namespace_name_check(&form.namespace_name) {
-        return common::Result::<String>::http_response(
-            StatusCode::NOT_FOUND.as_u16(),
-            error::ILLEGAL_NAMESPACE.code,
-            error::ILLEGAL_NAMESPACE.message.to_string(),
+        return common::Result::<String>::http_not_found(
+            &error::ILLEGAL_NAMESPACE,
             format!(
                 "namespaceName [{}] contains illegal char",
                 &form.namespace_name
@@ -215,7 +199,7 @@ async fn update_namespace(
         Ok(res) => common::Result::<bool>::http_success(res),
         Err(e) => {
             tracing::error!("Failed to update namespace: {}", e);
-            HttpResponse::InternalServerError().body(e.to_string())
+            common::Result::<String>::http_internal_error(e)
         }
     }
 }
@@ -268,7 +252,7 @@ async fn check_namespace(
         Ok(exists) => common::Result::<i32>::http_success(if exists { 1 } else { 0 }),
         Err(e) => {
             tracing::error!(error = %e, "Failed to check namespace");
-            HttpResponse::InternalServerError().body(e.to_string())
+            common::Result::<String>::http_internal_error(e)
         }
     }
 }

@@ -51,6 +51,42 @@ impl<T> Result<T> {
         HttpResponseBuilder::new(StatusCode::from_u16(status).unwrap_or_default())
             .json(Result::new(code, message, data))
     }
+
+    /// Build a NOT_FOUND error response from an ErrorCode and detail message
+    pub fn http_not_found(
+        error_code: &batata_common::error::ErrorCode,
+        detail: impl Into<String>,
+    ) -> HttpResponse {
+        Result::<String>::http_response(
+            StatusCode::NOT_FOUND.as_u16(),
+            error_code.code,
+            error_code.message.to_string(),
+            detail.into(),
+        )
+    }
+
+    /// Build a BAD_REQUEST error response from an ErrorCode and detail message
+    pub fn http_bad_request(
+        error_code: &batata_common::error::ErrorCode,
+        detail: impl Into<String>,
+    ) -> HttpResponse {
+        Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error_code.code,
+            error_code.message.to_string(),
+            detail.into(),
+        )
+    }
+
+    /// Build an INTERNAL_SERVER_ERROR response from an error
+    pub fn http_internal_error(detail: impl std::fmt::Display) -> HttpResponse {
+        Result::<String>::http_response(
+            StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+            crate::error::SERVER_ERROR.code,
+            format!("Internal error: {}", detail),
+            String::new(),
+        )
+    }
 }
 
 /// Error result for API error responses

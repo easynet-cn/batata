@@ -50,7 +50,7 @@ batata-ai = { path = "crates/batata-ai" }
 batata-server = { path = "crates/batata-server" }
 
 # Async runtime
-tokio = "1.49"
+tokio = "1.50"
 async-trait = "0.1"
 futures = "0.3"
 
@@ -111,6 +111,7 @@ chrono = "0.4"
 uuid = { version = "1.20", features = ["v4"] }
 regex = "1.11"
 base64 = "0.22"
+# Note: md5 (simple API via compute()) and md-5 (RustCrypto Digest trait) serve different use cases
 md5 = "0.8"
 md-5 = "0.10"
 bytes = "1.11"
@@ -174,6 +175,10 @@ tonic-prost-build = "0.14.2"
 
 [profile.dev]
 incremental = true
+
+# Optimize third-party dependencies even in dev builds for faster runtime
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 # 加速编译：使用 16 个代码生成单元（默认是 256，1 是最慢但最优）

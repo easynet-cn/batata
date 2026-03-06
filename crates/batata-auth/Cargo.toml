@@ -36,6 +36,9 @@ tokio = { workspace = true, features = ["rt"] }
 # Caching
 moka = { workspace = true }
 
+# Concurrency
+parking_lot = { workspace = true }
+
 # Time
 chrono = { workspace = true }
 

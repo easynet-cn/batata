@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use actix_web::{App, HttpServer, dev::Server, middleware::Logger, web};
+use actix_web::{App, HttpResponse, HttpServer, dev::Server, middleware::Logger, web};
 
 use batata_consistency::RaftNode;
 use batata_core::service::distro::DistroProtocol;
@@ -451,7 +451,35 @@ pub fn main_server(
         .configure(configure_kubernetes)
         // Prometheus metrics endpoint at /metrics (standard path)
         .service(batata_console::v3::metrics::routes())
+        // Kubernetes-compatible health endpoints
+        .route("/health/liveness", web::get().to(health_liveness))
+        .route("/health/readiness", web::get().to(health_readiness))
     })
     .bind((address, port))?
     .run())
+}
+
+/// Kubernetes liveness probe endpoint.
+/// Returns 200 if the process is alive and the HTTP server is serving.
+async fn health_liveness() -> HttpResponse {
+    HttpResponse::Ok().json(serde_json::json!({"status": "UP"}))
+}
+
+/// Kubernetes readiness probe endpoint.
+/// Returns 200 if the server is ready to accept traffic (DB connected, services initialized).
+async fn health_readiness(app_state: web::Data<Arc<AppState>>) -> HttpResponse {
+    // Check if persistence service is available and healthy
+    if let Some(ref persistence) = app_state.persistence {
+        match persistence.health_check().await {
+            Ok(_) => {}
+            Err(e) => {
+                return HttpResponse::ServiceUnavailable().json(serde_json::json!({
+                    "status": "DOWN",
+                    "reason": format!("Database health check failed: {}", e),
+                }));
+            }
+        }
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({"status": "UP"}))
 }

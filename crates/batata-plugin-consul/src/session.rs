@@ -113,7 +113,9 @@ impl ConsulSessionService {
                 for key in &expired_keys {
                     batch.delete_cf(cf, key.as_bytes());
                 }
-                let _ = db.write(batch);
+                if let Err(e) = db.write(batch) {
+                    tracing::error!("Failed to clean up expired sessions from RocksDB: {}", e);
+                }
                 info!(
                     "Loaded {} sessions from RocksDB ({} expired sessions cleaned up)",
                     loaded, count
@@ -292,8 +294,14 @@ impl ConsulSessionService {
         if stored.is_expired() {
             // Lazy expire: delete the expired session directly from local DB
             // In Raft mode, the leader's cleanup task will handle proper replication
-            if let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
-                let _ = self.db.delete_cf(cf, session_id.as_bytes());
+            if let Some(cf) = self.db.cf_handle(CF_CONSUL_SESSIONS)
+                && let Err(e) = self.db.delete_cf(cf, session_id.as_bytes())
+            {
+                tracing::error!(
+                    "Failed to delete expired session '{}' from RocksDB: {}",
+                    session_id,
+                    e
+                );
             }
             return None;
         }
@@ -374,7 +382,9 @@ impl ConsulSessionService {
             for key in &expired_keys {
                 batch.delete_cf(cf, key.as_bytes());
             }
-            let _ = self.db.write(batch);
+            if let Err(e) = self.db.write(batch) {
+                tracing::error!("Failed to clean up expired sessions from RocksDB: {}", e);
+            }
         }
 
         sessions

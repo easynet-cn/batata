@@ -9,7 +9,7 @@ use batata_server::model::common::{AppState, Configuration};
 #[actix_web::test]
 async fn test_v1_auth_login_success() {
     // Initialize test app state
-    let configuration = Configuration::new();
+    let configuration = Configuration::new().expect("Failed to load test configuration");
     let server_member_manager = None;
     let config_subscriber_manager = std::sync::Arc::new(batata_core::ConfigSubscriberManager::new());
     let console_datasource = None;
@@ -63,7 +63,7 @@ async fn test_v1_auth_login_success() {
 #[actix_web::test]
 async fn test_v3_auth_login_success() {
     // Initialize test app state
-    let configuration = Configuration::new();
+    let configuration = Configuration::new().expect("Failed to load test configuration");
     let server_member_manager = None;
     let config_subscriber_manager = std::sync::Arc::new(batata_core::ConfigSubscriberManager::new());
     let console_datasource = None;

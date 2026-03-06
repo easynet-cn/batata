@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use moka::sync::Cache;
-use std::sync::RwLock;
+use parking_lot::RwLock;
 
 use crate::model::NacosJwtPayload;
 
@@ -126,9 +126,7 @@ pub fn revoke_token(token: &str) {
 /// All existing tokens for this user will be rejected.
 /// Call `unblacklist_user` when the user logs in again to allow new tokens.
 pub fn revoke_user_tokens(username: &str) {
-    if let Ok(mut blacklist) = USER_BLACKLIST.write() {
-        blacklist.insert(username.to_string());
-    }
+    USER_BLACKLIST.write().insert(username.to_string());
     // No need to invalidate_all(): decode_jwt_token_cached() already checks
     // USER_BLACKLIST and invalidates individual tokens for blacklisted users
     // on cache hit. New requests will be rejected immediately.
@@ -136,17 +134,12 @@ pub fn revoke_user_tokens(username: &str) {
 
 /// Remove a user from the blacklist (typically called after successful login)
 pub fn unblacklist_user(username: &str) {
-    if let Ok(mut blacklist) = USER_BLACKLIST.write() {
-        blacklist.remove(username);
-    }
+    USER_BLACKLIST.write().remove(username);
 }
 
 /// Check if a user is blacklisted
 fn is_user_blacklisted(username: &str) -> bool {
-    USER_BLACKLIST
-        .read()
-        .map(|blacklist| blacklist.contains(username))
-        .unwrap_or(false)
+    USER_BLACKLIST.read().contains(username)
 }
 
 /// Check if a token is blacklisted
@@ -162,9 +155,7 @@ pub fn clear_token_cache() {
 /// Clear all blacklists (for testing or admin purposes)
 pub fn clear_all_blacklists() {
     TOKEN_BLACKLIST.invalidate_all();
-    if let Ok(mut blacklist) = USER_BLACKLIST.write() {
-        blacklist.clear();
-    }
+    USER_BLACKLIST.write().clear();
 }
 
 /// Encode a JWT token

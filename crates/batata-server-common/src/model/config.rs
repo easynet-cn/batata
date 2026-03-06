@@ -184,7 +184,7 @@ fn collect_env_overrides(prefix: &str, remap_to_batata: bool) -> Vec<(String, co
 }
 
 impl Configuration {
-    pub fn new() -> Self {
+    pub fn new() -> anyhow::Result<Self> {
         // Step 1: Extract --dotted.key=value overrides before clap sees them
         let (property_overrides, filtered_args) = extract_property_overrides();
 
@@ -196,8 +196,9 @@ impl Configuration {
             .config_file
             .as_deref()
             .unwrap_or("conf/application.yml");
-        let yaml_content =
-            std::fs::read_to_string(config_file).expect("Failed to read configuration file");
+        let yaml_content = std::fs::read_to_string(config_file).map_err(|e| {
+            anyhow::anyhow!("Failed to read configuration file '{}': {}", config_file, e)
+        })?;
         let merged_yaml = preprocess_yaml(&yaml_content);
 
         // Step 4: Build config with layered sources (lowest to highest priority)
@@ -217,49 +218,51 @@ impl Configuration {
         for (key, value) in &nacos_env {
             config_builder = config_builder
                 .set_override(key, value.clone())
-                .unwrap_or_else(|e| panic!("Failed to set NACOS_ env override for {key}: {e}"));
+                .map_err(|e| anyhow::anyhow!("Failed to set NACOS_ env override for {key}: {e}"))?;
         }
         // Apply BATATA_* second (higher priority, overwrites NACOS_* for same keys)
         for (key, value) in &batata_env {
             config_builder = config_builder
                 .set_override(key, value.clone())
-                .unwrap_or_else(|e| panic!("Failed to set BATATA_ env override for {key}: {e}"));
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to set BATATA_ env override for {key}: {e}")
+                })?;
         }
 
         // Priority 2: Convenience CLI args
         if let Some(v) = args.mode {
             config_builder = config_builder
                 .set_override(STANDALONE_MODE_PROPERTY_NAME, v == "standalone")
-                .expect("Failed to set standalone mode override");
+                .map_err(|e| anyhow::anyhow!("Failed to set standalone mode override: {e}"))?;
         }
         if let Some(v) = args.function_mode {
             config_builder = config_builder
                 .set_override(FUNCTION_MODE_PROPERTY_NAME, v)
-                .expect("Failed to set function mode override");
+                .map_err(|e| anyhow::anyhow!("Failed to set function mode override: {e}"))?;
         }
         if let Some(v) = args.deployment {
             config_builder = config_builder
                 .set_override(NACOS_DEPLOYMENT_TYPE, v)
-                .expect("Failed to set deployment type override");
+                .map_err(|e| anyhow::anyhow!("Failed to set deployment type override: {e}"))?;
         }
         if let Some(v) = args.database_url {
             config_builder = config_builder
                 .set_override("batata.db.url", v)
-                .expect("Failed to set database URL override");
+                .map_err(|e| anyhow::anyhow!("Failed to set database URL override: {e}"))?;
         }
 
         // Priority 1 (highest): --dotted.key=value property overrides
         for (key, value) in property_overrides {
             config_builder = config_builder
                 .set_override(&key, value)
-                .unwrap_or_else(|e| panic!("Failed to set override for {key}: {e}"));
+                .map_err(|e| anyhow::anyhow!("Failed to set override for {key}: {e}"))?;
         }
 
         let app_config = config_builder
             .build()
-            .expect("Failed to build configuration");
+            .map_err(|e| anyhow::anyhow!("Failed to build configuration: {e}"))?;
 
-        Configuration { config: app_config }
+        Ok(Configuration { config: app_config })
     }
 
     // ========================================================================

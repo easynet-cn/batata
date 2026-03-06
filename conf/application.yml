@@ -523,8 +523,8 @@ nacos.otel.enabled: false
 ### Service name for traces
 nacos.otel.service_name: batata
 
-### Sampling ratio (0.0 to 1.0, 1.0 = sample all traces)
-nacos.otel.sampling_ratio: 1.0
+### Sampling ratio (0.0 to 1.0, 1.0 = sample all traces, 0.1 recommended for production)
+nacos.otel.sampling_ratio: 0.1
 
 ### Export timeout in seconds
 nacos.otel.export_timeout_secs: 10

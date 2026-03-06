@@ -78,6 +78,30 @@ pub fn init_metrics() {
         "Total number of instance heartbeats"
     );
 
+    // gRPC connection metrics
+    describe_gauge!("grpc_connections_active", "Active gRPC client connections");
+    describe_gauge!("grpc_subscriptions_active", "Active gRPC subscriptions");
+
+    // Raft state metrics
+    describe_gauge!(
+        "raft_state",
+        "Raft node state (0=follower, 1=candidate, 2=leader)"
+    );
+    describe_gauge!("raft_leader_id", "Current Raft leader node ID");
+
+    // Registry size metrics
+    describe_gauge!(
+        "naming_dashmap_services_size",
+        "Number of service keys in DashMap"
+    );
+    describe_gauge!("config_items_total", "Total number of configuration items");
+
+    // gRPC request latency
+    describe_histogram!(
+        "grpc_request_duration_seconds",
+        "gRPC request duration in seconds"
+    );
+
     tracing::info!("Metrics initialized");
 }
 
@@ -156,6 +180,38 @@ pub fn set_naming_counts(instances: f64, services: f64) {
 /// Record a naming heartbeat
 pub fn record_naming_heartbeat() {
     counter!("naming_heartbeats_total").increment(1);
+}
+
+/// Update gRPC connection counts
+pub fn set_grpc_connections(active: f64) {
+    gauge!("grpc_connections_active").set(active);
+}
+
+/// Update gRPC subscription count
+pub fn set_grpc_subscriptions(active: f64) {
+    gauge!("grpc_subscriptions_active").set(active);
+}
+
+/// Update Raft state (0=follower, 1=candidate, 2=leader)
+pub fn set_raft_node_state(state: f64, leader_id: f64) {
+    gauge!("raft_state").set(state);
+    gauge!("raft_leader_id").set(leader_id);
+}
+
+/// Update naming DashMap service key count
+pub fn set_naming_dashmap_size(size: f64) {
+    gauge!("naming_dashmap_services_size").set(size);
+}
+
+/// Update total config items count
+pub fn set_config_items_total(count: f64) {
+    gauge!("config_items_total").set(count);
+}
+
+/// Record a gRPC request duration
+pub fn record_grpc_request(method: &str, duration_secs: f64) {
+    histogram!("grpc_request_duration_seconds", "method" => method.to_string())
+        .record(duration_secs);
 }
 
 /// Timer helper for measuring operation duration
