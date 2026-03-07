@@ -266,4 +266,171 @@ public class NacosParameterValidationTest {
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.200.1", 8080);
     }
+
+    // ==================== Config Null Group Tests ====================
+
+    /**
+     * PV-013: Test getConfig with null group (defaults to DEFAULT_GROUP)
+     *
+     * Aligned with Nacos AbstractConfigAPIConfigITCase.testGetConfigWithNullGroup()
+     */
+    @Test
+    @Order(13)
+    void testGetConfigWithNullGroup() throws NacosException, InterruptedException {
+        String dataId = "pv-null-group-get-" + UUID.randomUUID().toString().substring(0, 8);
+        String content = "null.group.get=value";
+
+        // Publish with null group
+        boolean published = configService.publishConfig(dataId, null, content);
+        assertTrue(published, "Publish with null group should succeed");
+
+        Thread.sleep(500);
+
+        String retrieved = configService.getConfig(dataId, null, 5000);
+        assertEquals(content, retrieved, "Should get config published with null group");
+
+        // Cleanup
+        configService.removeConfig(dataId, null);
+    }
+
+    /**
+     * PV-014: Test publishConfig with null group
+     *
+     * Aligned with Nacos AbstractConfigAPIConfigITCase.testPublishConfigWithNullGroup()
+     */
+    @Test
+    @Order(14)
+    void testPublishConfigWithNullGroup() throws NacosException, InterruptedException {
+        String dataId = "pv-null-group-pub-" + UUID.randomUUID().toString().substring(0, 8);
+        String content = "null.group.pub=value";
+
+        boolean published = configService.publishConfig(dataId, null, content);
+        assertTrue(published, "Publish with null group should succeed");
+
+        Thread.sleep(500);
+
+        // Should be retrievable from DEFAULT_GROUP
+        String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        assertEquals(content, retrieved,
+                "Config published with null group should be retrievable from DEFAULT_GROUP");
+
+        // Cleanup
+        configService.removeConfig(dataId, DEFAULT_GROUP);
+    }
+
+    /**
+     * PV-015: Test removeConfig with null group
+     *
+     * Aligned with Nacos AbstractConfigAPIConfigITCase.testRemoveConfigWithNullGroup()
+     */
+    @Test
+    @Order(15)
+    void testRemoveConfigWithNullGroup() throws NacosException, InterruptedException {
+        String dataId = "pv-null-group-rm-" + UUID.randomUUID().toString().substring(0, 8);
+
+        configService.publishConfig(dataId, null, "to.remove=true");
+        Thread.sleep(500);
+
+        boolean removed = configService.removeConfig(dataId, null);
+        assertTrue(removed, "Remove with null group should succeed");
+
+        Thread.sleep(500);
+
+        String afterRemove = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
+        assertNull(afterRemove, "Config should be null after removal with null group");
+    }
+
+    /**
+     * PV-016: Test removeListener with null listener throws exception
+     *
+     * Aligned with Nacos AbstractConfigAPIConfigITCase.testRemoveListenerNull()
+     */
+    @Test
+    @Order(16)
+    void testRemoveListenerWithNull() {
+        String dataId = "pv-rm-null-listener-" + UUID.randomUUID().toString().substring(0, 8);
+
+        assertThrows(Exception.class, () -> {
+            configService.removeListener(dataId, DEFAULT_GROUP, null);
+        }, "removeListener with null listener should throw exception");
+    }
+
+    /**
+     * PV-017: Test getConfig when server has no such config returns null
+     *
+     * Aligned with Nacos AbstractConfigAPIConfigITCase.testGetConfigWhenServerHasNoConfig()
+     */
+    @Test
+    @Order(17)
+    void testGetConfigWhenNotExists() throws NacosException {
+        String dataId = "pv-nonexist-" + UUID.randomUUID().toString().substring(0, 8);
+
+        String result = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        assertNull(result, "getConfig for non-existent config should return null");
+    }
+
+    /**
+     * PV-018: Test publishConfig when server does not have existing config
+     *
+     * Aligned with Nacos AbstractConfigAPIConfigITCase.testPublishConfigWhenServerDoesNotExist()
+     */
+    @Test
+    @Order(18)
+    void testPublishNewConfig() throws NacosException, InterruptedException {
+        String dataId = "pv-new-publish-" + UUID.randomUUID().toString().substring(0, 8);
+        String content = "new.config=created";
+
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
+        assertTrue(published, "Publish new config should succeed");
+
+        Thread.sleep(500);
+
+        String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        assertEquals(content, retrieved);
+
+        // Cleanup
+        configService.removeConfig(dataId, DEFAULT_GROUP);
+    }
+
+    /**
+     * PV-019: Test updateConfig when server has existing config
+     *
+     * Aligned with Nacos AbstractConfigAPIConfigITCase.testUpdateConfigWhenServerHasExistingConfig()
+     */
+    @Test
+    @Order(19)
+    void testUpdateExistingConfig() throws NacosException, InterruptedException {
+        String dataId = "pv-update-existing-" + UUID.randomUUID().toString().substring(0, 8);
+        String initialContent = "update.test=initial";
+        String updatedContent = "update.test=updated";
+
+        configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
+        Thread.sleep(500);
+
+        boolean updated = configService.publishConfig(dataId, DEFAULT_GROUP, updatedContent);
+        assertTrue(updated, "Update existing config should succeed");
+
+        Thread.sleep(500);
+
+        String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        assertEquals(updatedContent, retrieved, "Should reflect updated content");
+
+        // Cleanup
+        configService.removeConfig(dataId, DEFAULT_GROUP);
+    }
+
+    /**
+     * PV-020: Test removeConfig when server does not have the config
+     *
+     * Aligned with Nacos AbstractConfigAPIConfigITCase.testRemoveConfigWhenServerDoesNotHaveConfig()
+     */
+    @Test
+    @Order(20)
+    void testRemoveConfigWhenNotExists() throws NacosException {
+        String dataId = "pv-remove-nonexist-" + UUID.randomUUID().toString().substring(0, 8);
+
+        // Should succeed silently
+        boolean result = configService.removeConfig(dataId, DEFAULT_GROUP);
+        assertTrue(result, "Remove non-existent config should succeed (return true)");
+    }
 }

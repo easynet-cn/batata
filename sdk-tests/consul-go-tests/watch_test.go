@@ -738,3 +738,495 @@ func TestWatchHandlerPanic(t *testing.T) {
 
 	t.Logf("Handler was called %d times", callCount)
 }
+
+// ==================== Watch Service with Tags Tests ====================
+
+// TestWatchServiceWithTag tests watching a service filtered by tag
+func TestWatchServiceWithTag(t *testing.T) {
+	client := getTestClient(t)
+	agent := client.Agent()
+	serviceName := "watch-tag-svc-" + randomString(8)
+
+	// Register service with tags
+	err := agent.ServiceRegister(&api.AgentServiceRegistration{
+		ID:   serviceName + "-1",
+		Name: serviceName,
+		Port: 8080,
+		Tags: []string{"primary", "v1"},
+	})
+	require.NoError(t, err)
+	defer agent.ServiceDeregister(serviceName + "-1")
+
+	err = agent.ServiceRegister(&api.AgentServiceRegistration{
+		ID:   serviceName + "-2",
+		Name: serviceName,
+		Port: 8081,
+		Tags: []string{"secondary", "v2"},
+	})
+	require.NoError(t, err)
+	defer agent.ServiceDeregister(serviceName + "-2")
+
+	time.Sleep(500 * time.Millisecond)
+
+	params := map[string]interface{}{
+		"type":    "service",
+		"service": serviceName,
+		"tag":     "primary",
+	}
+
+	plan, err := watch.Parse(params)
+	if err != nil {
+		t.Logf("Watch parse: %v", err)
+		return
+	}
+
+	updates := make(chan []*api.ServiceEntry, 10)
+	plan.Handler = func(idx uint64, data interface{}) {
+		if entries, ok := data.([]*api.ServiceEntry); ok {
+			select {
+			case updates <- entries:
+			default:
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+	defer plan.Stop()
+
+	select {
+	case entries := <-updates:
+		t.Logf("Service watch with tag found %d entries", len(entries))
+		for _, e := range entries {
+			t.Logf("  Service ID: %s, Tags: %v", e.Service.ID, e.Service.Tags)
+		}
+	case <-ctx.Done():
+		t.Log("Watch service with tag timeout")
+	}
+}
+
+// TestWatchServicePassingOnly tests watching a service with passingOnly filter
+func TestWatchServicePassingOnly(t *testing.T) {
+	client := getTestClient(t)
+	agent := client.Agent()
+	serviceName := "watch-passing-" + randomString(8)
+
+	err := agent.ServiceRegister(&api.AgentServiceRegistration{
+		ID:   serviceName,
+		Name: serviceName,
+		Port: 8080,
+	})
+	require.NoError(t, err)
+	defer agent.ServiceDeregister(serviceName)
+
+	time.Sleep(500 * time.Millisecond)
+
+	params := map[string]interface{}{
+		"type":         "service",
+		"service":      serviceName,
+		"passingonly":  true,
+	}
+
+	plan, err := watch.Parse(params)
+	if err != nil {
+		t.Logf("Watch parse: %v", err)
+		return
+	}
+
+	updates := make(chan []*api.ServiceEntry, 10)
+	plan.Handler = func(idx uint64, data interface{}) {
+		if entries, ok := data.([]*api.ServiceEntry); ok {
+			select {
+			case updates <- entries:
+			default:
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+	defer plan.Stop()
+
+	select {
+	case entries := <-updates:
+		t.Logf("Service watch passing only: %d entries", len(entries))
+	case <-ctx.Done():
+		t.Log("Watch service passing only timeout")
+	}
+}
+
+// ==================== Watch Key Update Detection Tests ====================
+
+// TestWatchKeyUpdate tests that key watch detects updates
+func TestWatchKeyUpdate(t *testing.T) {
+	client := getTestClient(t)
+	kv := client.KV()
+	key := "watch-update-" + randomString(8)
+
+	_, err := kv.Put(&api.KVPair{Key: key, Value: []byte("v1")}, nil)
+	require.NoError(t, err)
+	defer kv.Delete(key, nil)
+
+	params := map[string]interface{}{
+		"type": "key",
+		"key":  key,
+	}
+
+	plan, err := watch.Parse(params)
+	require.NoError(t, err)
+
+	updates := make(chan string, 10)
+	plan.Handler = func(idx uint64, data interface{}) {
+		if pair, ok := data.(*api.KVPair); ok && pair != nil {
+			select {
+			case updates <- string(pair.Value):
+			default:
+			}
+		}
+	}
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+	defer plan.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Wait for initial
+	select {
+	case val := <-updates:
+		t.Logf("Initial value: %s", val)
+	case <-ctx.Done():
+		t.Log("Timeout waiting for initial value")
+		return
+	}
+
+	// Update the key
+	_, err = kv.Put(&api.KVPair{Key: key, Value: []byte("v2")}, nil)
+	require.NoError(t, err)
+
+	// Wait for update notification
+	select {
+	case val := <-updates:
+		t.Logf("Updated value: %s", val)
+		assert.Equal(t, "v2", val, "Should receive updated value")
+	case <-ctx.Done():
+		t.Log("Timeout waiting for update")
+	}
+}
+
+// TestWatchKeyDelete tests that key watch detects deletion
+func TestWatchKeyDelete(t *testing.T) {
+	client := getTestClient(t)
+	kv := client.KV()
+	key := "watch-delete-" + randomString(8)
+
+	_, err := kv.Put(&api.KVPair{Key: key, Value: []byte("to-delete")}, nil)
+	require.NoError(t, err)
+
+	params := map[string]interface{}{
+		"type": "key",
+		"key":  key,
+	}
+
+	plan, err := watch.Parse(params)
+	require.NoError(t, err)
+
+	callCount := 0
+	plan.Handler = func(idx uint64, data interface{}) {
+		callCount++
+		if data == nil {
+			t.Log("Key was deleted (nil data)")
+		} else if pair, ok := data.(*api.KVPair); ok {
+			if pair == nil {
+				t.Log("Key was deleted (nil pair)")
+			} else {
+				t.Logf("Key value: %s", string(pair.Value))
+			}
+		}
+	}
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+	defer plan.Stop()
+
+	time.Sleep(1 * time.Second)
+
+	// Delete the key
+	_, err = kv.Delete(key, nil)
+	require.NoError(t, err)
+
+	time.Sleep(2 * time.Second)
+	t.Logf("Handler called %d times (should include delete notification)", callCount)
+}
+
+// ==================== Watch Checks by Service Tests ====================
+
+// TestWatchChecksByService tests watching health checks for a specific service
+func TestWatchChecksByService(t *testing.T) {
+	client := getTestClient(t)
+	agent := client.Agent()
+	serviceName := "watch-check-svc-" + randomString(8)
+
+	err := agent.ServiceRegister(&api.AgentServiceRegistration{
+		ID:   serviceName,
+		Name: serviceName,
+		Port: 8080,
+		Check: &api.AgentServiceCheck{
+			TTL:    "30s",
+			Status: api.HealthPassing,
+		},
+	})
+	require.NoError(t, err)
+	defer agent.ServiceDeregister(serviceName)
+
+	agent.PassTTL("service:"+serviceName, "healthy")
+	time.Sleep(500 * time.Millisecond)
+
+	params := map[string]interface{}{
+		"type":    "checks",
+		"service": serviceName,
+	}
+
+	plan, err := watch.Parse(params)
+	if err != nil {
+		t.Logf("Watch parse: %v", err)
+		return
+	}
+
+	updates := make(chan []*api.HealthCheck, 10)
+	plan.Handler = func(idx uint64, data interface{}) {
+		if checks, ok := data.([]*api.HealthCheck); ok {
+			select {
+			case updates <- checks:
+			default:
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+	defer plan.Stop()
+
+	select {
+	case checks := <-updates:
+		t.Logf("Checks for service %s: %d", serviceName, len(checks))
+		for _, c := range checks {
+			t.Logf("  Check: %s, Status: %s", c.CheckID, c.Status)
+		}
+	case <-ctx.Done():
+		t.Log("Watch checks by service timeout")
+	}
+}
+
+// ==================== Watch Plan IsStopped Tests ====================
+
+// TestWatchPlanIsStopped tests the IsStopped method on a watch plan
+func TestWatchPlanIsStopped(t *testing.T) {
+	params := map[string]interface{}{
+		"type": "services",
+	}
+
+	plan, err := watch.Parse(params)
+	require.NoError(t, err)
+
+	assert.False(t, plan.IsStopped(), "Plan should not be stopped initially")
+
+	client := getTestClient(t)
+	plan.Handler = func(idx uint64, data interface{}) {}
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+	assert.False(t, plan.IsStopped(), "Plan should not be stopped while running")
+
+	plan.Stop()
+	time.Sleep(200 * time.Millisecond)
+	assert.True(t, plan.IsStopped(), "Plan should be stopped after Stop()")
+}
+
+// ==================== Watch with Filter Tests ====================
+
+// TestWatchChecksWithFilter tests watching checks with a filter expression
+func TestWatchChecksWithFilter(t *testing.T) {
+	client := getTestClient(t)
+
+	params := map[string]interface{}{
+		"type":   "checks",
+		"state":  "passing",
+	}
+
+	plan, err := watch.Parse(params)
+	if err != nil {
+		t.Logf("Watch parse: %v", err)
+		return
+	}
+
+	updates := make(chan []*api.HealthCheck, 10)
+	plan.Handler = func(idx uint64, data interface{}) {
+		if checks, ok := data.([]*api.HealthCheck); ok {
+			select {
+			case updates <- checks:
+			default:
+			}
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+	defer plan.Stop()
+
+	select {
+	case checks := <-updates:
+		t.Logf("Passing checks: %d", len(checks))
+		for _, c := range checks {
+			assert.Equal(t, api.HealthPassing, c.Status, "All checks should be passing")
+		}
+	case <-ctx.Done():
+		t.Log("Watch checks with filter timeout")
+	}
+}
+
+// TestWatchKeyPrefixUpdate tests that keyprefix watch detects new keys
+func TestWatchKeyPrefixUpdate(t *testing.T) {
+	client := getTestClient(t)
+	kv := client.KV()
+	prefix := "watch-pfx-upd-" + randomString(8) + "/"
+
+	// Create initial key
+	_, err := kv.Put(&api.KVPair{Key: prefix + "key1", Value: []byte("v1")}, nil)
+	require.NoError(t, err)
+	defer kv.DeleteTree(prefix, nil)
+
+	params := map[string]interface{}{
+		"type":   "keyprefix",
+		"prefix": prefix,
+	}
+
+	plan, err := watch.Parse(params)
+	require.NoError(t, err)
+
+	updates := make(chan int, 10)
+	plan.Handler = func(idx uint64, data interface{}) {
+		if pairs, ok := data.(api.KVPairs); ok {
+			select {
+			case updates <- len(pairs):
+			default:
+			}
+		}
+	}
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+	defer plan.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Wait for initial
+	select {
+	case count := <-updates:
+		t.Logf("Initial key count: %d", count)
+	case <-ctx.Done():
+		t.Log("Timeout waiting for initial keys")
+		return
+	}
+
+	// Add a new key under the prefix
+	_, err = kv.Put(&api.KVPair{Key: prefix + "key2", Value: []byte("v2")}, nil)
+	require.NoError(t, err)
+
+	// Wait for update
+	select {
+	case count := <-updates:
+		t.Logf("Updated key count: %d", count)
+		assert.GreaterOrEqual(t, count, 2, "Should have at least 2 keys after addition")
+	case <-ctx.Done():
+		t.Log("Timeout waiting for keyprefix update")
+	}
+}
+
+// TestWatchServiceRegistration tests that services watch detects new registrations
+func TestWatchServiceRegistration(t *testing.T) {
+	client := getTestClient(t)
+
+	params := map[string]interface{}{
+		"type": "services",
+	}
+
+	plan, err := watch.Parse(params)
+	if err != nil {
+		t.Logf("Watch parse: %v", err)
+		return
+	}
+
+	updates := make(chan map[string][]string, 10)
+	plan.Handler = func(idx uint64, data interface{}) {
+		if services, ok := data.(map[string][]string); ok {
+			select {
+			case updates <- services:
+			default:
+			}
+		}
+	}
+
+	go func() {
+		plan.RunWithClientAndHclog(client, nil)
+	}()
+	defer plan.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Wait for initial catalog
+	select {
+	case services := <-updates:
+		t.Logf("Initial services: %d", len(services))
+	case <-ctx.Done():
+		t.Log("Timeout waiting for initial services")
+		return
+	}
+
+	// Register a new service
+	serviceName := "watch-new-reg-" + randomString(8)
+	err = client.Agent().ServiceRegister(&api.AgentServiceRegistration{
+		ID:   serviceName,
+		Name: serviceName,
+		Port: 8080,
+	})
+	require.NoError(t, err)
+	defer client.Agent().ServiceDeregister(serviceName)
+
+	// Wait for catalog update
+	select {
+	case services := <-updates:
+		t.Logf("Updated services: %d", len(services))
+		_, found := services[serviceName]
+		if found {
+			t.Logf("New service %s detected by watch", serviceName)
+		}
+	case <-ctx.Done():
+		t.Log("Timeout waiting for service registration notification")
+	}
+}

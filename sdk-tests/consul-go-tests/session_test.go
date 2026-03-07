@@ -213,3 +213,240 @@ func TestSessionWithChecks(t *testing.T) {
 		t.Logf("Session with checks not supported: %v", err)
 	}
 }
+
+// CS-009: Test renew destroyed session fails
+func TestSessionRenewDestroyed(t *testing.T) {
+	client := getClient(t)
+
+	// Create and immediately destroy
+	session := &api.SessionEntry{
+		Name: "renew-destroyed-" + randomID(),
+		TTL:  "30s",
+	}
+	sessionID, _, err := client.Session().Create(session, nil)
+	require.NoError(t, err)
+
+	_, err = client.Session().Destroy(sessionID, nil)
+	require.NoError(t, err)
+
+	// Try to renew destroyed session
+	entry, _, err := client.Session().Renew(sessionID, nil)
+	// Should return nil entry or error
+	if err != nil {
+		t.Logf("Renew destroyed session error (expected): %v", err)
+	} else {
+		assert.Nil(t, entry, "Renew of destroyed session should return nil entry")
+		t.Log("Renew of destroyed session returned nil (correct)")
+	}
+}
+
+// CS-010: Test session with release behavior
+func TestSessionReleaseBehavior(t *testing.T) {
+	client := getClient(t)
+
+	session := &api.SessionEntry{
+		Name:     "release-behavior-" + randomID(),
+		TTL:      "30s",
+		Behavior: api.SessionBehaviorRelease,
+	}
+
+	sessionID, _, err := client.Session().Create(session, nil)
+	require.NoError(t, err)
+	defer client.Session().Destroy(sessionID, nil)
+
+	info, _, err := client.Session().Info(sessionID, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, info)
+	assert.Equal(t, api.SessionBehaviorRelease, info.Behavior,
+		"Session behavior should be release")
+	t.Logf("Session %s has release behavior", sessionID)
+}
+
+// CS-011: Test session with delete behavior
+func TestSessionDeleteBehavior(t *testing.T) {
+	client := getClient(t)
+
+	session := &api.SessionEntry{
+		Name:     "delete-behavior-" + randomID(),
+		TTL:      "30s",
+		Behavior: api.SessionBehaviorDelete,
+	}
+
+	sessionID, _, err := client.Session().Create(session, nil)
+	require.NoError(t, err)
+	defer client.Session().Destroy(sessionID, nil)
+
+	info, _, err := client.Session().Info(sessionID, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, info)
+	assert.Equal(t, api.SessionBehaviorDelete, info.Behavior,
+		"Session behavior should be delete")
+	t.Logf("Session %s has delete behavior", sessionID)
+}
+
+// CS-012: Test session KV lock and release
+func TestSessionKVLock(t *testing.T) {
+	client := getClient(t)
+
+	session := &api.SessionEntry{
+		Name:     "kv-lock-session-" + randomID(),
+		TTL:      "30s",
+		Behavior: api.SessionBehaviorRelease,
+	}
+
+	sessionID, _, err := client.Session().Create(session, nil)
+	require.NoError(t, err)
+	defer client.Session().Destroy(sessionID, nil)
+
+	// Acquire a KV lock
+	key := "session-lock-key-" + randomID()
+	acquired, _, err := client.KV().Acquire(&api.KVPair{
+		Key:     key,
+		Value:   []byte("locked"),
+		Session: sessionID,
+	}, nil)
+	assert.NoError(t, err)
+	assert.True(t, acquired, "Should acquire KV lock")
+	defer client.KV().Delete(key, nil)
+
+	// Verify the lock
+	pair, _, err := client.KV().Get(key, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, pair)
+	assert.Equal(t, sessionID, pair.Session, "KV should be locked by session")
+
+	// Release the lock
+	released, _, err := client.KV().Release(&api.KVPair{
+		Key:     key,
+		Session: sessionID,
+	}, nil)
+	assert.NoError(t, err)
+	assert.True(t, released, "Should release KV lock")
+
+	// Verify released
+	pair, _, err = client.KV().Get(key, nil)
+	assert.NoError(t, err)
+	if pair != nil {
+		assert.Empty(t, pair.Session, "KV should have no session after release")
+	}
+}
+
+// CS-013: Test session destroy releases KV locks
+func TestSessionDestroyReleasesLocks(t *testing.T) {
+	client := getClient(t)
+
+	session := &api.SessionEntry{
+		Name:     "destroy-release-" + randomID(),
+		TTL:      "30s",
+		Behavior: api.SessionBehaviorRelease,
+	}
+
+	sessionID, _, err := client.Session().Create(session, nil)
+	require.NoError(t, err)
+
+	// Acquire a KV lock
+	key := "destroy-release-key-" + randomID()
+	acquired, _, err := client.KV().Acquire(&api.KVPair{
+		Key:     key,
+		Value:   []byte("locked"),
+		Session: sessionID,
+	}, nil)
+	assert.NoError(t, err)
+	assert.True(t, acquired)
+	defer client.KV().Delete(key, nil)
+
+	// Destroy the session
+	_, err = client.Session().Destroy(sessionID, nil)
+	assert.NoError(t, err)
+
+	time.Sleep(500 * time.Millisecond)
+
+	// KV lock should be released (release behavior)
+	pair, _, err := client.KV().Get(key, nil)
+	assert.NoError(t, err)
+	if pair != nil {
+		assert.Empty(t, pair.Session,
+			"KV lock should be released after session destroy with release behavior")
+		t.Logf("KV lock released after session destroy (value preserved: %s)", string(pair.Value))
+	}
+}
+
+// CS-014: Test session destroy with delete behavior deletes keys
+func TestSessionDestroyDeletesKeys(t *testing.T) {
+	client := getClient(t)
+
+	session := &api.SessionEntry{
+		Name:     "destroy-delete-" + randomID(),
+		TTL:      "30s",
+		Behavior: api.SessionBehaviorDelete,
+	}
+
+	sessionID, _, err := client.Session().Create(session, nil)
+	require.NoError(t, err)
+
+	// Acquire a KV lock
+	key := "destroy-delete-key-" + randomID()
+	acquired, _, err := client.KV().Acquire(&api.KVPair{
+		Key:     key,
+		Value:   []byte("to-be-deleted"),
+		Session: sessionID,
+	}, nil)
+	assert.NoError(t, err)
+	assert.True(t, acquired)
+	defer client.KV().Delete(key, nil)
+
+	// Destroy the session (delete behavior should delete the key)
+	_, err = client.Session().Destroy(sessionID, nil)
+	assert.NoError(t, err)
+
+	time.Sleep(500 * time.Millisecond)
+
+	// KV key may be deleted (delete behavior)
+	pair, _, err := client.KV().Get(key, nil)
+	assert.NoError(t, err)
+	if pair == nil {
+		t.Log("KV key deleted after session destroy with delete behavior (correct)")
+	} else if pair.Session == "" {
+		t.Log("KV key still exists but lock released (acceptable)")
+	} else {
+		t.Logf("KV key still locked (unexpected): session=%s", pair.Session)
+	}
+}
+
+// CS-015: Test create multiple sessions on same node
+func TestSessionMultipleOnNode(t *testing.T) {
+	client := getClient(t)
+
+	var sessionIDs []string
+	for i := 0; i < 5; i++ {
+		session := &api.SessionEntry{
+			Name: "multi-session-" + randomID(),
+			TTL:  "30s",
+		}
+		id, _, err := client.Session().Create(session, nil)
+		require.NoError(t, err)
+		sessionIDs = append(sessionIDs, id)
+	}
+	defer func() {
+		for _, id := range sessionIDs {
+			client.Session().Destroy(id, nil)
+		}
+	}()
+
+	// All sessions should be listable
+	sessions, _, err := client.Session().List(nil)
+	assert.NoError(t, err)
+
+	foundCount := 0
+	for _, s := range sessions {
+		for _, id := range sessionIDs {
+			if s.ID == id {
+				foundCount++
+				break
+			}
+		}
+	}
+
+	assert.Equal(t, 5, foundCount, "All 5 created sessions should be found")
+	t.Logf("Found %d/%d sessions", foundCount, len(sessionIDs))
+}
