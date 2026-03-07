@@ -164,12 +164,14 @@ pub async fn ui_nodes(
     naming_service: web::Data<Arc<NamingService>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    _query: web::Query<UINodeQueryParams>,
+    query: web::Query<UINodeQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
+
+    let dc = dc_config.resolve_dc(&query.dc);
 
     // Collect unique nodes from all service instances
     let (_, service_names) = naming_service.list_services("public", "DEFAULT_GROUP", 1, 10000);
@@ -188,7 +190,11 @@ pub async fn ui_nodes(
                 id: uuid::Uuid::new_v4().to_string(),
                 node: node_name,
                 address: instance.ip.clone(),
-                datacenter: dc_config.datacenter.clone(),
+                datacenter: instance
+                    .metadata
+                    .get("consul_datacenter")
+                    .cloned()
+                    .unwrap_or_else(|| dc.clone()),
                 meta: None,
                 create_index: 1,
                 modify_index: 1,
@@ -232,7 +238,11 @@ pub async fn ui_node_info(
                     id: uuid::Uuid::new_v4().to_string(),
                     node: node_name,
                     address: instance.ip.clone(),
-                    datacenter: dc_config.datacenter.clone(),
+                    datacenter: instance
+                        .metadata
+                        .get("consul_datacenter")
+                        .cloned()
+                        .unwrap_or_else(|| dc_config.datacenter.clone()),
                     meta: None,
                     create_index: 1,
                     modify_index: 1,
@@ -516,6 +526,57 @@ pub async fn ui_metrics_proxy(
 }
 
 // ============================================================================
+// Federation State Helpers
+// ============================================================================
+
+/// Collect mesh-gateway service instances as JSON values for federation state
+fn collect_mesh_gateways(
+    naming_service: &Arc<NamingService>,
+    datacenter: &str,
+) -> Vec<serde_json::Value> {
+    let namespace = "public";
+    let (_, service_names) = naming_service.list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+    let mut gateways = Vec::new();
+
+    for svc in service_names {
+        let instances = naming_service.get_instances(namespace, "DEFAULT_GROUP", &svc, "", false);
+        for instance in instances {
+            if instance
+                .metadata
+                .get("consul_kind")
+                .is_some_and(|k| k == "mesh-gateway")
+            {
+                gateways.push(serde_json::json!({
+                    "WAN": {
+                        "Address": instance.ip,
+                        "Port": instance.port
+                    },
+                    "LAN": {
+                        "Address": instance.ip,
+                        "Port": instance.port
+                    },
+                    "Service": {
+                        "ID": instance.instance_id,
+                        "Service": svc,
+                        "Address": instance.ip,
+                        "Port": instance.port,
+                        "Meta": {},
+                        "Datacenter": datacenter
+                    },
+                    "Node": {
+                        "Node": instance.metadata.get("consul_node").cloned().unwrap_or_else(|| instance.ip.clone()),
+                        "Address": instance.ip,
+                        "Datacenter": datacenter
+                    }
+                }));
+            }
+        }
+    }
+
+    gateways
+}
+
+// ============================================================================
 // Federation State Handlers
 // ============================================================================
 
@@ -524,15 +585,19 @@ pub async fn federation_state_list(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    naming_service: web::Data<Arc<NamingService>>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
+    // Collect mesh-gateway instances for the local datacenter
+    let mesh_gateways = collect_mesh_gateways(&naming_service, &dc_config.datacenter);
+
     let state = FederationState {
         datacenter: dc_config.datacenter.clone(),
-        mesh_gateways: Vec::new(),
+        mesh_gateways,
         primary_datacenter: dc_config.primary_datacenter.clone(),
         primary_modifyindex: 1,
     };
@@ -589,6 +654,7 @@ pub async fn federation_state_get(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    naming_service: web::Data<Arc<NamingService>>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
@@ -597,9 +663,15 @@ pub async fn federation_state_get(
     }
 
     let dc = path.into_inner();
+    let mesh_gateways = if dc == dc_config.datacenter {
+        collect_mesh_gateways(&naming_service, &dc)
+    } else {
+        Vec::new()
+    };
+
     let state = FederationState {
         datacenter: dc,
-        mesh_gateways: Vec::new(),
+        mesh_gateways,
         primary_datacenter: dc_config.primary_datacenter.clone(),
         primary_modifyindex: 1,
     };

@@ -110,7 +110,7 @@ reqwest = { version = "0.12", features = ["json"] }
 
 # Utils
 chrono = "0.4"
-uuid = { version = "1.20", features = ["v4"] }
+uuid = { version = "1.22", features = ["v4"] }
 regex = "1.11"
 base64 = "0.22"
 # Note: md5 (simple API via compute()) and md-5 (RustCrypto Digest trait) serve different use cases

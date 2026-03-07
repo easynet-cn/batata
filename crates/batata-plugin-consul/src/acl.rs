@@ -557,7 +557,13 @@ query_prefix "" { policy = "write" }
     }
 
     /// Create a new policy
-    pub fn create_policy(&self, name: &str, description: &str, rules: &str) -> AclPolicy {
+    pub fn create_policy(
+        &self,
+        name: &str,
+        description: &str,
+        rules: &str,
+        datacenters: Option<Vec<String>>,
+    ) -> AclPolicy {
         let now = chrono::Utc::now().to_rfc3339();
         let policy_id = uuid::Uuid::new_v4().to_string();
 
@@ -566,7 +572,7 @@ query_prefix "" { policy = "write" }
             name: name.to_string(),
             description: description.to_string(),
             rules: rules.to_string(),
-            datacenters: None,
+            datacenters,
             create_time: now.clone(),
             modify_time: now,
         };
@@ -1410,6 +1416,7 @@ pub struct CreatePolicyRequest {
     pub name: String,
     pub description: Option<String>,
     pub rules: String,
+    pub datacenters: Option<Vec<String>>,
 }
 
 /// PUT /v1/acl/policy
@@ -1422,6 +1429,7 @@ pub async fn create_policy(
         &body.name,
         body.description.as_deref().unwrap_or(""),
         &body.rules,
+        body.datacenters.clone(),
     );
 
     HttpResponse::Ok().json(policy)
@@ -2227,6 +2235,7 @@ mod tests {
             "test-policy",
             "A test policy",
             r#"service_prefix "test-" { policy = "write" }"#,
+            None,
         );
 
         assert!(!policy.id.is_empty());
@@ -2279,6 +2288,7 @@ mod tests {
             "acl-test-del-policy",
             "For deletion test",
             r#"key_prefix "" { policy = "read" }"#,
+            None,
         );
 
         assert!(service.get_policy(&policy.id).is_some());
@@ -2301,6 +2311,7 @@ mod tests {
             "acl-role-test-policy",
             "Test",
             r#"service_prefix "" { policy = "read" }"#,
+            None,
         );
 
         // Create role
@@ -2371,6 +2382,7 @@ mod tests {
             "acl-test-readonly-svc",
             "Read only",
             r#"service_prefix "" { policy = "read" }"#,
+            None,
         );
 
         // Create token with this policy
@@ -2394,6 +2406,7 @@ mod tests {
             "acl-test-deny-policy",
             "Deny",
             r#"key_prefix "secret/" { policy = "deny" }"#,
+            None,
         );
 
         let token = service.create_token("deny-token", vec![policy.name.clone()], vec![], false);

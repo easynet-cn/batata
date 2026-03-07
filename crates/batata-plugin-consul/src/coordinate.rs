@@ -296,8 +296,23 @@ impl ConsulCoordinateServicePersistent {
 /// GET /v1/coordinate/datacenters - List WAN coordinates
 pub async fn get_coordinate_datacenters(
     coord_service: web::Data<ConsulCoordinateService>,
+    peering_service: web::Data<crate::peering::ConsulPeeringService>,
 ) -> HttpResponse {
-    HttpResponse::Ok().json(coord_service.get_datacenters())
+    let mut dc_maps = coord_service.get_datacenters();
+
+    // Add coordinate maps for datacenters known through peering
+    for peering in peering_service.list_peerings() {
+        let remote_dc = &peering.remote.datacenter;
+        if !remote_dc.is_empty() && !dc_maps.iter().any(|m| m.datacenter == *remote_dc) {
+            dc_maps.push(DatacenterMap {
+                datacenter: remote_dc.clone(),
+                area_id: "WAN".to_string(),
+                coordinates: Vec::new(),
+            });
+        }
+    }
+
+    HttpResponse::Ok().json(dc_maps)
 }
 
 /// GET /v1/coordinate/nodes - List LAN coordinates for nodes
@@ -363,8 +378,23 @@ pub async fn update_coordinate(
 /// GET /v1/coordinate/datacenters (persistent)
 pub async fn get_coordinate_datacenters_persistent(
     coord_service: web::Data<ConsulCoordinateServicePersistent>,
+    peering_service: web::Data<crate::peering::ConsulPeeringService>,
 ) -> HttpResponse {
-    HttpResponse::Ok().json(coord_service.get_datacenters())
+    let mut dc_maps = coord_service.get_datacenters();
+
+    // Add coordinate maps for datacenters known through peering
+    for peering in peering_service.list_peerings() {
+        let remote_dc = &peering.remote.datacenter;
+        if !remote_dc.is_empty() && !dc_maps.iter().any(|m| m.datacenter == *remote_dc) {
+            dc_maps.push(DatacenterMap {
+                datacenter: remote_dc.clone(),
+                area_id: "WAN".to_string(),
+                coordinates: Vec::new(),
+            });
+        }
+    }
+
+    HttpResponse::Ok().json(dc_maps)
 }
 
 /// GET /v1/coordinate/nodes (persistent)

@@ -1153,6 +1153,7 @@ pub async fn list_services(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
 ) -> HttpResponse {
     // Check ACL authorization for service read
@@ -1161,10 +1162,12 @@ pub async fn list_services(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    let dc = dc_config.resolve_dc(&query.dc);
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
     let services = catalog.get_services(&namespace);
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Effective-Datacenter", dc))
         .json(services)
 }
 
@@ -1174,12 +1177,14 @@ pub async fn get_service(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
     let tag_filter = query.tag.as_deref();
+    let dc = dc_config.resolve_dc(&query.dc);
 
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
@@ -1187,7 +1192,12 @@ pub async fn get_service(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let services = catalog.get_service_instances(&namespace, &service_name, tag_filter);
+    let mut services = catalog.get_service_instances(&namespace, &service_name, tag_filter);
+
+    // Override datacenter with resolved DC from query params
+    for svc in &mut services {
+        svc.datacenter = dc.clone();
+    }
 
     if services.is_empty() {
         HttpResponse::Ok()
@@ -1206,6 +1216,7 @@ pub async fn list_nodes(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
 ) -> HttpResponse {
     // Check ACL authorization for node read
@@ -1214,8 +1225,15 @@ pub async fn list_nodes(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    let dc = dc_config.resolve_dc(&query.dc);
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
-    let nodes = catalog.get_nodes(&namespace);
+    let mut nodes = catalog.get_nodes(&namespace);
+
+    // Override datacenter with resolved DC from query params
+    for node in &mut nodes {
+        node.datacenter = dc.clone();
+    }
+
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", "1"))
         .json(nodes)
@@ -1254,11 +1272,17 @@ pub async fn register(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
     body: web::Json<CatalogRegistration>,
 ) -> HttpResponse {
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
-    let registration = body.into_inner();
+    let mut registration = body.into_inner();
+
+    // Use resolved DC if registration doesn't specify one
+    if registration.datacenter.is_none() {
+        registration.datacenter = Some(dc_config.resolve_dc(&query.dc));
+    }
 
     // Check ACL authorization for service write
     let service_name = registration
@@ -1284,6 +1308,7 @@ pub async fn deregister(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    _dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
     body: web::Json<CatalogDeregistration>,
 ) -> HttpResponse {
@@ -1311,9 +1336,23 @@ pub async fn deregister(
 }
 
 /// GET /v1/catalog/datacenters
-/// Returns a list of all known datacenters
-pub async fn list_datacenters(dc_config: web::Data<ConsulDatacenterConfig>) -> HttpResponse {
-    HttpResponse::Ok().json(vec![&dc_config.datacenter])
+/// Returns a list of all known datacenters, including those known from peering relationships
+pub async fn list_datacenters(
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    peering_service: web::Data<crate::peering::ConsulPeeringService>,
+) -> HttpResponse {
+    let mut datacenters = vec![dc_config.datacenter.clone()];
+
+    // Add datacenters known from peering relationships
+    for peering in peering_service.list_peerings() {
+        if !peering.remote.datacenter.is_empty()
+            && !datacenters.contains(&peering.remote.datacenter)
+        {
+            datacenters.push(peering.remote.datacenter.clone());
+        }
+    }
+
+    HttpResponse::Ok().json(datacenters)
 }
 
 /// GET /v1/internal/ui/services
@@ -1322,6 +1361,7 @@ pub async fn ui_services(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    _dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
 ) -> HttpResponse {
     // Check ACL authorization for service read
@@ -1344,18 +1384,26 @@ pub async fn get_connect_service(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let dc = dc_config.resolve_dc(&query.dc);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let services = catalog.get_connect_service_instances(&namespace, &service_name);
+    let mut services = catalog.get_connect_service_instances(&namespace, &service_name);
+
+    // Override datacenter with resolved DC from query params
+    for svc in &mut services {
+        svc.datacenter = dc.clone();
+    }
+
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", "1"))
         .json(services)
@@ -1367,11 +1415,13 @@ pub async fn get_node_services(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
 ) -> HttpResponse {
     let node_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let dc = dc_config.resolve_dc(&query.dc);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Node, &node_name, false);
     if !authz.allowed {
@@ -1380,8 +1430,11 @@ pub async fn get_node_services(
 
     match catalog.get_node(&namespace, &node_name) {
         Some(node_services) => {
+            let mut node = node_services.node;
+            // Override datacenter with resolved DC from query params
+            node.datacenter = dc;
             let list = NodeServiceList {
-                node: node_services.node,
+                node,
                 services: node_services.services.into_values().collect(),
             };
             HttpResponse::Ok()

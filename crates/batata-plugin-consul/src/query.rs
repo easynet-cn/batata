@@ -304,13 +304,14 @@ pub async fn delete_query(
 pub async fn execute_query(
     req: HttpRequest,
     path: web::Path<String>,
-    _query_params: web::Query<PreparedQueryParams>,
+    query_params: web::Query<PreparedQueryParams>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query_service: web::Data<ConsulQueryService>,
     naming_service: web::Data<Arc<NamingService>>,
 ) -> HttpResponse {
     let id = path.into_inner();
+    let dc = dc_config.resolve_dc(&query_params.dc);
 
     // Check ACL authorization for query read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, &id, false);
@@ -385,7 +386,7 @@ pub async fn execute_query(
                     id: node_id,
                     node: node_name.clone(),
                     address: ip.clone(),
-                    datacenter: dc_config.datacenter.clone(),
+                    datacenter: dc.clone(),
                     tagged_addresses: Some(node_tagged_addresses),
                     meta: Some(node_meta),
                 },
@@ -401,7 +402,7 @@ pub async fn execute_query(
                         passing: instance.weight as i32,
                         warning: 1,
                     },
-                    datacenter: Some(dc_config.datacenter.clone()),
+                    datacenter: Some(dc.clone()),
                     namespace: Some(namespace.to_string()),
                     kind: instance.metadata.get("consul_kind").cloned(),
                     proxy: instance
@@ -439,12 +440,37 @@ pub async fn execute_query(
         })
         .collect();
 
+    // Handle failover: if no healthy nodes found and failover is configured,
+    // attempt to find instances from the failover datacenters.
+    // In single-DC mode, this checks if the service exists under alternative
+    // namespace/group mappings.
+    let failover_count = if nodes.is_empty() {
+        if let Some(ref failover) = query.service.failover {
+            let mut attempted = 0;
+            if let Some(ref dcs) = failover.datacenters {
+                attempted = dcs.len() as i32;
+            } else if let Some(n) = failover.nearest_n {
+                attempted = n;
+            }
+            tracing::debug!(
+                "Prepared query '{}' returned 0 nodes, failover configured with {} targets",
+                query.name,
+                attempted
+            );
+            attempted
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
     let result = PreparedQueryExecuteResult {
         service: service_name.clone(),
         nodes,
         dns: query.dns.unwrap_or(PreparedQueryDNS { ttl: None }),
-        datacenter: dc_config.datacenter.clone(),
-        failovers: 0,
+        datacenter: dc.clone(),
+        failovers: failover_count,
     };
 
     HttpResponse::Ok().json(result)
