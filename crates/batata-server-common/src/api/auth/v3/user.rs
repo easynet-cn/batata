@@ -1,4 +1,4 @@
-use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
 use serde::Deserialize;
 
 use batata_api::model::Page;
@@ -9,7 +9,7 @@ use crate::api::auth::model::{
 };
 use crate::model::app_state::AppState;
 use crate::model::response::{ConsoleException, Result};
-use crate::secured::Secured;
+use crate::secured::{AuthContext, Secured};
 use crate::{ActionTypes, ApiType, SignType, secured};
 
 #[derive(Debug, Deserialize)]
@@ -211,6 +211,37 @@ async fn update(
             ])
             .build()
     );
+
+    // Permission check consistent with Nacos: only global admin or the user themselves
+    // can change the password (hasPermission logic from UserControllerV3.java)
+    if data.configuration.auth_enabled() {
+        let auth_context = req
+            .extensions()
+            .get::<AuthContext>()
+            .cloned()
+            .unwrap_or_default();
+
+        let current_username = &auth_context.username;
+
+        // If the user is not changing their own password, check if they are admin
+        if current_username != &params.username {
+            let is_global_admin = data
+                .persistence()
+                .role_find_by_username(current_username)
+                .await
+                .unwrap_or_default()
+                .iter()
+                .any(|role| role.role == GLOBAL_ADMIN_ROLE);
+
+            if !is_global_admin {
+                return HttpResponse::Forbidden().json(Result::<String> {
+                    code: 403,
+                    message: "authorization failed!".to_string(),
+                    data: "authorization failed!".to_string(),
+                });
+            }
+        }
+    }
 
     let hashed_password = match bcrypt::hash(&params.new_password, 10u32) {
         Ok(hash) => hash,

@@ -2,8 +2,7 @@
 //!
 //! Provides weighted random selection from healthy instances.
 
-use batata_api::naming::model::Instance;
-use batata_api::naming::model::ServiceInfo;
+use batata_api::naming::model::{Instance, Service};
 use rand::Rng;
 use rand::seq::IndexedRandom;
 use tracing::debug;
@@ -20,17 +19,17 @@ pub struct Balancer;
 
 impl Balancer {
     /// Select all instances from service
-    pub fn select_all(service_info: &ServiceInfo) -> Result<Vec<Instance>, String> {
-        let hosts = service_info.hosts.clone();
+    pub fn select_all(service: &Service) -> Result<Vec<Instance>, String> {
+        let hosts = service.hosts.clone();
         if hosts.is_empty() {
-            return Err(format!("no host to srv for serviceInfo: {}", service_info.name));
+            return Err(format!("no host to srv for service: {}", service.name));
         }
         Ok(hosts)
     }
 
     /// Randomly select one instance from service
-    pub fn select_host(service_info: &ServiceInfo) -> Result<Instance, String> {
-        let hosts = Self::select_all(service_info)?;
+    pub fn select_host(service: &Service) -> Result<Instance, String> {
+        let hosts = Self::select_all(service)?;
         Self::get_host_by_random_weight(&hosts)
     }
 
@@ -48,7 +47,7 @@ impl Balancer {
             .filter(|host| host.healthy)
             .map(|host| WeightedInstance {
                 instance: host.clone(),
-                weight: host.weight.unwrap_or(1.0),
+                weight: host.weight,
             })
             .collect();
 
@@ -73,27 +72,10 @@ impl Balancer {
         Ok(host_with_weight.last().unwrap().instance.clone())
     }
 
-    /// Select by instance name (deterministic)
-    pub fn select_by_name(
-        service_info: &ServiceInfo,
-        instance_name: &str,
-    ) -> Result<Instance, String> {
-        let hosts = Self::select_all(service_info)?;
-        hosts
-            .iter()
-            .find(|host| host.instance_name.as_deref() == Some(instance_name))
-            .cloned()
-            .ok_or_else(|| format!("instance '{}' not found", instance_name))
-    }
-
     /// Select healthy instances only
-    pub fn select_healthy(service_info: &ServiceInfo) -> Result<Vec<Instance>, String> {
-        let hosts = Self::select_all(service_info)?;
-        let healthy: Vec<Instance> = hosts
-            .iter()
-            .filter(|host| host.healthy)
-            .cloned()
-            .collect();
+    pub fn select_healthy(service: &Service) -> Result<Vec<Instance>, String> {
+        let hosts = Self::select_all(service)?;
+        let healthy: Vec<Instance> = hosts.iter().filter(|host| host.healthy).cloned().collect();
 
         if healthy.is_empty() {
             return Err("no healthy instances available".to_string());
@@ -119,17 +101,17 @@ mod tests {
 
     fn create_mock_instance(id: &str, weight: f64, healthy: bool) -> Instance {
         Instance {
-            instance_id: Some(id.to_string()),
+            instance_id: id.to_string(),
             ip: "127.0.0.1".to_string(),
             port: 8080,
-            weight: Some(weight),
+            weight,
             healthy,
             ..Default::default()
         }
     }
 
-    fn create_mock_service(instances: Vec<Instance>) -> ServiceInfo {
-        ServiceInfo {
+    fn create_mock_service(instances: Vec<Instance>) -> Service {
+        Service {
             name: "test-service".to_string(),
             hosts: instances,
             ..Default::default()
@@ -159,28 +141,14 @@ mod tests {
 
         let healthy = Balancer::select_healthy(&service).unwrap();
         assert_eq!(healthy.len(), 2);
-        assert_eq!(healthy[0].instance_id.as_ref().unwrap(), "1");
-        assert_eq!(healthy[1].instance_id.as_ref().unwrap(), "3");
-    }
-
-    #[test]
-    fn test_select_by_name() {
-        let instances = vec![
-            create_mock_instance("instance-a", 1.0, true),
-            create_mock_instance("instance-b", 1.0, true),
-        ];
-        let service = create_mock_service(instances);
-
-        let selected = Balancer::select_by_name(&service, "instance-b").unwrap();
-        assert_eq!(selected.instance_id.as_ref().unwrap(), "instance-b");
     }
 
     #[test]
     fn test_random_weighted() {
         let instances = vec![
-            create_mock_instance("1", 1.0, true),  // 1/6 weight
-            create_mock_instance("2", 2.0, true),  // 2/6 weight
-            create_mock_instance("3", 3.0, true),  // 3/6 weight
+            create_mock_instance("1", 1.0, true),
+            create_mock_instance("2", 2.0, true),
+            create_mock_instance("3", 3.0, true),
         ];
         let service = create_mock_service(instances);
 
@@ -188,10 +156,10 @@ mod tests {
         let mut counts = [0usize; 3];
         for _ in 0..1000 {
             let selected = Balancer::select_host(&service).unwrap();
-            match selected.instance_id.as_deref() {
-                Some("1") => counts[0] += 1,
-                Some("2") => counts[1] += 1,
-                Some("3") => counts[2] += 1,
+            match selected.instance_id.as_str() {
+                "1" => counts[0] += 1,
+                "2" => counts[1] += 1,
+                "3" => counts[2] += 1,
                 _ => {}
             }
         }
@@ -212,5 +180,105 @@ mod tests {
         let result = Balancer::select_host(&service);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("no healthy instances"));
+    }
+
+    #[test]
+    fn test_select_all_empty() {
+        let service = create_mock_service(vec![]);
+        let result = Balancer::select_all(&service);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no host to srv"));
+    }
+
+    #[test]
+    fn test_select_healthy_empty() {
+        let service = create_mock_service(vec![]);
+        let result = Balancer::select_healthy(&service);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_select_healthy_none_healthy() {
+        let instances = vec![
+            create_mock_instance("1", 1.0, false),
+            create_mock_instance("2", 1.0, false),
+        ];
+        let service = create_mock_service(instances);
+        let result = Balancer::select_healthy(&service);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("no healthy instances"));
+    }
+
+    #[test]
+    fn test_select_host_single() {
+        let instances = vec![create_mock_instance("only-one", 1.0, true)];
+        let service = create_mock_service(instances);
+
+        // Should always return the same instance
+        for _ in 0..10 {
+            let selected = Balancer::select_host(&service).unwrap();
+            assert_eq!(selected.instance_id, "only-one");
+        }
+    }
+
+    #[test]
+    fn test_random_instance_healthy_only() {
+        let instances = vec![
+            create_mock_instance("healthy", 1.0, true),
+            create_mock_instance("unhealthy", 1.0, false),
+        ];
+
+        // Should only return healthy instances
+        for _ in 0..20 {
+            let selected = Balancer::random_instance(&instances).unwrap();
+            assert_eq!(selected.instance_id, "healthy");
+        }
+    }
+
+    #[test]
+    fn test_random_instance_empty() {
+        let result = Balancer::random_instance(&[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_random_instance_all_unhealthy() {
+        let instances = vec![
+            create_mock_instance("1", 1.0, false),
+            create_mock_instance("2", 1.0, false),
+        ];
+        let result = Balancer::random_instance(&instances);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_select_all_includes_unhealthy() {
+        let instances = vec![
+            create_mock_instance("1", 1.0, true),
+            create_mock_instance("2", 1.0, false),
+        ];
+        let service = create_mock_service(instances);
+
+        let all = Balancer::select_all(&service).unwrap();
+        assert_eq!(all.len(), 2); // Includes unhealthy
+    }
+
+    #[test]
+    fn test_weighted_selection_zero_weight() {
+        let instances = vec![
+            create_mock_instance("zero", 0.0, true),
+            create_mock_instance("normal", 1.0, true),
+        ];
+        let service = create_mock_service(instances);
+
+        // The zero-weight instance should rarely be selected
+        let mut normal_count = 0;
+        for _ in 0..100 {
+            let selected = Balancer::select_host(&service).unwrap();
+            if selected.instance_id == "normal" {
+                normal_count += 1;
+            }
+        }
+        assert!(normal_count > 90);
     }
 }

@@ -26,6 +26,10 @@ pub fn consul_agent_routes() -> actix_web::Scope {
         .route("/reload", web::put().to(agent::agent_reload))
         .route("/maintenance", web::put().to(agent::agent_maintenance))
         .route("/metrics", web::get().to(agent::get_agent_metrics))
+        .route(
+            "/metrics/stream",
+            web::get().to(agent::agent_metrics_stream),
+        )
         .route("/monitor", web::get().to(agent::agent_monitor))
         .route(
             "/token/{token_type}",
@@ -90,6 +94,10 @@ pub fn consul_agent_routes_persistent() -> actix_web::Scope {
         .route("/reload", web::put().to(agent::agent_reload))
         .route("/maintenance", web::put().to(agent::agent_maintenance))
         .route("/metrics", web::get().to(agent::get_agent_metrics))
+        .route(
+            "/metrics/stream",
+            web::get().to(agent::agent_metrics_stream),
+        )
         .route("/monitor", web::get().to(agent::agent_monitor))
         .route(
             "/token/{token_type}",
@@ -150,6 +158,10 @@ pub fn consul_agent_routes_real() -> actix_web::Scope {
         .route("/reload", web::put().to(agent::agent_reload))
         .route("/maintenance", web::put().to(agent::agent_maintenance))
         .route("/metrics", web::get().to(agent::get_agent_metrics_real))
+        .route(
+            "/metrics/stream",
+            web::get().to(agent::agent_metrics_stream_real),
+        )
         .route("/monitor", web::get().to(agent::agent_monitor))
         .route(
             "/token/{token_type}",
@@ -1042,6 +1054,9 @@ mod tests {
                 .app_data(web::Data::new(connect_service))
                 .app_data(web::Data::new(connect_ca_service))
                 .app_data(web::Data::new(naming_service))
+                .app_data(web::Data::new(
+                    crate::model::ConsulDatacenterConfig::default(),
+                ))
                 .service(consul_test_routes()),
         )
         .await

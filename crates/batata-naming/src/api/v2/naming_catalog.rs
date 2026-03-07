@@ -15,7 +15,7 @@ use batata_common::{
 };
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
-use batata_server_common::{Secured, secured};
+use batata_server_common::{Secured, error, secured};
 
 use crate::service::NamingService;
 
@@ -76,7 +76,7 @@ pub async fn list_catalog_instances(
     if params.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             String::new(),
         );

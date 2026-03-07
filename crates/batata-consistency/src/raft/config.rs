@@ -102,11 +102,11 @@ impl RaftConfig {
     }
 
     /// Ensure all data directories exist
-    pub fn ensure_dirs(&self) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.data_dir)?;
-        std::fs::create_dir_all(self.log_dir())?;
-        std::fs::create_dir_all(self.state_machine_dir())?;
-        std::fs::create_dir_all(self.snapshot_dir())?;
+    pub async fn ensure_dirs(&self) -> std::io::Result<()> {
+        tokio::fs::create_dir_all(&self.data_dir).await?;
+        tokio::fs::create_dir_all(self.log_dir()).await?;
+        tokio::fs::create_dir_all(self.state_machine_dir()).await?;
+        tokio::fs::create_dir_all(self.snapshot_dir()).await?;
         Ok(())
     }
 
@@ -191,8 +191,8 @@ mod tests {
         assert_eq!(config1.data_dir, config2.data_dir);
     }
 
-    #[test]
-    fn test_ensure_dirs() {
+    #[tokio::test]
+    async fn test_ensure_dirs() {
         let temp_dir = std::env::temp_dir().join(format!("raft_test_{}", std::process::id()));
         let config = RaftConfig {
             data_dir: temp_dir.clone(),
@@ -200,7 +200,7 @@ mod tests {
         };
 
         // Should succeed creating directories
-        assert!(config.ensure_dirs().is_ok());
+        assert!(config.ensure_dirs().await.is_ok());
 
         // Verify directories exist
         assert!(temp_dir.exists());

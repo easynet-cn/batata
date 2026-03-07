@@ -19,9 +19,7 @@ impl ProtectMode {
 
     /// Create with custom threshold
     pub fn with_threshold(protect_threshold: f32) -> Self {
-        Self {
-            protect_threshold,
-        }
+        Self { protect_threshold }
     }
 
     /// Get the protection threshold (0.0 - 1.0)
@@ -31,12 +29,15 @@ impl ProtectMode {
 
     /// Set the protection threshold
     pub fn set_protect_threshold(&mut self, threshold: f32) {
-        assert!((0.0..=1.0).contains(&threshold), "Threshold must be between 0.0 and 1.0");
+        assert!(
+            (0.0..=1.0).contains(&threshold),
+            "Threshold must be between 0.0 and 1.0"
+        );
         self.protect_threshold = threshold;
     }
 
     /// Check if protection should be enabled
-    /// 
+    ///
     /// Protection is enabled when the ratio of healthy instances
     /// to total instances falls below the threshold.
     pub fn should_protect(&self, healthy_count: usize, total_count: usize) -> bool {
@@ -106,7 +107,63 @@ mod tests {
 
     #[test]
     #[should_panic]
-    fn test_invalid_threshold() {
-        ProtectMode::with_threshold(1.5);
+    fn test_invalid_threshold_above() {
+        let mut pm = ProtectMode::new();
+        pm.set_protect_threshold(1.5);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_threshold_below() {
+        let mut pm = ProtectMode::new();
+        pm.set_protect_threshold(-0.1);
+    }
+
+    #[test]
+    fn test_valid_boundary_thresholds() {
+        let mut pm = ProtectMode::new();
+        pm.set_protect_threshold(0.0);
+        assert_eq!(pm.protect_threshold(), 0.0);
+
+        pm.set_protect_threshold(1.0);
+        assert_eq!(pm.protect_threshold(), 1.0);
+    }
+
+    #[test]
+    fn test_should_protect_exact_threshold() {
+        let protect = ProtectMode::with_threshold(0.5);
+        // 5/10 = 0.5, NOT below threshold
+        assert!(!protect.should_protect(5, 10));
+        // 4/10 = 0.4, below threshold
+        assert!(protect.should_protect(4, 10));
+    }
+
+    #[test]
+    fn test_should_protect_all_healthy() {
+        let protect = ProtectMode::with_threshold(0.8);
+        // 10/10 = 1.0 > 0.8, should not protect
+        assert!(!protect.should_protect(10, 10));
+    }
+
+    #[test]
+    fn test_should_protect_single_instance() {
+        let protect = ProtectMode::with_threshold(0.8);
+        // 1/1 = 1.0, should not protect
+        assert!(!protect.should_protect(1, 1));
+        // 0/1 = 0.0, should protect
+        assert!(protect.should_protect(0, 1));
+    }
+
+    #[test]
+    fn test_is_protected_zero_healthy() {
+        let protect = ProtectMode::with_threshold(0.8);
+        // 0 healthy instances: should_protect is true but is_protected requires healthy > 0
+        assert!(!protect.is_protected(0, 10));
+    }
+
+    #[test]
+    fn test_default_impl() {
+        let protect = ProtectMode::default();
+        assert_eq!(protect.protect_threshold(), 0.8);
     }
 }

@@ -78,6 +78,9 @@ impl TokenBucket {
     }
 }
 
+/// Maximum number of tracked IPs to prevent unbounded memory growth under DoS
+const MAX_RATE_LIMIT_ENTRIES: usize = 100_000;
+
 /// Rate limiter state shared across requests
 pub struct RateLimiterState {
     buckets: DashMap<String, TokenBucket>,
@@ -95,6 +98,11 @@ impl RateLimiterState {
     fn check_rate_limit(&self, key: &str) -> (bool, u32) {
         if !self.config.enabled {
             return (true, self.config.max_requests);
+        }
+
+        // Prevent unbounded memory growth: reject new IPs when at capacity
+        if self.buckets.len() >= MAX_RATE_LIMIT_ENTRIES && !self.buckets.contains_key(key) {
+            return (false, 0);
         }
 
         let mut bucket = self.buckets.entry(key.to_string()).or_insert_with(|| {

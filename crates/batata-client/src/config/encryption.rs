@@ -6,7 +6,7 @@
 
 use crate::error::{ClientError, Result};
 use crate::local_config::SnapshotSwitch;
-use md5::Digest;
+use md5::Digest as Md5Digest;
 use std::path::PathBuf;
 use tracing::debug;
 
@@ -165,7 +165,7 @@ impl LocalEncryptedDataKeyProcessor {
     }
 
     fn hash_string(s: &str) -> String {
-        hex::encode(&md5::Md5::digest(s.as_bytes())[..8])
+        hex::encode(&md5::Md5::digest(s.as_bytes())[..4])
     }
 }
 
@@ -257,8 +257,8 @@ mod tests {
     use super::*;
     use crate::config::filter::IConfigFilter;
 
-    #[test]
-    fn test_encryption_filter_roundtrip() {
+    #[tokio::test]
+    async fn test_encryption_filter_roundtrip() {
         let filter = SimpleEncryptionFilter::new_from_string("my-secret-key-1234567890");
 
         let mut request = super::super::filter::ConfigRequest::new(
@@ -268,20 +268,16 @@ mod tests {
         );
         request.content = "Hello, World!".to_string();
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            filter.filter_publish(&mut request).await.unwrap();
-        });
+        filter.filter_publish(&mut request).await.unwrap();
 
         assert_ne!(request.content, "Hello, World!");
         assert!(!request.encrypted_data_key.is_empty());
 
         let mut response = super::super::filter::ConfigResponse::new();
         response.content = request.content.clone();
+        response.encrypted_data_key = request.encrypted_data_key.clone();
 
-        rt.block_on(async {
-            filter.filter_query(&mut response).await.unwrap();
-        });
+        filter.filter_query(&mut response).await.unwrap();
 
         assert_eq!(response.content, "Hello, World!");
     }

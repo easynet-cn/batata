@@ -4,6 +4,7 @@
 use actix_web::{HttpRequest, Responder, Scope, get, web};
 use serde::Serialize;
 
+use batata_server_common::error;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response as common_response;
 use batata_server_common::secured::Secured;
@@ -82,7 +83,7 @@ async fn get_plugin(
         Some(plugin) => common_response::Result::<PluginInfo>::http_success(plugin),
         None => common_response::Result::<String>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!("Plugin '{}' not found", params.name),
             String::new(),
         ),

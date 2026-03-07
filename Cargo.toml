@@ -18,6 +18,7 @@ members = [
     "crates/batata-mesh",
     "crates/batata-maintainer-client",
     "crates/batata-ai",
+    "crates/batata-consul-client",
     "crates/batata-server",
 ]
 
@@ -47,6 +48,7 @@ batata-client = { path = "crates/batata-client" }
 batata-maintainer-client = { path = "crates/batata-maintainer-client" }
 batata-mesh = { path = "crates/batata-mesh" }
 batata-ai = { path = "crates/batata-ai" }
+batata-consul-client = { path = "crates/batata-consul-client" }
 batata-server = { path = "crates/batata-server" }
 
 # Async runtime
@@ -181,13 +183,13 @@ incremental = true
 opt-level = 2
 
 [profile.release]
-# 加速编译：使用 16 个代码生成单元（默认是 256，1 是最慢但最优）
-codegen-units = 16
-# 启用 LTO "thin" 模式（比 "fat" 快，仍能获得大部分优化效果）
-lto = "thin"
-# 优化级别 3（比 "s" 更注重性能，比 "z" 稍大的二进制）
+# Use fewer codegen units for better optimization (1 = slowest build but best optimization)
+codegen-units = 1
+# Enable full LTO for maximum optimization
+lto = "fat"
+# Optimization level 3 for maximum performance
 opt-level = 3
-# 允许 panic 展开（"abort" 会稍微减小体积但可能影响错误信息）
-panic = "unwind"
-# 去除调试信息
+# Use abort on panic for smaller binary and slightly better performance
+panic = "abort"
+# Strip debug info from release binary
 strip = true

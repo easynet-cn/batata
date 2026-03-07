@@ -1,6 +1,7 @@
 use actix_web::{HttpResponse, Responder, Scope, get, web};
 use serde::Serialize;
 
+use batata_server_common::error;
 use batata_server_common::model::AppState;
 use batata_server_common::model::response::Result;
 
@@ -55,7 +56,7 @@ async fn readiness(data: web::Data<AppState>) -> impl Responder {
         let status = data.server_status.status().to_string();
         return Result::<String>::http_response(
             503,
-            30000,
+            error::SERVER_ERROR.code,
             format!("server is {} now, please try again later!", status),
             String::new(),
         );
@@ -67,7 +68,12 @@ async fn readiness(data: web::Data<AppState>) -> impl Responder {
     if db_ready {
         Result::<String>::http_success("ok".to_string())
     } else {
-        Result::<String>::http_response(500, 30000, "not ready".to_string(), String::new())
+        Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            "not ready".to_string(),
+            String::new(),
+        )
     }
 }
 

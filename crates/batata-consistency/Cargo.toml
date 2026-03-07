@@ -29,7 +29,7 @@ dashmap = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "fs"] }
 futures = { workspace = true }
 
 # Logging

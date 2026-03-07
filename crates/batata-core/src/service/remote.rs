@@ -145,6 +145,87 @@ impl ConnectionManager {
             .map(|entry| entry.value().clone())
             .collect()
     }
+
+    /// Send a ConnectResetRequest to a specific client, instructing it to reconnect
+    /// (optionally to a different server address).
+    ///
+    /// Returns true if the reset request was sent successfully.
+    pub async fn load_single(&self, connection_id: &str, redirect_address: Option<&str>) -> bool {
+        use batata_api::remote::model::{ConnectResetRequest, RequestTrait};
+
+        if let Some(client) = self.clients.get(connection_id) {
+            let mut reset_request = ConnectResetRequest::new();
+            if let Some(addr) = redirect_address
+                && let Some((ip, port)) = addr.split_once(':')
+            {
+                reset_request.server_ip = ip.to_string();
+                reset_request.server_port = port.to_string();
+            }
+
+            let payload = reset_request.build_server_push_payload();
+            match client.tx.send(Ok(payload)).await {
+                Ok(_) => {
+                    tracing::info!(
+                        connection_id,
+                        redirect = ?redirect_address,
+                        "ConnectResetRequest sent to client"
+                    );
+                    true
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        connection_id,
+                        error = %e,
+                        "Failed to send ConnectResetRequest"
+                    );
+                    // Channel closed, remove the stale connection
+                    drop(client);
+                    self.unregister(connection_id);
+                    false
+                }
+            }
+        } else {
+            tracing::debug!(connection_id, "Connection not found for load_single");
+            false
+        }
+    }
+
+    /// Eject excess connections by sending ConnectResetRequest to clients until
+    /// the connection count drops to `target_count`.
+    ///
+    /// Returns the number of clients that were sent reset requests.
+    pub async fn load_count(&self, target_count: usize, redirect_address: Option<&str>) -> usize {
+        let current = self.connection_count();
+        if current <= target_count {
+            tracing::info!(
+                current,
+                target_count,
+                "Connection count already within limit, no ejection needed"
+            );
+            return 0;
+        }
+
+        let ejecting_count = current - target_count;
+        let ids = self.get_all_connection_ids();
+        let mut ejected = 0;
+
+        for id in ids {
+            if ejected >= ejecting_count {
+                break;
+            }
+            if self.load_single(&id, redirect_address).await {
+                ejected += 1;
+            }
+        }
+
+        tracing::info!(
+            ejected,
+            target_count,
+            current,
+            "Connection ejection completed"
+        );
+        ejected
+    }
 }
 
 #[cfg(test)]

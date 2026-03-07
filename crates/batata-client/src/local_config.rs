@@ -248,12 +248,12 @@ impl LocalConfigInfoProcessor {
         }
     }
 
-    /// Hash string for short ID
+    /// Hash string for short ID (8 hex chars)
     fn hash_string(s: &str) -> String {
         let mut hasher = Md5::new();
         hasher.update(s.as_bytes());
         let result = hasher.finalize();
-        hex::encode(&result[..8])
+        hex::encode(&result[..4])
     }
 
     /// Read file content
@@ -448,5 +448,280 @@ mod tests {
         // Get failover
         let content = processor.get_failover("dataId", "group", "").unwrap();
         assert_eq!(content, Some("failover-content".to_string()));
+    }
+
+    #[test]
+    fn test_get_failover_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+
+        let content = processor.get_failover("nonexistent", "group", "").unwrap();
+        assert_eq!(content, None);
+    }
+
+    #[test]
+    fn test_snapshot_disabled() {
+        let temp_dir = TempDir::new().unwrap();
+
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+
+        let switch = SnapshotSwitch::new(false);
+        let processor = LocalConfigInfoProcessor::with_snapshot_switch(
+            "test".to_string(),
+            "server".to_string(),
+            switch,
+        );
+
+        // Save should be no-op when disabled
+        processor
+            .save_snapshot("dataId", "group", "", Some("content"))
+            .unwrap();
+
+        // Get should return None when disabled
+        let content = processor.get_snapshot("dataId", "group", "").unwrap();
+        assert_eq!(content, None);
+    }
+
+    #[test]
+    fn test_snapshot_toggle() {
+        let switch = SnapshotSwitch::new(true);
+        assert!(switch.is_enabled());
+
+        switch.set_enabled(false);
+        assert!(!switch.is_enabled());
+
+        switch.set_enabled(true);
+        assert!(switch.is_enabled());
+    }
+
+    #[test]
+    fn test_snapshot_switch_clone() {
+        let switch = SnapshotSwitch::new(true);
+        let cloned = switch.clone();
+
+        // Shared state
+        switch.set_enabled(false);
+        assert!(!cloned.is_enabled());
+    }
+
+    #[test]
+    fn test_clean_all_snapshots() {
+        let temp_dir = TempDir::new().unwrap();
+
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+
+        // Save some snapshots
+        processor
+            .save_snapshot("id1", "group", "", Some("content1"))
+            .unwrap();
+        processor
+            .save_snapshot("id2", "group", "", Some("content2"))
+            .unwrap();
+
+        // Clean all
+        processor.clean_all_snapshots().unwrap();
+
+        // Should return None now
+        let content = processor.get_snapshot("id1", "group", "").unwrap();
+        assert_eq!(content, None);
+    }
+
+    #[test]
+    fn test_clean_all_snapshots_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+
+        // Should not error when nothing to clean
+        processor.clean_all_snapshots().unwrap();
+    }
+
+    #[test]
+    fn test_clean_env_snapshot() {
+        let temp_dir = TempDir::new().unwrap();
+
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+
+        processor
+            .save_snapshot("id1", "group", "", Some("content"))
+            .unwrap();
+
+        processor.clean_env_snapshot().unwrap();
+
+        let content = processor.get_snapshot("id1", "group", "").unwrap();
+        assert_eq!(content, None);
+    }
+
+    #[test]
+    fn test_hash_string_consistency() {
+        let hash1 = LocalConfigInfoProcessor::hash_string("test-string");
+        let hash2 = LocalConfigInfoProcessor::hash_string("test-string");
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash1.len(), 8); // 4 bytes = 8 hex chars
+    }
+
+    #[test]
+    fn test_hash_string_different_inputs() {
+        let hash1 = LocalConfigInfoProcessor::hash_string("input-a");
+        let hash2 = LocalConfigInfoProcessor::hash_string("input-b");
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_simplify_env_name_short() {
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+        assert_eq!(processor.simplify_env_name("short"), "short");
+        assert_eq!(processor.simplify_env_name(""), "");
+        assert_eq!(
+            processor.simplify_env_name("exactly_thirty_chars_long_xxxx"),
+            "exactly_thirty_chars_long_xxxx"
+        );
+    }
+
+    #[test]
+    fn test_simplify_env_name_exactly_30() {
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+        let name = "a".repeat(30);
+        let simplified = processor.simplify_env_name(&name);
+        assert_eq!(simplified, name); // Exactly 30, no simplification
+    }
+
+    #[test]
+    fn test_simplify_env_name_over_30() {
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+        let name = "a".repeat(31);
+        let simplified = processor.simplify_env_name(&name);
+        assert!(simplified.len() <= 30);
+        assert!(simplified.contains('-'));
+    }
+
+    #[test]
+    fn test_snapshot_with_tenant() {
+        let temp_dir = TempDir::new().unwrap();
+
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+
+        // Save with different tenants
+        processor
+            .save_snapshot("dataId", "group", "tenant-a", Some("content-a"))
+            .unwrap();
+        processor
+            .save_snapshot("dataId", "group", "tenant-b", Some("content-b"))
+            .unwrap();
+
+        // Get from different tenants
+        let a = processor
+            .get_snapshot("dataId", "group", "tenant-a")
+            .unwrap();
+        let b = processor
+            .get_snapshot("dataId", "group", "tenant-b")
+            .unwrap();
+        assert_eq!(a, Some("content-a".to_string()));
+        assert_eq!(b, Some("content-b".to_string()));
+    }
+
+    #[test]
+    fn test_snapshot_delete_by_none() {
+        let temp_dir = TempDir::new().unwrap();
+
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+
+        processor
+            .save_snapshot("dataId", "group", "", Some("content"))
+            .unwrap();
+        assert!(
+            processor
+                .get_snapshot("dataId", "group", "")
+                .unwrap()
+                .is_some()
+        );
+
+        // Delete by passing None
+        processor
+            .save_snapshot("dataId", "group", "", None)
+            .unwrap();
+        assert!(
+            processor
+                .get_snapshot("dataId", "group", "")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_manager_batch_save() {
+        let temp_dir = TempDir::new().unwrap();
+
+        unsafe {
+            std::env::set_var("BATATA_SNAPSHOT_PATH", temp_dir.path());
+        }
+
+        let processor = LocalConfigInfoProcessor::new("test".to_string(), "server".to_string());
+
+        // Save individual snapshot first to verify the path works
+        processor
+            .save_snapshot("pre-test", "group", "", Some("pre-content"))
+            .unwrap();
+        assert_eq!(
+            processor.get_snapshot("pre-test", "group", "").unwrap(),
+            Some("pre-content".to_string())
+        );
+
+        let manager = SnapshotManager::new(processor);
+
+        let configs = vec![
+            (
+                "id1".to_string(),
+                "group".to_string(),
+                "".to_string(),
+                "content1".to_string(),
+            ),
+            (
+                "id2".to_string(),
+                "group".to_string(),
+                "".to_string(),
+                "content2".to_string(),
+            ),
+        ];
+
+        manager.batch_save_snapshots(configs).await.unwrap();
+
+        // Verify via the manager's own processor
+        let processor = manager.processor.read().await;
+        assert_eq!(
+            processor.get_snapshot("id1", "group", "").unwrap(),
+            Some("content1".to_string())
+        );
+        assert_eq!(
+            processor.get_snapshot("id2", "group", "").unwrap(),
+            Some("content2".to_string())
+        );
     }
 }

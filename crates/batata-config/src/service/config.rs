@@ -782,15 +782,11 @@ async fn update_existing_config(
     model.c_schema = Set(Some(schema.to_string()));
     model.encrypted_data_key = Set(Some(encrypted_data_key.to_string()));
 
-    let mut model_changed = false;
-    let mut tags_changed = false;
+    // Always update the config and set gmt_modified (consistent with Nacos behavior)
+    model.gmt_modified = Set(Some(now));
+    config_info::Entity::update(model).exec(tx).await?;
 
-    if model.is_changed() {
-        model_changed = true;
-        model.gmt_modified = Set(Some(now));
-        config_info::Entity::update(model).exec(tx).await?;
-    }
-
+    // Update tags
     let new_tags_vec = normalize_tags(config_tags);
     let new_tags = join_tags(&new_tags_vec);
 
@@ -805,8 +801,6 @@ async fn update_existing_config(
         .join(",");
 
     if new_tags != old_tags {
-        tags_changed = true;
-
         config_tags_relation::Entity::delete_many()
             .filter(config_tags_relation::Column::Id.eq(entity_c.id))
             .exec(tx)
@@ -833,67 +827,67 @@ async fn update_existing_config(
         }
     }
 
-    if model_changed || tags_changed {
-        let mut map = HashMap::<String, String>::with_capacity(6);
+    // Always record history on update (consistent with Nacos behavior)
+    // Nacos unconditionally inserts history with the OLD config state before the update
+    let mut map = HashMap::<String, String>::with_capacity(6);
 
-        if !old_tags.is_empty() {
-            map.insert("config_tags".to_string(), config_tags.to_string());
-        }
-        if entity_c.c_desc.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert(
-                "desc".to_string(),
-                entity_c.c_desc.clone().unwrap_or_default(),
-            );
-        }
-        if entity_c.c_use.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert(
-                "use".to_string(),
-                entity_c.c_use.clone().unwrap_or_default(),
-            );
-        }
-        if entity_c.effect.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert(
-                "effect".to_string(),
-                entity_c.effect.clone().unwrap_or_default(),
-            );
-        }
-        if entity_c.r#type.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert(
-                "type".to_string(),
-                entity_c.r#type.clone().unwrap_or_default(),
-            );
-        }
-        if entity_c.c_schema.as_ref().is_some_and(|e| !e.is_empty()) {
-            map.insert(
-                "schema".to_string(),
-                entity_c.c_schema.clone().unwrap_or_default(),
-            );
-        }
-
-        let ext_info = serde_json::to_string(&map).unwrap_or_default();
-
-        let his_config = his_config_info::ActiveModel {
-            id: Set(entity_c.id as u64),
-            nid: Set(0),
-            data_id: Set(entity_c.data_id.clone()),
-            group_id: Set(entity_c.group_id.clone().unwrap_or_default()),
-            app_name: Set(entity_c.app_name),
-            content: Set(entity_c.content.unwrap_or_default()),
-            md5: Set(Some(entity_c.md5.unwrap_or_default())),
-            gmt_create: Set(entity_c.gmt_create.unwrap_or(now)),
-            gmt_modified: Set(entity_c.gmt_modified.unwrap_or(now)),
-            src_user: Set(Some(entity_c.src_user.unwrap_or_default())),
-            src_ip: Set(Some(entity_c.src_ip.unwrap_or_default())),
-            op_type: Set(Some("U".to_string())),
-            tenant_id: Set(Some(entity_c.tenant_id.clone().unwrap_or_default())),
-            encrypted_data_key: Set(entity_c.encrypted_data_key.unwrap_or_default()),
-            publish_type: Set(Some("formal".to_string())),
-            gray_name: Set(Some(String::new())),
-            ext_info: Set(Some(ext_info)),
-        };
-
-        his_config_info::Entity::insert(his_config).exec(tx).await?;
+    if !old_tags.is_empty() {
+        map.insert("config_tags".to_string(), config_tags.to_string());
     }
+    if entity_c.c_desc.as_ref().is_some_and(|e| !e.is_empty()) {
+        map.insert(
+            "desc".to_string(),
+            entity_c.c_desc.clone().unwrap_or_default(),
+        );
+    }
+    if entity_c.c_use.as_ref().is_some_and(|e| !e.is_empty()) {
+        map.insert(
+            "use".to_string(),
+            entity_c.c_use.clone().unwrap_or_default(),
+        );
+    }
+    if entity_c.effect.as_ref().is_some_and(|e| !e.is_empty()) {
+        map.insert(
+            "effect".to_string(),
+            entity_c.effect.clone().unwrap_or_default(),
+        );
+    }
+    if entity_c.r#type.as_ref().is_some_and(|e| !e.is_empty()) {
+        map.insert(
+            "type".to_string(),
+            entity_c.r#type.clone().unwrap_or_default(),
+        );
+    }
+    if entity_c.c_schema.as_ref().is_some_and(|e| !e.is_empty()) {
+        map.insert(
+            "schema".to_string(),
+            entity_c.c_schema.clone().unwrap_or_default(),
+        );
+    }
+
+    let ext_info = serde_json::to_string(&map).unwrap_or_default();
+
+    let his_config = his_config_info::ActiveModel {
+        id: Set(entity_c.id as u64),
+        nid: Set(0),
+        data_id: Set(entity_c.data_id.clone()),
+        group_id: Set(entity_c.group_id.clone().unwrap_or_default()),
+        app_name: Set(entity_c.app_name),
+        content: Set(entity_c.content.unwrap_or_default()),
+        md5: Set(Some(entity_c.md5.unwrap_or_default())),
+        gmt_create: Set(entity_c.gmt_create.unwrap_or(now)),
+        gmt_modified: Set(now),
+        src_user: Set(Some(src_user.to_string())),
+        src_ip: Set(Some(src_ip.to_string())),
+        op_type: Set(Some("U".to_string())),
+        tenant_id: Set(Some(entity_c.tenant_id.clone().unwrap_or_default())),
+        encrypted_data_key: Set(entity_c.encrypted_data_key.unwrap_or_default()),
+        publish_type: Set(Some("formal".to_string())),
+        gray_name: Set(Some(String::new())),
+        ext_info: Set(Some(ext_info)),
+    };
+
+    his_config_info::Entity::insert(his_config).exec(tx).await?;
 
     Ok(())
 }

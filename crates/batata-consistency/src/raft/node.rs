@@ -57,7 +57,7 @@ impl RaftNode {
         );
 
         // Ensure data directories exist
-        config.ensure_dirs()?;
+        config.ensure_dirs().await?;
 
         // Create log store
         let log_store = RocksLogStore::new(config.log_dir()).await?;

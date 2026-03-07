@@ -51,8 +51,8 @@ async fn internal_login(
     form: Option<web::Form<LoginData>>,
     query: Option<web::Query<LoginData>>,
 ) -> HttpResponse {
-    let mut username: String = "".to_string();
-    let mut password: String = "".to_string();
+    let mut username = String::new();
+    let mut password = String::new();
 
     // Nacos SDK sends username as query param and password as form body,
     // so we merge both sources (query params take precedence for username,

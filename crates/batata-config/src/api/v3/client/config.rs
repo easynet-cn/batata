@@ -20,7 +20,7 @@ async fn get_config(
     if params.data_id.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'dataId' is missing".to_string(),
             String::new(),
         );
@@ -29,7 +29,7 @@ async fn get_config(
     if params.group.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'group' is missing".to_string(),
             String::new(),
         );
@@ -82,7 +82,7 @@ async fn get_config(
         }
         Ok(None) => Result::<Option<ConfigResponse>>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!(
                 "config data not exist, dataId={}, group={}, tenant={}",
                 params.data_id, params.group, namespace_id

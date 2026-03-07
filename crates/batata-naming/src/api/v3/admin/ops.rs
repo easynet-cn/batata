@@ -6,7 +6,9 @@ use actix_web::{HttpRequest, Responder, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use batata_common::{ActionTypes, ApiType, SignType};
-use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
+use batata_server_common::{
+    Secured, error, model::app_state::AppState, model::response::Result, secured,
+};
 
 use crate::service::NamingService;
 
@@ -98,7 +100,7 @@ async fn update_switches(
     if params.entry.is_empty() || params.value.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters 'entry' and 'value' are missing".to_string(),
             false,
         );

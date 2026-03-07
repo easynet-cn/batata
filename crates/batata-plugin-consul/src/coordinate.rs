@@ -100,6 +100,10 @@ pub struct ConsulCoordinateService {
 
 impl ConsulCoordinateService {
     pub fn new() -> Self {
+        Self::with_datacenter("dc1".to_string())
+    }
+
+    pub fn with_datacenter(datacenter: String) -> Self {
         let node_name = hostname::get()
             .ok()
             .and_then(|h| h.into_string().ok())
@@ -107,7 +111,7 @@ impl ConsulCoordinateService {
 
         let service = Self {
             coordinates: Arc::new(DashMap::new()),
-            datacenter: "dc1".to_string(),
+            datacenter,
         };
 
         // Add self with default coordinate

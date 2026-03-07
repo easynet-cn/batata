@@ -224,6 +224,8 @@ pub struct ConsulConnectCAService {
     index: std::sync::atomic::AtomicU64,
     /// Trust domain
     trust_domain: String,
+    /// Datacenter name
+    datacenter: String,
 }
 
 impl ConsulConnectCAService {
@@ -269,7 +271,13 @@ impl ConsulConnectCAService {
             intentions: Arc::new(DashMap::new()),
             index: std::sync::atomic::AtomicU64::new(2),
             trust_domain: "consul".to_string(),
+            datacenter: "dc1".to_string(),
         }
+    }
+
+    pub fn with_datacenter(mut self, datacenter: String) -> Self {
+        self.datacenter = datacenter;
+        self
     }
 
     fn placeholder_root_cert() -> String {
@@ -321,8 +329,8 @@ impl ConsulConnectCAService {
             private_key_pem: "-----BEGIN EC PRIVATE KEY-----\nPlaceholder private key\n-----END EC PRIVATE KEY-----".to_string(),
             service: service.to_string(),
             service_uri: format!(
-                "spiffe://{}/ns/default/dc/dc1/svc/{}",
-                self.trust_domain, service
+                "spiffe://{}/ns/default/dc/{}/svc/{}",
+                self.trust_domain, self.datacenter, service
             ),
             valid_after: now.to_rfc3339(),
             valid_before: valid_before.to_rfc3339(),

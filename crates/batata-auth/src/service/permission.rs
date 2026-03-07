@@ -12,10 +12,9 @@ use moka::sync::Cache;
 
 use crate::model::PermissionInfo;
 
-/// Cache entry that stores permissions along with the roles that were queried
+/// Cache entry that stores permissions
 #[derive(Clone)]
 struct CachedPermissions {
-    roles: Vec<String>,
     permissions: Vec<PermissionInfo>,
 }
 
@@ -27,6 +26,11 @@ static PERMISSIONS_CACHE: LazyLock<Cache<u64, CachedPermissions>> = LazyLock::ne
         .time_to_live(Duration::from_secs(300))
         .build()
 });
+
+// Secondary index: role -> set of cache keys that contain this role
+// Enables O(1) targeted cache invalidation instead of O(n) full scan
+static ROLE_CACHE_INDEX: LazyLock<dashmap::DashMap<String, Vec<u64>>> =
+    LazyLock::new(dashmap::DashMap::new);
 
 /// Generate cache key from roles using efficient hashing
 /// This avoids allocating a new Vec and joining strings
@@ -125,10 +129,17 @@ pub async fn find_by_roles(
         .map(PermissionInfo::from)
         .collect();
 
+    // Update secondary index for O(1) invalidation
+    for role in &roles {
+        ROLE_CACHE_INDEX
+            .entry(role.clone())
+            .or_default()
+            .push(cache_key);
+    }
+
     PERMISSIONS_CACHE.insert(
         cache_key,
         CachedPermissions {
-            roles,
             permissions: permissions.clone(),
         },
     );
@@ -137,17 +148,12 @@ pub async fn find_by_roles(
 }
 
 /// Invalidate cache entries that contain the specified role
-/// This is more efficient than invalidating the entire cache
+/// Uses secondary index for O(1) lookup instead of O(n) full scan
 pub fn invalidate_permissions_cache_for_role(role: &str) {
-    // Collect keys to invalidate (entries where the queried roles contain this role)
-    let keys_to_invalidate: Vec<u64> = PERMISSIONS_CACHE
-        .iter()
-        .filter(|(_, cached)| cached.roles.iter().any(|r| r == role))
-        .map(|(key, _)| *key) // Dereference Arc<u64> to u64
-        .collect();
-
-    for key in keys_to_invalidate {
-        PERMISSIONS_CACHE.invalidate(&key);
+    if let Some((_, keys)) = ROLE_CACHE_INDEX.remove(role) {
+        for key in keys {
+            PERMISSIONS_CACHE.invalidate(&key);
+        }
     }
 }
 
@@ -155,6 +161,7 @@ pub fn invalidate_permissions_cache_for_role(role: &str) {
 /// Use sparingly - prefer `invalidate_permissions_cache_for_role` when possible
 pub fn invalidate_all_permissions_cache() {
     PERMISSIONS_CACHE.invalidate_all();
+    ROLE_CACHE_INDEX.clear();
 }
 
 pub async fn create(
@@ -242,7 +249,7 @@ mod tests {
         // Clear any existing cache entries
         invalidate_all_permissions_cache();
 
-        // Insert some test entries
+        // Insert some test entries and populate secondary index
         let roles1 = vec!["admin".to_string(), "user".to_string()];
         let roles2 = vec!["admin".to_string(), "guest".to_string()];
         let roles3 = vec!["guest".to_string()];
@@ -251,24 +258,32 @@ mod tests {
         let key2 = make_cache_key(&roles2);
         let key3 = make_cache_key(&roles3);
 
+        // Populate secondary index
+        for role in &roles1 {
+            ROLE_CACHE_INDEX.entry(role.clone()).or_default().push(key1);
+        }
+        for role in &roles2 {
+            ROLE_CACHE_INDEX.entry(role.clone()).or_default().push(key2);
+        }
+        for role in &roles3 {
+            ROLE_CACHE_INDEX.entry(role.clone()).or_default().push(key3);
+        }
+
         PERMISSIONS_CACHE.insert(
             key1,
             CachedPermissions {
-                roles: roles1,
                 permissions: vec![],
             },
         );
         PERMISSIONS_CACHE.insert(
             key2,
             CachedPermissions {
-                roles: roles2,
                 permissions: vec![],
             },
         );
         PERMISSIONS_CACHE.insert(
             key3,
             CachedPermissions {
-                roles: roles3,
                 permissions: vec![],
             },
         );

@@ -16,8 +16,8 @@ use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
 use crate::model::{
-    AgentService, CheckRegistration, CheckStatusUpdate, CheckUpdateParams, ConsulError,
-    HealthCheck, HealthQueryParams, Node, ServiceHealth, ServiceQueryParams,
+    AgentService, CheckRegistration, CheckStatusUpdate, CheckUpdateParams, ConsulDatacenterConfig,
+    ConsulError, HealthCheck, HealthQueryParams, Node, ServiceHealth, ServiceQueryParams,
 };
 
 /// Consul Health Check service backed by InstanceCheckRegistry.
@@ -256,6 +256,7 @@ pub async fn get_service_health(
     naming_service: web::Data<Arc<NamingService>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
 ) -> HttpResponse {
@@ -349,7 +350,7 @@ pub async fn get_service_health(
                 id: uuid::Uuid::new_v4().to_string(),
                 node: health_service.node_name.clone(),
                 address: ip.clone(),
-                datacenter: query.dc.clone().unwrap_or_else(|| "dc1".to_string()),
+                datacenter: dc_config.resolve_dc(&query.dc),
                 tagged_addresses: Some(node_tagged_addresses),
                 meta: Some(node_meta),
             },
@@ -752,43 +753,194 @@ pub async fn list_agent_checks(
 }
 
 /// GET /v1/health/connect/:service
-/// Returns health for mesh-enabled service instances (stub - same as /health/service)
+/// Returns health for Connect-enabled service instances (connect-proxy or native connect)
 pub async fn get_connect_health(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
 ) -> HttpResponse {
-    // Connect/mesh services are not supported, return same as regular service query
-    get_service_health(
-        req,
-        naming_service,
-        health_service,
-        acl_service,
-        path,
-        query,
-    )
-    .await
-}
-
-/// GET /v1/health/ingress/:service
-/// Returns health for ingress gateway instances (stub - returns empty)
-pub async fn get_ingress_health(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    path: web::Path<String>,
-) -> HttpResponse {
     let service_name = path.into_inner();
+    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let passing_only = query.passing.unwrap_or(false);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Ingress gateways are not supported, return empty array
-    HttpResponse::Ok().json(Vec::<ServiceHealth>::new())
+    // Get all services and find Connect-enabled instances for this target service
+    let (_, all_service_names) =
+        naming_service.list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+
+    let mut results: Vec<ServiceHealth> = Vec::new();
+
+    for svc_name in all_service_names {
+        let instances =
+            naming_service.get_instances(&namespace, "DEFAULT_GROUP", &svc_name, "", passing_only);
+
+        for instance in instances {
+            if !is_connect_instance_for(&instance, &service_name) {
+                continue;
+            }
+
+            let agent_service = AgentService::from(&instance);
+            let mut checks = health_service
+                .get_service_checks(&instance.instance_id)
+                .await;
+            if checks.is_empty() {
+                checks.push(health_service.create_instance_check(&instance));
+            }
+
+            for check in &mut checks {
+                check.service_name = svc_name.clone();
+            }
+
+            if passing_only && checks.iter().any(|c| c.status == "critical") {
+                continue;
+            }
+
+            let ip = instance.ip.clone();
+            let mut node_tagged_addresses = std::collections::HashMap::new();
+            node_tagged_addresses.insert("lan".to_string(), ip.clone());
+            node_tagged_addresses.insert("wan".to_string(), ip.clone());
+
+            results.push(ServiceHealth {
+                node: Node {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    node: health_service.node_name.clone(),
+                    address: ip,
+                    datacenter: dc_config.resolve_dc(&query.dc),
+                    tagged_addresses: Some(node_tagged_addresses),
+                    meta: None,
+                },
+                service: agent_service,
+                checks,
+            });
+        }
+    }
+
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(results)
+}
+
+/// GET /v1/health/ingress/:service
+/// Returns health for ingress gateway instances that expose the given service
+pub async fn get_ingress_health(
+    req: HttpRequest,
+    naming_service: web::Data<Arc<NamingService>>,
+    health_service: web::Data<ConsulHealthService>,
+    acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    path: web::Path<String>,
+    query: web::Query<HealthQueryParams>,
+) -> HttpResponse {
+    let service_name = path.into_inner();
+    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let passing_only = query.passing.unwrap_or(false);
+
+    let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    // Find ingress gateway instances
+    let (_, all_service_names) =
+        naming_service.list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+
+    let mut results: Vec<ServiceHealth> = Vec::new();
+
+    for svc_name in all_service_names {
+        let instances =
+            naming_service.get_instances(&namespace, "DEFAULT_GROUP", &svc_name, "", passing_only);
+
+        for instance in instances {
+            // Only include ingress-gateway instances
+            let is_ingress = instance
+                .metadata
+                .get("consul_kind")
+                .map_or(false, |k| k == "ingress-gateway");
+            if !is_ingress {
+                continue;
+            }
+
+            let agent_service = AgentService::from(&instance);
+            let mut checks = health_service
+                .get_service_checks(&instance.instance_id)
+                .await;
+            if checks.is_empty() {
+                checks.push(health_service.create_instance_check(&instance));
+            }
+
+            if passing_only && checks.iter().any(|c| c.status == "critical") {
+                continue;
+            }
+
+            let ip = instance.ip.clone();
+            let mut node_tagged_addresses = std::collections::HashMap::new();
+            node_tagged_addresses.insert("lan".to_string(), ip.clone());
+            node_tagged_addresses.insert("wan".to_string(), ip.clone());
+
+            results.push(ServiceHealth {
+                node: Node {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    node: health_service.node_name.clone(),
+                    address: ip,
+                    datacenter: dc_config.resolve_dc(&query.dc),
+                    tagged_addresses: Some(node_tagged_addresses),
+                    meta: None,
+                },
+                service: agent_service,
+                checks,
+            });
+        }
+    }
+
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(results)
+}
+
+/// Check if a Nacos instance is a Connect-enabled instance for the given target service.
+fn is_connect_instance_for(instance: &NacosInstance, target_service: &str) -> bool {
+    // Check if it's a connect-proxy targeting this service
+    if let Some(kind) = instance.metadata.get("consul_kind") {
+        if kind == "connect-proxy" {
+            if let Some(proxy_json) = instance.metadata.get("consul_proxy") {
+                if let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json) {
+                    if let Some(dest) = proxy
+                        .get("DestinationServiceName")
+                        .or_else(|| proxy.get("destination_service_name"))
+                        .and_then(|v| v.as_str())
+                    {
+                        return dest == target_service;
+                    }
+                }
+            }
+        }
+    }
+
+    // Check if it's a native Connect service with matching name
+    if instance.service_name == target_service {
+        if let Some(connect_json) = instance.metadata.get("consul_connect") {
+            if let Ok(connect) = serde_json::from_str::<serde_json::Value>(connect_json) {
+                if connect
+                    .get("Native")
+                    .or_else(|| connect.get("native"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 // ============================================================================

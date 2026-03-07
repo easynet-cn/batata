@@ -11,6 +11,8 @@ use batata_persistence::sea_orm::sea_query::Asterisk;
 use batata_persistence::sea_orm::*;
 use moka::sync::Cache;
 
+use dashmap::DashMap;
+
 use crate::model::{GLOBAL_ADMIN_ROLE, RoleInfo};
 
 // Cache for user roles with 5-minute TTL
@@ -20,6 +22,10 @@ static ROLES_CACHE: LazyLock<Cache<String, Vec<RoleInfo>>> = LazyLock::new(|| {
         .time_to_live(Duration::from_secs(300))
         .build()
 });
+
+// Secondary index: role name -> set of usernames that have this role
+// Enables O(1) targeted cache invalidation instead of O(n) full scan
+static ROLE_USER_INDEX: LazyLock<DashMap<String, Vec<String>>> = LazyLock::new(DashMap::new);
 
 pub async fn find_all(db: &DatabaseConnection) -> anyhow::Result<Vec<RoleInfo>> {
     let roles = roles::Entity::find()
@@ -49,7 +55,16 @@ pub async fn find_by_username(
         .map(RoleInfo::from)
         .collect();
 
-    ROLES_CACHE.insert(username.to_owned(), roles.clone());
+    // Update secondary index for O(1) invalidation
+    let username_owned = username.to_owned();
+    for role in &roles {
+        ROLE_USER_INDEX
+            .entry(role.role.clone())
+            .or_default()
+            .push(username_owned.clone());
+    }
+
+    ROLES_CACHE.insert(username_owned, roles.clone());
 
     Ok(roles)
 }
@@ -60,16 +75,12 @@ pub fn invalidate_roles_cache(username: &str) {
 }
 
 /// Invalidate cache entries for users who have a specific role
-/// This is more efficient than invalidating the entire cache when deleting a role
+/// Uses secondary index for O(1) lookup instead of O(n) full scan
 pub fn invalidate_roles_cache_for_role(role: &str) {
-    let keys_to_invalidate: Vec<String> = ROLES_CACHE
-        .iter()
-        .filter(|(_, roles)| roles.iter().any(|r| r.role == role))
-        .map(|(key, _)| (*key).clone())
-        .collect();
-
-    for key in keys_to_invalidate {
-        ROLES_CACHE.invalidate(&key);
+    if let Some((_, usernames)) = ROLE_USER_INDEX.remove(role) {
+        for username in usernames {
+            ROLES_CACHE.invalidate(&username);
+        }
     }
 }
 
@@ -77,6 +88,7 @@ pub fn invalidate_roles_cache_for_role(role: &str) {
 /// Use sparingly - prefer targeted invalidation when possible
 pub fn invalidate_all_roles_cache() {
     ROLES_CACHE.invalidate_all();
+    ROLE_USER_INDEX.clear();
 }
 
 pub async fn search_page(
@@ -305,6 +317,26 @@ mod tests {
             role: "viewer".to_string(),
             username: user3.clone(),
         }];
+
+        // Populate secondary index (simulates what find_by_username does)
+        for role in &roles_user1 {
+            ROLE_USER_INDEX
+                .entry(role.role.clone())
+                .or_default()
+                .push(user1.clone());
+        }
+        for role in &roles_user2 {
+            ROLE_USER_INDEX
+                .entry(role.role.clone())
+                .or_default()
+                .push(user2.clone());
+        }
+        for role in &roles_user3 {
+            ROLE_USER_INDEX
+                .entry(role.role.clone())
+                .or_default()
+                .push(user3.clone());
+        }
 
         ROLES_CACHE.insert(user1.clone(), roles_user1);
         ROLES_CACHE.insert(user2.clone(), roles_user2);

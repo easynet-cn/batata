@@ -55,7 +55,7 @@ async fn list_agents(
             Ok(result) => common_response::Result::<AgentListResponse>::http_success(result),
             Err(e) => common_response::Result::<String>::http_response(
                 500,
-                500,
+                error::SERVER_ERROR.code,
                 e.to_string(),
                 String::new(),
             ),
@@ -95,13 +95,13 @@ async fn get_agent(
                 Ok(Some(agent)) => common_response::Result::<RegisteredAgent>::http_success(agent),
                 Ok(None) => common_response::Result::<String>::http_response(
                     404,
-                    404,
+                    error::AGENT_NOT_FOUND.code,
                     "Agent not found".to_string(),
                     String::new(),
                 ),
                 Err(e) => common_response::Result::<String>::http_response(
                     500,
-                    500,
+                    error::SERVER_ERROR.code,
                     e.to_string(),
                     String::new(),
                 ),
@@ -109,7 +109,7 @@ async fn get_agent(
         } else {
             common_response::Result::<String>::http_response(
                 400,
-                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
                 "agentName is required".to_string(),
                 String::new(),
             )
@@ -119,7 +119,7 @@ async fn get_agent(
             Some(agent) => common_response::Result::<RegisteredAgent>::http_success(agent),
             None => common_response::Result::<String>::http_response(
                 404,
-                404,
+                error::AGENT_NOT_FOUND.code,
                 "Agent not found".to_string(),
                 String::new(),
             ),
@@ -153,7 +153,9 @@ async fn register_agent(
         {
             Ok(_id) => {
                 // Also register in in-memory for backward compat
-                let _ = registry.register(req_body.clone());
+                if let Err(e) = registry.register(req_body.clone()) {
+                    tracing::warn!("Failed to register agent in memory: {}", e);
+                }
                 match svc
                     .get_agent_card(&req_body.namespace, &req_body.card.name, None)
                     .await
@@ -214,7 +216,9 @@ async fn update_agent(
         card.name = name.clone();
         match svc.update_agent_card(&card, &namespace, "manual").await {
             Ok(()) => {
-                let _ = registry.update(&namespace, &name, req_body.clone());
+                if let Err(e) = registry.update(&namespace, &name, req_body.clone()) {
+                    tracing::warn!("Failed to update agent in memory: {}", e);
+                }
                 match svc.get_agent_card(&namespace, &name, None).await {
                     Ok(Some(agent)) => {
                         common_response::Result::<RegisteredAgent>::http_success(agent)
@@ -224,7 +228,7 @@ async fn update_agent(
             }
             Err(e) => common_response::Result::<String>::http_response(
                 404,
-                error::RESOURCE_NOT_FOUND.code,
+                error::AGENT_NOT_FOUND.code,
                 e.to_string(),
                 String::new(),
             ),
@@ -234,7 +238,7 @@ async fn update_agent(
             Ok(agent) => common_response::Result::<RegisteredAgent>::http_success(agent),
             Err(e) => common_response::Result::<String>::http_response(
                 404,
-                error::RESOURCE_NOT_FOUND.code,
+                error::AGENT_NOT_FOUND.code,
                 e,
                 String::new(),
             ),
@@ -269,16 +273,18 @@ async fn delete_agent(
                 .await
             {
                 Ok(()) => {
-                    let _ = registry.delete_by_query(&AgentDeleteQuery {
+                    if let Err(e) = registry.delete_by_query(&AgentDeleteQuery {
                         namespace_id: Some(namespace.to_string()),
                         agent_name: Some(name.clone()),
                         version: q.version.clone(),
-                    });
+                    }) {
+                        tracing::warn!("Failed to delete agent from memory: {}", e);
+                    }
                     common_response::Result::<bool>::http_success(true)
                 }
                 Err(e) => common_response::Result::<String>::http_response(
                     404,
-                    error::RESOURCE_NOT_FOUND.code,
+                    error::AGENT_NOT_FOUND.code,
                     e.to_string(),
                     String::new(),
                 ),
@@ -286,7 +292,7 @@ async fn delete_agent(
         } else {
             common_response::Result::<String>::http_response(
                 400,
-                400,
+                error::PARAMETER_VALIDATE_ERROR.code,
                 "agentName is required".to_string(),
                 String::new(),
             )
@@ -296,7 +302,7 @@ async fn delete_agent(
             Ok(()) => common_response::Result::<bool>::http_success(true),
             Err(e) => common_response::Result::<String>::http_response(
                 404,
-                error::RESOURCE_NOT_FOUND.code,
+                error::AGENT_NOT_FOUND.code,
                 e,
                 String::new(),
             ),
@@ -331,7 +337,7 @@ async fn list_versions(
             Ok(versions) => common_response::Result::<Vec<VersionDetail>>::http_success(versions),
             Err(e) => common_response::Result::<String>::http_response(
                 500,
-                500,
+                error::SERVER_ERROR.code,
                 e.to_string(),
                 String::new(),
             ),

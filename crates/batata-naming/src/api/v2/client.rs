@@ -17,7 +17,7 @@ use batata_core::service::remote::ConnectionManager;
 use batata_common::{ActionTypes, ApiType, SignType};
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
-use batata_server_common::{Secured, secured};
+use batata_server_common::{Secured, error, secured};
 
 use crate::service::NamingService;
 
@@ -74,7 +74,7 @@ pub async fn get_client_detail(
     if params.client_id.is_empty() {
         return Result::<Option<ClientDetailResponse>>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'clientId' is missing".to_string(),
             None::<ClientDetailResponse>,
         );
@@ -127,7 +127,7 @@ pub async fn get_client_detail(
         }
         None => Result::<Option<ClientDetailResponse>>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!("client {} not found", params.client_id),
             None::<ClientDetailResponse>,
         ),
@@ -149,7 +149,7 @@ pub async fn get_client_published_services(
     if params.client_id.is_empty() {
         return Result::<Option<ClientServiceListResponse>>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'clientId' is missing".to_string(),
             None::<ClientServiceListResponse>,
         );
@@ -194,7 +194,7 @@ pub async fn get_client_subscribed_services(
     if params.client_id.is_empty() {
         return Result::<Option<ClientServiceListResponse>>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'clientId' is missing".to_string(),
             None::<ClientServiceListResponse>,
         );
@@ -240,7 +240,7 @@ pub async fn get_service_publishers(
     if params.service_name.is_empty() {
         return Result::<Option<ServiceClientListResponse>>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             None::<ServiceClientListResponse>,
         );
@@ -303,7 +303,7 @@ pub async fn get_service_subscribers(
     if params.service_name.is_empty() {
         return Result::<Option<ServiceClientListResponse>>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             None::<ServiceClientListResponse>,
         );

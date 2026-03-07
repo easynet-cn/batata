@@ -22,7 +22,7 @@ use crate::{
         AclService, ConsulEventService, ConsulLockService, ConsulQueryService,
         ConsulSemaphoreService, ConsulSessionService, agent::ConsulAgentService,
         catalog::ConsulCatalogService, health::ConsulHealthService, kv::ConsulKVService,
-        route::consul_routes,
+        model::ConsulDatacenterConfig, route::consul_routes,
     },
     api::v2::route::{cluster_routes, config_routes, naming_routes},
     api::v3::admin::route::admin_routes as v3_admin_routes,
@@ -49,6 +49,7 @@ pub struct ConsulServices {
     pub query: ConsulQueryService,
     pub lock: ConsulLockService,
     pub semaphore: ConsulSemaphoreService,
+    pub dc_config: ConsulDatacenterConfig,
 }
 
 impl ConsulServices {
@@ -57,6 +58,7 @@ impl ConsulServices {
         naming_service: Arc<NamingService>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
+        dc_config: ConsulDatacenterConfig,
     ) -> Self {
         let session = ConsulSessionService::new();
         let kv = ConsulKVService::new();
@@ -69,7 +71,10 @@ impl ConsulServices {
             agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
             health: ConsulHealthService::new(naming_service.clone(), registry),
             kv,
-            catalog: ConsulCatalogService::new(naming_service),
+            catalog: ConsulCatalogService::with_datacenter(
+                naming_service,
+                dc_config.datacenter.clone(),
+            ),
             acl: if acl_enabled {
                 AclService::new()
             } else {
@@ -80,6 +85,7 @@ impl ConsulServices {
             query: ConsulQueryService::new(),
             lock,
             semaphore,
+            dc_config,
         }
     }
 
@@ -90,6 +96,7 @@ impl ConsulServices {
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
+        dc_config: ConsulDatacenterConfig,
     ) -> Self {
         let session = ConsulSessionService::with_rocks(db.clone());
         let kv = ConsulKVService::with_rocks(db.clone());
@@ -102,7 +109,10 @@ impl ConsulServices {
             agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
             health: ConsulHealthService::new(naming_service.clone(), registry),
             kv,
-            catalog: ConsulCatalogService::new(naming_service),
+            catalog: ConsulCatalogService::with_datacenter(
+                naming_service,
+                dc_config.datacenter.clone(),
+            ),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
             } else {
@@ -113,6 +123,7 @@ impl ConsulServices {
             query: ConsulQueryService::with_rocks(db),
             lock,
             semaphore,
+            dc_config,
         }
     }
 
@@ -124,6 +135,7 @@ impl ConsulServices {
         acl_enabled: bool,
         db: Arc<DB>,
         raft_node: Arc<RaftNode>,
+        dc_config: ConsulDatacenterConfig,
     ) -> Self {
         let session = ConsulSessionService::with_raft(db.clone(), raft_node.clone());
         let kv = ConsulKVService::with_raft(db.clone(), raft_node);
@@ -136,7 +148,10 @@ impl ConsulServices {
             agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
             health: ConsulHealthService::new(naming_service.clone(), registry),
             kv,
-            catalog: ConsulCatalogService::new(naming_service),
+            catalog: ConsulCatalogService::with_datacenter(
+                naming_service,
+                dc_config.datacenter.clone(),
+            ),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
             } else {
@@ -147,6 +162,7 @@ impl ConsulServices {
             query: ConsulQueryService::with_rocks(db),
             lock,
             semaphore,
+            dc_config,
         }
     }
 }
@@ -239,6 +255,7 @@ pub fn consul_server(
             .app_data(web::Data::new(consul_services.query.clone()))
             .app_data(web::Data::new(consul_services.lock.clone()))
             .app_data(web::Data::new(consul_services.semaphore.clone()))
+            .app_data(web::Data::new(consul_services.dc_config.clone()))
             .app_data(web::QueryConfig::default().error_handler(|err, _req| {
                 let err_str = err.to_string();
                 // For duplicate field errors (e.g., ?tag=a&tag=b), return empty result

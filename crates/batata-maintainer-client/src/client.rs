@@ -44,6 +44,12 @@ impl MaintainerClient {
         Ok(Self { http_client })
     }
 
+    /// Create a MaintainerClient from an existing HTTP client (for testing)
+    #[doc(hidden)]
+    pub fn from_http_client(http_client: BatataHttpClient) -> Self {
+        Self { http_client }
+    }
+
     /// Create a new MaintainerClient from a single server address
     pub async fn from_server_addr(
         addr: &str,

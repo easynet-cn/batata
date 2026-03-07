@@ -16,7 +16,7 @@ use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType,
     console::api_model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo},
     error, is_valid,
-    model::{self, AppState, constants::DEFAULT_NAMESPACE_ID, response::ErrorResult},
+    model::{self, AppState, constants::DEFAULT_NAMESPACE_ID},
     secured,
 };
 
@@ -68,7 +68,14 @@ async fn find_one(
         .await
     {
         Ok(config) => config,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     model::common::Result::<Option<ConfigDetailInfo>>::http_success(result)
@@ -129,13 +136,12 @@ async fn search(
         Ok(page_result) => {
             model::common::Result::<Page<ConfigBasicInfo>>::http_success(page_result)
         }
-        Err(err) => HttpResponse::InternalServerError().json(ErrorResult {
-            timestamp: Utc::now().to_rfc3339(),
-            status: 403,
-            message: err.to_string(),
-            error: String::from("Forbiden"),
-            path: req.path().to_string(),
-        }),
+        Err(err) => model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            err.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -300,7 +306,12 @@ async fn delete(
         )
         .await
     {
-        return HttpResponse::InternalServerError().body(e.to_string());
+        return model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
     }
 
     model::common::Result::<bool>::http_success(true)
@@ -332,7 +343,14 @@ async fn find_beta_one(
         .await
     {
         Ok(config) => config,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
@@ -466,7 +484,12 @@ async fn publish_beta(
         )
         .await
     {
-        return HttpResponse::InternalServerError().body(e.to_string());
+        return model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
     }
 
     model::common::Result::<bool>::http_success(true)
@@ -517,7 +540,12 @@ async fn delete_beta(
         )
         .await
     {
-        return HttpResponse::InternalServerError().body(e.to_string());
+        return model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
     }
 
     model::common::Result::<bool>::http_success(true)
@@ -545,7 +573,12 @@ async fn find_listeners(
         Ok(listener_info) => {
             model::common::Result::<Option<ConfigListenerInfo>>::http_success(listener_info)
         }
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -749,7 +782,12 @@ async fn batch_delete(
         .await
     {
         Ok(_) => model::common::Result::<bool>::http_success(true),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -824,7 +862,12 @@ async fn search_detail(
         Ok(page_result) => {
             model::common::Result::<Page<ConfigBasicInfo>>::http_success(page_result)
         }
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -862,7 +905,12 @@ async fn find_listener_by_ip(
         Ok(listener_info) => {
             model::common::Result::<ConfigListenerInfo>::http_success(listener_info)
         }
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -941,7 +989,12 @@ async fn clone_config(
         .await
     {
         Ok(import_result) => model::common::Result::<ImportResult>::http_success(import_result),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 

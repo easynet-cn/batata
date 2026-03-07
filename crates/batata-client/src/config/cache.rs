@@ -132,4 +132,76 @@ mod tests {
         let cache = CacheData::new("my-config", "DEFAULT_GROUP", "public");
         assert_eq!(cache.key(), "my-config+DEFAULT_GROUP+public");
     }
+
+    #[test]
+    fn test_cache_data_key_no_tenant() {
+        let cache = CacheData::new("my-config", "DEFAULT_GROUP", "");
+        assert_eq!(cache.key(), "my-config+DEFAULT_GROUP");
+    }
+
+    #[test]
+    fn test_cache_data_new_defaults() {
+        let cache = CacheData::new("id", "group", "tenant");
+        assert_eq!(cache.data_id, "id");
+        assert_eq!(cache.group, "group");
+        assert_eq!(cache.tenant, "tenant");
+        assert!(cache.content.is_empty());
+        assert!(cache.md5.is_empty());
+        assert!(cache.listeners.is_empty());
+        assert!(!cache.is_listening);
+    }
+
+    #[test]
+    fn test_cache_data_listeners() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let mut cache = CacheData::new("id", "group", "");
+        assert!(!cache.has_listeners());
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+        let listener = Arc::new(super::super::listener::FnConfigChangeListener::new(
+            move |_info: super::super::listener::ConfigResponse| {
+                called_clone.store(true, Ordering::SeqCst);
+            },
+        ));
+
+        cache.add_listener(listener.clone());
+        assert!(cache.has_listeners());
+        assert_eq!(cache.listeners.len(), 1);
+
+        // Add another
+        cache.add_listener(listener);
+        assert_eq!(cache.listeners.len(), 2);
+
+        // Remove all
+        let removed = cache.remove_all_listeners();
+        assert_eq!(removed, 2);
+        assert!(!cache.has_listeners());
+    }
+
+    #[test]
+    fn test_cache_data_md5_consistency() {
+        let mut cache = CacheData::new("id", "group", "");
+        cache.update_content("test content");
+
+        let expected_md5 = compute_md5("test content");
+        assert_eq!(cache.md5, expected_md5);
+    }
+
+    #[test]
+    fn test_compute_md5_different_content() {
+        let md5a = compute_md5("content-a");
+        let md5b = compute_md5("content-b");
+        assert_ne!(md5a, md5b);
+    }
+
+    #[test]
+    fn test_build_cache_key_special_chars() {
+        assert_eq!(
+            build_cache_key("data.id", "my-group", "ns:public"),
+            "data.id+my-group+ns:public"
+        );
+    }
 }

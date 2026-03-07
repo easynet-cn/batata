@@ -90,13 +90,13 @@ async fn get_server(
             Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
             Ok(None) => common_response::Result::<String>::http_response(
                 404,
-                404,
+                error::MCP_SERVER_NOT_FOUND.code,
                 "MCP server not found".to_string(),
                 String::new(),
             ),
             Err(e) => common_response::Result::<String>::http_response(
                 500,
-                500,
+                error::SERVER_ERROR.code,
                 e.to_string(),
                 String::new(),
             ),
@@ -106,7 +106,7 @@ async fn get_server(
             Some(server) => common_response::Result::<McpServer>::http_success(server),
             None => common_response::Result::<String>::http_response(
                 404,
-                404,
+                error::MCP_SERVER_NOT_FOUND.code,
                 "MCP server not found".to_string(),
                 String::new(),
             ),
@@ -138,7 +138,9 @@ async fn register_server(
         match svc.create_mcp_server(&namespace, &reg).await {
             Ok(id) => {
                 // Also register in in-memory for backward compat
-                let _ = registry.register(reg.clone());
+                if let Err(e) = registry.register(reg.clone()) {
+                    tracing::warn!("Failed to register MCP server in memory: {}", e);
+                }
                 // Fetch the full server from operation service
                 match svc
                     .get_mcp_server_detail(&namespace, Some(&id), None, None)
@@ -199,7 +201,9 @@ async fn update_server(
         match svc.update_mcp_server(&namespace, &reg).await {
             Ok(()) => {
                 // Also update in-memory
-                let _ = registry.update(&namespace, &reg.name, reg.clone());
+                if let Err(e) = registry.update(&namespace, &reg.name, reg.clone()) {
+                    tracing::warn!("Failed to update MCP server in memory: {}", e);
+                }
                 match svc
                     .get_mcp_server_detail(&namespace, None, Some(&reg.name), None)
                     .await
@@ -261,12 +265,14 @@ async fn delete_server(
         {
             Ok(()) => {
                 // Also remove from in-memory
-                let _ = registry.delete_by_query(&McpDeleteQuery {
+                if let Err(e) = registry.delete_by_query(&McpDeleteQuery {
                     namespace_id: Some(namespace.to_string()),
                     mcp_name: q.mcp_name.clone(),
                     mcp_id: q.mcp_id.clone(),
                     version: q.version.clone(),
-                });
+                }) {
+                    tracing::warn!("Failed to delete MCP server from memory: {}", e);
+                }
                 common_response::Result::<bool>::http_success(true)
             }
             Err(e) => common_response::Result::<String>::http_response(
@@ -377,7 +383,7 @@ async fn import_execute(
         }
         Err(e) => common_response::Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             format!("Invalid JSON: {}", e),
             String::new(),
         ),

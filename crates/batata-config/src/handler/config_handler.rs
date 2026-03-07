@@ -33,6 +33,33 @@ use batata_common::error;
 use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
 use batata_server_common::model::AppState;
 
+/// Maximum number of gray versions per config (consistent with Nacos default)
+const MAX_GRAY_VERSION_COUNT: usize = 10;
+
+/// Check if adding a new gray version would exceed the max count.
+/// Returns true if over the limit (and the gray_name doesn't already exist).
+async fn is_gray_version_over_max_count(
+    persistence: &dyn PersistenceService,
+    data_id: &str,
+    group: &str,
+    tenant: &str,
+    gray_name: &str,
+) -> bool {
+    match persistence
+        .config_find_all_grays(data_id, group, tenant)
+        .await
+    {
+        Ok(grays) => {
+            // If this gray_name already exists, it's an update, not a new version
+            if grays.iter().any(|g| g.gray_name == gray_name) {
+                return false;
+            }
+            grays.len() >= MAX_GRAY_VERSION_COUNT
+        }
+        Err(_) => false,
+    }
+}
+
 /// Build client labels from the connection metadata for gray rule matching.
 fn build_client_labels(connection: &Connection) -> HashMap<String, String> {
     let mut labels = connection.meta_info.get_app_labels();
@@ -50,14 +77,14 @@ fn build_client_labels(connection: &Connection) -> HashMap<String, String> {
 }
 
 /// Find a matching gray config for the given connection and config key.
-/// Returns (content, md5, encrypted_data_key, last_modified) if a gray config matches.
+/// Returns (content, md5, encrypted_data_key, last_modified, gray_name) if a gray config matches.
 async fn find_matching_gray_config(
     persistence: &dyn PersistenceService,
     data_id: &str,
     group: &str,
     tenant: &str,
     labels: &HashMap<String, String>,
-) -> Option<(String, String, String, i64)> {
+) -> Option<(String, String, String, i64, String)> {
     let grays = match persistence
         .config_find_all_grays(data_id, group, tenant)
         .await
@@ -99,6 +126,7 @@ async fn find_matching_gray_config(
                 gray.md5.clone(),
                 gray.encrypted_data_key.clone(),
                 gray.modified_time,
+                gray.gray_name.clone(),
             ));
         }
     }
@@ -140,7 +168,7 @@ impl PayloadHandler for ConfigQueryHandler {
 
         // Check for matching gray config first
         let labels = build_client_labels(__connection);
-        if let Some((content, md5, encrypted_data_key, last_modified)) =
+        if let Some((content, md5, encrypted_data_key, last_modified, gray_name)) =
             find_matching_gray_config(persistence, data_id, group, tenant, &labels).await
         {
             let mut response = ConfigQueryResponse::new();
@@ -149,7 +177,12 @@ impl PayloadHandler for ConfigQueryHandler {
             response.md5 = md5;
             response.encrypted_data_key = encrypted_data_key;
             response.last_modified = last_modified;
-            response.is_beta = true;
+            // Distinguish beta vs tag gray types in response (consistent with Nacos)
+            if gray_name == "beta" {
+                response.is_beta = true;
+            } else {
+                response.tag = Some(gray_name);
+            }
             return Ok(response.build_payload());
         }
 
@@ -299,6 +332,19 @@ impl PayloadHandler for ConfigPublishHandler {
 
         // Handle gray (beta/tag) publish
         if !beta_ips.is_empty() {
+            // Check max gray version count
+            if is_gray_version_over_max_count(persistence, data_id, group, tenant, "beta").await {
+                let mut response = ConfigPublishResponse::new();
+                response.response.request_id = request_id;
+                response.response.result_code = ResponseCode::Fail.code();
+                response.response.error_code = 20010; // CONFIG_GRAY_OVER_MAX_VERSION_COUNT
+                response.response.success = false;
+                response.response.message = format!(
+                    "gray config version is over max count: {}",
+                    MAX_GRAY_VERSION_COUNT
+                );
+                return Ok(response.build_payload());
+            }
             let gray_rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_beta(
                 beta_ips,
                 crate::model::gray_rule::BetaGrayRule::PRIORITY,
@@ -349,6 +395,22 @@ impl PayloadHandler for ConfigPublishHandler {
         }
 
         if !tag.is_empty() {
+            let gray_name = format!("tag_{}", tag);
+            // Check max gray version count
+            if is_gray_version_over_max_count(persistence, data_id, group, tenant, &gray_name).await
+            {
+                let mut response = ConfigPublishResponse::new();
+                response.response.request_id = request_id;
+                response.response.result_code = ResponseCode::Fail.code();
+                response.response.error_code = 20010; // CONFIG_GRAY_OVER_MAX_VERSION_COUNT
+                response.response.success = false;
+                response.response.message = format!(
+                    "gray config version is over max count: {}",
+                    MAX_GRAY_VERSION_COUNT
+                );
+                return Ok(response.build_payload());
+            }
+
             let gray_rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_tag(
                 tag,
                 crate::model::gray_rule::TagGrayRule::PRIORITY,
@@ -366,7 +428,6 @@ impl PayloadHandler for ConfigPublishHandler {
                 }
             };
 
-            let gray_name = format!("tag_{}", tag);
             match persistence
                 .config_create_or_update_gray(
                     data_id,
@@ -844,7 +905,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
             }
 
             // First check for matching gray config
-            if let Some((_, gray_md5, _, _)) =
+            if let Some((_, gray_md5, _, _, _)) =
                 find_matching_gray_config(persistence, data_id, group, tenant, &labels).await
             {
                 if client_md5 != &gray_md5 {
@@ -1008,6 +1069,10 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
 impl ConfigChangeClusterSyncHandler {
     /// Notify local config subscribers and fuzzy watchers about configuration changes
     /// received from another cluster node. Does NOT re-broadcast to avoid infinite loops.
+    ///
+    /// Note: `gray_name` is intentionally not used for subscriber filtering.
+    /// Consistent with Nacos, all subscribers are notified regardless of gray type.
+    /// Gray matching happens at query time when subscribers re-fetch the config.
     async fn notify_config_change(
         &self,
         data_id: &str,

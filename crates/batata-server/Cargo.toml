@@ -84,6 +84,9 @@ metrics = { workspace = true }
 # Auth
 jsonwebtoken = { workspace = true }
 
+# System info
+sysinfo = { workspace = true }
+
 # Utils
 chrono = { workspace = true }
 uuid = { workspace = true }

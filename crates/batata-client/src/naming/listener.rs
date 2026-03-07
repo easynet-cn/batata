@@ -2,6 +2,8 @@
 
 use batata_api::naming::model::Instance;
 
+use super::instances_diff::InstancesDiff;
+
 /// Event delivered to naming listeners when a service's instance list changes.
 #[derive(Clone, Debug)]
 pub struct NamingEvent {
@@ -9,6 +11,8 @@ pub struct NamingEvent {
     pub group_name: String,
     pub clusters: String,
     pub instances: Vec<Instance>,
+    /// Diff between old and new instances (None on first subscription)
+    pub diff: Option<InstancesDiff>,
 }
 
 /// Trait for receiving naming service change events.
@@ -66,6 +70,7 @@ mod tests {
             group_name: "DEFAULT_GROUP".to_string(),
             clusters: String::new(),
             instances: vec![],
+            diff: None,
         });
 
         assert!(called.load(Ordering::SeqCst));

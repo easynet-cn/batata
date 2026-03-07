@@ -20,9 +20,10 @@ use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
 use crate::model::{
-    AgentService, ConsulError, HealthCheck, Node, PreparedQuery, PreparedQueryCreateRequest,
-    PreparedQueryCreateResponse, PreparedQueryDNS, PreparedQueryExecuteResult,
-    PreparedQueryExplainResult, PreparedQueryParams, ServiceHealth, Weights,
+    AgentService, ConsulDatacenterConfig, ConsulError, HealthCheck, Node, PreparedQuery,
+    PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
+    PreparedQueryExecuteResult, PreparedQueryExplainResult, PreparedQueryParams, ServiceHealth,
+    Weights,
 };
 
 /// Global prepared query storage
@@ -305,6 +306,7 @@ pub async fn execute_query(
     path: web::Path<String>,
     _query_params: web::Query<PreparedQueryParams>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     query_service: web::Data<ConsulQueryService>,
     naming_service: web::Data<Arc<NamingService>>,
 ) -> HttpResponse {
@@ -383,7 +385,7 @@ pub async fn execute_query(
                     id: node_id,
                     node: node_name.clone(),
                     address: ip.clone(),
-                    datacenter: "dc1".to_string(),
+                    datacenter: dc_config.datacenter.clone(),
                     tagged_addresses: Some(node_tagged_addresses),
                     meta: Some(node_meta),
                 },
@@ -399,7 +401,7 @@ pub async fn execute_query(
                         passing: instance.weight as i32,
                         warning: 1,
                     },
-                    datacenter: Some("dc1".to_string()),
+                    datacenter: Some(dc_config.datacenter.clone()),
                     namespace: Some(namespace.to_string()),
                     kind: instance.metadata.get("consul_kind").cloned(),
                     proxy: instance
@@ -441,7 +443,7 @@ pub async fn execute_query(
         service: service_name.clone(),
         nodes,
         dns: query.dns.unwrap_or(PreparedQueryDNS { ttl: None }),
-        datacenter: "dc1".to_string(),
+        datacenter: dc_config.datacenter.clone(),
         failovers: 0,
     };
 

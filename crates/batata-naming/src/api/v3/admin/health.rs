@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use batata_common::{
     ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, impl_or_default,
 };
-use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
+use batata_server_common::{
+    Secured, error, model::app_state::AppState, model::response::Result, secured,
+};
 
 use crate::service::NamingService;
 
@@ -48,7 +50,7 @@ async fn update_health(
     if params.service_name.is_empty() || params.ip.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters missing".to_string(),
             false,
         );
@@ -85,7 +87,7 @@ async fn update_health(
     if !instance_exists {
         return Result::<bool>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!(
                 "instance {}:{} not found in service {}",
                 params.ip, params.port, params.service_name
@@ -109,7 +111,7 @@ async fn update_health(
     } else {
         Result::<bool>::http_response(
             500,
-            500,
+            error::SERVER_ERROR.code,
             "Failed to update instance health status".to_string(),
             false,
         )

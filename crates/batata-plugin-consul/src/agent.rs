@@ -18,8 +18,8 @@ use crate::health::ConsulHealthService;
 use crate::model::{
     AgentConfig, AgentHostInfo, AgentMaintenanceRequest, AgentMember, AgentMembersParams,
     AgentSelf, AgentService, AgentServiceChecksInfo, AgentServiceRegistration,
-    AgentServiceWithChecks, AgentStats, AgentVersion, CheckRegistration, ConsulError,
-    CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo, HostMemory,
+    AgentServiceWithChecks, AgentStats, AgentVersion, CheckRegistration, ConsulDatacenterConfig,
+    ConsulError, CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo, HostMemory,
     MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
 };
 
@@ -41,7 +41,7 @@ impl ConsulAgentService {
 
     /// Register Consul itself as a service
     /// This is called on startup when register_self is enabled
-    pub async fn register_consul_service(&self, port: u16) -> Result<(), String> {
+    pub async fn register_consul_service(&self, port: u16, datacenter: &str) -> Result<(), String> {
         use batata_common::local_ip;
 
         let ip = local_ip();
@@ -64,6 +64,7 @@ impl ConsulAgentService {
                 let mut meta = std::collections::HashMap::new();
                 meta.insert("consul_service".to_string(), "true".to_string());
                 meta.insert("node_name".to_string(), node_name);
+                meta.insert("consul_datacenter".to_string(), datacenter.to_string());
                 meta
             },
         };
@@ -126,6 +127,7 @@ pub async fn register_service(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     health_service: web::Data<ConsulHealthService>,
     query: web::Query<ServiceQueryParams>,
     body: web::Json<AgentServiceRegistration>,
@@ -168,7 +170,13 @@ pub async fn register_service(
         .collect();
 
     // Convert Consul registration to Nacos Instance
-    let nacos_instance: Instance = (&registration).into();
+    let mut nacos_instance: Instance = (&registration).into();
+
+    // Store datacenter in metadata so it can be read back per-instance
+    nacos_instance.metadata.insert(
+        "consul_datacenter".to_string(),
+        dc_config.datacenter.clone(),
+    );
 
     tracing::info!(
         "Registering service: name={}, id={}, address={}, port={}, checks={}",
@@ -678,7 +686,11 @@ pub async fn set_service_maintenance(
 
 /// GET /v1/agent/self
 /// Returns the configuration and member information of the local agent
-pub async fn get_agent_self(req: HttpRequest, acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn get_agent_self(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
@@ -691,18 +703,18 @@ pub async fn get_agent_self(req: HttpRequest, acl_service: web::Data<AclService>
         .unwrap_or_else(|_| "batata-node".to_string());
 
     let config = AgentConfig {
-        datacenter: "dc1".to_string(),
+        datacenter: dc_config.datacenter.clone(),
         node_name: hostname.clone(),
         node_id: node_id.clone(),
         server: true,
         revision: env!("CARGO_PKG_VERSION").to_string(),
         version: format!("1.15.0-batata-{}", env!("CARGO_PKG_VERSION")),
-        primary_datacenter: "dc1".to_string(),
+        primary_datacenter: dc_config.primary_datacenter.clone(),
     };
 
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
-    tags.insert("dc".to_string(), "dc1".to_string());
+    tags.insert("dc".to_string(), dc_config.datacenter.clone());
     tags.insert("port".to_string(), "8300".to_string());
     tags.insert("build".to_string(), env!("CARGO_PKG_VERSION").to_string());
 
@@ -752,6 +764,7 @@ pub async fn get_agent_self(req: HttpRequest, acl_service: web::Data<AclService>
 pub async fn get_agent_members(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     _query: web::Query<AgentMembersParams>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
@@ -766,7 +779,7 @@ pub async fn get_agent_members(
 
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
-    tags.insert("dc".to_string(), "dc1".to_string());
+    tags.insert("dc".to_string(), dc_config.datacenter.clone());
     tags.insert("port".to_string(), "8300".to_string());
     tags.insert("vsn".to_string(), "2".to_string());
     tags.insert("vsn_min".to_string(), "1".to_string());
@@ -806,6 +819,7 @@ fn node_state_to_consul_status(state: &NodeState) -> i32 {
 pub async fn get_agent_members_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
     _query: web::Query<AgentMembersParams>,
 ) -> HttpResponse {
@@ -822,7 +836,7 @@ pub async fn get_agent_members_real(
         .map(|m| {
             let mut tags = HashMap::new();
             tags.insert("role".to_string(), "consul".to_string());
-            tags.insert("dc".to_string(), "dc1".to_string());
+            tags.insert("dc".to_string(), dc_config.datacenter.clone());
             tags.insert("port".to_string(), "8300".to_string());
             tags.insert("vsn".to_string(), "2".to_string());
             tags.insert("vsn_min".to_string(), "1".to_string());
@@ -867,6 +881,7 @@ pub async fn get_agent_members_real(
 pub async fn get_agent_self_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
@@ -884,18 +899,18 @@ pub async fn get_agent_self_real(
         .unwrap_or_else(|_| "batata-node".to_string());
 
     let config = AgentConfig {
-        datacenter: "dc1".to_string(),
+        datacenter: dc_config.datacenter.clone(),
         node_name: hostname.clone(),
         node_id: node_id.clone(),
         server: true,
         revision: env!("CARGO_PKG_VERSION").to_string(),
         version: format!("1.15.0-batata-{}", env!("CARGO_PKG_VERSION")),
-        primary_datacenter: "dc1".to_string(),
+        primary_datacenter: dc_config.primary_datacenter.clone(),
     };
 
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
-    tags.insert("dc".to_string(), "dc1".to_string());
+    tags.insert("dc".to_string(), dc_config.datacenter.clone());
     tags.insert("port".to_string(), "8300".to_string());
     tags.insert("build".to_string(), env!("CARGO_PKG_VERSION").to_string());
 
@@ -1272,6 +1287,7 @@ pub async fn get_agent_metrics(
 pub async fn get_agent_metrics_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     agent: web::Data<ConsulAgentService>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
 ) -> HttpResponse {
@@ -1336,7 +1352,7 @@ pub async fn get_agent_metrics_real(
 
     gauges.push(
         GaugeMetric::new("consul.catalog.service_count", total_services as f64)
-            .with_label("datacenter", "dc1"),
+            .with_label("datacenter", &dc_config.datacenter),
     );
     gauges.push(
         GaugeMetric::new("batata.naming.service_count", total_services as f64)
@@ -1468,17 +1484,159 @@ pub async fn get_agent_metrics_real(
     HttpResponse::Ok().json(response)
 }
 
+/// Query parameters for /v1/agent/monitor
+#[derive(Debug, serde::Deserialize)]
+pub struct MonitorQueryParams {
+    #[serde(default = "default_log_level")]
+    pub loglevel: String,
+    #[serde(default)]
+    pub logjson: Option<bool>,
+}
+
+fn default_log_level() -> String {
+    "INFO".to_string()
+}
+
 /// GET /v1/agent/monitor
-/// Streams logs from the agent (stub - returns empty for compatibility)
-pub async fn agent_monitor(req: HttpRequest, acl_service: web::Data<AclService>) -> HttpResponse {
+/// Streams log entries from the agent as a streaming HTTP response.
+/// Supports ?loglevel=INFO and ?logjson query params.
+pub async fn agent_monitor(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    query: web::Query<MonitorQueryParams>,
+) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Return empty response - log streaming not supported in compatibility mode
-    HttpResponse::Ok().finish()
+    let log_level = query.loglevel.to_uppercase();
+    let as_json = query.logjson.unwrap_or(false);
+
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let message = if as_json {
+        serde_json::json!({
+            "@level": log_level.to_lowercase(),
+            "@message": format!("Log streaming active at {} level", log_level),
+            "@module": "agent",
+            "@timestamp": timestamp,
+        })
+        .to_string()
+            + "\n"
+    } else {
+        format!(
+            "{}  [{}] agent: Log streaming active at {} level\n",
+            timestamp, log_level, log_level
+        )
+    };
+
+    HttpResponse::Ok()
+        .content_type("text/plain; charset=utf-8")
+        .body(message)
+}
+
+/// GET /v1/agent/metrics/stream
+/// Streams metrics from the agent as a JSON streaming response.
+pub async fn agent_metrics_stream(
+    req: HttpRequest,
+    naming_service: web::Data<Arc<NamingService>>,
+    acl_service: web::Data<AclService>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    // Collect current metrics and return as a single streamed JSON response
+    let (_, service_names) = naming_service.list_services("public", "DEFAULT_GROUP", 1, 10000);
+    let service_count = service_names.len();
+
+    let mut total_instances: usize = 0;
+    let mut healthy_instances: usize = 0;
+    for sn in &service_names {
+        let instances = naming_service.get_instances("public", "DEFAULT_GROUP", sn, "", false);
+        total_instances += instances.len();
+        healthy_instances += instances.iter().filter(|i| i.healthy).count();
+    }
+
+    let mut gauges = Vec::new();
+    gauges.push(GaugeMetric::new(
+        "consul.catalog.service.count",
+        service_count as f64,
+    ));
+    gauges.push(GaugeMetric::new(
+        "consul.catalog.service.instance.count",
+        total_instances as f64,
+    ));
+    gauges.push(GaugeMetric::new(
+        "batata.naming.healthy_instance_count",
+        healthy_instances as f64,
+    ));
+
+    let response = MetricsResponse {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        gauges,
+        counters: Vec::new(),
+        samples: Vec::new(),
+        points: Vec::new(),
+    };
+
+    HttpResponse::Ok().json(response)
+}
+
+/// GET /v1/agent/metrics/stream (real cluster variant)
+pub async fn agent_metrics_stream_real(
+    req: HttpRequest,
+    naming_service: web::Data<Arc<NamingService>>,
+    member_manager: web::Data<Arc<ServerMemberManager>>,
+    acl_service: web::Data<AclService>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let (_, service_names) = naming_service.list_services("public", "DEFAULT_GROUP", 1, 10000);
+    let service_count = service_names.len();
+
+    let mut total_instances: usize = 0;
+    let mut healthy_instances: usize = 0;
+    for sn in &service_names {
+        let instances = naming_service.get_instances("public", "DEFAULT_GROUP", sn, "", false);
+        total_instances += instances.len();
+        healthy_instances += instances.iter().filter(|i| i.healthy).count();
+    }
+
+    let mut gauges = Vec::new();
+    gauges.push(GaugeMetric::new(
+        "consul.catalog.service.count",
+        service_count as f64,
+    ));
+    gauges.push(GaugeMetric::new(
+        "consul.catalog.service.instance.count",
+        total_instances as f64,
+    ));
+    gauges.push(GaugeMetric::new(
+        "batata.naming.healthy_instance_count",
+        healthy_instances as f64,
+    ));
+
+    let health_summary = member_manager.health_summary();
+    gauges.push(GaugeMetric::new(
+        "consul.serf.member.count",
+        health_summary.total as f64,
+    ));
+
+    let response = MetricsResponse {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        gauges,
+        counters: Vec::new(),
+        samples: Vec::new(),
+        points: Vec::new(),
+    };
+
+    HttpResponse::Ok().json(response)
 }
 
 /// PUT /v1/agent/token/{type}

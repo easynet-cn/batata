@@ -168,7 +168,7 @@ async fn register_instance(
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             false,
         );
@@ -177,7 +177,7 @@ async fn register_instance(
     if form.ip.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'ip' is missing".to_string(),
             false,
         );
@@ -186,7 +186,7 @@ async fn register_instance(
     if form.port <= 0 {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'port' is invalid".to_string(),
             false,
         );
@@ -266,7 +266,7 @@ async fn deregister_instance(
     if params.service_name.is_empty() || params.ip.is_empty() || params.port <= 0 {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
             false,
         );
@@ -333,7 +333,7 @@ async fn update_instance(
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
             false,
         );
@@ -395,7 +395,7 @@ async fn get_instance(
     if params.service_name.is_empty() || params.ip.is_empty() || params.port <= 0 {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters missing or invalid".to_string(),
             String::new(),
         );
@@ -448,7 +448,7 @@ async fn get_instance(
     } else {
         Result::<Option<InstanceResponse>>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!(
                 "instance not found, ip={}, port={}, cluster={}",
                 params.ip, params.port, cluster_name
@@ -469,7 +469,7 @@ async fn list_instances(
     if params.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             String::new(),
         );
@@ -520,7 +520,7 @@ async fn update_metadata(
     if form.service_name.is_empty() || form.instances.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters 'serviceName' and 'instances' are missing".to_string(),
             false,
         );
@@ -547,7 +547,7 @@ async fn update_metadata(
     if metadata.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Invalid metadata format".to_string(),
             false,
         );
@@ -604,7 +604,7 @@ async fn partial_update_instance(
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
             false,
         );
@@ -669,7 +669,7 @@ async fn partial_update_instance(
         } else {
             Result::<bool>::http_response(
                 500,
-                500,
+                error::SERVER_ERROR.code,
                 "Failed to partial update instance".to_string(),
                 false,
             )
@@ -677,7 +677,7 @@ async fn partial_update_instance(
     } else {
         Result::<bool>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!(
                 "instance not found, ip={}, port={}, cluster={}",
                 form.ip, form.port, cluster_name
@@ -700,7 +700,7 @@ async fn delete_metadata_batch(
     if params.service_name.is_empty() || params.instances.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters 'serviceName' and 'instances' are missing".to_string(),
             false,
         );
@@ -726,7 +726,7 @@ async fn delete_metadata_batch(
     if keys_to_delete.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Invalid metadata format. Expected JSON array of keys".to_string(),
             false,
         );
@@ -748,7 +748,7 @@ async fn delete_metadata_batch(
     if instance_keys.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Invalid instances format".to_string(),
             false,
         );

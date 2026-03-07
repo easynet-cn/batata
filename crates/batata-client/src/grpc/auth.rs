@@ -170,6 +170,8 @@ mod tests {
     fn test_auth_provider_none() {
         let provider = AuthProvider::none();
         assert!(!provider.is_enabled());
+        assert!(provider.username.is_empty());
+        assert!(provider.server_addr.is_empty());
     }
 
     #[test]
@@ -178,10 +180,60 @@ mod tests {
         assert!(provider.is_enabled());
     }
 
+    #[test]
+    fn test_auth_provider_empty_username() {
+        let provider = AuthProvider::new("http://localhost:8848", "", "password").unwrap();
+        assert!(!provider.is_enabled());
+    }
+
+    #[test]
+    fn test_auth_provider_trims_trailing_slash() {
+        let provider = AuthProvider::new("http://localhost:8848/", "user", "pass").unwrap();
+        assert_eq!(provider.server_addr, "http://localhost:8848");
+    }
+
+    #[test]
+    fn test_auth_provider_trims_multiple_trailing_slashes() {
+        let provider = AuthProvider::new("http://localhost:8848///", "user", "pass").unwrap();
+        // trim_end_matches removes all trailing slashes
+        assert!(!provider.server_addr.ends_with('/'));
+    }
+
     #[tokio::test]
     async fn test_no_auth_returns_none() {
         let provider = AuthProvider::none();
         let token = provider.get_token().await.unwrap();
         assert!(token.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_no_auth() {
+        let provider = AuthProvider::none();
+        // Refresh on a disabled provider should be no-op
+        provider.refresh().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_get_token_requires_login() {
+        // Provider with credentials but unreachable server
+        let provider = AuthProvider::new("http://127.0.0.1:1", "user", "pass").unwrap();
+        // Should fail because server is not reachable
+        let result = provider.get_token().await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_token_refresh_buffer() {
+        assert_eq!(TOKEN_REFRESH_BUFFER_SECS, 300);
+    }
+
+    #[test]
+    fn test_token_info_struct() {
+        let token = TokenInfo {
+            access_token: "test-token".to_string(),
+            expires_at: Instant::now() + Duration::from_secs(3600),
+        };
+        assert_eq!(token.access_token, "test-token");
+        assert!(token.expires_at > Instant::now());
     }
 }

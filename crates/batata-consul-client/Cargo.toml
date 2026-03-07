@@ -1,0 +1,23 @@
+[package]
+name = "batata-consul-client"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Consul-compatible HTTP client SDK for Batata"
+
+[dependencies]
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_urlencoded = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time", "sync"] }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+base64 = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
+wiremock = "0.6.5"

@@ -192,7 +192,7 @@ pub struct OperatorQueryParams {
 /// In-memory operator service
 pub struct ConsulOperatorService {
     /// Raft server list
-    servers: Arc<DashMap<String, RaftServer>>,
+    pub(crate) servers: Arc<DashMap<String, RaftServer>>,
     /// Autopilot configuration
     autopilot_config: Arc<tokio::sync::RwLock<AutopilotConfiguration>>,
     /// Keyring (key -> node count)
@@ -201,10 +201,16 @@ pub struct ConsulOperatorService {
     primary_key: Arc<tokio::sync::RwLock<Option<String>>>,
     /// Current index
     index: Arc<AtomicU64>,
+    /// Datacenter name
+    pub(crate) datacenter: String,
 }
 
 impl ConsulOperatorService {
     pub fn new() -> Self {
+        Self::with_datacenter("dc1".to_string())
+    }
+
+    pub fn with_datacenter(datacenter: String) -> Self {
         let node_name = hostname::get()
             .ok()
             .and_then(|h| h.into_string().ok())
@@ -216,6 +222,7 @@ impl ConsulOperatorService {
             keyring: Arc::new(DashMap::new()),
             primary_key: Arc::new(tokio::sync::RwLock::new(None)),
             index: Arc::new(AtomicU64::new(1)),
+            datacenter,
         };
 
         // Add self as default server
@@ -365,7 +372,7 @@ impl ConsulOperatorService {
 
         vec![KeyringResponse {
             wan: false,
-            datacenter: "dc1".to_string(),
+            datacenter: self.datacenter.clone(),
             segment: "".to_string(),
             messages: None,
             keys,
@@ -411,21 +418,30 @@ impl Default for ConsulOperatorService {
 
 /// Real cluster operator service using ServerMemberManager
 pub struct ConsulOperatorServiceReal {
-    member_manager: Arc<batata_core::service::cluster::ServerMemberManager>,
+    pub(crate) member_manager: Arc<batata_core::service::cluster::ServerMemberManager>,
     autopilot_config: Arc<tokio::sync::RwLock<AutopilotConfiguration>>,
     keyring: Arc<DashMap<String, i32>>,
     primary_key: Arc<tokio::sync::RwLock<Option<String>>>,
     index: Arc<AtomicU64>,
+    pub(crate) datacenter: String,
 }
 
 impl ConsulOperatorServiceReal {
     pub fn new(member_manager: Arc<batata_core::service::cluster::ServerMemberManager>) -> Self {
+        Self::with_datacenter(member_manager, "dc1".to_string())
+    }
+
+    pub fn with_datacenter(
+        member_manager: Arc<batata_core::service::cluster::ServerMemberManager>,
+        datacenter: String,
+    ) -> Self {
         Self {
             member_manager,
             autopilot_config: Arc::new(tokio::sync::RwLock::new(AutopilotConfiguration::default())),
             keyring: Arc::new(DashMap::new()),
             primary_key: Arc::new(tokio::sync::RwLock::new(None)),
             index: Arc::new(AtomicU64::new(1)),
+            datacenter,
         }
     }
 
@@ -544,7 +560,7 @@ impl ConsulOperatorServiceReal {
 
         vec![KeyringResponse {
             wan: false,
-            datacenter: "dc1".to_string(),
+            datacenter: self.datacenter.clone(),
             segment: "".to_string(),
             messages: None,
             keys,
@@ -823,7 +839,7 @@ pub async fn get_operator_usage(
     let node_count = operator_service.servers.len() as i64;
     let mut usage = HashMap::new();
     usage.insert(
-        "dc1".to_string(),
+        operator_service.datacenter.clone(),
         ServiceUsage {
             nodes: node_count,
             services: 0,
@@ -1070,7 +1086,7 @@ pub async fn get_operator_usage_real(
     let members = operator_service.member_manager.all_members();
     let mut usage = HashMap::new();
     usage.insert(
-        "dc1".to_string(),
+        operator_service.datacenter.clone(),
         ServiceUsage {
             nodes: members.len() as i64,
             services: 0,

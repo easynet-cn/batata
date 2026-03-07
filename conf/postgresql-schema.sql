@@ -41,6 +41,10 @@ CREATE TABLE config_info (
     CONSTRAINT uk_configinfo_datagrouptenant UNIQUE (data_id, group_id, tenant_id)
 );
 
+CREATE INDEX idx_config_tenant_id ON config_info(tenant_id);
+CREATE INDEX idx_config_app_name ON config_info(app_name);
+CREATE INDEX idx_config_gmt_modified ON config_info(gmt_modified);
+
 COMMENT ON TABLE config_info IS 'Configuration information table';
 COMMENT ON COLUMN config_info.id IS 'Primary key ID';
 COMMENT ON COLUMN config_info.data_id IS 'Configuration data ID';
@@ -90,6 +94,7 @@ CREATE TABLE config_tags_relation (
 );
 
 CREATE INDEX idx_tags_tenant_id ON config_tags_relation(tenant_id);
+CREATE INDEX idx_tags_config_lookup ON config_tags_relation(data_id, group_id, tenant_id);
 
 COMMENT ON TABLE config_tags_relation IS 'Configuration tag relation table';
 

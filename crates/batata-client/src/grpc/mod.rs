@@ -13,7 +13,7 @@ use batata_api::{
     grpc::{Metadata, Payload},
     remote::model::{
         ClientDetectionRequest, ClientDetectionResponse, ConnectResetRequest, RequestTrait,
-        ResponseTrait,
+        ResponseTrait, ServerCheckRequest, ServerCheckResponse,
     },
 };
 use dashmap::DashMap;
@@ -262,6 +262,18 @@ impl GrpcClient {
         Ok(())
     }
 
+    /// Check if the server is healthy by sending a ServerCheckRequest.
+    pub async fn check_server_status(&self) -> Result<bool> {
+        let req = ServerCheckRequest::new();
+        match self.request_typed::<_, ServerCheckResponse>(&req).await {
+            Ok(resp) => Ok(resp.response.success || resp.response.result_code == 200),
+            Err(e) => {
+                warn!("Server health check failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
     /// Get the current server address.
     fn current_server_addr(&self) -> String {
         let index = self
@@ -346,12 +358,182 @@ mod tests {
         assert_eq!(config.server_addrs, vec!["127.0.0.1:8848"]);
         assert_eq!(config.module, "config");
         assert!(config.username.is_empty());
+        assert!(config.password.is_empty());
+        assert!(config.tenant.is_empty());
+        assert!(config.labels.is_empty());
+    }
+
+    #[test]
+    fn test_grpc_client_config_custom() {
+        let config = GrpcClientConfig {
+            server_addrs: vec!["10.0.0.1:8848".to_string(), "10.0.0.2:8848".to_string()],
+            username: "nacos".to_string(),
+            password: "secret".to_string(),
+            module: "naming".to_string(),
+            tenant: "public".to_string(),
+            labels: {
+                let mut m = HashMap::new();
+                m.insert("env".to_string(), "prod".to_string());
+                m
+            },
+        };
+        assert_eq!(config.server_addrs.len(), 2);
+        assert_eq!(config.module, "naming");
+        assert_eq!(config.labels.get("env").unwrap(), "prod");
+    }
+
+    #[test]
+    fn test_grpc_client_config_clone() {
+        let config = GrpcClientConfig::default();
+        let cloned = config.clone();
+        assert_eq!(cloned.server_addrs, config.server_addrs);
+        assert_eq!(cloned.module, config.module);
     }
 
     #[test]
     fn test_grpc_client_new() {
         let config = GrpcClientConfig::default();
         let client = GrpcClient::new(config).unwrap();
-        assert!(!client.push_handlers.is_empty() || client.push_handlers.is_empty());
+        assert!(client.push_handlers.is_empty());
+    }
+
+    #[test]
+    fn test_grpc_client_new_with_auth() {
+        let config = GrpcClientConfig {
+            username: "nacos".to_string(),
+            password: "nacos".to_string(),
+            ..Default::default()
+        };
+        let client = GrpcClient::new(config).unwrap();
+        assert!(client.auth_provider.is_enabled());
+    }
+
+    #[test]
+    fn test_grpc_client_new_without_auth() {
+        let config = GrpcClientConfig::default();
+        let client = GrpcClient::new(config).unwrap();
+        assert!(!client.auth_provider.is_enabled());
+    }
+
+    #[tokio::test]
+    async fn test_grpc_client_not_connected() {
+        let config = GrpcClientConfig::default();
+        let client = GrpcClient::new(config).unwrap();
+        assert!(!client.is_connected().await);
+    }
+
+    #[test]
+    fn test_register_push_handler() {
+        let config = GrpcClientConfig::default();
+        let client = GrpcClient::new(config).unwrap();
+
+        struct TestHandler;
+        impl ServerPushHandler for TestHandler {
+            fn handle(&self, _payload: &Payload) -> Option<Payload> {
+                None
+            }
+        }
+
+        client.register_push_handler("TestRequest", TestHandler);
+        assert!(client.push_handlers.contains_key("TestRequest"));
+        assert_eq!(client.push_handlers.len(), 1);
+    }
+
+    #[test]
+    fn test_register_multiple_push_handlers() {
+        let config = GrpcClientConfig::default();
+        let client = GrpcClient::new(config).unwrap();
+
+        struct Handler1;
+        impl ServerPushHandler for Handler1 {
+            fn handle(&self, _: &Payload) -> Option<Payload> {
+                None
+            }
+        }
+        struct Handler2;
+        impl ServerPushHandler for Handler2 {
+            fn handle(&self, _: &Payload) -> Option<Payload> {
+                None
+            }
+        }
+
+        client.register_push_handler("Type1", Handler1);
+        client.register_push_handler("Type2", Handler2);
+        assert_eq!(client.push_handlers.len(), 2);
+    }
+
+    #[test]
+    fn test_register_push_handler_overwrites() {
+        let config = GrpcClientConfig::default();
+        let client = GrpcClient::new(config).unwrap();
+
+        struct Handler1;
+        impl ServerPushHandler for Handler1 {
+            fn handle(&self, _: &Payload) -> Option<Payload> {
+                None
+            }
+        }
+        struct Handler2;
+        impl ServerPushHandler for Handler2 {
+            fn handle(&self, _: &Payload) -> Option<Payload> {
+                None
+            }
+        }
+
+        client.register_push_handler("SameType", Handler1);
+        client.register_push_handler("SameType", Handler2);
+        assert_eq!(client.push_handlers.len(), 1);
+    }
+
+    #[test]
+    fn test_current_server_addr() {
+        let config = GrpcClientConfig {
+            server_addrs: vec!["10.0.0.1:8848".to_string(), "10.0.0.2:8848".to_string()],
+            ..Default::default()
+        };
+        let client = GrpcClient::new(config).unwrap();
+        assert_eq!(client.current_server_addr(), "10.0.0.1:8848");
+    }
+
+    #[test]
+    fn test_current_server_addr_wraps() {
+        let config = GrpcClientConfig {
+            server_addrs: vec!["10.0.0.1:8848".to_string(), "10.0.0.2:8848".to_string()],
+            ..Default::default()
+        };
+        let client = GrpcClient::new(config).unwrap();
+        // Set index beyond length
+        client
+            .current_server_index
+            .store(3, std::sync::atomic::Ordering::Relaxed);
+        // Should wrap: 3 % 2 = 1
+        assert_eq!(client.current_server_addr(), "10.0.0.2:8848");
+    }
+
+    #[test]
+    fn test_deserialize_payload_empty() {
+        use batata_api::remote::model::ServerCheckResponse;
+
+        let payload = Payload {
+            metadata: None,
+            body: None,
+        };
+
+        // Empty body should return default
+        let resp: ServerCheckResponse = deserialize_payload(&payload);
+        assert_eq!(resp.connection_id, "");
+    }
+
+    #[test]
+    fn test_deserialize_payload_valid() {
+        use batata_api::remote::model::{ResponseTrait, ServerCheckResponse};
+
+        // Build a payload using the trait method
+        let mut original = ServerCheckResponse::default();
+        original.connection_id = "test-conn-id".to_string();
+        let payload = original.build_payload();
+
+        let resp: ServerCheckResponse = deserialize_payload(&payload);
+        assert_eq!(resp.connection_id, "test-conn-id");
     }
 }

@@ -112,6 +112,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consul_acl_enabled = configuration.consul_acl_enabled();
     let consul_server_port = configuration.consul_server_port();
     let consul_server_address = server_address.clone();
+    let consul_dc_config =
+        batata_plugin_consul::model::ConsulDatacenterConfig::new(configuration.consul_datacenter())
+            .with_primary(configuration.consul_primary_datacenter());
     let mcp_registry_enabled = configuration.mcp_registry_enabled()
         || deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP;
     let mcp_registry_port = configuration.mcp_registry_port();
@@ -619,6 +622,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     consul_acl_enabled,
                     db,
                     raft.clone(),
+                    consul_dc_config.clone(),
                 )
             } else {
                 // ExternalDb cluster: Consul doesn't have a Raft node yet.
@@ -632,12 +636,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         consul_registry.clone(),
                         consul_acl_enabled,
                         db,
+                        consul_dc_config.clone(),
                     )
                 } else {
                     ConsulServices::new(
                         grpc_servers.naming_service.clone(),
                         consul_registry.clone(),
                         consul_acl_enabled,
+                        consul_dc_config.clone(),
                     )
                 }
             }
@@ -651,6 +657,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     consul_registry.clone(),
                     consul_acl_enabled,
                     db,
+                    consul_dc_config.clone(),
                 )
             } else {
                 info!("Consul services using in-memory storage (no persistence)");
@@ -658,6 +665,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     grpc_servers.naming_service.clone(),
                     consul_registry.clone(),
                     consul_acl_enabled,
+                    consul_dc_config.clone(),
                 )
             }
         } else {
@@ -667,6 +675,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.naming_service.clone(),
                 consul_registry.clone(),
                 consul_acl_enabled,
+                consul_dc_config.clone(),
             )
         };
 
@@ -674,10 +683,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if consul_register_self_for_init && !is_console_remote {
             info!("Auto-registering Consul service...");
             let agent = services.agent.clone();
+            let dc = consul_dc_config.datacenter.clone();
             tokio::spawn(async move {
                 // Wait a bit to ensure naming service is ready
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                if let Err(e) = agent.register_consul_service(consul_server_port).await {
+                if let Err(e) = agent.register_consul_service(consul_server_port, &dc).await {
                     error!("Failed to auto-register Consul service: {}", e);
                 }
             });

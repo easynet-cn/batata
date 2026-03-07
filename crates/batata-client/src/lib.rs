@@ -15,6 +15,7 @@ pub mod grpc;
 pub mod http;
 pub mod limiter;
 pub mod local_config;
+pub mod lock;
 pub mod metrics;
 pub mod model;
 pub mod naming;
@@ -29,8 +30,21 @@ pub use model::*;
 pub use config::BatataConfigService;
 pub use error::ClientError;
 pub use grpc::{GrpcClient, GrpcClientConfig};
+pub use lock::BatataLockService;
 pub use naming::BatataNamingService;
 pub use redo::RedoService;
+
+// Config change parser
+pub use config::change_parser::{
+    ConfigChangeEvent, ConfigChangeHandler, ConfigChangeItem, PropertyChangeType,
+};
+
+// Fuzzy watch
+pub use config::fuzzy_watch::{ConfigFuzzyWatchEvent, ConfigFuzzyWatchService};
+pub use naming::fuzzy_watch::{NamingFuzzyWatchEvent, NamingFuzzyWatchService};
+
+// Instance diff
+pub use naming::instances_diff::InstancesDiff;
 
 // Additional re-exports
 pub use limiter::{RateLimiter, SlidingWindowLimiter};

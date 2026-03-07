@@ -58,4 +58,46 @@ mod tests {
         let err: ClientError = status.into();
         assert!(matches!(err, ClientError::Grpc(_)));
     }
+
+    #[test]
+    fn test_from_anyhow_error() {
+        let anyhow_err = anyhow::anyhow!("something went wrong");
+        let err: ClientError = anyhow_err.into();
+        assert!(matches!(err, ClientError::Other(_)));
+        assert!(err.to_string().contains("something went wrong"));
+    }
+
+    #[test]
+    fn test_server_error_display() {
+        let err = ClientError::ServerError {
+            code: 403,
+            message: "forbidden".to_string(),
+        };
+        let display = err.to_string();
+        assert!(display.contains("403"));
+        assert!(display.contains("forbidden"));
+    }
+
+    #[test]
+    fn test_error_debug() {
+        let err = ClientError::NotConnected;
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("NotConnected"));
+    }
+
+    #[test]
+    fn test_result_type_alias() {
+        fn test_fn() -> Result<i32> {
+            Ok(42)
+        }
+        assert_eq!(test_fn().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_result_type_error() {
+        fn test_fn() -> Result<()> {
+            Err(ClientError::Timeout)
+        }
+        assert!(test_fn().is_err());
+    }
 }

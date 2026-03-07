@@ -285,10 +285,14 @@ pub struct ConsulConnectService {
 
 impl ConsulConnectService {
     pub fn new() -> Self {
+        Self::with_datacenter("dc1".to_string())
+    }
+
+    pub fn with_datacenter(datacenter: String) -> Self {
         Self {
             exported_services: Arc::new(DashMap::new()),
             imported_services: Arc::new(DashMap::new()),
-            datacenter: "dc1".to_string(),
+            datacenter,
         }
     }
 

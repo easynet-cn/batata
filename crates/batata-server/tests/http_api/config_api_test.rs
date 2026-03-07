@@ -251,6 +251,174 @@ async fn test_config_parameter_validation() {
     }
 }
 
+/// Test that config update generates history records
+///
+/// Verifies the fix: both create AND update must generate history entries.
+/// Previously, updates with unchanged content would skip history recording.
+/// Nacos unconditionally records history on every create/update/delete.
+#[tokio::test]
+
+async fn test_config_update_generates_history() {
+    let client = authenticated_client().await;
+    let data_id = unique_data_id("history_on_update");
+    let content_v1 = "version=1";
+    let content_v2 = "version=2";
+
+    // Step 1: Create config (should generate history with op_type "I")
+    let response: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", content_v1),
+            ],
+        )
+        .await
+        .expect("Failed to publish config v1");
+
+    assert_eq!(response["code"], 0, "Publish v1 should succeed");
+
+    // Step 2: Query history - should have 1 entry (create)
+    let response: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/cs/history/list",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("pageNo", "1"),
+                ("pageSize", "100"),
+            ],
+        )
+        .await
+        .expect("Failed to list history after create");
+
+    assert_eq!(response["code"], 0, "History list should succeed");
+    let total_after_create = response["data"]["totalCount"].as_i64().unwrap_or(0);
+    assert!(
+        total_after_create >= 1,
+        "Should have at least 1 history entry after create, got {}",
+        total_after_create
+    );
+
+    // Step 3: Update config with new content (should generate history with op_type "U")
+    let response: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", content_v2),
+            ],
+        )
+        .await
+        .expect("Failed to publish config v2");
+
+    assert_eq!(response["code"], 0, "Publish v2 should succeed");
+
+    // Step 4: Query history again - should have 2 entries (create + update)
+    let response: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/cs/history/list",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("pageNo", "1"),
+                ("pageSize", "100"),
+            ],
+        )
+        .await
+        .expect("Failed to list history after update");
+
+    assert_eq!(response["code"], 0, "History list should succeed");
+    let total_after_update = response["data"]["totalCount"].as_i64().unwrap_or(0);
+    assert!(
+        total_after_update >= 2,
+        "Should have at least 2 history entries after update, got {}",
+        total_after_update
+    );
+
+    // Cleanup
+    let _ = client
+        .delete_with_query::<serde_json::Value, _>(
+            "/nacos/v2/cs/config",
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
+        )
+        .await;
+}
+
+/// Test that config update with same content still generates history
+///
+/// Even when content doesn't change, Nacos records a history entry.
+/// This ensures the fix handles the "no-op update" case correctly.
+#[tokio::test]
+
+async fn test_config_update_same_content_generates_history() {
+    let client = authenticated_client().await;
+    let data_id = unique_data_id("history_same_content");
+    let content = "unchanged.key=unchanged.value";
+
+    // Step 1: Create config
+    let response: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", content),
+            ],
+        )
+        .await
+        .expect("Failed to publish config");
+
+    assert_eq!(response["code"], 0, "Publish should succeed");
+
+    // Step 2: Update with SAME content (this was the bug - no history was generated)
+    let response: serde_json::Value = client
+        .post_form(
+            "/nacos/v2/cs/config",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("content", content),
+            ],
+        )
+        .await
+        .expect("Failed to re-publish config");
+
+    assert_eq!(response["code"], 0, "Re-publish should succeed");
+
+    // Step 3: Query history - should have 2 entries even though content didn't change
+    let response: serde_json::Value = client
+        .get_with_query(
+            "/nacos/v2/cs/history/list",
+            &[
+                ("dataId", data_id.as_str()),
+                ("group", DEFAULT_GROUP),
+                ("pageNo", "1"),
+                ("pageSize", "100"),
+            ],
+        )
+        .await
+        .expect("Failed to list history");
+
+    assert_eq!(response["code"], 0, "History list should succeed");
+    let total = response["data"]["totalCount"].as_i64().unwrap_or(0);
+    assert!(
+        total >= 2,
+        "Should have at least 2 history entries even when content unchanged, got {}",
+        total
+    );
+
+    // Cleanup
+    let _ = client
+        .delete_with_query::<serde_json::Value, _>(
+            "/nacos/v2/cs/config",
+            &[("dataId", data_id.as_str()), ("group", DEFAULT_GROUP)],
+        )
+        .await;
+}
+
 /// Test MD5 in config response
 #[tokio::test]
 

@@ -11,7 +11,8 @@ use batata_api::naming::model::Instance as NacosInstance;
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
-use crate::model::{AgentService, ConsulError, Weights};
+use crate::config_entry::ConsulConfigEntryService;
+use crate::model::{AgentService, ConsulDatacenterConfig, ConsulError, Weights};
 
 // ============================================================================
 // Catalog Models
@@ -94,14 +95,31 @@ impl CatalogService {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
+        // Extract service kind from Consul metadata
+        let service_kind = instance.metadata.get("consul_kind").cloned();
+
+        // Prefer per-instance datacenter from metadata, fall back to service-level default
+        let instance_dc = instance
+            .metadata
+            .get("consul_datacenter")
+            .map(|s| s.as_str())
+            .unwrap_or(datacenter);
+
+        // Prefer per-instance node name from metadata
+        let instance_node = instance
+            .metadata
+            .get("consul_node")
+            .map(|s| s.as_str())
+            .unwrap_or(node_name);
+
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            node: node_name.to_string(),
+            node: instance_node.to_string(),
             address: instance.ip.clone(),
-            datacenter: datacenter.to_string(),
+            datacenter: instance_dc.to_string(),
             tagged_addresses: None,
             node_meta: None,
-            service_kind: None,
+            service_kind,
             service_id: instance.instance_id.clone(),
             service_name: instance.service_name.clone(),
             service_tags: tags,
@@ -171,6 +189,40 @@ pub enum ServiceKind {
 pub struct GatewayConfig {
     #[serde(rename = "AssociatedServiceCount")]
     pub associated_service_count: i32,
+}
+
+/// Gateway-service association entry (response for /v1/catalog/gateway-services/:gateway)
+#[derive(Debug, Clone, Serialize)]
+pub struct GatewayServiceEntry {
+    #[serde(rename = "Gateway")]
+    pub gateway: GatewayServiceName,
+    #[serde(rename = "Service")]
+    pub service: GatewayServiceName,
+    #[serde(rename = "GatewayKind")]
+    pub gateway_kind: String,
+    #[serde(rename = "Port", skip_serializing_if = "Option::is_none")]
+    pub port: Option<i32>,
+    #[serde(rename = "Protocol")]
+    pub protocol: String,
+    #[serde(rename = "Hosts", skip_serializing_if = "Option::is_none")]
+    pub hosts: Option<Vec<String>>,
+    #[serde(rename = "FromWildcard")]
+    pub from_wildcard: bool,
+    #[serde(rename = "CreateIndex")]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex")]
+    pub modify_index: u64,
+}
+
+/// Service name within a gateway service entry
+#[derive(Debug, Clone, Serialize)]
+pub struct GatewayServiceName {
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(rename = "Partition", skip_serializing_if = "Option::is_none")]
+    pub partition: Option<String>,
 }
 
 /// Service summary for UI
@@ -377,10 +429,14 @@ pub struct ConsulCatalogService {
 
 impl ConsulCatalogService {
     pub fn new(naming_service: Arc<NamingService>) -> Self {
+        Self::with_datacenter(naming_service, "dc1".to_string())
+    }
+
+    pub fn with_datacenter(naming_service: Arc<NamingService>, datacenter: String) -> Self {
         Self {
             naming_service,
             node_name: "batata-node".to_string(),
-            datacenter: "dc1".to_string(),
+            datacenter,
         }
     }
 
@@ -585,6 +641,16 @@ impl ConsulCatalogService {
                 );
             }
 
+            // Store datacenter in metadata for per-instance DC tracking
+            let dc = registration
+                .datacenter
+                .as_deref()
+                .unwrap_or(&self.datacenter);
+            metadata.insert("consul_datacenter".to_string(), dc.to_string());
+
+            // Store node name in metadata
+            metadata.insert("consul_node".to_string(), registration.node.clone());
+
             let instance = NacosInstance {
                 instance_id: service_id,
                 ip: address,
@@ -738,9 +804,37 @@ impl ConsulCatalogService {
                 }
             }
 
+            // Detect service kind from metadata
+            let kind = Self::detect_service_kind(&instances);
+            let has_proxy = instances.iter().any(|i| {
+                i.metadata
+                    .get("consul_kind")
+                    .map_or(false, |k| k == "connect-proxy")
+            });
+            let has_connect = instances.iter().any(|i| {
+                i.metadata.get("consul_connect").map_or(false, |c| {
+                    serde_json::from_str::<serde_json::Value>(c)
+                        .ok()
+                        .and_then(|v| v.get("Native").and_then(|n| n.as_bool()))
+                        .unwrap_or(false)
+                })
+            });
+            let transparent_proxy = instances.iter().any(|i| {
+                i.metadata.get("consul_proxy").map_or(false, |p| {
+                    serde_json::from_str::<serde_json::Value>(p)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("Mode")
+                                .and_then(|m| m.as_str())
+                                .map(|m| m == "transparent")
+                        })
+                        .unwrap_or(false)
+                })
+            });
+
             let summary = ServiceListingSummary {
                 service_summary: ServiceSummary {
-                    kind: None, // TODO: detect service kind from metadata
+                    kind,
                     name: service_name.clone(),
                     datacenter: self.datacenter.clone(),
                     tags: all_tags,
@@ -751,10 +845,10 @@ impl ConsulCatalogService {
                     checks_warning,
                     checks_critical,
                     gateway_config: GatewayConfig::default(),
-                    transparent_proxy: false, // TODO: detect from metadata
+                    transparent_proxy,
                 },
-                connected_with_proxy: false, // Connect proxy not supported yet
-                connected_with_gateway: false, // Gateway not supported yet
+                connected_with_proxy: has_proxy,
+                connected_with_gateway: has_connect,
             };
 
             summaries.push(summary);
@@ -764,6 +858,288 @@ impl ConsulCatalogService {
         summaries.sort_by(|a, b| a.service_summary.name.cmp(&b.service_summary.name));
 
         summaries
+    }
+
+    /// Detect service kind from the first instance's metadata
+    fn detect_service_kind(instances: &[NacosInstance]) -> Option<ServiceKind> {
+        for inst in instances {
+            if let Some(kind_str) = inst.metadata.get("consul_kind") {
+                return match kind_str.as_str() {
+                    "connect-proxy" => Some(ServiceKind::ConnectProxy),
+                    "mesh-gateway" => Some(ServiceKind::MeshGateway),
+                    "ingress-gateway" => Some(ServiceKind::IngressGateway),
+                    "terminating-gateway" => Some(ServiceKind::TerminatingGateway),
+                    "api-gateway" => Some(ServiceKind::ApiGateway),
+                    _ => None,
+                };
+            }
+        }
+        None
+    }
+
+    /// Get Connect-enabled service instances for a target service.
+    /// Returns connect-proxy instances targeting this service, or native-connect instances.
+    pub fn get_connect_service_instances(
+        &self,
+        namespace: &str,
+        target_service: &str,
+    ) -> Vec<CatalogService> {
+        let (_, service_names) =
+            self.naming_service
+                .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+
+        let mut results = Vec::new();
+
+        for service_name in service_names {
+            let instances = self.naming_service.get_instances(
+                namespace,
+                "DEFAULT_GROUP",
+                &service_name,
+                "",
+                false,
+            );
+
+            for instance in &instances {
+                let is_connect = Self::is_connect_instance_for(instance, target_service);
+                if is_connect {
+                    results.push(CatalogService::from_instance(
+                        instance,
+                        &self.node_name,
+                        &self.datacenter,
+                    ));
+                }
+            }
+        }
+
+        results
+    }
+
+    /// Check if an instance is a Connect-enabled instance for the given target service.
+    /// A service is Connect-enabled if:
+    /// 1. It's a connect-proxy with DestinationServiceName matching the target
+    /// 2. It has Connect.Native=true and the service name matches
+    fn is_connect_instance_for(instance: &NacosInstance, target_service: &str) -> bool {
+        // Check if it's a connect-proxy targeting this service
+        if let Some(kind) = instance.metadata.get("consul_kind") {
+            if kind == "connect-proxy" {
+                if let Some(proxy_json) = instance.metadata.get("consul_proxy") {
+                    if let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json) {
+                        if let Some(dest) = proxy
+                            .get("DestinationServiceName")
+                            .or_else(|| proxy.get("destination_service_name"))
+                            .and_then(|v| v.as_str())
+                        {
+                            return dest == target_service;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check if it's a native Connect service with matching name
+        if instance.service_name == target_service {
+            if let Some(connect_json) = instance.metadata.get("consul_connect") {
+                if let Ok(connect) = serde_json::from_str::<serde_json::Value>(connect_json) {
+                    if connect
+                        .get("Native")
+                        .or_else(|| connect.get("native"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Get gateway service entries from config entries (ingress-gateway, terminating-gateway)
+    pub fn get_gateway_services_from_config(
+        &self,
+        gateway_name: &str,
+        config_entry_service: &ConsulConfigEntryService,
+    ) -> Vec<GatewayServiceEntry> {
+        let mut entries = Vec::new();
+
+        // Check ingress-gateway config entries
+        if let Some(entry) = config_entry_service.get_entry("ingress-gateway", gateway_name) {
+            entries.extend(Self::extract_gateway_services(
+                gateway_name,
+                "ingress-gateway",
+                &entry.extra,
+                entry.create_index,
+                entry.modify_index,
+            ));
+        }
+
+        // Check terminating-gateway config entries
+        if let Some(entry) = config_entry_service.get_entry("terminating-gateway", gateway_name) {
+            entries.extend(Self::extract_gateway_services(
+                gateway_name,
+                "terminating-gateway",
+                &entry.extra,
+                entry.create_index,
+                entry.modify_index,
+            ));
+        }
+
+        // Check api-gateway config entries
+        if let Some(entry) = config_entry_service.get_entry("api-gateway", gateway_name) {
+            entries.extend(Self::extract_gateway_services(
+                gateway_name,
+                "api-gateway",
+                &entry.extra,
+                entry.create_index,
+                entry.modify_index,
+            ));
+        }
+
+        entries
+    }
+
+    /// Extract service associations from a gateway config entry
+    fn extract_gateway_services(
+        gateway_name: &str,
+        gateway_kind: &str,
+        extra: &HashMap<String, serde_json::Value>,
+        create_index: u64,
+        modify_index: u64,
+    ) -> Vec<GatewayServiceEntry> {
+        let mut entries = Vec::new();
+
+        // For ingress-gateway, services are in "Listeners[].Services[]"
+        if gateway_kind == "ingress-gateway" {
+            if let Some(listeners) = extra.get("Listeners").and_then(|v| v.as_array()) {
+                for listener in listeners {
+                    let protocol = listener
+                        .get("Protocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tcp")
+                        .to_string();
+                    let port = listener
+                        .get("Port")
+                        .and_then(|v| v.as_i64())
+                        .map(|p| p as i32);
+
+                    if let Some(services) = listener.get("Services").and_then(|v| v.as_array()) {
+                        for svc in services {
+                            let svc_name = svc
+                                .get("Name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if svc_name.is_empty() {
+                                continue;
+                            }
+                            let hosts: Option<Vec<String>> = svc
+                                .get("Hosts")
+                                .and_then(|v| serde_json::from_value(v.clone()).ok());
+                            let from_wildcard = svc_name == "*";
+
+                            entries.push(GatewayServiceEntry {
+                                gateway: GatewayServiceName {
+                                    name: gateway_name.to_string(),
+                                    namespace: None,
+                                    partition: None,
+                                },
+                                service: GatewayServiceName {
+                                    name: svc_name,
+                                    namespace: None,
+                                    partition: None,
+                                },
+                                gateway_kind: gateway_kind.to_string(),
+                                port,
+                                protocol: protocol.clone(),
+                                hosts,
+                                from_wildcard,
+                                create_index,
+                                modify_index,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // For terminating-gateway, services are in "Services[]"
+        if gateway_kind == "terminating-gateway" {
+            if let Some(services) = extra.get("Services").and_then(|v| v.as_array()) {
+                for svc in services {
+                    let svc_name = svc
+                        .get("Name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if svc_name.is_empty() {
+                        continue;
+                    }
+                    entries.push(GatewayServiceEntry {
+                        gateway: GatewayServiceName {
+                            name: gateway_name.to_string(),
+                            namespace: None,
+                            partition: None,
+                        },
+                        service: GatewayServiceName {
+                            name: svc_name,
+                            namespace: None,
+                            partition: None,
+                        },
+                        gateway_kind: gateway_kind.to_string(),
+                        port: None,
+                        protocol: "tcp".to_string(),
+                        hosts: None,
+                        from_wildcard: false,
+                        create_index,
+                        modify_index,
+                    });
+                }
+            }
+        }
+
+        // For api-gateway, services are in "Listeners[]"
+        if gateway_kind == "api-gateway" {
+            if let Some(listeners) = extra.get("Listeners").and_then(|v| v.as_array()) {
+                for listener in listeners {
+                    let protocol = listener
+                        .get("Protocol")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("tcp")
+                        .to_string();
+                    let port = listener
+                        .get("Port")
+                        .and_then(|v| v.as_i64())
+                        .map(|p| p as i32);
+                    let listener_name = listener
+                        .get("Name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("default");
+
+                    entries.push(GatewayServiceEntry {
+                        gateway: GatewayServiceName {
+                            name: gateway_name.to_string(),
+                            namespace: None,
+                            partition: None,
+                        },
+                        service: GatewayServiceName {
+                            name: listener_name.to_string(),
+                            namespace: None,
+                            partition: None,
+                        },
+                        gateway_kind: gateway_kind.to_string(),
+                        port,
+                        protocol,
+                        hosts: None,
+                        from_wildcard: false,
+                        create_index,
+                        modify_index,
+                    });
+                }
+            }
+        }
+
+        entries
     }
 }
 
@@ -936,9 +1312,8 @@ pub async fn deregister(
 
 /// GET /v1/catalog/datacenters
 /// Returns a list of all known datacenters
-pub async fn list_datacenters() -> HttpResponse {
-    // For now, return a single datacenter
-    HttpResponse::Ok().json(vec!["dc1"])
+pub async fn list_datacenters(dc_config: web::Data<ConsulDatacenterConfig>) -> HttpResponse {
+    HttpResponse::Ok().json(vec![&dc_config.datacenter])
 }
 
 /// GET /v1/internal/ui/services
@@ -964,7 +1339,7 @@ pub async fn ui_services(
 }
 
 /// GET /v1/catalog/connect/:service
-/// Returns the mesh-capable service instances (stub - returns same as /catalog/service)
+/// Returns Connect-enabled service instances (connect-proxy targeting this service, or native connect)
 pub async fn get_connect_service(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
@@ -972,18 +1347,18 @@ pub async fn get_connect_service(
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
 ) -> HttpResponse {
-    // Connect/mesh services are not supported, return same as regular service query
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
-    let tag_filter = query.tag.as_deref();
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let services = catalog.get_service_instances(&namespace, &service_name, tag_filter);
-    HttpResponse::Ok().json(services)
+    let services = catalog.get_connect_service_instances(&namespace, &service_name);
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(services)
 }
 
 /// GET /v1/catalog/node-services/:node
@@ -1019,10 +1394,12 @@ pub async fn get_node_services(
 }
 
 /// GET /v1/catalog/gateway-services/:gateway
-/// Returns services for a gateway (stub - returns empty)
+/// Returns services associated with a gateway (ingress, terminating, mesh, api)
 pub async fn get_gateway_services(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    catalog: web::Data<ConsulCatalogService>,
+    config_entry_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let gateway_name = path.into_inner();
@@ -1032,8 +1409,11 @@ pub async fn get_gateway_services(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Gateway services are not supported, return empty array
-    HttpResponse::Ok().json(Vec::<CatalogService>::new())
+    let gateway_services =
+        catalog.get_gateway_services_from_config(&gateway_name, &config_entry_service);
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", "1"))
+        .json(gateway_services)
 }
 
 // ============================================================================

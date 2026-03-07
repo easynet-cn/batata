@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, put, web};
+use actix_web::{HttpRequest, Responder, Scope, delete, get, post, put, web};
 use serde::Deserialize;
 
 use batata_common::{DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, default_page_no, default_page_size};
@@ -211,7 +211,12 @@ async fn list_services(
             });
             Result::<serde_json::Value>::http_success(response)
         }
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -249,7 +254,12 @@ async fn get_service(
             format!("service {} not found", params.service_name),
             None::<serde_json::Value>,
         ),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -309,7 +319,12 @@ async fn create_service(
         .await
     {
         Ok(_result) => Result::<String>::http_success("ok".to_string()),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -360,7 +375,12 @@ async fn update_service(
         .await
     {
         Ok(_result) => Result::<String>::http_success("ok".to_string()),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -392,7 +412,12 @@ async fn delete_service(
         .await
     {
         Ok(_result) => Result::<String>::http_success("ok".to_string()),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -446,7 +471,12 @@ async fn list_subscribers(
             });
             Result::<serde_json::Value>::http_success(response)
         }
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -502,7 +532,12 @@ async fn update_cluster(
         .await
     {
         Ok(_result) => Result::<String>::http_success("ok".to_string()),
-        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 

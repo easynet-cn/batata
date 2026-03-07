@@ -264,7 +264,47 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_grpc_addr_different_ports() {
+        assert_eq!(
+            compute_grpc_addr("10.0.0.1:9848").unwrap(),
+            "http://10.0.0.1:10848"
+        );
+        assert_eq!(
+            compute_grpc_addr("10.0.0.1:80").unwrap(),
+            "http://10.0.0.1:1080"
+        );
+    }
+
+    #[test]
+    fn test_compute_grpc_addr_ipv6() {
+        // IPv6 with port
+        assert_eq!(
+            compute_grpc_addr("[::1]:8848").unwrap(),
+            "http://[::1]:9848"
+        );
+    }
+
+    #[test]
     fn test_compute_grpc_addr_invalid() {
         assert!(compute_grpc_addr("no-port").is_err());
+    }
+
+    #[test]
+    fn test_compute_grpc_addr_invalid_port() {
+        assert!(compute_grpc_addr("host:not-a-number").is_err());
+    }
+
+    #[test]
+    fn test_compute_grpc_addr_hostname() {
+        assert_eq!(
+            compute_grpc_addr("nacos.example.com:8848").unwrap(),
+            "http://nacos.example.com:9848"
+        );
+    }
+
+    #[test]
+    fn test_grpc_port_offset() {
+        // Verify the offset constant is 1000
+        assert_eq!(SDK_GRPC_PORT_DEFAULT_OFFSET, 1000);
     }
 }

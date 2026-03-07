@@ -12,7 +12,9 @@ use batata_common::{
     ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, default_page_no,
     default_page_size_small, impl_or_default,
 };
-use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
+use batata_server_common::{
+    Secured, error, model::app_state::AppState, model::response::Result, secured,
+};
 
 use crate::service::{NamingService, ServiceMetadata};
 
@@ -215,7 +217,7 @@ async fn get_service(
     if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
         return Result::<Option<ServiceInfoResponse>>::http_response(
             404,
-            20004,
+            error::RESOURCE_NOT_FOUND.code,
             format!("service {} not found", params.service_name),
             None::<ServiceInfoResponse>,
         );
@@ -280,7 +282,7 @@ async fn create_service(
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             false,
         );
@@ -304,7 +306,7 @@ async fn create_service(
     if naming_service.service_exists(namespace_id, group_name, &form.service_name) {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             format!("service {} already exists", form.service_name),
             false,
         );
@@ -358,7 +360,7 @@ async fn update_service(
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             false,
         );
@@ -382,7 +384,7 @@ async fn update_service(
     if !naming_service.service_exists(namespace_id, group_name, &form.service_name) {
         return Result::<bool>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!("service {} not found", form.service_name),
             false,
         );
@@ -451,7 +453,7 @@ async fn delete_service(
     if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
         return Result::<bool>::http_response(
             404,
-            404,
+            error::RESOURCE_NOT_FOUND.code,
             format!("service {} not found", params.service_name),
             false,
         );
@@ -462,7 +464,7 @@ async fn delete_service(
     if !instances.is_empty() {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             format!(
                 "service {} has {} instances, cannot delete",
                 params.service_name,
@@ -515,7 +517,7 @@ async fn get_subscribers(
     if params.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             String::new(),
         );

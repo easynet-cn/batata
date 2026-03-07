@@ -5,8 +5,10 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::config::BatataConfigService;
+use crate::config::fuzzy_watch::ConfigFuzzyWatchService;
 use crate::error::Result;
 use crate::naming::BatataNamingService;
+use crate::naming::fuzzy_watch::NamingFuzzyWatchService;
 
 /// Service that replays all client state after a reconnection.
 ///
@@ -15,6 +17,8 @@ use crate::naming::BatataNamingService;
 pub struct RedoService {
     config_service: Option<Arc<BatataConfigService>>,
     naming_service: Option<Arc<BatataNamingService>>,
+    config_fuzzy_watch: Option<Arc<ConfigFuzzyWatchService>>,
+    naming_fuzzy_watch: Option<Arc<NamingFuzzyWatchService>>,
 }
 
 impl RedoService {
@@ -26,10 +30,27 @@ impl RedoService {
         Self {
             config_service,
             naming_service,
+            config_fuzzy_watch: None,
+            naming_fuzzy_watch: None,
         }
     }
 
-    /// Replay all state: config listeners, instance registrations, and subscriptions.
+    /// Create with all services including fuzzy watch
+    pub fn with_all(
+        config_service: Option<Arc<BatataConfigService>>,
+        naming_service: Option<Arc<BatataNamingService>>,
+        config_fuzzy_watch: Option<Arc<ConfigFuzzyWatchService>>,
+        naming_fuzzy_watch: Option<Arc<NamingFuzzyWatchService>>,
+    ) -> Self {
+        Self {
+            config_service,
+            naming_service,
+            config_fuzzy_watch,
+            naming_fuzzy_watch,
+        }
+    }
+
+    /// Replay all state: config listeners, instance registrations, subscriptions, and fuzzy watches.
     pub async fn redo_all(&self) -> Result<()> {
         info!("Starting redo after reconnect");
 
@@ -43,6 +64,18 @@ impl RedoService {
             && let Err(e) = naming_service.redo().await
         {
             error!("Failed to redo naming registrations/subscriptions: {}", e);
+        }
+
+        if let Some(config_fuzzy_watch) = &self.config_fuzzy_watch
+            && let Err(e) = config_fuzzy_watch.redo().await
+        {
+            error!("Failed to redo config fuzzy watches: {}", e);
+        }
+
+        if let Some(naming_fuzzy_watch) = &self.naming_fuzzy_watch
+            && let Err(e) = naming_fuzzy_watch.redo().await
+        {
+            error!("Failed to redo naming fuzzy watches: {}", e);
         }
 
         info!("Redo complete");
@@ -66,5 +99,14 @@ mod tests {
         let redo = RedoService::new(None, None);
         let result = redo.redo_all().await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_redo_service_with_all() {
+        let redo = RedoService::with_all(None, None, None, None);
+        assert!(redo.config_service.is_none());
+        assert!(redo.naming_service.is_none());
+        assert!(redo.config_fuzzy_watch.is_none());
+        assert!(redo.naming_fuzzy_watch.is_none());
     }
 }

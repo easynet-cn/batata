@@ -78,7 +78,14 @@ async fn get_config(
         .await
     {
         Ok(config) => config.map(ConfigDetailInfo::from),
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     model::common::Result::<Option<ConfigDetailInfo>>::http_success(result)
@@ -157,7 +164,12 @@ async fn list_configs(
         }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list configs");
-            HttpResponse::InternalServerError().body(e.to_string())
+            model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -392,7 +404,12 @@ async fn delete_config(
         )
         .await
     {
-        return HttpResponse::InternalServerError().body(e.to_string());
+        return model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
     }
 
     model::common::Result::<bool>::http_success(true)
@@ -491,7 +508,14 @@ async fn import_config(
     .await
     {
         Ok(r) => r,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     model::common::Result::<ImportResult>::http_success(result)
@@ -536,7 +560,14 @@ async fn export_config(
         .await
     {
         Ok(c) => c,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     if storage_configs.is_empty() {
@@ -549,7 +580,14 @@ async fn export_config(
 
     let zip_data = match service::export::create_nacos_export_zip(configs) {
         Ok(z) => z,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     let filename = format!(
@@ -739,7 +777,14 @@ async fn get_beta_config(
             gray_name: gray.gray_name,
             gray_rule: gray.gray_rule,
         }),
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     model::common::Result::<Option<ConfigGrayInfo>>::http_success(result)
@@ -796,6 +841,22 @@ async fn publish_beta_config(
         .unwrap_or_default()
         .to_owned();
 
+    // Check max gray version count
+    if let Ok(grays) = data
+        .persistence()
+        .config_find_all_grays(&form.data_id, &group_name, &namespace_id)
+        .await
+        && !grays.iter().any(|g| g.gray_name == "beta")
+        && grays.len() >= 10
+    {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::CONFIG_GRAY_OVER_MAX_VERSION_COUNT.code,
+            "gray config version is over max count: 10".to_string(),
+            String::new(),
+        );
+    }
+
     // Build gray rule from betaIps
     let gray_rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_beta(
         &form.beta_ips,
@@ -829,7 +890,12 @@ async fn publish_beta_config(
         )
         .await
     {
-        return HttpResponse::InternalServerError().body(e.to_string());
+        return model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
     }
 
     model::common::Result::<bool>::http_success(true)
@@ -880,7 +946,12 @@ async fn stop_beta_config(
         )
         .await
     {
-        return HttpResponse::InternalServerError().body(e.to_string());
+        return model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
     }
 
     model::common::Result::<bool>::http_success(true)
@@ -941,7 +1012,12 @@ async fn batch_delete_config(
         Ok(_) => model::common::Result::<bool>::http_success(true),
         Err(e) => {
             tracing::error!(error = %e, "Failed to batch delete configs");
-            HttpResponse::InternalServerError().body(e.to_string())
+            model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -1004,7 +1080,12 @@ async fn update_metadata(
         Ok(_) => model::common::Result::<bool>::http_success(true),
         Err(e) => {
             tracing::error!(error = %e, "Failed to update config metadata");
-            HttpResponse::InternalServerError().body(e.to_string())
+            model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -1075,7 +1156,14 @@ async fn clone_config(
     let persistence = data.persistence();
     let source_configs = match persistence.config_find_by_ids(&ids).await {
         Ok(c) => c,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     if source_configs.is_empty() {
@@ -1141,7 +1229,14 @@ async fn clone_config(
     .await
     {
         Ok(r) => r,
-        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+        Err(e) => {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
     };
 
     model::common::Result::<ImportResult>::http_success(result)

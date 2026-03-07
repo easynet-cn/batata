@@ -1,8 +1,6 @@
 use std::sync::LazyLock;
 
-use actix_web::{
-    HttpRequest, HttpResponse, Responder, Scope, delete, get, http::StatusCode, post, put, web,
-};
+use actix_web::{HttpRequest, Responder, Scope, delete, get, http::StatusCode, post, put, web};
 use serde::Deserialize;
 
 use crate::model::Namespace;
@@ -80,7 +78,12 @@ async fn get(
                     data.to_string(),
                 )
             } else {
-                HttpResponse::InternalServerError().body(err.to_string())
+                common::Result::<String>::http_response(
+                    500,
+                    error::SERVER_ERROR.code,
+                    err.to_string(),
+                    String::new(),
+                )
             }
         }
     }
@@ -218,7 +221,12 @@ async fn update(
         Ok(res) => common::Result::<bool>::http_success(res),
         Err(e) => {
             tracing::error!("Failed to update namespace: {}", e);
-            HttpResponse::InternalServerError().body(e.to_string())
+            common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            )
         }
     }
 }
@@ -280,7 +288,12 @@ async fn exist(
                     data.to_string(),
                 )
             } else {
-                HttpResponse::InternalServerError().body(err.to_string())
+                common::Result::<String>::http_response(
+                    500,
+                    error::SERVER_ERROR.code,
+                    err.to_string(),
+                    String::new(),
+                )
             }
         }
     }

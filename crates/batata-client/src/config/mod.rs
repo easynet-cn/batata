@@ -4,8 +4,10 @@
 //! config listening, and server push handling.
 
 pub mod cache;
+pub mod change_parser;
 pub mod encryption;
 pub mod filter;
+pub mod fuzzy_watch;
 pub mod listener;
 
 use std::sync::Arc;

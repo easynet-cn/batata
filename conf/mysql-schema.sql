@@ -36,7 +36,10 @@ CREATE TABLE `config_info` (
                                `c_schema` text COMMENT '配置的模式',
                                `encrypted_data_key` varchar(1024) NOT NULL DEFAULT '' COMMENT '密钥',
                                PRIMARY KEY (`id`),
-                               UNIQUE KEY `uk_configinfo_datagrouptenant` (`data_id`,`group_id`,`tenant_id`)
+                               UNIQUE KEY `uk_configinfo_datagrouptenant` (`data_id`,`group_id`,`tenant_id`),
+                               KEY `idx_tenant_id` (`tenant_id`),
+                               KEY `idx_app_name` (`app_name`),
+                               KEY `idx_gmt_modified` (`gmt_modified`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='config_info';
 
 /******************************************/
@@ -76,7 +79,8 @@ CREATE TABLE `config_tags_relation` (
                                         `nid` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'nid, 自增长标识',
                                         PRIMARY KEY (`nid`),
                                         UNIQUE KEY `uk_configtagrelation_configidtag` (`id`,`tag_name`,`tag_type`),
-                                        KEY `idx_tenant_id` (`tenant_id`)
+                                        KEY `idx_tenant_id` (`tenant_id`),
+                                        KEY `idx_config_lookup` (`data_id`,`group_id`,`tenant_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='config_tag_relation';
 
 /******************************************/

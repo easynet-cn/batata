@@ -294,9 +294,7 @@ impl Configuration {
     }
 
     pub fn version(&self) -> String {
-        self.config
-            .get_string("batata.version")
-            .unwrap_or("".to_string())
+        self.config.get_string("batata.version").unwrap_or_default()
     }
 
     // ========================================================================
@@ -378,7 +376,7 @@ impl Configuration {
     pub fn console_server_context_path(&self) -> String {
         self.config
             .get_string("batata.console.contextPath")
-            .unwrap_or("".to_string())
+            .unwrap_or_default()
     }
 
     pub fn console_ui_enabled(&self) -> bool {
@@ -1201,6 +1199,20 @@ impl Configuration {
         self.config
             .get_int("batata.plugin.consul.check_reap_interval")
             .unwrap_or(30) as u64
+    }
+
+    /// Get Consul datacenter name (default: "dc1")
+    pub fn consul_datacenter(&self) -> String {
+        self.config
+            .get_string("batata.plugin.consul.datacenter")
+            .unwrap_or_else(|_| "dc1".to_string())
+    }
+
+    /// Get Consul primary datacenter name (defaults to consul_datacenter)
+    pub fn consul_primary_datacenter(&self) -> String {
+        self.config
+            .get_string("batata.plugin.consul.primary_datacenter")
+            .unwrap_or_else(|_| self.consul_datacenter())
     }
 
     // ========================================================================

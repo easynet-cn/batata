@@ -5,6 +5,45 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Shared datacenter configuration for Consul API handlers.
+/// Registered as `web::Data<ConsulDatacenterConfig>` so all handlers
+/// can resolve the local datacenter name instead of hardcoding "dc1".
+#[derive(Debug, Clone)]
+pub struct ConsulDatacenterConfig {
+    /// The local datacenter name (e.g., "dc1")
+    pub datacenter: String,
+    /// The primary datacenter name (defaults to same as datacenter)
+    pub primary_datacenter: String,
+}
+
+impl ConsulDatacenterConfig {
+    pub fn new(datacenter: String) -> Self {
+        Self {
+            primary_datacenter: datacenter.clone(),
+            datacenter,
+        }
+    }
+
+    pub fn with_primary(mut self, primary: String) -> Self {
+        self.primary_datacenter = primary;
+        self
+    }
+
+    /// Resolve datacenter from query parameter, falling back to local datacenter
+    pub fn resolve_dc(&self, dc: &Option<String>) -> String {
+        dc.as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.datacenter)
+            .to_string()
+    }
+}
+
+impl Default for ConsulDatacenterConfig {
+    fn default() -> Self {
+        Self::new("dc1".to_string())
+    }
+}
+
 /// Consul-compatible boolean query parameter deserialization.
 /// In Consul, query parameters like `?recurse` (key-present with empty value) mean `true`.
 /// Standard serde can't parse empty string "" as bool.

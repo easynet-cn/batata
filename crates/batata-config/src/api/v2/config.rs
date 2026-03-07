@@ -17,6 +17,9 @@ use tracing::{info, warn};
 
 use crate::model::config::ConfigBasicInfo;
 
+/// Maximum number of gray versions per config (consistent with Nacos default)
+const MAX_GRAY_VERSION_COUNT: usize = 10;
+
 use super::model::{
     ConfigDeleteParam, ConfigGetParam, ConfigPublishParam, ConfigSearchDetailParam,
 };
@@ -227,6 +230,24 @@ pub async fn publish_config(
     if let Some(ref beta_ips) = beta_ips
         && !beta_ips.is_empty()
     {
+        // Check max gray version count
+        if let Ok(grays) = persistence
+            .config_find_all_grays(&form.data_id, &form.group, namespace_id)
+            .await
+            && !grays.iter().any(|g| g.gray_name == "beta")
+            && grays.len() >= MAX_GRAY_VERSION_COUNT
+        {
+            return Result::<String>::http_response(
+                400,
+                error::CONFIG_GRAY_OVER_MAX_VERSION_COUNT.code,
+                format!(
+                    "gray config version is over max count: {}",
+                    MAX_GRAY_VERSION_COUNT
+                ),
+                String::new(),
+            );
+        }
+
         let gray_rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_beta(
             beta_ips,
             crate::model::gray_rule::BetaGrayRule::PRIORITY,
@@ -269,6 +290,82 @@ pub async fn publish_config(
             }
             Err(e) => {
                 warn!(error = %e, "Failed to publish beta config");
+                return Result::<String>::http_response(
+                    500,
+                    error::SERVER_ERROR.code,
+                    e.to_string(),
+                    String::new(),
+                );
+            }
+        }
+    }
+
+    // Handle tag-based gray publish if tag is provided
+    if let Some(ref tag) = form.tag
+        && !tag.is_empty()
+    {
+        let gray_name = format!("tag_{}", tag);
+        // Check max gray version count
+        if let Ok(grays) = persistence
+            .config_find_all_grays(&form.data_id, &form.group, namespace_id)
+            .await
+            && !grays.iter().any(|g| g.gray_name == gray_name)
+            && grays.len() >= MAX_GRAY_VERSION_COUNT
+        {
+            return Result::<String>::http_response(
+                400,
+                error::CONFIG_GRAY_OVER_MAX_VERSION_COUNT.code,
+                format!(
+                    "gray config version is over max count: {}",
+                    MAX_GRAY_VERSION_COUNT
+                ),
+                String::new(),
+            );
+        }
+
+        let gray_rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_tag(
+            tag,
+            crate::model::gray_rule::TagGrayRule::PRIORITY,
+        );
+        let gray_rule = match gray_rule_info.to_json() {
+            Ok(json) => json,
+            Err(e) => {
+                return Result::<String>::http_response(
+                    500,
+                    error::SERVER_ERROR.code,
+                    format!("Failed to serialize gray rule: {}", e),
+                    String::new(),
+                );
+            }
+        };
+
+        match persistence
+            .config_create_or_update_gray(
+                &form.data_id,
+                &form.group,
+                namespace_id,
+                &form.content,
+                &gray_name,
+                &gray_rule,
+                &src_user,
+                &src_ip,
+                form.app_name.as_deref().unwrap_or(""),
+                "",
+            )
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    data_id = %form.data_id,
+                    group = %form.group,
+                    namespace_id = %namespace_id,
+                    tag = %tag,
+                    "Tag gray config published successfully"
+                );
+                return Result::<String>::http_success("ok".to_string());
+            }
+            Err(e) => {
+                warn!(error = %e, "Failed to publish tag gray config");
                 return Result::<String>::http_response(
                     500,
                     error::SERVER_ERROR.code,

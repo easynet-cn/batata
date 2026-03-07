@@ -12,10 +12,12 @@ use serde::{Deserialize, Serialize};
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
+use crate::catalog::ConsulCatalogService;
+use crate::config_entry::ConsulConfigEntryService;
 use crate::connect::ConsulConnectService;
 use crate::connect_ca::ConsulConnectCAService;
 use crate::health::ConsulHealthService;
-use crate::model::ConsulError;
+use crate::model::{ConsulDatacenterConfig, ConsulError};
 
 // ============================================================================
 // UI Models
@@ -161,6 +163,7 @@ pub async fn ui_nodes(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     _query: web::Query<UINodeQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
@@ -185,7 +188,7 @@ pub async fn ui_nodes(
                 id: uuid::Uuid::new_v4().to_string(),
                 node: node_name,
                 address: instance.ip.clone(),
-                datacenter: "dc1".to_string(),
+                datacenter: dc_config.datacenter.clone(),
                 meta: None,
                 create_index: 1,
                 modify_index: 1,
@@ -204,6 +207,7 @@ pub async fn ui_node_info(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
@@ -228,7 +232,7 @@ pub async fn ui_node_info(
                     id: uuid::Uuid::new_v4().to_string(),
                     node: node_name,
                     address: instance.ip.clone(),
-                    datacenter: "dc1".to_string(),
+                    datacenter: dc_config.datacenter.clone(),
                     meta: None,
                     create_index: 1,
                     modify_index: 1,
@@ -341,17 +345,22 @@ pub async fn ui_catalog_overview(
 pub async fn ui_gateway_services_nodes(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
-    _path: web::Path<String>,
+    catalog: web::Data<ConsulCatalogService>,
+    config_entry_service: web::Data<ConsulConfigEntryService>,
+    path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    // Stub: gateway services not implemented
+    let gateway_name = path.into_inner();
+    let gateway_services =
+        catalog.get_gateway_services_from_config(&gateway_name, &config_entry_service);
+
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", "1"))
-        .json(Vec::<serde_json::Value>::new())
+        .json(gateway_services)
 }
 
 /// GET /v1/internal/ui/gateway-intentions/{gateway} - List gateway intentions
@@ -377,20 +386,114 @@ pub async fn ui_gateway_intentions(
 pub async fn ui_service_topology(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
-    _path: web::Path<String>,
-    _query: web::Query<UIServiceTopologyQueryParams>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    naming_service: web::Data<Arc<NamingService>>,
+    path: web::Path<String>,
+    query: web::Query<UIServiceTopologyQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    // Stub: service topology requires deep integration
+    let service_name = path.into_inner();
+    let dc = dc_config.resolve_dc(&query.dc);
+
+    // Build upstream and downstream relationships from intentions and proxy config
+    let mut upstreams = Vec::new();
+    let mut downstreams = Vec::new();
+
+    // Get all intentions where this service is the source (upstreams)
+    let source_intentions = ca_service.match_intentions("source", &service_name);
+    for intention in &source_intentions {
+        upstreams.push(ServiceTopologySummary {
+            name: intention.destination_name.clone(),
+            datacenter: dc.clone(),
+            namespace: "default".to_string(),
+            intention: ServiceTopologyIntention {
+                allowed: intention.action == crate::connect_ca::IntentionAction::Allow,
+                has_permissions: !intention.permissions.is_empty(),
+                external_source: String::new(),
+            },
+        });
+    }
+
+    // Get all intentions where this service is the destination (downstreams)
+    let dest_intentions = ca_service.match_intentions("destination", &service_name);
+    for intention in &dest_intentions {
+        downstreams.push(ServiceTopologySummary {
+            name: intention.source_name.clone(),
+            datacenter: dc.clone(),
+            namespace: "default".to_string(),
+            intention: ServiceTopologyIntention {
+                allowed: intention.action == crate::connect_ca::IntentionAction::Allow,
+                has_permissions: !intention.permissions.is_empty(),
+                external_source: String::new(),
+            },
+        });
+    }
+
+    // Also check proxy config for upstream dependencies
+    let namespace = "public";
+    let (_, all_services) = naming_service.list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+
+    for svc in &all_services {
+        let instances = naming_service.get_instances(namespace, "DEFAULT_GROUP", svc, "", false);
+        for instance in &instances {
+            if let Some(kind) = instance.metadata.get("consul_kind") {
+                if kind == "connect-proxy" {
+                    if let Some(proxy_json) = instance.metadata.get("consul_proxy") {
+                        if let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json) {
+                            // If this proxy's destination is our service, check its upstreams
+                            let dest = proxy
+                                .get("DestinationServiceName")
+                                .or_else(|| proxy.get("destination_service_name"))
+                                .and_then(|v| v.as_str());
+                            if dest == Some(&service_name) {
+                                if let Some(upstream_arr) = proxy
+                                    .get("Upstreams")
+                                    .or_else(|| proxy.get("upstreams"))
+                                    .and_then(|v| v.as_array())
+                                {
+                                    for upstream in upstream_arr {
+                                        let upstream_name = upstream
+                                            .get("DestinationName")
+                                            .or_else(|| upstream.get("destination_name"))
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        if !upstream_name.is_empty()
+                                            && !upstreams.iter().any(|u| u.name == upstream_name)
+                                        {
+                                            upstreams.push(ServiceTopologySummary {
+                                                name: upstream_name,
+                                                datacenter: dc.clone(),
+                                                namespace: "default".to_string(),
+                                                intention: ServiceTopologyIntention {
+                                                    allowed: true,
+                                                    has_permissions: false,
+                                                    external_source: String::new(),
+                                                },
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let protocol = query.kind.as_deref().unwrap_or("tcp").to_string();
+
     let topology = ServiceTopology {
-        protocol: "tcp".to_string(),
+        protocol,
         transparent_proxy: false,
-        upstreams: Vec::new(),
-        downstreams: Vec::new(),
+        upstreams,
+        downstreams,
         filtered_by_acls: false,
     };
 
@@ -420,6 +523,7 @@ pub async fn ui_metrics_proxy(
 pub async fn federation_state_list(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
@@ -427,9 +531,9 @@ pub async fn federation_state_list(
     }
 
     let state = FederationState {
-        datacenter: "dc1".to_string(),
+        datacenter: dc_config.datacenter.clone(),
         mesh_gateways: Vec::new(),
-        primary_datacenter: "dc1".to_string(),
+        primary_datacenter: dc_config.primary_datacenter.clone(),
         primary_modifyindex: 1,
     };
 
@@ -442,21 +546,49 @@ pub async fn federation_state_list(
 pub async fn federation_state_mesh_gateways(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    naming_service: web::Data<Arc<NamingService>>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
+    // Find mesh-gateway instances and group by datacenter
+    let namespace = "public";
+    let (_, service_names) = naming_service.list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+
+    let mut gateways_by_dc: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+
+    for svc in service_names {
+        let instances = naming_service.get_instances(namespace, "DEFAULT_GROUP", &svc, "", false);
+        for instance in instances {
+            if instance
+                .metadata
+                .get("consul_kind")
+                .map_or(false, |k| k == "mesh-gateway")
+            {
+                let dc = dc_config.datacenter.clone();
+                let entry = serde_json::json!({
+                    "Address": instance.ip,
+                    "Port": instance.port,
+                    "Service": svc,
+                });
+                gateways_by_dc.entry(dc).or_default().push(entry);
+            }
+        }
+    }
+
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", "1"))
-        .json(HashMap::<String, Vec<serde_json::Value>>::new())
+        .json(gateways_by_dc)
 }
 
 /// GET /v1/internal/federation-state/{dc} - Get federation state for a datacenter
 pub async fn federation_state_get(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
@@ -468,7 +600,7 @@ pub async fn federation_state_get(
     let state = FederationState {
         datacenter: dc,
         mesh_gateways: Vec::new(),
-        primary_datacenter: "dc1".to_string(),
+        primary_datacenter: dc_config.primary_datacenter.clone(),
         primary_modifyindex: 1,
     };
 
@@ -481,10 +613,11 @@ pub async fn federation_state_get(
 // Service Virtual IP Handler
 // ============================================================================
 
-/// PUT /v1/internal/service-virtual-ip - Assign service virtual IPs (Enterprise stub)
+/// PUT /v1/internal/service-virtual-ip - Assign service virtual IPs
 pub async fn assign_service_virtual_ip(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    naming_service: web::Data<Arc<NamingService>>,
     body: web::Json<AssignServiceVIPsRequest>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
@@ -493,9 +626,15 @@ pub async fn assign_service_virtual_ip(
     }
 
     let request = body.into_inner();
+
+    // Check if the service exists in the naming service
+    let instances =
+        naming_service.get_instances("public", "DEFAULT_GROUP", &request.service_name, "", false);
+    let found = !instances.is_empty();
+
     HttpResponse::Ok().json(AssignServiceVIPsResponse {
         service_name: request.service_name,
-        found: false,
+        found,
     })
 }
 

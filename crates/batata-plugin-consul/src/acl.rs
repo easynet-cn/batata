@@ -16,6 +16,8 @@ use tracing::{error, info, warn};
 
 use batata_consistency::raft::state_machine::CF_CONSUL_ACL;
 
+use crate::model::ConsulDatacenterConfig;
+
 // ACL Token header name
 pub const X_CONSUL_TOKEN: &str = "X-Consul-Token";
 pub const CONSUL_TOKEN_QUERY: &str = "token";
@@ -1888,11 +1890,11 @@ pub async fn get_role_by_name(
 }
 
 /// GET /v1/acl/replication - ACL replication status
-pub async fn acl_replication() -> HttpResponse {
+pub async fn acl_replication(dc_config: web::Data<ConsulDatacenterConfig>) -> HttpResponse {
     HttpResponse::Ok().json(AclReplicationStatus {
         enabled: false,
         running: false,
-        source_datacenter: "dc1".to_string(),
+        source_datacenter: dc_config.primary_datacenter.clone(),
         replication_type: "tokens".to_string(),
         replicated_index: 0,
         replicated_role_index: 0,

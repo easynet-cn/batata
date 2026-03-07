@@ -3,7 +3,12 @@
 //! Provides `BatataNamingService` for instance registration/deregistration,
 //! service queries, subscriptions, and server push handling.
 
+pub mod balancer;
+pub mod failover;
+pub mod fuzzy_watch;
+pub mod instances_diff;
 pub mod listener;
+pub mod protect_mode;
 pub mod service_info_holder;
 
 use std::sync::Arc;
@@ -11,14 +16,18 @@ use std::sync::Arc;
 use batata_api::{
     grpc::Payload,
     naming::model::{
-        DE_REGISTER_INSTANCE, Instance, InstanceRequest, InstanceResponse, NotifySubscriberRequest,
-        NotifySubscriberResponse, QueryServiceResponse, REGISTER_INSTANCE, ServiceQueryRequest,
-        SubscribeServiceRequest, SubscribeServiceResponse,
+        BATCH_DE_REGISTER_INSTANCE, BATCH_REGISTER_INSTANCE, BatchInstanceRequest,
+        BatchInstanceResponse, DE_REGISTER_INSTANCE, Instance, InstanceRequest, InstanceResponse,
+        NotifySubscriberRequest, NotifySubscriberResponse, QueryServiceResponse, REGISTER_INSTANCE,
+        ServiceListRequest, ServiceListResponse, ServiceQueryRequest, SubscribeServiceRequest,
+        SubscribeServiceResponse,
     },
     remote::model::ResponseTrait,
 };
 use dashmap::DashMap;
 use tracing::{debug, error, info};
+
+use self::instances_diff::InstancesDiff;
 
 use crate::error::Result;
 use crate::grpc::{GrpcClient, ServerPushHandler};
@@ -217,17 +226,142 @@ impl BatataNamingService {
         Ok(())
     }
 
+    /// Batch register multiple instances for a service.
+    pub async fn batch_register_instance(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        instances: Vec<Instance>,
+    ) -> Result<()> {
+        let mut req = BatchInstanceRequest::new();
+        req.naming_request.namespace = namespace.to_string();
+        req.naming_request.group_name = group_name.to_string();
+        req.naming_request.service_name = service_name.to_string();
+        req.naming_request.request.request_id = uuid::Uuid::new_v4().to_string();
+        req.r#type = BATCH_REGISTER_INSTANCE.to_string();
+        req.instances = instances.clone();
+
+        let _resp: BatchInstanceResponse = self.grpc_client.request_typed(&req).await?;
+
+        // Store each for redo on reconnect
+        for instance in &instances {
+            let redo_key = build_instance_redo_key(namespace, group_name, service_name, instance);
+            self.registered_instances.insert(
+                redo_key,
+                RegisteredInstance {
+                    namespace: namespace.to_string(),
+                    group_name: group_name.to_string(),
+                    service_name: service_name.to_string(),
+                    instance: instance.clone(),
+                },
+            );
+        }
+
+        debug!(
+            "Batch registered {} instances: namespace={}, group={}, service={}",
+            instances.len(),
+            namespace,
+            group_name,
+            service_name
+        );
+
+        Ok(())
+    }
+
+    /// Batch deregister multiple instances from a service.
+    pub async fn batch_deregister_instance(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        instances: Vec<Instance>,
+    ) -> Result<()> {
+        let mut req = BatchInstanceRequest::new();
+        req.naming_request.namespace = namespace.to_string();
+        req.naming_request.group_name = group_name.to_string();
+        req.naming_request.service_name = service_name.to_string();
+        req.naming_request.request.request_id = uuid::Uuid::new_v4().to_string();
+        req.r#type = BATCH_DE_REGISTER_INSTANCE.to_string();
+        req.instances = instances.clone();
+
+        let _resp: BatchInstanceResponse = self.grpc_client.request_typed(&req).await?;
+
+        // Remove from redo map
+        for instance in &instances {
+            let redo_key = build_instance_redo_key(namespace, group_name, service_name, instance);
+            self.registered_instances.remove(&redo_key);
+        }
+
+        debug!(
+            "Batch deregistered {} instances: namespace={}, group={}, service={}",
+            instances.len(),
+            namespace,
+            group_name,
+            service_name
+        );
+
+        Ok(())
+    }
+
+    /// List services with pagination.
+    pub async fn list_services(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        page_no: i32,
+        page_size: i32,
+    ) -> Result<(i32, Vec<String>)> {
+        let mut req = ServiceListRequest::new();
+        req.naming_request.namespace = namespace.to_string();
+        req.naming_request.group_name = group_name.to_string();
+        req.naming_request.request.request_id = uuid::Uuid::new_v4().to_string();
+        req.page_no = page_no;
+        req.page_size = page_size;
+
+        let resp: ServiceListResponse = self.grpc_client.request_typed(&req).await?;
+
+        Ok((resp.count, resp.service_names))
+    }
+
+    /// Get healthy instances only for a service.
+    pub async fn select_healthy_instances(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Result<Vec<Instance>> {
+        let instances = self
+            .get_all_instances(namespace, group_name, service_name)
+            .await?;
+        Ok(instances
+            .into_iter()
+            .filter(|i| i.healthy && i.enabled)
+            .collect())
+    }
+
     /// Handle a `NotifySubscriberRequest` from the server.
     ///
-    /// Updates the local cache and notifies all listeners.
+    /// Updates the local cache, computes instance diff, and notifies all listeners.
     pub fn handle_notify_subscriber(&self, req: &NotifySubscriberRequest) {
         let key = build_service_key(&req.group_name, &req.service_name);
 
+        // Compute diff before updating cache
+        let diff = if let Some(old_service) = self.service_info_holder.get(&key) {
+            Some(InstancesDiff::diff(
+                &old_service.hosts,
+                &req.service_info.hosts,
+            ))
+        } else {
+            None
+        };
+
         info!(
-            "Service change notification: group={}, service={}, hosts={}",
+            "Service change notification: group={}, service={}, hosts={}, diff={}",
             req.group_name,
             req.service_name,
-            req.service_info.hosts.len()
+            req.service_info.hosts.len(),
+            diff.as_ref().map_or(0, |d| d.change_count())
         );
 
         // Update local cache
@@ -241,6 +375,7 @@ impl BatataNamingService {
                 group_name: req.group_name.clone(),
                 clusters: req.service_info.clusters.clone(),
                 instances: req.service_info.hosts.clone(),
+                diff,
             };
 
             for listener in listeners.iter() {
@@ -364,6 +499,8 @@ impl ServerPushHandler for NotifySubscriberHandler {
 #[cfg(test)]
 mod tests {
     use super::service_info_holder::build_service_key;
+    use super::*;
+    use batata_api::naming::model::{Instance, NotifySubscriberRequest, Service};
 
     #[test]
     fn test_build_service_key() {
@@ -371,5 +508,216 @@ mod tests {
             build_service_key("DEFAULT_GROUP", "my-service"),
             "DEFAULT_GROUP@@my-service"
         );
+    }
+
+    fn make_instance(ip: &str, port: i32, healthy: bool) -> Instance {
+        Instance {
+            ip: ip.to_string(),
+            port,
+            healthy,
+            weight: 1.0,
+            enabled: true,
+            ephemeral: true,
+            cluster_name: "DEFAULT".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_build_instance_redo_key() {
+        let instance = make_instance("10.0.0.1", 8080, true);
+        let key = build_instance_redo_key("public", "DEFAULT_GROUP", "my-service", &instance);
+        assert!(key.starts_with("public#DEFAULT_GROUP#my-service#"));
+    }
+
+    #[test]
+    fn test_build_instance_redo_key_different_instances() {
+        let inst1 = make_instance("10.0.0.1", 8080, true);
+        let inst2 = make_instance("10.0.0.2", 8081, true);
+        let key1 = build_instance_redo_key("ns", "group", "svc", &inst1);
+        let key2 = build_instance_redo_key("ns", "group", "svc", &inst2);
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_handle_notify_subscriber_first_notification() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::new(client);
+
+        let mut service = Service::default();
+        service.name = "test-service".to_string();
+        service.group_name = "DEFAULT_GROUP".to_string();
+        service.hosts = vec![make_instance("10.0.0.1", 8080, true)];
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            service,
+        );
+
+        naming_service.handle_notify_subscriber(&req);
+
+        // Cache should be updated
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        let cached = naming_service.service_info_holder.get(&key).unwrap();
+        assert_eq!(cached.hosts.len(), 1);
+        assert_eq!(cached.hosts[0].ip, "10.0.0.1");
+    }
+
+    #[test]
+    fn test_handle_notify_subscriber_with_diff() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::new(client);
+
+        // Pre-populate cache
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        let mut old_service = Service::default();
+        old_service.name = "test-service".to_string();
+        old_service.hosts = vec![make_instance("10.0.0.1", 8080, true)];
+        naming_service.service_info_holder.update(&key, old_service);
+
+        // Notify with new instances
+        let mut new_service = Service::default();
+        new_service.name = "test-service".to_string();
+        new_service.group_name = "DEFAULT_GROUP".to_string();
+        new_service.hosts = vec![
+            make_instance("10.0.0.1", 8080, true),
+            make_instance("10.0.0.2", 8080, true),
+        ];
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            new_service,
+        );
+
+        naming_service.handle_notify_subscriber(&req);
+
+        // Cache updated
+        let cached = naming_service.service_info_holder.get(&key).unwrap();
+        assert_eq!(cached.hosts.len(), 2);
+    }
+
+    #[test]
+    fn test_handle_notify_subscriber_with_listener() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::new(client);
+
+        let called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let called_clone = called.clone();
+        let listener = Arc::new(listener::FnEventListener::new(
+            move |event: listener::NamingEvent| {
+                assert_eq!(event.service_name, "test-service");
+                assert_eq!(event.group_name, "DEFAULT_GROUP");
+                assert_eq!(event.instances.len(), 1);
+                called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        ));
+
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        naming_service
+            .subscriptions
+            .entry(key)
+            .or_default()
+            .push(listener);
+
+        let mut service = Service::default();
+        service.name = "test-service".to_string();
+        service.group_name = "DEFAULT_GROUP".to_string();
+        service.hosts = vec![make_instance("10.0.0.1", 8080, true)];
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            service,
+        );
+
+        naming_service.handle_notify_subscriber(&req);
+        assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_handle_notify_subscriber_no_listener() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::new(client);
+
+        let mut service = Service::default();
+        service.name = "test-service".to_string();
+        service.group_name = "DEFAULT_GROUP".to_string();
+        service.hosts = vec![make_instance("10.0.0.1", 8080, true)];
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            service,
+        );
+
+        // Should not panic even with no listeners
+        naming_service.handle_notify_subscriber(&req);
+
+        // Cache should still be updated
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        assert!(naming_service.service_info_holder.get(&key).is_some());
+    }
+
+    #[test]
+    fn test_handle_notify_subscriber_diff_added_and_removed() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::new(client);
+
+        // Pre-populate with inst1 and inst2
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        let mut old_service = Service::default();
+        old_service.hosts = vec![
+            make_instance("10.0.0.1", 8080, true),
+            make_instance("10.0.0.2", 8080, true),
+        ];
+        naming_service.service_info_holder.update(&key, old_service);
+
+        let diff_received = Arc::new(std::sync::Mutex::new(None));
+        let diff_clone = diff_received.clone();
+        let listener = Arc::new(listener::FnEventListener::new(
+            move |event: listener::NamingEvent| {
+                *diff_clone.lock().unwrap() = event.diff;
+            },
+        ));
+        naming_service
+            .subscriptions
+            .entry(key.clone())
+            .or_default()
+            .push(listener);
+
+        // Notify: remove inst2, add inst3
+        let mut new_service = Service::default();
+        new_service.name = "test-service".to_string();
+        new_service.group_name = "DEFAULT_GROUP".to_string();
+        new_service.hosts = vec![
+            make_instance("10.0.0.1", 8080, true),
+            make_instance("10.0.0.3", 8080, true),
+        ];
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            new_service,
+        );
+
+        naming_service.handle_notify_subscriber(&req);
+
+        let diff = diff_received.lock().unwrap().clone().unwrap();
+        assert_eq!(diff.added_instances.len(), 1);
+        assert_eq!(diff.removed_instances.len(), 1);
+        assert_eq!(diff.added_instances[0].ip, "10.0.0.3");
+        assert_eq!(diff.removed_instances[0].ip, "10.0.0.2");
     }
 }

@@ -7,7 +7,9 @@ use batata_api::naming::model::Instance;
 use batata_common::{
     ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, impl_or_default,
 };
-use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
+use batata_server_common::{
+    Secured, error, model::app_state::AppState, model::response::Result, secured,
+};
 
 use crate::service::NamingService;
 use actix_web::{HttpRequest, Responder, delete, get, post, web};
@@ -132,7 +134,7 @@ async fn register_or_beat(
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
             false,
         );
@@ -194,7 +196,7 @@ async fn deregister(
     if params.service_name.is_empty() || params.ip.is_empty() || params.port <= 0 {
         return Result::<bool>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameters missing or invalid".to_string(),
             false,
         );
@@ -247,7 +249,7 @@ async fn list_instances(
     if params.service_name.is_empty() {
         return Result::<String>::http_response(
             400,
-            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
             "Required parameter 'serviceName' is missing".to_string(),
             String::new(),
         );

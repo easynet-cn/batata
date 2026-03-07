@@ -165,10 +165,14 @@ pub struct ConsulPeeringService {
 
 impl ConsulPeeringService {
     pub fn new() -> Self {
+        Self::with_datacenter("dc1".to_string())
+    }
+
+    pub fn with_datacenter(datacenter: String) -> Self {
         Self {
             peerings: Arc::new(DashMap::new()),
             index: std::sync::atomic::AtomicU64::new(1),
-            datacenter: "dc1".to_string(),
+            datacenter,
         }
     }
 
@@ -211,7 +215,7 @@ impl ConsulPeeringService {
             } else {
                 req.server_external_addresses
             },
-            server_name: "server.dc1.consul".to_string(),
+            server_name: format!("server.{}.consul", self.datacenter),
             peer_id,
             establishment_secret: secret,
             remote: PeeringRemoteInfo {

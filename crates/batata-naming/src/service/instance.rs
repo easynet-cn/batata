@@ -153,15 +153,21 @@ impl NamingService {
 
         // Clone only the final set of instances to return
         let instances: Vec<Instance> = if protection_triggered {
-            cluster_filtered.iter().map(|i| (***i).clone()).collect()
+            cluster_filtered
+                .iter()
+                .map(|i| Instance::clone(i))
+                .collect()
         } else if healthy_only {
             cluster_filtered
                 .iter()
                 .filter(|i| i.healthy)
-                .map(|i| (***i).clone())
+                .map(|i| Instance::clone(i))
                 .collect()
         } else {
-            cluster_filtered.iter().map(|i| (***i).clone()).collect()
+            cluster_filtered
+                .iter()
+                .map(|i| Instance::clone(i))
+                .collect()
         };
 
         let now = SystemTime::now()
@@ -234,15 +240,21 @@ impl NamingService {
 
         // Clone only the final set of instances to return
         let instances: Vec<Instance> = if protection_triggered {
-            cluster_filtered.iter().map(|i| (***i).clone()).collect()
+            cluster_filtered
+                .iter()
+                .map(|i| Instance::clone(i))
+                .collect()
         } else if healthy_only {
             cluster_filtered
                 .iter()
                 .filter(|i| i.healthy)
-                .map(|i| (***i).clone())
+                .map(|i| Instance::clone(i))
                 .collect()
         } else {
-            cluster_filtered.iter().map(|i| (***i).clone()).collect()
+            cluster_filtered
+                .iter()
+                .map(|i| Instance::clone(i))
+                .collect()
         };
 
         let now = SystemTime::now()

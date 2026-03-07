@@ -41,22 +41,144 @@ async fn test_config_info_unique_constraint() {
 }
 
 /// Test his_config_info history tracking
+///
+/// Verifies that both create and update operations generate history records.
+/// This validates the fix where update was conditionally skipping history.
 #[tokio::test]
 #[ignore = "requires test database"]
 async fn test_his_config_info_insert() {
-    let _db = TestDatabase::from_env()
+    use batata_persistence::entity::his_config_info;
+    use sea_orm::*;
+
+    let db = TestDatabase::from_env()
         .await
         .expect("Database connection failed");
-    let _data_id = unique_data_id("history");
+    let data_id = unique_data_id("history");
+    let conn = db.conn();
 
-    // Insert config
-    // Verify history record created
+    // Step 1: Create config (generates history with op_type "I")
+    let result = batata_config::service::config::create_or_update(
+        conn,
+        &data_id,
+        "DEFAULT_GROUP",
+        "public",
+        "content=v1",
+        "",
+        "test-user",
+        "127.0.0.1",
+        "",
+        "test config",
+        "",
+        "",
+        "text",
+        "",
+        "",
+    )
+    .await
+    .expect("Failed to create config");
+    assert!(result, "Create should succeed");
 
-    // Update config
-    // Verify new history record created
+    // Verify history record exists via direct query
+    let history_count = his_config_info::Entity::find()
+        .filter(his_config_info::Column::DataId.eq(&data_id))
+        .filter(his_config_info::Column::GroupId.eq("DEFAULT_GROUP"))
+        .count(conn)
+        .await
+        .expect("Failed to count history");
+    assert_eq!(history_count, 1, "Should have 1 history entry after create");
 
-    // Query history
-    // SELECT * FROM his_config_info WHERE data_id = ? ORDER BY gmt_modified DESC
+    // Verify op_type is "I" (insert)
+    let first_history = his_config_info::Entity::find()
+        .filter(his_config_info::Column::DataId.eq(&data_id))
+        .one(conn)
+        .await
+        .expect("Failed to query history")
+        .expect("History record should exist");
+    assert_eq!(
+        first_history.op_type.as_deref(),
+        Some("I"),
+        "First history should be Insert"
+    );
+
+    // Step 2: Update config with new content (generates history with op_type "U")
+    let result = batata_config::service::config::create_or_update(
+        conn,
+        &data_id,
+        "DEFAULT_GROUP",
+        "public",
+        "content=v2",
+        "",
+        "test-user",
+        "127.0.0.1",
+        "",
+        "test config updated",
+        "",
+        "",
+        "text",
+        "",
+        "",
+    )
+    .await
+    .expect("Failed to update config");
+    assert!(result, "Update should succeed");
+
+    // Verify 2 history records
+    let history_count = his_config_info::Entity::find()
+        .filter(his_config_info::Column::DataId.eq(&data_id))
+        .filter(his_config_info::Column::GroupId.eq("DEFAULT_GROUP"))
+        .count(conn)
+        .await
+        .expect("Failed to count history");
+    assert_eq!(
+        history_count, 2,
+        "Should have 2 history entries after update"
+    );
+
+    // Verify the second entry has op_type "U"
+    let update_history = his_config_info::Entity::find()
+        .filter(his_config_info::Column::DataId.eq(&data_id))
+        .filter(his_config_info::Column::OpType.eq("U"))
+        .one(conn)
+        .await
+        .expect("Failed to query update history");
+    assert!(
+        update_history.is_some(),
+        "Should have an Update history entry"
+    );
+
+    // Step 3: Update with same content (should still generate history)
+    let result = batata_config::service::config::create_or_update(
+        conn,
+        &data_id,
+        "DEFAULT_GROUP",
+        "public",
+        "content=v2",
+        "",
+        "test-user",
+        "127.0.0.1",
+        "",
+        "test config updated",
+        "",
+        "",
+        "text",
+        "",
+        "",
+    )
+    .await
+    .expect("Failed to re-update config");
+    assert!(result, "Re-update should succeed");
+
+    // Verify 3 history records (even though content unchanged)
+    let history_count = his_config_info::Entity::find()
+        .filter(his_config_info::Column::DataId.eq(&data_id))
+        .filter(his_config_info::Column::GroupId.eq("DEFAULT_GROUP"))
+        .count(conn)
+        .await
+        .expect("Failed to count history");
+    assert_eq!(
+        history_count, 3,
+        "Should have 3 history entries after same-content update"
+    );
 }
 
 /// Test config_tags_relation
