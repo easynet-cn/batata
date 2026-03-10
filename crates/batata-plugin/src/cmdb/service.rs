@@ -290,7 +290,9 @@ impl CmdbPlugin for DefaultCmdbPlugin {
         }
 
         // Get candidate IDs from first label
-        let first_label = labels.iter().next().unwrap();
+        let Some(first_label) = labels.iter().next() else {
+            return Ok(Vec::new());
+        };
         let label_key = format!("{}={}", first_label.0, first_label.1);
 
         let candidate_ids = match self.label_index.get(&label_key) {

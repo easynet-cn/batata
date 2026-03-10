@@ -17,6 +17,7 @@ use batata_consistency::raft::request::RaftRequest;
 use batata_consistency::raft::state_machine::{CF_CONSUL_KV, CF_CONSUL_SESSIONS};
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -600,15 +601,25 @@ impl ConsulKVService {
             return false;
         };
 
-        // Check if already locked by another session
-        if let Some(ref holder) = stored.pair.session
-            && holder != session_id
-        {
-            return false;
+        // Match Consul's LockIndex logic from kvs.go kvsLockTxn:
+        // - If already locked by the SAME session: preserve LockIndex (re-acquire is a no-op)
+        // - If locked by a DIFFERENT session: fail
+        // - If unlocked (no session): increment LockIndex (new lock transition)
+        match stored.pair.session.as_deref() {
+            Some(holder) if holder == session_id => {
+                // Same session re-acquiring — preserve lock_index, just update modify_index
+            }
+            Some(_) => {
+                // Different session holds the lock — fail
+                return false;
+            }
+            None => {
+                // Unlocked → locked transition: increment lock_index
+                stored.pair.lock_index += 1;
+            }
         }
 
         stored.pair.session = Some(session_id.to_string());
-        stored.pair.lock_index += 1;
         stored.pair.modify_index = self.next_index();
         stored.modified_at = current_timestamp();
 
@@ -802,10 +813,9 @@ impl ConsulKVService {
     pub async fn delete(&self, key: &str) -> bool {
         // Check if key exists and get session info for cleanup
         let stored = self.get_stored(key);
-        if stored.is_none() {
+        let Some(stored) = stored else {
             return false;
-        }
-        let stored = stored.unwrap();
+        };
 
         let session_index_cleanup = stored
             .pair
@@ -1314,6 +1324,7 @@ pub async fn put_kv(
     req: HttpRequest,
     query: web::Query<KVQueryParams>,
     body: web::Bytes,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let key = req.match_info().get("key").unwrap_or("").to_string();
 
@@ -1337,13 +1348,17 @@ pub async fn put_kv(
             && existing.session.as_deref() != Some(session_id)
         {
             // Another session holds the lock
-            return HttpResponse::Ok().json(false);
+            return HttpResponse::Ok()
+                .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                .json(false);
         }
         // Write the value
         kv_service.put(key.clone(), &value, query.flags).await;
         // Acquire the session lock
         kv_service.acquire_session(&key, session_id).await;
-        return HttpResponse::Ok().json(true);
+        return HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true);
     }
 
     // Handle release (session-based unlock)
@@ -1354,20 +1369,28 @@ pub async fn put_kv(
             // Release the lock: update the value and clear session
             kv_service.put(key.clone(), &value, query.flags).await;
             kv_service.release_session_key(&key, session_id).await;
-            return HttpResponse::Ok().json(true);
+            return HttpResponse::Ok()
+                .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                .json(true);
         }
-        return HttpResponse::Ok().json(false);
+        return HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(false);
     }
 
     // Check-and-set if cas parameter is provided
     if let Some(cas_index) = query.cas {
         let success = kv_service.cas(key, &value, cas_index, query.flags).await;
-        return HttpResponse::Ok().json(success);
+        return HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(success);
     }
 
     // Regular put
     kv_service.put(key, &value, query.flags).await;
-    HttpResponse::Ok().json(true)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(true)
 }
 
 /// DELETE /v1/kv/{key:.*}

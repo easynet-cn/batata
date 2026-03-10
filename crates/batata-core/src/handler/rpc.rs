@@ -72,6 +72,17 @@ pub trait PayloadHandler: Send + Sync {
     fn resource_type(&self) -> crate::ResourceType {
         crate::ResourceType::Internal
     }
+
+    /// Extract resource and permission action from the payload for authorization checking.
+    ///
+    /// Returns `Some((resource, action))` if this handler requires permission checking.
+    /// Returns `None` if no permission checking is needed (default).
+    fn resource_from_payload(
+        &self,
+        _payload: &crate::api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        None
+    }
 }
 
 /// Trait for handling connection cleanup when a client disconnects.
@@ -377,8 +388,16 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                             check_authentication(&auth_context)?;
 
                             // Validate authority (permission)
-                            // TODO: Extract resource and permissions from handler context
-                            // This requires handler to provide resource info and user permissions
+                            if let Some((resource, action)) = handler.resource_from_payload(payload)
+                            {
+                                check_authority(
+                                    auth_service,
+                                    &auth_context,
+                                    &resource,
+                                    action,
+                                    &[],
+                                )?;
+                            }
                         }
                     }
                 }
@@ -536,7 +555,22 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                                 auth_service,
                                                 &payload,
                                             );
-                                            check_authentication(&auth_context)
+                                            let auth_check = check_authentication(&auth_context);
+                                            if auth_check.is_err() {
+                                                auth_check
+                                            } else if let Some((resource, action)) =
+                                                handler.resource_from_payload(&payload)
+                                            {
+                                                check_authority(
+                                                    auth_service,
+                                                    &auth_context,
+                                                    &resource,
+                                                    action,
+                                                    &[],
+                                                )
+                                            } else {
+                                                Ok(())
+                                            }
                                         }
                                     }
                                 }

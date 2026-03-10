@@ -50,6 +50,9 @@ anyhow = { workspace = true }
 # Concurrency
 dashmap = { workspace = true }
 
+# Caching
+moka = { workspace = true }
+
 # Utils
 md5 = { workspace = true }
 chrono = { workspace = true }

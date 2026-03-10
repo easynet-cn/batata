@@ -15,6 +15,7 @@ use batata_naming::healthcheck::registry::{
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::{
     AgentService, CheckRegistration, CheckStatusUpdate, CheckUpdateParams, ConsulDatacenterConfig,
     ConsulError, HealthCheck, HealthQueryParams, Node, ServiceHealth, ServiceQueryParams,
@@ -251,6 +252,7 @@ impl ConsulHealthService {
 
 /// GET /v1/health/service/:service
 /// Returns the health information for a service
+#[allow(clippy::too_many_arguments)]
 pub async fn get_service_health(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
@@ -259,6 +261,7 @@ pub async fn get_service_health(
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -367,7 +370,7 @@ pub async fn get_service_health(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(results)
 }
 
@@ -454,6 +457,7 @@ pub async fn get_service_checks(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -491,7 +495,9 @@ pub async fn get_service_checks(
         all_checks.extend(checks);
     }
 
-    HttpResponse::Ok().json(all_checks)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(all_checks)
 }
 
 /// GET /v1/health/state/:state
@@ -502,6 +508,7 @@ pub async fn get_checks_by_state(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     _query: web::Query<HealthQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let state = path.into_inner();
 
@@ -529,7 +536,9 @@ pub async fn get_checks_by_state(
         health_service.get_checks_by_status(&state).await
     };
 
-    HttpResponse::Ok().json(checks)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(checks)
 }
 
 /// GET /v1/health/node/:node
@@ -540,6 +549,7 @@ pub async fn get_node_checks(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     _query: web::Query<HealthQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let node = path.into_inner();
 
@@ -557,7 +567,9 @@ pub async fn get_node_checks(
         .filter(|c| c.node == node)
         .collect();
 
-    HttpResponse::Ok().json(checks)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(checks)
 }
 
 /// PUT /v1/agent/check/register
@@ -732,6 +744,7 @@ pub async fn list_agent_checks(
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     _query: web::Query<ServiceQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -748,12 +761,13 @@ pub async fn list_agent_checks(
         .collect();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(checks_map)
 }
 
 /// GET /v1/health/connect/:service
 /// Returns health for Connect-enabled service instances (connect-proxy or native connect)
+#[allow(clippy::too_many_arguments)]
 pub async fn get_connect_health(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
@@ -762,6 +776,7 @@ pub async fn get_connect_health(
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -824,12 +839,13 @@ pub async fn get_connect_health(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(results)
 }
 
 /// GET /v1/health/ingress/:service
 /// Returns health for ingress gateway instances that expose the given service
+#[allow(clippy::too_many_arguments)]
 pub async fn get_ingress_health(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
@@ -838,6 +854,7 @@ pub async fn get_ingress_health(
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -863,7 +880,7 @@ pub async fn get_ingress_health(
             let is_ingress = instance
                 .metadata
                 .get("consul_kind")
-                .map_or(false, |k| k == "ingress-gateway");
+                .is_some_and(|k| k == "ingress-gateway");
             if !is_ingress {
                 continue;
             }
@@ -901,43 +918,36 @@ pub async fn get_ingress_health(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(results)
 }
 
 /// Check if a Nacos instance is a Connect-enabled instance for the given target service.
 fn is_connect_instance_for(instance: &NacosInstance, target_service: &str) -> bool {
     // Check if it's a connect-proxy targeting this service
-    if let Some(kind) = instance.metadata.get("consul_kind") {
-        if kind == "connect-proxy" {
-            if let Some(proxy_json) = instance.metadata.get("consul_proxy") {
-                if let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json) {
-                    if let Some(dest) = proxy
-                        .get("DestinationServiceName")
-                        .or_else(|| proxy.get("destination_service_name"))
-                        .and_then(|v| v.as_str())
-                    {
-                        return dest == target_service;
-                    }
-                }
-            }
-        }
+    if let Some(kind) = instance.metadata.get("consul_kind")
+        && kind == "connect-proxy"
+        && let Some(proxy_json) = instance.metadata.get("consul_proxy")
+        && let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json)
+        && let Some(dest) = proxy
+            .get("DestinationServiceName")
+            .or_else(|| proxy.get("destination_service_name"))
+            .and_then(|v| v.as_str())
+    {
+        return dest == target_service;
     }
 
     // Check if it's a native Connect service with matching name
-    if instance.service_name == target_service {
-        if let Some(connect_json) = instance.metadata.get("consul_connect") {
-            if let Ok(connect) = serde_json::from_str::<serde_json::Value>(connect_json) {
-                if connect
-                    .get("Native")
-                    .or_else(|| connect.get("native"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
-                    return true;
-                }
-            }
-        }
+    if instance.service_name == target_service
+        && let Some(connect_json) = instance.metadata.get("consul_connect")
+        && let Ok(connect) = serde_json::from_str::<serde_json::Value>(connect_json)
+        && connect
+            .get("Native")
+            .or_else(|| connect.get("native"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    {
+        return true;
     }
 
     false

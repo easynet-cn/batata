@@ -15,6 +15,7 @@ use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
 use crate::health::ConsulHealthService;
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::{
     AgentConfig, AgentHostInfo, AgentMaintenanceRequest, AgentMember, AgentMembersParams,
     AgentSelf, AgentService, AgentServiceChecksInfo, AgentServiceRegistration,
@@ -123,12 +124,14 @@ impl ConsulAgentService {
 
 /// PUT /v1/agent/service/register
 /// Register a new service with the local agent
+#[allow(clippy::too_many_arguments)]
 pub async fn register_service(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     health_service: web::Data<ConsulHealthService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<ServiceQueryParams>,
     body: web::Json<AgentServiceRegistration>,
 ) -> HttpResponse {
@@ -199,6 +202,7 @@ pub async fn register_service(
     tracing::info!("Service registration result: {}", success);
 
     if success {
+        index_provider.increment();
         // Register validated checks with health service
         for check_reg in embedded_checks {
             let check_id = check_reg
@@ -214,7 +218,9 @@ pub async fn register_service(
                 );
             }
         }
-        HttpResponse::Ok().finish()
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .finish()
     } else {
         HttpResponse::InternalServerError().json(ConsulError::new("Failed to register service"))
     }
@@ -227,6 +233,7 @@ pub async fn deregister_service(
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
     health_service: web::Data<ConsulHealthService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
 ) -> HttpResponse {
@@ -316,12 +323,15 @@ pub async fn deregister_service(
     };
 
     if deregistered {
+        index_provider.increment();
         // Clean up any associated health checks from old system
         let service_checks = health_service.get_service_checks(&service_id).await;
         for check in &service_checks {
             let _ = health_service.deregister_check(&check.check_id).await;
         }
-        HttpResponse::Ok().finish()
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new(format!(
             "Service not found: {}",
@@ -337,6 +347,7 @@ pub async fn list_services(
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
     query: web::Query<ServiceQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
 
@@ -376,7 +387,9 @@ pub async fn list_services(
         }
     }
 
-    HttpResponse::Ok().json(services)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(services)
 }
 
 /// GET /v1/agent/service/{service_id}
@@ -387,6 +400,7 @@ pub async fn get_service(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_id = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -426,7 +440,9 @@ pub async fn get_service(
                     service: agent_service,
                     checks: Some(checks),
                 };
-                return HttpResponse::Ok().json(response);
+                return HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .json(response);
             }
         }
     }
@@ -504,6 +520,7 @@ pub async fn agent_health_service_by_id(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_id = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -548,10 +565,11 @@ pub async fn agent_health_service_by_id(
                     checks,
                 };
 
+                let idx_header = ("X-Consul-Index", index_provider.current_index().to_string());
                 return match status.as_str() {
-                    "passing" => HttpResponse::Ok().json(info),
-                    "warning" => HttpResponse::TooManyRequests().json(info),
-                    _ => HttpResponse::ServiceUnavailable().json(info),
+                    "passing" => HttpResponse::Ok().insert_header(idx_header).json(info),
+                    "warning" => HttpResponse::TooManyRequests().insert_header(idx_header).json(info),
+                    _ => HttpResponse::ServiceUnavailable().insert_header(idx_header).json(info),
                 };
             }
         }
@@ -572,6 +590,7 @@ pub async fn agent_health_service_by_name(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -624,10 +643,11 @@ pub async fn agent_health_service_by_name(
         });
     }
 
+    let idx_header = ("X-Consul-Index", index_provider.current_index().to_string());
     match worst_status {
-        "passing" => HttpResponse::Ok().json(results),
-        "warning" => HttpResponse::TooManyRequests().json(results),
-        _ => HttpResponse::ServiceUnavailable().json(results),
+        "passing" => HttpResponse::Ok().insert_header(idx_header).json(results),
+        "warning" => HttpResponse::TooManyRequests().insert_header(idx_header).json(results),
+        _ => HttpResponse::ServiceUnavailable().insert_header(idx_header).json(results),
     }
 }
 
@@ -640,6 +660,7 @@ pub async fn set_service_maintenance(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<MaintenanceRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_id = path.into_inner();
     let enable = query.enable;
@@ -677,7 +698,9 @@ pub async fn set_service_maintenance(
         let _ = health_service.deregister_check(&check_id).await;
     }
 
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .finish()
 }
 
 // ============================================================================
@@ -690,6 +713,7 @@ pub async fn get_agent_self(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -756,7 +780,9 @@ pub async fn get_agent_self(
         stats,
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// GET /v1/agent/members
@@ -766,6 +792,7 @@ pub async fn get_agent_members(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     _query: web::Query<AgentMembersParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -796,7 +823,9 @@ pub async fn get_agent_members(
         ..Default::default()
     };
 
-    HttpResponse::Ok().json(vec![member])
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(vec![member])
 }
 
 // ============================================================================
@@ -822,6 +851,7 @@ pub async fn get_agent_members_real(
     dc_config: web::Data<ConsulDatacenterConfig>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
     _query: web::Query<AgentMembersParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -873,7 +903,9 @@ pub async fn get_agent_members_real(
         })
         .collect();
 
-    HttpResponse::Ok().json(members)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(members)
 }
 
 /// GET /v1/agent/self (Real cluster version)
@@ -883,6 +915,7 @@ pub async fn get_agent_self_real(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -980,12 +1013,14 @@ pub async fn get_agent_self_real(
         stats,
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// GET /v1/agent/host
 /// Returns information about the host the agent is running on
-pub async fn get_agent_host(req: HttpRequest, acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn get_agent_host(req: HttpRequest, acl_service: web::Data<AclService>, index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
@@ -1071,12 +1106,14 @@ pub async fn get_agent_host(req: HttpRequest, acl_service: web::Data<AclService>
         host,
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// GET /v1/agent/version
 /// Returns the Consul version of the agent
-pub async fn get_agent_version() -> HttpResponse {
+pub async fn get_agent_version(index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
     let version = env!("CARGO_PKG_VERSION");
     let response = AgentVersion {
         version: format!("1.15.0-batata-{}", version),
@@ -1086,7 +1123,9 @@ pub async fn get_agent_version() -> HttpResponse {
         build_date: "2024-01-01T00:00:00Z".to_string(),
         fips: "".to_string(),
     };
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// PUT /v1/agent/join/{address}
@@ -1095,6 +1134,7 @@ pub async fn agent_join(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let address = path.into_inner();
 
@@ -1107,12 +1147,14 @@ pub async fn agent_join(
     // In compatibility mode, just return success
     // Real cluster join would be handled by Batata's cluster management
     tracing::info!("Agent join requested for address: {}", address);
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .finish()
 }
 
 /// PUT /v1/agent/leave
 /// Triggers a graceful leave and shutdown of the agent
-pub async fn agent_leave(req: HttpRequest, acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn agent_leave(req: HttpRequest, acl_service: web::Data<AclService>, index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
@@ -1122,7 +1164,9 @@ pub async fn agent_leave(req: HttpRequest, acl_service: web::Data<AclService>) -
     // In compatibility mode, just return success
     // Real leave would trigger Batata's graceful shutdown
     tracing::info!("Agent leave requested");
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .finish()
 }
 
 /// PUT /v1/agent/force-leave/{node}
@@ -1131,6 +1175,7 @@ pub async fn agent_force_leave(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let node = path.into_inner();
 
@@ -1142,12 +1187,14 @@ pub async fn agent_force_leave(
 
     // In compatibility mode, just return success
     tracing::info!("Agent force-leave requested for node: {}", node);
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .finish()
 }
 
 /// PUT /v1/agent/reload
 /// Triggers a reload of the agent's configuration
-pub async fn agent_reload(req: HttpRequest, acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn agent_reload(req: HttpRequest, acl_service: web::Data<AclService>, index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
@@ -1156,7 +1203,9 @@ pub async fn agent_reload(req: HttpRequest, acl_service: web::Data<AclService>) 
 
     // In compatibility mode, return success (config reload not actually supported)
     tracing::info!("Agent reload requested");
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .finish()
 }
 
 /// PUT /v1/agent/maintenance
@@ -1166,6 +1215,7 @@ pub async fn agent_maintenance(
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     query: web::Query<AgentMaintenanceRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
@@ -1203,7 +1253,9 @@ pub async fn agent_maintenance(
         reason
     );
 
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .finish()
 }
 
 /// GET /v1/agent/metrics
@@ -1212,6 +1264,7 @@ pub async fn agent_maintenance(
 pub async fn get_agent_metrics(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -1278,7 +1331,9 @@ pub async fn get_agent_metrics(
         points: Vec::new(),
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// GET /v1/agent/metrics (Real version with service and cluster metrics)
@@ -1290,6 +1345,7 @@ pub async fn get_agent_metrics_real(
     dc_config: web::Data<ConsulDatacenterConfig>,
     agent: web::Data<ConsulAgentService>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -1481,7 +1537,9 @@ pub async fn get_agent_metrics_real(
         points: Vec::new(),
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// Query parameters for /v1/agent/monitor
@@ -1504,6 +1562,7 @@ pub async fn agent_monitor(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     query: web::Query<MonitorQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -1532,6 +1591,7 @@ pub async fn agent_monitor(
     };
 
     HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .content_type("text/plain; charset=utf-8")
         .body(message)
 }
@@ -1542,6 +1602,7 @@ pub async fn agent_metrics_stream(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
     acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
@@ -1560,19 +1621,17 @@ pub async fn agent_metrics_stream(
         healthy_instances += instances.iter().filter(|i| i.healthy).count();
     }
 
-    let mut gauges = Vec::new();
-    gauges.push(GaugeMetric::new(
-        "consul.catalog.service.count",
-        service_count as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "consul.catalog.service.instance.count",
-        total_instances as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "batata.naming.healthy_instance_count",
-        healthy_instances as f64,
-    ));
+    let gauges = vec![
+        GaugeMetric::new("consul.catalog.service.count", service_count as f64),
+        GaugeMetric::new(
+            "consul.catalog.service.instance.count",
+            total_instances as f64,
+        ),
+        GaugeMetric::new(
+            "batata.naming.healthy_instance_count",
+            healthy_instances as f64,
+        ),
+    ];
 
     let response = MetricsResponse {
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -1582,7 +1641,9 @@ pub async fn agent_metrics_stream(
         points: Vec::new(),
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// GET /v1/agent/metrics/stream (real cluster variant)
@@ -1591,6 +1652,7 @@ pub async fn agent_metrics_stream_real(
     naming_service: web::Data<Arc<NamingService>>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
     acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
@@ -1636,7 +1698,9 @@ pub async fn agent_metrics_stream_real(
         points: Vec::new(),
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// PUT /v1/agent/token/{type}
@@ -1645,6 +1709,7 @@ pub async fn update_agent_token(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let token_type = path.into_inner();
 
@@ -1655,7 +1720,9 @@ pub async fn update_agent_token(
     }
 
     tracing::info!("Agent token update requested for type: {}", token_type);
-    HttpResponse::Ok().finish()
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .finish()
 }
 
 #[cfg(test)]

@@ -16,6 +16,7 @@ use tracing::{error, info, warn};
 
 use batata_consistency::raft::state_machine::CF_CONSUL_ACL;
 
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulDatacenterConfig;
 
 // ACL Token header name
@@ -1065,15 +1066,21 @@ impl AclError {
 
 /// GET /v1/acl/tokens
 /// List all tokens
-pub async fn list_tokens(acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn list_tokens(
+    acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let tokens = acl_service.list_tokens();
-    HttpResponse::Ok().json(tokens)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(tokens)
 }
 
 /// GET /v1/acl/token/{accessor_id}
 pub async fn get_token(
     _acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let accessor_id = path.into_inner();
 
@@ -1087,7 +1094,9 @@ pub async fn get_token(
     });
 
     match token {
-        Some(t) => HttpResponse::Ok().json(t),
+        Some(t) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(t),
         None => HttpResponse::NotFound().json(serde_json::Value::Null),
     }
 }
@@ -1107,6 +1116,7 @@ pub struct CreateTokenRequest {
 pub async fn create_token(
     acl_service: web::Data<AclService>,
     body: web::Json<CreateTokenRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Collect policy identifiers - prefer ID, fallback to name
     let policies: Vec<String> = body
@@ -1151,18 +1161,23 @@ pub async fn create_token(
         local,
     );
 
-    HttpResponse::Ok().json(token)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(token)
 }
 
 /// DELETE /v1/acl/token/{accessor_id}
 pub async fn delete_token(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let accessor_id = path.into_inner();
 
     if acl_service.delete_token(&accessor_id) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Token not found"))
     }
@@ -1170,14 +1185,20 @@ pub async fn delete_token(
 
 /// GET /v1/acl/token/self
 /// Returns the token associated with the current request
-pub async fn get_token_self(acl_service: web::Data<AclService>, req: HttpRequest) -> HttpResponse {
+pub async fn get_token_self(
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let secret_id = match AclService::extract_token(&req) {
         Some(t) => t,
         None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
     };
 
     match acl_service.get_token(&secret_id) {
-        Some(token) => HttpResponse::Ok().json(token),
+        Some(token) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(token),
         None => HttpResponse::Forbidden().json(AclError::new("ACL token not found or invalid")),
     }
 }
@@ -1188,6 +1209,7 @@ pub async fn clone_token(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     body: web::Json<CloneTokenRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let accessor_id = path.into_inner();
 
@@ -1210,7 +1232,9 @@ pub async fn clone_token(
                 .unwrap_or_else(|| format!("Clone of {}", source.description));
             let roles: Vec<String> = source.roles.iter().map(|r| r.name.clone()).collect();
             let new_token = acl_service.create_token(&description, policies, roles, source.local);
-            HttpResponse::Ok().json(new_token)
+            HttpResponse::Ok()
+                .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                .json(new_token)
         }
         None => HttpResponse::NotFound().json(AclError::new("Token not found")),
     }
@@ -1218,7 +1242,10 @@ pub async fn clone_token(
 
 /// PUT /v1/acl/bootstrap
 /// Bootstrap the ACL system (creates initial management token)
-pub async fn acl_bootstrap(_acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn acl_bootstrap(
+    _acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     // Check if already bootstrapped
     if let Some(existing) = MEMORY_TOKENS.get("root") {
         // If bootstrap token exists, return it (for development/testing)
@@ -1234,7 +1261,9 @@ pub async fn acl_bootstrap(_acl_service: web::Data<AclService>) -> HttpResponse 
             create_time: token.create_time,
             hash: "bootstrap".to_string(),
         };
-        return HttpResponse::Ok().json(response);
+        return HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(response);
     }
 
     // Re-initialize bootstrap (this will create the token)
@@ -1252,7 +1281,9 @@ pub async fn acl_bootstrap(_acl_service: web::Data<AclService>) -> HttpResponse 
             create_time: token.create_time,
             hash: "bootstrap".to_string(),
         };
-        HttpResponse::Ok().json(response)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(response)
     } else {
         HttpResponse::InternalServerError().json(AclError::new("Failed to bootstrap ACL"))
     }
@@ -1263,6 +1294,7 @@ pub async fn acl_bootstrap(_acl_service: web::Data<AclService>) -> HttpResponse 
 pub async fn acl_login(
     acl_service: web::Data<AclService>,
     body: web::Json<LoginRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check if auth method exists
     let auth_method = match acl_service.get_auth_method(&body.auth_method) {
@@ -1315,12 +1347,18 @@ pub async fn acl_login(
         create_time: now,
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// POST /v1/acl/logout
 /// Logout and invalidate the current token
-pub async fn acl_logout(acl_service: web::Data<AclService>, req: HttpRequest) -> HttpResponse {
+pub async fn acl_logout(
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let secret_id = match AclService::extract_token(&req) {
         Some(t) => t,
         None => return HttpResponse::Forbidden().json(AclError::new("ACL token required")),
@@ -1335,12 +1373,16 @@ pub async fn acl_logout(acl_service: web::Data<AclService>, req: HttpRequest) ->
     if let Some(token) = acl_service.get_token(&secret_id)
         && acl_service.delete_token(&token.accessor_id)
     {
-        return HttpResponse::Ok().json(true);
+        return HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true);
     }
 
     // Also try direct removal from memory
     if MEMORY_TOKENS.remove(&secret_id).is_some() {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Token not found"))
     }
@@ -1377,20 +1419,28 @@ fn parse_duration(s: &str) -> Option<std::time::Duration> {
 
 /// GET /v1/acl/policies
 /// List all policies
-pub async fn list_policies(acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn list_policies(
+    acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let policies = acl_service.list_policies();
-    HttpResponse::Ok().json(policies)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(policies)
 }
 
 /// GET /v1/acl/policy/{id}
 pub async fn get_policy(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
 
     match acl_service.get_policy(&id) {
-        Some(policy) => HttpResponse::Ok().json(policy),
+        Some(policy) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(policy),
         None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
     }
 }
@@ -1399,11 +1449,14 @@ pub async fn get_policy(
 pub async fn delete_policy(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
 
     if acl_service.delete_policy(&id) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Policy not found"))
     }
@@ -1424,6 +1477,7 @@ pub struct CreatePolicyRequest {
 pub async fn create_policy(
     acl_service: web::Data<AclService>,
     body: web::Json<CreatePolicyRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let policy = acl_service.create_policy(
         &body.name,
@@ -1432,7 +1486,9 @@ pub async fn create_policy(
         body.datacenters.clone(),
     );
 
-    HttpResponse::Ok().json(policy)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(policy)
 }
 
 // ============================================================================
@@ -1452,9 +1508,14 @@ pub struct RoleRequest {
 
 /// GET /v1/acl/roles
 /// List all roles
-pub async fn list_roles(acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn list_roles(
+    acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let roles = acl_service.list_roles();
-    HttpResponse::Ok().json(roles)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(roles)
 }
 
 /// PUT /v1/acl/role
@@ -1462,6 +1523,7 @@ pub async fn list_roles(acl_service: web::Data<AclService>) -> HttpResponse {
 pub async fn create_role(
     acl_service: web::Data<AclService>,
     body: web::Json<RoleRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let policies: Vec<String> = body
         .policies
@@ -1475,16 +1537,24 @@ pub async fn create_role(
         policies,
     );
 
-    HttpResponse::Ok().json(role)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(role)
 }
 
 /// GET /v1/acl/role/{id}
 /// Get a role by ID or name
-pub async fn get_role(acl_service: web::Data<AclService>, path: web::Path<String>) -> HttpResponse {
+pub async fn get_role(
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let id = path.into_inner();
 
     match acl_service.get_role(&id) {
-        Some(role) => HttpResponse::Ok().json(role),
+        Some(role) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(role),
         None => HttpResponse::NotFound().json(AclError::new("Role not found")),
     }
 }
@@ -1495,6 +1565,7 @@ pub async fn update_role(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     body: web::Json<RoleRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
 
@@ -1504,7 +1575,9 @@ pub async fn update_role(
         .map(|p| p.iter().map(|pl| pl.name.clone()).collect());
 
     match acl_service.update_role(&id, Some(&body.name), body.description.as_deref(), policies) {
-        Some(role) => HttpResponse::Ok().json(role),
+        Some(role) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(role),
         None => HttpResponse::NotFound().json(AclError::new("Role not found")),
     }
 }
@@ -1514,11 +1587,14 @@ pub async fn update_role(
 pub async fn delete_role(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
 
     if acl_service.delete_role(&id) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Role not found"))
     }
@@ -1544,9 +1620,14 @@ pub struct AuthMethodRequest {
 
 /// GET /v1/acl/auth-methods
 /// List all auth methods
-pub async fn list_auth_methods(acl_service: web::Data<AclService>) -> HttpResponse {
+pub async fn list_auth_methods(
+    acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let methods = acl_service.list_auth_methods();
-    HttpResponse::Ok().json(methods)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(methods)
 }
 
 /// PUT /v1/acl/auth-method
@@ -1554,6 +1635,7 @@ pub async fn list_auth_methods(acl_service: web::Data<AclService>) -> HttpRespon
 pub async fn create_auth_method(
     acl_service: web::Data<AclService>,
     body: web::Json<AuthMethodRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let method = acl_service.create_auth_method(
         &body.name,
@@ -1565,7 +1647,9 @@ pub async fn create_auth_method(
         body.config.clone(),
     );
 
-    HttpResponse::Ok().json(method)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(method)
 }
 
 /// GET /v1/acl/auth-method/{name}
@@ -1573,11 +1657,14 @@ pub async fn create_auth_method(
 pub async fn get_auth_method(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let name = path.into_inner();
 
     match acl_service.get_auth_method(&name) {
-        Some(method) => HttpResponse::Ok().json(method),
+        Some(method) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(method),
         None => HttpResponse::NotFound().json(AclError::new("Auth method not found")),
     }
 }
@@ -1588,6 +1675,7 @@ pub async fn update_auth_method(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     body: web::Json<AuthMethodRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let name = path.into_inner();
 
@@ -1600,7 +1688,9 @@ pub async fn update_auth_method(
         body.token_locality.as_deref(),
         body.config.clone(),
     ) {
-        Some(method) => HttpResponse::Ok().json(method),
+        Some(method) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(method),
         None => HttpResponse::NotFound().json(AclError::new("Auth method not found")),
     }
 }
@@ -1610,11 +1700,14 @@ pub async fn update_auth_method(
 pub async fn delete_auth_method(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let name = path.into_inner();
 
     if acl_service.delete_auth_method(&name) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Auth method not found"))
     }
@@ -1852,10 +1945,13 @@ pub async fn update_token(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     body: web::Json<TokenUpdateRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let accessor_id = path.into_inner();
     match acl_service.update_token(&accessor_id, body.into_inner()) {
-        Some(token) => HttpResponse::Ok().json(token),
+        Some(token) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(token),
         None => HttpResponse::NotFound().json(AclError::new("Token not found")),
     }
 }
@@ -1865,10 +1961,13 @@ pub async fn update_policy(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     body: web::Json<PolicyUpdateRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
     match acl_service.update_policy(&id, body.into_inner()) {
-        Some(policy) => HttpResponse::Ok().json(policy),
+        Some(policy) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(policy),
         None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
     }
 }
@@ -1877,10 +1976,13 @@ pub async fn update_policy(
 pub async fn get_policy_by_name(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let name = path.into_inner();
     match acl_service.get_policy(&name) {
-        Some(policy) => HttpResponse::Ok().json(policy),
+        Some(policy) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(policy),
         None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
     }
 }
@@ -1889,17 +1991,25 @@ pub async fn get_policy_by_name(
 pub async fn get_role_by_name(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let name = path.into_inner();
     match acl_service.get_role(&name) {
-        Some(role) => HttpResponse::Ok().json(role),
+        Some(role) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(role),
         None => HttpResponse::NotFound().json(AclError::new("Role not found")),
     }
 }
 
 /// GET /v1/acl/replication - ACL replication status
-pub async fn acl_replication(dc_config: web::Data<ConsulDatacenterConfig>) -> HttpResponse {
-    HttpResponse::Ok().json(AclReplicationStatus {
+pub async fn acl_replication(
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(AclReplicationStatus {
         enabled: false,
         running: false,
         source_datacenter: dc_config.primary_datacenter.clone(),
@@ -1914,27 +2024,38 @@ pub async fn acl_replication(dc_config: web::Data<ConsulDatacenterConfig>) -> Ht
 }
 
 /// GET /v1/acl/binding-rules - List binding rules
-pub async fn list_binding_rules(acl_service: web::Data<AclService>) -> HttpResponse {
-    HttpResponse::Ok().json(acl_service.list_binding_rules())
+pub async fn list_binding_rules(
+    acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(acl_service.list_binding_rules())
 }
 
 /// PUT /v1/acl/binding-rule - Create binding rule
 pub async fn create_binding_rule(
     acl_service: web::Data<AclService>,
     body: web::Json<BindingRuleRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let rule = acl_service.create_binding_rule(body.into_inner());
-    HttpResponse::Ok().json(rule)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(rule)
 }
 
 /// GET /v1/acl/binding-rule/{id} - Get binding rule
 pub async fn get_binding_rule(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
     match acl_service.get_binding_rule(&id) {
-        Some(rule) => HttpResponse::Ok().json(rule),
+        Some(rule) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(rule),
         None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
     }
 }
@@ -1944,10 +2065,13 @@ pub async fn update_binding_rule(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     body: web::Json<BindingRuleRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
     match acl_service.update_binding_rule(&id, body.into_inner()) {
-        Some(rule) => HttpResponse::Ok().json(rule),
+        Some(rule) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(rule),
         None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
     }
 }
@@ -1956,17 +2080,22 @@ pub async fn update_binding_rule(
 pub async fn delete_binding_rule(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
     if acl_service.delete_binding_rule(&id) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Binding rule not found"))
     }
 }
 
 /// GET /v1/acl/templated-policies - List templated policies
-pub async fn list_templated_policies() -> HttpResponse {
+pub async fn list_templated_policies(
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let mut policies = HashMap::new();
     policies.insert(
         "builtin/service".to_string(),
@@ -2004,26 +2133,37 @@ pub async fn list_templated_policies() -> HttpResponse {
             ),
         },
     );
-    HttpResponse::Ok().json(policies)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(policies)
 }
 
 /// GET /v1/acl/templated-policy/name/{name} - Get templated policy by name
-pub async fn get_templated_policy(path: web::Path<String>) -> HttpResponse {
+pub async fn get_templated_policy(
+    path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     let name = path.into_inner();
     match name.as_str() {
-        "builtin/service" => HttpResponse::Ok().json(TemplatedPolicy {
+        "builtin/service" => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(TemplatedPolicy {
             template_name: "builtin/service".to_string(),
             schema: Some(r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string()),
             template: Some(r#"service "{{.Name}}" { policy = "write" } service "{{.Name}}-sidecar-proxy" { policy = "write" }"#.to_string()),
             description: Some("Gives the token or role permissions for a service and its sidecar proxy".to_string()),
         }),
-        "builtin/node" => HttpResponse::Ok().json(TemplatedPolicy {
+        "builtin/node" => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(TemplatedPolicy {
             template_name: "builtin/node".to_string(),
             schema: Some(r#"{"type":"object","properties":{"Name":{"type":"string"}}}"#.to_string()),
             template: Some(r#"node "{{.Name}}" { policy = "write" }"#.to_string()),
             description: Some("Gives the token or role permissions for a node".to_string()),
         }),
-        "builtin/dns" => HttpResponse::Ok().json(TemplatedPolicy {
+        "builtin/dns" => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(TemplatedPolicy {
             template_name: "builtin/dns".to_string(),
             schema: None,
             template: Some(r#"node_prefix "" { policy = "read" } service_prefix "" { policy = "read" }"#.to_string()),
@@ -2037,6 +2177,7 @@ pub async fn get_templated_policy(path: web::Path<String>) -> HttpResponse {
 pub async fn preview_templated_policy(
     path: web::Path<String>,
     body: web::Json<TemplatedPolicyPreviewRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let template_name = path.into_inner();
     let var_name = &body.name;
@@ -2059,7 +2200,9 @@ pub async fn preview_templated_policy(
         }
     };
 
-    HttpResponse::Ok().json(serde_json::json!({ "Rules": rules }))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(serde_json::json!({ "Rules": rules }))
 }
 
 // ============================================================================
@@ -2093,6 +2236,7 @@ pub async fn acl_authorize(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     body: web::Json<Vec<AclAuthorizationCheck>>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let checks = body.into_inner();
 
@@ -2135,7 +2279,9 @@ pub async fn acl_authorize(
         })
         .collect();
 
-    HttpResponse::Ok().json(responses)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(responses)
 }
 
 #[cfg(test)]

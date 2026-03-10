@@ -19,6 +19,7 @@ use batata_consistency::raft::state_machine::CF_CONSUL_QUERIES;
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::{
     AgentService, ConsulDatacenterConfig, ConsulError, HealthCheck, Node, PreparedQuery,
     PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
@@ -201,6 +202,7 @@ pub async fn create_query(
     body: web::Json<PreparedQueryCreateRequest>,
     acl_service: web::Data<AclService>,
     query_service: web::Data<ConsulQueryService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for query write
     let authz = acl_service.authorize_request(&req, ResourceType::Query, "", true);
@@ -210,7 +212,9 @@ pub async fn create_query(
 
     let query = query_service.create_query(body.into_inner());
 
-    HttpResponse::Ok().json(PreparedQueryCreateResponse { id: query.id })
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(PreparedQueryCreateResponse { id: query.id })
 }
 
 /// GET /v1/query
@@ -219,6 +223,7 @@ pub async fn list_queries(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     query_service: web::Data<ConsulQueryService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for query read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, "", false);
@@ -228,7 +233,9 @@ pub async fn list_queries(
 
     let queries = query_service.list_queries();
 
-    HttpResponse::Ok().json(queries)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(queries)
 }
 
 /// GET /v1/query/{uuid}
@@ -238,6 +245,7 @@ pub async fn get_query(
     path: web::Path<String>,
     acl_service: web::Data<AclService>,
     query_service: web::Data<ConsulQueryService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
 
@@ -248,7 +256,9 @@ pub async fn get_query(
     }
 
     match query_service.get_query(&id) {
-        Some(query) => HttpResponse::Ok().json(vec![query]),
+        Some(query) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(vec![query]),
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }
 }
@@ -261,6 +271,7 @@ pub async fn update_query(
     body: web::Json<PreparedQueryCreateRequest>,
     acl_service: web::Data<AclService>,
     query_service: web::Data<ConsulQueryService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
 
@@ -271,7 +282,9 @@ pub async fn update_query(
     }
 
     match query_service.update_query(&id, body.into_inner()) {
-        Some(_) => HttpResponse::Ok().finish(),
+        Some(_) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .finish(),
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }
 }
@@ -283,6 +296,7 @@ pub async fn delete_query(
     path: web::Path<String>,
     acl_service: web::Data<AclService>,
     query_service: web::Data<ConsulQueryService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
 
@@ -293,7 +307,9 @@ pub async fn delete_query(
     }
 
     if query_service.delete_query(&id) {
-        HttpResponse::Ok().finish()
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Query not found"))
     }
@@ -301,6 +317,7 @@ pub async fn delete_query(
 
 /// GET /v1/query/{uuid}/execute
 /// Execute a prepared query
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_query(
     req: HttpRequest,
     path: web::Path<String>,
@@ -309,6 +326,7 @@ pub async fn execute_query(
     dc_config: web::Data<ConsulDatacenterConfig>,
     query_service: web::Data<ConsulQueryService>,
     naming_service: web::Data<Arc<NamingService>>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
     let dc = dc_config.resolve_dc(&query_params.dc);
@@ -473,7 +491,9 @@ pub async fn execute_query(
         failovers: failover_count,
     };
 
-    HttpResponse::Ok().json(result)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(result)
 }
 
 /// GET /v1/query/{uuid}/explain
@@ -483,6 +503,7 @@ pub async fn explain_query(
     path: web::Path<String>,
     acl_service: web::Data<AclService>,
     query_service: web::Data<ConsulQueryService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
 
@@ -493,7 +514,9 @@ pub async fn explain_query(
     }
 
     match query_service.get_query(&id) {
-        Some(query) => HttpResponse::Ok().json(PreparedQueryExplainResult { query }),
+        Some(query) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(PreparedQueryExplainResult { query }),
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }
 }

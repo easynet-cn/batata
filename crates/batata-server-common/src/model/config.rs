@@ -458,13 +458,13 @@ impl Configuration {
     pub fn console_remote_username(&self) -> String {
         self.config
             .get_string(NACOS_CONSOLE_REMOTE_USERNAME)
-            .unwrap_or("nacos".to_string())
+            .unwrap_or("batata".to_string())
     }
 
     pub fn console_remote_password(&self) -> String {
         self.config
             .get_string(NACOS_CONSOLE_REMOTE_PASSWORD)
-            .unwrap_or("nacos".to_string())
+            .unwrap_or("batata".to_string())
     }
 
     pub fn console_remote_connect_timeout_ms(&self) -> u64 {

@@ -19,7 +19,7 @@ use crate::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
     },
     api::consul::{
-        AclService, ConsulEventService, ConsulLockService, ConsulQueryService,
+        AclService, ConsulEventService, ConsulIndexProvider, ConsulLockService, ConsulQueryService,
         ConsulSemaphoreService, ConsulSessionService, agent::ConsulAgentService,
         catalog::ConsulCatalogService, health::ConsulHealthService, kv::ConsulKVService,
         model::ConsulDatacenterConfig, route::consul_routes,
@@ -50,6 +50,7 @@ pub struct ConsulServices {
     pub lock: ConsulLockService,
     pub semaphore: ConsulSemaphoreService,
     pub dc_config: ConsulDatacenterConfig,
+    pub index_provider: ConsulIndexProvider,
 }
 
 impl ConsulServices {
@@ -60,6 +61,7 @@ impl ConsulServices {
         acl_enabled: bool,
         dc_config: ConsulDatacenterConfig,
     ) -> Self {
+        let index_provider = ConsulIndexProvider::new();
         let session = ConsulSessionService::new();
         let kv = ConsulKVService::new();
         let kv_arc = Arc::new(kv.clone());
@@ -74,7 +76,9 @@ impl ConsulServices {
             catalog: ConsulCatalogService::with_datacenter(
                 naming_service,
                 dc_config.datacenter.clone(),
-            ),
+            )
+            .with_index_provider(index_provider.clone()),
+            index_provider,
             acl: if acl_enabled {
                 AclService::new()
             } else {
@@ -98,6 +102,7 @@ impl ConsulServices {
         db: Arc<DB>,
         dc_config: ConsulDatacenterConfig,
     ) -> Self {
+        let index_provider = ConsulIndexProvider::new();
         let session = ConsulSessionService::with_rocks(db.clone());
         let kv = ConsulKVService::with_rocks(db.clone());
         let kv_arc = Arc::new(kv.clone());
@@ -112,7 +117,8 @@ impl ConsulServices {
             catalog: ConsulCatalogService::with_datacenter(
                 naming_service,
                 dc_config.datacenter.clone(),
-            ),
+            )
+            .with_index_provider(index_provider.clone()),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
             } else {
@@ -124,6 +130,7 @@ impl ConsulServices {
             lock,
             semaphore,
             dc_config,
+            index_provider,
         }
     }
 
@@ -137,6 +144,7 @@ impl ConsulServices {
         raft_node: Arc<RaftNode>,
         dc_config: ConsulDatacenterConfig,
     ) -> Self {
+        let index_provider = ConsulIndexProvider::with_raft(raft_node.clone());
         let session = ConsulSessionService::with_raft(db.clone(), raft_node.clone());
         let kv = ConsulKVService::with_raft(db.clone(), raft_node);
         let kv_arc = Arc::new(kv.clone());
@@ -151,7 +159,8 @@ impl ConsulServices {
             catalog: ConsulCatalogService::with_datacenter(
                 naming_service,
                 dc_config.datacenter.clone(),
-            ),
+            )
+            .with_index_provider(index_provider.clone()),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
             } else {
@@ -163,6 +172,7 @@ impl ConsulServices {
             lock,
             semaphore,
             dc_config,
+            index_provider,
         }
     }
 }
@@ -256,6 +266,7 @@ pub fn consul_server(
             .app_data(web::Data::new(consul_services.lock.clone()))
             .app_data(web::Data::new(consul_services.semaphore.clone()))
             .app_data(web::Data::new(consul_services.dc_config.clone()))
+            .app_data(web::Data::new(consul_services.index_provider.clone()))
             .app_data(web::QueryConfig::default().error_handler(|err, _req| {
                 let err_str = err.to_string();
                 // For duplicate field errors (e.g., ?tag=a&tag=b), return empty result

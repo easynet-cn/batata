@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -559,6 +560,7 @@ pub async fn get_ca_roots(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     _query: web::Query<CARootQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -566,7 +568,9 @@ pub async fn get_ca_roots(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(ca_service.get_roots().await)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(ca_service.get_roots().await)
 }
 
 /// GET /v1/connect/ca/configuration - Get CA configuration
@@ -574,13 +578,16 @@ pub async fn get_ca_configuration(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(ca_service.get_ca_config().await)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(ca_service.get_ca_config().await)
 }
 
 /// PUT /v1/connect/ca/configuration - Set CA configuration
@@ -588,6 +595,7 @@ pub async fn set_ca_configuration(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<CAConfig>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
@@ -596,7 +604,9 @@ pub async fn set_ca_configuration(
     }
 
     match ca_service.set_ca_config(body.into_inner()).await {
-        Ok(()) => HttpResponse::Ok().finish(),
+        Ok(()) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .finish(),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -606,6 +616,7 @@ pub async fn get_leaf_cert(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -614,7 +625,9 @@ pub async fn get_leaf_cert(
     }
 
     let service = path.into_inner();
-    HttpResponse::Ok().json(ca_service.get_leaf_cert(&service))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(ca_service.get_leaf_cert(&service))
 }
 
 /// GET /v1/connect/intentions - List intentions
@@ -622,6 +635,7 @@ pub async fn list_intentions(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     _query: web::Query<IntentionQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -629,7 +643,9 @@ pub async fn list_intentions(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(ca_service.list_intentions())
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(ca_service.list_intentions())
 }
 
 /// POST /v1/connect/intentions - Create intention
@@ -637,6 +653,7 @@ pub async fn create_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<IntentionRequest>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
@@ -645,7 +662,9 @@ pub async fn create_intention(
     }
 
     let intention = ca_service.create_intention(body.into_inner());
-    HttpResponse::Ok().json(serde_json::json!({ "ID": intention.id }))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(serde_json::json!({ "ID": intention.id }))
 }
 
 /// GET /v1/connect/intentions/{id} - Read intention
@@ -653,6 +672,7 @@ pub async fn get_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -662,7 +682,9 @@ pub async fn get_intention(
 
     let id = path.into_inner();
     match ca_service.get_intention(&id) {
-        Some(intention) => HttpResponse::Ok().json(intention),
+        Some(intention) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(intention),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
 }
@@ -672,6 +694,7 @@ pub async fn update_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
     body: web::Json<IntentionRequest>,
 ) -> HttpResponse {
@@ -682,7 +705,9 @@ pub async fn update_intention(
 
     let id = path.into_inner();
     match ca_service.update_intention(&id, body.into_inner()) {
-        Some(_) => HttpResponse::Ok().json(serde_json::json!({ "ID": id })),
+        Some(_) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(serde_json::json!({ "ID": id })),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
 }
@@ -692,6 +717,7 @@ pub async fn delete_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
@@ -701,7 +727,9 @@ pub async fn delete_intention(
 
     let id = path.into_inner();
     if ca_service.delete_intention(&id) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
     }
@@ -712,6 +740,7 @@ pub async fn check_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -722,7 +751,9 @@ pub async fn check_intention(
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
     let allowed = ca_service.check_intention(source, destination);
-    HttpResponse::Ok().json(IntentionCheckResponse { allowed })
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(IntentionCheckResponse { allowed })
 }
 
 /// GET /v1/connect/intentions/match - Match intentions for service
@@ -730,6 +761,7 @@ pub async fn match_intentions(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionMatchQuery>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -740,7 +772,9 @@ pub async fn match_intentions(
     let matched = ca_service.match_intentions(&query.by, &query.name);
     let mut result = std::collections::HashMap::new();
     result.insert(query.name.clone(), matched);
-    HttpResponse::Ok().json(result)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(result)
 }
 
 /// POST /v1/agent/connect/authorize - Authorize a connection
@@ -748,6 +782,7 @@ pub async fn connect_authorize(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<AgentAuthorizeRequest>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -757,7 +792,9 @@ pub async fn connect_authorize(
 
     let auth_req = body.into_inner();
     let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri);
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// GET /v1/connect/intentions/exact - Get intention by exact source/destination
@@ -765,6 +802,7 @@ pub async fn get_intention_exact(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionExactQuery>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -775,7 +813,9 @@ pub async fn get_intention_exact(
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
     match ca_service.get_intention_exact(source, destination) {
-        Some(intention) => HttpResponse::Ok().json(intention),
+        Some(intention) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(intention),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
 }
@@ -785,6 +825,7 @@ pub async fn upsert_intention_exact(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<IntentionRequest>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
@@ -793,7 +834,9 @@ pub async fn upsert_intention_exact(
     }
 
     let intention = ca_service.upsert_intention_exact(body.into_inner());
-    HttpResponse::Ok().json(serde_json::json!({ "Created": true, "ID": intention.id }))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(serde_json::json!({ "Created": true, "ID": intention.id }))
 }
 
 /// DELETE /v1/connect/intentions/exact - Delete intention by exact source/destination
@@ -801,6 +844,7 @@ pub async fn delete_intention_exact(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionExactQuery>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
@@ -811,7 +855,9 @@ pub async fn delete_intention_exact(
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
     if ca_service.delete_intention_exact(source, destination) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
     }
@@ -826,6 +872,7 @@ pub async fn get_ca_roots_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     _query: web::Query<CARootQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -833,7 +880,9 @@ pub async fn get_ca_roots_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(ca_service.get_roots().await)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(ca_service.get_roots().await)
 }
 
 /// GET /v1/connect/ca/configuration (persistent)
@@ -841,13 +890,16 @@ pub async fn get_ca_configuration_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(ca_service.get_ca_config().await)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(ca_service.get_ca_config().await)
 }
 
 /// PUT /v1/connect/ca/configuration (persistent)
@@ -855,6 +907,7 @@ pub async fn set_ca_configuration_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<CAConfig>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
@@ -863,7 +916,9 @@ pub async fn set_ca_configuration_persistent(
     }
 
     match ca_service.set_ca_config(body.into_inner()).await {
-        Ok(()) => HttpResponse::Ok().finish(),
+        Ok(()) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .finish(),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -873,6 +928,7 @@ pub async fn get_leaf_cert_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -881,7 +937,9 @@ pub async fn get_leaf_cert_persistent(
     }
 
     let service = path.into_inner();
-    HttpResponse::Ok().json(ca_service.get_leaf_cert(&service))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(ca_service.get_leaf_cert(&service))
 }
 
 /// GET /v1/connect/intentions (persistent)
@@ -889,6 +947,7 @@ pub async fn list_intentions_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     _query: web::Query<IntentionQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -896,7 +955,9 @@ pub async fn list_intentions_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(ca_service.list_intentions())
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(ca_service.list_intentions())
 }
 
 /// POST /v1/connect/intentions (persistent)
@@ -904,6 +965,7 @@ pub async fn create_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<IntentionRequest>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
@@ -912,7 +974,9 @@ pub async fn create_intention_persistent(
     }
 
     let intention = ca_service.create_intention(body.into_inner());
-    HttpResponse::Ok().json(serde_json::json!({ "ID": intention.id }))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(serde_json::json!({ "ID": intention.id }))
 }
 
 /// GET /v1/connect/intentions/{id} (persistent)
@@ -920,6 +984,7 @@ pub async fn get_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -929,7 +994,9 @@ pub async fn get_intention_persistent(
 
     let id = path.into_inner();
     match ca_service.get_intention(&id) {
-        Some(intention) => HttpResponse::Ok().json(intention),
+        Some(intention) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(intention),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
 }
@@ -939,6 +1006,7 @@ pub async fn update_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
     body: web::Json<IntentionRequest>,
 ) -> HttpResponse {
@@ -949,7 +1017,9 @@ pub async fn update_intention_persistent(
 
     let id = path.into_inner();
     match ca_service.update_intention(&id, body.into_inner()) {
-        Some(_) => HttpResponse::Ok().json(serde_json::json!({ "ID": id })),
+        Some(_) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(serde_json::json!({ "ID": id })),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
 }
@@ -959,6 +1029,7 @@ pub async fn delete_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
@@ -968,7 +1039,9 @@ pub async fn delete_intention_persistent(
 
     let id = path.into_inner();
     if ca_service.delete_intention(&id) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
     }
@@ -979,6 +1052,7 @@ pub async fn check_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -989,7 +1063,9 @@ pub async fn check_intention_persistent(
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
     let allowed = ca_service.check_intention(source, destination);
-    HttpResponse::Ok().json(IntentionCheckResponse { allowed })
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(IntentionCheckResponse { allowed })
 }
 
 /// GET /v1/connect/intentions/match (persistent)
@@ -997,6 +1073,7 @@ pub async fn match_intentions_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionMatchQuery>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -1007,7 +1084,9 @@ pub async fn match_intentions_persistent(
     let matched = ca_service.match_intentions(&query.by, &query.name);
     let mut result = std::collections::HashMap::new();
     result.insert(query.name.clone(), matched);
-    HttpResponse::Ok().json(result)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(result)
 }
 
 /// POST /v1/agent/connect/authorize (persistent)
@@ -1015,6 +1094,7 @@ pub async fn connect_authorize_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<AgentAuthorizeRequest>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -1024,7 +1104,9 @@ pub async fn connect_authorize_persistent(
 
     let auth_req = body.into_inner();
     let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri);
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// GET /v1/connect/intentions/exact (persistent)
@@ -1032,6 +1114,7 @@ pub async fn get_intention_exact_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionExactQuery>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -1042,7 +1125,9 @@ pub async fn get_intention_exact_persistent(
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
     match ca_service.get_intention_exact(source, destination) {
-        Some(intention) => HttpResponse::Ok().json(intention),
+        Some(intention) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(intention),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
 }
@@ -1052,6 +1137,7 @@ pub async fn upsert_intention_exact_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<IntentionRequest>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
@@ -1060,7 +1146,9 @@ pub async fn upsert_intention_exact_persistent(
     }
 
     let intention = ca_service.upsert_intention_exact(body.into_inner());
-    HttpResponse::Ok().json(serde_json::json!({ "Created": true, "ID": intention.id }))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(serde_json::json!({ "Created": true, "ID": intention.id }))
 }
 
 /// DELETE /v1/connect/intentions/exact (persistent)
@@ -1068,6 +1156,7 @@ pub async fn delete_intention_exact_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionExactQuery>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
@@ -1078,7 +1167,9 @@ pub async fn delete_intention_exact_persistent(
     let source = query.source.as_deref().unwrap_or("*");
     let destination = query.destination.as_deref().unwrap_or("*");
     if ca_service.delete_intention_exact(source, destination) {
-        HttpResponse::Ok().json(true)
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(true)
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
     }

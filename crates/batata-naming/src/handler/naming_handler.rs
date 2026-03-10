@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use batata_core::{
+    GrpcResource, PermissionAction,
     handler::rpc::{AuthRequirement, PayloadHandler},
     model::Connection,
     service::distro::{DistroDataType, DistroProtocol},
@@ -190,6 +191,21 @@ impl PayloadHandler for InstanceRequestHandler {
 
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Naming
+    }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = InstanceRequest::from(payload);
+        Some((
+            GrpcResource::naming(
+                &request.naming_request.namespace,
+                &request.naming_request.group_name,
+                &request.naming_request.service_name,
+            ),
+            PermissionAction::Write,
+        ))
     }
 }
 
@@ -464,6 +480,21 @@ impl PayloadHandler for BatchInstanceRequestHandler {
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Naming
     }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = BatchInstanceRequest::from(payload);
+        Some((
+            GrpcResource::naming(
+                &request.naming_request.namespace,
+                &request.naming_request.group_name,
+                &request.naming_request.service_name,
+            ),
+            PermissionAction::Write,
+        ))
+    }
 }
 
 impl BatchInstanceRequestHandler {
@@ -548,6 +579,21 @@ impl PayloadHandler for ServiceListRequestHandler {
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Naming
     }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = ServiceListRequest::from(payload);
+        Some((
+            GrpcResource::naming(
+                &request.naming_request.namespace,
+                &request.naming_request.group_name,
+                "",
+            ),
+            PermissionAction::Read,
+        ))
+    }
 }
 
 // Handler for ServiceQueryRequest - queries service details and instances
@@ -613,6 +659,21 @@ impl PayloadHandler for ServiceQueryRequestHandler {
 
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Naming
+    }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = ServiceQueryRequest::from(payload);
+        Some((
+            GrpcResource::naming(
+                &request.naming_request.namespace,
+                &request.naming_request.group_name,
+                &request.naming_request.service_name,
+            ),
+            PermissionAction::Read,
+        ))
     }
 }
 
@@ -683,6 +744,21 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
 
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Naming
+    }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = SubscribeServiceRequest::from(payload);
+        Some((
+            GrpcResource::naming(
+                &request.naming_request.namespace,
+                &request.naming_request.group_name,
+                &request.naming_request.service_name,
+            ),
+            PermissionAction::Read,
+        ))
     }
 }
 
@@ -760,6 +836,21 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
 
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Naming
+    }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = PersistentInstanceRequest::from(payload);
+        Some((
+            GrpcResource::naming(
+                &request.naming_request.namespace,
+                &request.naming_request.group_name,
+                &request.naming_request.service_name,
+            ),
+            PermissionAction::Write,
+        ))
     }
 }
 

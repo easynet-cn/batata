@@ -25,6 +25,7 @@ pub use batata_plugin_consul::ConsulAgentService;
 pub use batata_plugin_consul::ConsulCatalogService;
 pub use batata_plugin_consul::ConsulEventService;
 pub use batata_plugin_consul::ConsulHealthService;
+pub use batata_plugin_consul::ConsulIndexProvider;
 pub use batata_plugin_consul::ConsulLockService;
 pub use batata_plugin_consul::ConsulQueryService;
 pub use batata_plugin_consul::ConsulSemaphoreService;

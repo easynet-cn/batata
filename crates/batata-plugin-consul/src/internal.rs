@@ -17,6 +17,7 @@ use crate::config_entry::ConsulConfigEntryService;
 use crate::connect::ConsulConnectService;
 use crate::connect_ca::ConsulConnectCAService;
 use crate::health::ConsulHealthService;
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::{ConsulDatacenterConfig, ConsulError};
 
 // ============================================================================
@@ -165,6 +166,7 @@ pub async fn ui_nodes(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<UINodeQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
@@ -196,15 +198,15 @@ pub async fn ui_nodes(
                     .cloned()
                     .unwrap_or_else(|| dc.clone()),
                 meta: None,
-                create_index: 1,
-                modify_index: 1,
+                create_index: index_provider.current_index(),
+                modify_index: index_provider.current_index(),
             });
         }
     }
 
     let nodes: Vec<UINode> = node_map.into_values().collect();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(nodes)
 }
 
@@ -215,6 +217,7 @@ pub async fn ui_node_info(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
@@ -244,10 +247,12 @@ pub async fn ui_node_info(
                         .cloned()
                         .unwrap_or_else(|| dc_config.datacenter.clone()),
                     meta: None,
-                    create_index: 1,
-                    modify_index: 1,
+                    create_index: index_provider.current_index(),
+                    modify_index: index_provider.current_index(),
                 };
-                return HttpResponse::Ok().json(node);
+                return HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .json(node);
             }
         }
     }
@@ -261,6 +266,7 @@ pub async fn ui_exported_services(
     acl_service: web::Data<AclService>,
     connect_service: web::Data<ConsulConnectService>,
     _query: web::Query<UIExportedServicesQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -268,7 +274,7 @@ pub async fn ui_exported_services(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(connect_service.list_exported_services())
 }
 
@@ -279,6 +285,7 @@ pub async fn ui_catalog_overview(
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     _query: web::Query<UICatalogOverviewQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -347,7 +354,7 @@ pub async fn ui_catalog_overview(
 
     let _ = total_instances; // used for node counting
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(summary)
 }
 
@@ -358,6 +365,7 @@ pub async fn ui_gateway_services_nodes(
     catalog: web::Data<ConsulCatalogService>,
     config_entry_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -369,7 +377,7 @@ pub async fn ui_gateway_services_nodes(
         catalog.get_gateway_services_from_config(&gateway_name, &config_entry_service);
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(gateway_services)
 }
 
@@ -379,6 +387,7 @@ pub async fn ui_gateway_intentions(
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -388,11 +397,12 @@ pub async fn ui_gateway_intentions(
     let gateway = path.into_inner();
     let matched = ca_service.match_intentions("destination", &gateway);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(matched)
 }
 
 /// GET /v1/internal/ui/service-topology/{service} - Get service topology
+#[allow(clippy::too_many_arguments)]
 pub async fn ui_service_topology(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
@@ -401,6 +411,7 @@ pub async fn ui_service_topology(
     naming_service: web::Data<Arc<NamingService>>,
     path: web::Path<String>,
     query: web::Query<UIServiceTopologyQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -451,45 +462,42 @@ pub async fn ui_service_topology(
     for svc in &all_services {
         let instances = naming_service.get_instances(namespace, "DEFAULT_GROUP", svc, "", false);
         for instance in &instances {
-            if let Some(kind) = instance.metadata.get("consul_kind") {
-                if kind == "connect-proxy" {
-                    if let Some(proxy_json) = instance.metadata.get("consul_proxy") {
-                        if let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json) {
-                            // If this proxy's destination is our service, check its upstreams
-                            let dest = proxy
-                                .get("DestinationServiceName")
-                                .or_else(|| proxy.get("destination_service_name"))
-                                .and_then(|v| v.as_str());
-                            if dest == Some(&service_name) {
-                                if let Some(upstream_arr) = proxy
-                                    .get("Upstreams")
-                                    .or_else(|| proxy.get("upstreams"))
-                                    .and_then(|v| v.as_array())
-                                {
-                                    for upstream in upstream_arr {
-                                        let upstream_name = upstream
-                                            .get("DestinationName")
-                                            .or_else(|| upstream.get("destination_name"))
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        if !upstream_name.is_empty()
-                                            && !upstreams.iter().any(|u| u.name == upstream_name)
-                                        {
-                                            upstreams.push(ServiceTopologySummary {
-                                                name: upstream_name,
-                                                datacenter: dc.clone(),
-                                                namespace: "default".to_string(),
-                                                intention: ServiceTopologyIntention {
-                                                    allowed: true,
-                                                    has_permissions: false,
-                                                    external_source: String::new(),
-                                                },
-                                            });
-                                        }
-                                    }
-                                }
-                            }
+            if let Some(kind) = instance.metadata.get("consul_kind")
+                && kind == "connect-proxy"
+                && let Some(proxy_json) = instance.metadata.get("consul_proxy")
+                && let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json)
+            {
+                // If this proxy's destination is our service, check its upstreams
+                let dest = proxy
+                    .get("DestinationServiceName")
+                    .or_else(|| proxy.get("destination_service_name"))
+                    .and_then(|v| v.as_str());
+                if dest == Some(&service_name)
+                    && let Some(upstream_arr) = proxy
+                        .get("Upstreams")
+                        .or_else(|| proxy.get("upstreams"))
+                        .and_then(|v| v.as_array())
+                {
+                    for upstream in upstream_arr {
+                        let upstream_name = upstream
+                            .get("DestinationName")
+                            .or_else(|| upstream.get("destination_name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if !upstream_name.is_empty()
+                            && !upstreams.iter().any(|u| u.name == upstream_name)
+                        {
+                            upstreams.push(ServiceTopologySummary {
+                                name: upstream_name,
+                                datacenter: dc.clone(),
+                                namespace: "default".to_string(),
+                                intention: ServiceTopologyIntention {
+                                    allowed: true,
+                                    has_permissions: false,
+                                    external_source: String::new(),
+                                },
+                            });
                         }
                     }
                 }
@@ -508,7 +516,7 @@ pub async fn ui_service_topology(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(topology)
 }
 
@@ -586,6 +594,7 @@ pub async fn federation_state_list(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     naming_service: web::Data<Arc<NamingService>>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
@@ -603,7 +612,7 @@ pub async fn federation_state_list(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(vec![state])
 }
 
@@ -613,6 +622,7 @@ pub async fn federation_state_mesh_gateways(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     naming_service: web::Data<Arc<NamingService>>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
@@ -631,7 +641,7 @@ pub async fn federation_state_mesh_gateways(
             if instance
                 .metadata
                 .get("consul_kind")
-                .map_or(false, |k| k == "mesh-gateway")
+                .is_some_and(|k| k == "mesh-gateway")
             {
                 let dc = dc_config.datacenter.clone();
                 let entry = serde_json::json!({
@@ -645,7 +655,7 @@ pub async fn federation_state_mesh_gateways(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(gateways_by_dc)
 }
 
@@ -656,6 +666,7 @@ pub async fn federation_state_get(
     dc_config: web::Data<ConsulDatacenterConfig>,
     naming_service: web::Data<Arc<NamingService>>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
@@ -677,7 +688,7 @@ pub async fn federation_state_get(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(state)
 }
 
@@ -691,6 +702,7 @@ pub async fn assign_service_virtual_ip(
     acl_service: web::Data<AclService>,
     naming_service: web::Data<Arc<NamingService>>,
     body: web::Json<AssignServiceVIPsRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
@@ -704,10 +716,12 @@ pub async fn assign_service_virtual_ip(
         naming_service.get_instances("public", "DEFAULT_GROUP", &request.service_name, "", false);
     let found = !instances.is_empty();
 
-    HttpResponse::Ok().json(AssignServiceVIPsResponse {
-        service_name: request.service_name,
-        found,
-    })
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(AssignServiceVIPsResponse {
+            service_name: request.service_name,
+            found,
+        })
 }
 
 #[cfg(test)]

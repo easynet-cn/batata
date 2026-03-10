@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -328,6 +329,7 @@ pub async fn generate_peering_token(
     acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     body: web::Json<PeeringGenerateTokenRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
@@ -335,7 +337,9 @@ pub async fn generate_peering_token(
     }
 
     match peering_service.generate_token(body.into_inner()) {
-        Ok(resp) => HttpResponse::Ok().json(resp),
+        Ok(resp) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(resp),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -346,6 +350,7 @@ pub async fn establish_peering(
     acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     body: web::Json<PeeringEstablishRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
@@ -353,7 +358,9 @@ pub async fn establish_peering(
     }
 
     match peering_service.establish(body.into_inner()) {
-        Ok(()) => HttpResponse::Ok().json(serde_json::json!({})),
+        Ok(()) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(serde_json::json!({})),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -365,6 +372,7 @@ pub async fn get_peering(
     peering_service: web::Data<ConsulPeeringService>,
     path: web::Path<String>,
     _query: web::Query<PeeringQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
@@ -377,7 +385,9 @@ pub async fn get_peering(
     }
 
     match peering_service.get_peering(&name) {
-        Some(peering) => HttpResponse::Ok().json(peering),
+        Some(peering) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(peering),
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
         }
@@ -391,6 +401,7 @@ pub async fn delete_peering(
     peering_service: web::Data<ConsulPeeringService>,
     path: web::Path<String>,
     _query: web::Query<PeeringQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
@@ -403,7 +414,9 @@ pub async fn delete_peering(
     }
 
     if peering_service.delete_peering(&name) {
-        HttpResponse::Ok().finish()
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
     }
@@ -415,13 +428,16 @@ pub async fn list_peerings(
     acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     _query: web::Query<PeeringQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(peering_service.list_peerings())
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(peering_service.list_peerings())
 }
 
 // ============================================================================
@@ -434,6 +450,7 @@ pub async fn generate_peering_token_persistent(
     acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     body: web::Json<PeeringGenerateTokenRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
@@ -441,7 +458,9 @@ pub async fn generate_peering_token_persistent(
     }
 
     match peering_service.generate_token(body.into_inner()) {
-        Ok(resp) => HttpResponse::Ok().json(resp),
+        Ok(resp) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(resp),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -452,6 +471,7 @@ pub async fn establish_peering_persistent(
     acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     body: web::Json<PeeringEstablishRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
@@ -459,7 +479,9 @@ pub async fn establish_peering_persistent(
     }
 
     match peering_service.establish(body.into_inner()) {
-        Ok(()) => HttpResponse::Ok().json(serde_json::json!({})),
+        Ok(()) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(serde_json::json!({})),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -471,6 +493,7 @@ pub async fn get_peering_persistent(
     peering_service: web::Data<ConsulPeeringService>,
     path: web::Path<String>,
     _query: web::Query<PeeringQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
@@ -483,7 +506,9 @@ pub async fn get_peering_persistent(
     }
 
     match peering_service.get_peering(&name) {
-        Some(peering) => HttpResponse::Ok().json(peering),
+        Some(peering) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(peering),
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
         }
@@ -497,6 +522,7 @@ pub async fn delete_peering_persistent(
     peering_service: web::Data<ConsulPeeringService>,
     path: web::Path<String>,
     _query: web::Query<PeeringQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", true);
     if !authz.allowed {
@@ -509,7 +535,9 @@ pub async fn delete_peering_persistent(
     }
 
     if peering_service.delete_peering(&name) {
-        HttpResponse::Ok().finish()
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
     }
@@ -521,13 +549,16 @@ pub async fn list_peerings_persistent(
     acl_service: web::Data<AclService>,
     peering_service: web::Data<ConsulPeeringService>,
     _query: web::Query<PeeringQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(peering_service.list_peerings())
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(peering_service.list_peerings())
 }
 
 #[cfg(test)]

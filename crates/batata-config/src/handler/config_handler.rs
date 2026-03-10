@@ -2,7 +2,8 @@
 // Implements handlers for configuration management requests
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use futures::future::join_all;
 use tonic::Status;
@@ -31,10 +32,35 @@ use batata_api::grpc::Payload;
 use batata_api::remote::model::{RequestTrait, ResponseCode, ResponseTrait};
 use batata_common::error;
 use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
+use batata_core::{GrpcResource, PermissionAction};
 use batata_server_common::model::AppState;
 
 /// Maximum number of gray versions per config (consistent with Nacos default)
 const MAX_GRAY_VERSION_COUNT: usize = 10;
+
+use crate::model::gray_rule::GrayRule;
+
+/// Cached parsed gray rules to avoid re-parsing on every config query.
+/// Key: gray_rule JSON string, Value: parsed gray rule (Arc-wrapped for shared ownership).
+/// TTL of 30 seconds ensures stale rules are evicted quickly after updates.
+static GRAY_RULE_CACHE: LazyLock<moka::sync::Cache<String, Arc<dyn GrayRule>>> =
+    LazyLock::new(|| {
+        moka::sync::Cache::builder()
+            .max_capacity(1000)
+            .time_to_live(Duration::from_secs(30))
+            .build()
+    });
+
+/// Parse a gray rule from JSON, using a cache to avoid redundant parsing.
+fn cached_parse_gray_rule(gray_rule_json: &str) -> Option<Arc<dyn GrayRule>> {
+    if let Some(cached) = GRAY_RULE_CACHE.get(gray_rule_json) {
+        return Some(cached);
+    }
+    let rule = crate::model::gray_rule::parse_gray_rule(gray_rule_json)?;
+    let arc_rule: Arc<dyn GrayRule> = Arc::from(rule);
+    GRAY_RULE_CACHE.insert(gray_rule_json.to_string(), arc_rule.clone());
+    Some(arc_rule)
+}
 
 /// Check if adding a new gray version would exceed the max count.
 /// Returns true if over the limit (and the gray_name doesn't already exist).
@@ -103,11 +129,11 @@ async fn find_matching_gray_config(
         return None;
     }
 
-    // Parse and sort by priority (higher priority first)
+    // Parse (with caching) and sort by priority (higher priority first)
     let mut candidates: Vec<_> = grays
         .iter()
         .filter_map(|gray| {
-            let rule = crate::model::gray_rule::parse_gray_rule(&gray.gray_rule)?;
+            let rule = cached_parse_gray_rule(&gray.gray_rule)?;
             Some((gray, rule))
         })
         .collect();
@@ -235,6 +261,26 @@ impl PayloadHandler for ConfigQueryHandler {
 
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Config
+    }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = ConfigQueryRequest::from(payload);
+        let tenant = if request.config_request.tenant.is_empty() {
+            "public"
+        } else {
+            &request.config_request.tenant
+        };
+        Some((
+            GrpcResource::config(
+                tenant,
+                &request.config_request.group,
+                &request.config_request.data_id,
+            ),
+            PermissionAction::Read,
+        ))
     }
 }
 
@@ -546,6 +592,26 @@ impl PayloadHandler for ConfigPublishHandler {
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Config
     }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = ConfigPublishRequest::from(payload);
+        let tenant = if request.config_request.tenant.is_empty() {
+            "public"
+        } else {
+            &request.config_request.tenant
+        };
+        Some((
+            GrpcResource::config(
+                tenant,
+                &request.config_request.group,
+                &request.config_request.data_id,
+            ),
+            PermissionAction::Write,
+        ))
+    }
 }
 
 impl ConfigPublishHandler {
@@ -755,6 +821,26 @@ impl PayloadHandler for ConfigRemoveHandler {
 
     fn resource_type(&self) -> batata_core::ResourceType {
         batata_core::ResourceType::Config
+    }
+
+    fn resource_from_payload(
+        &self,
+        payload: &batata_api::grpc::Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = ConfigRemoveRequest::from(payload);
+        let tenant = if request.config_request.tenant.is_empty() {
+            "public"
+        } else {
+            &request.config_request.tenant
+        };
+        Some((
+            GrpcResource::config(
+                tenant,
+                &request.config_request.group,
+                &request.config_request.data_id,
+            ),
+            PermissionAction::Write,
+        ))
     }
 }
 

@@ -319,10 +319,9 @@ impl ConfigPersistence for EmbeddedPersistService {
 
         // Get existing config for history
         let existing = self.reader.get_config(data_id, group, namespace_id)?;
-        if existing.is_none() {
+        let Some(existing) = existing else {
             return Ok(false);
-        }
-        let existing = existing.unwrap();
+        };
 
         // Delete the config
         self.delete_key(CF_CONFIG, &key)?;

@@ -1058,6 +1058,7 @@ mod tests {
                     crate::model::ConsulDatacenterConfig::default(),
                 ))
                 .app_data(web::Data::new(crate::peering::ConsulPeeringService::new()))
+                .app_data(web::Data::new(crate::index_provider::ConsulIndexProvider::new()))
                 .service(consul_test_routes()),
         )
         .await

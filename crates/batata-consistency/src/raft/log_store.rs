@@ -223,20 +223,6 @@ impl RocksLogStore {
 
         Ok(None)
     }
-
-    /// Get an entry by index
-    #[allow(dead_code)]
-    fn get_entry(&self, index: u64) -> Result<Option<Entry<TypeConfig>>, StorageError<NodeId>> {
-        let key = Self::encode_log_index(index);
-        match self.db.get_cf(self.cf_logs(), &key) {
-            Ok(Some(bytes)) => {
-                let entry = Self::deserialize_entry(&bytes)?;
-                Ok(Some(entry))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => Err(logs_error(e, ErrorVerb::Read)),
-        }
-    }
 }
 
 impl RaftLogReader<TypeConfig> for RocksLogStore {

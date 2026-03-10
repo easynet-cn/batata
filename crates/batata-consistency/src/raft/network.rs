@@ -155,31 +155,6 @@ impl RaftNetworkConnection {
             payload,
         }
     }
-
-    /// Convert proto Entry to openraft Entry
-    #[allow(dead_code)]
-    fn from_proto_entry(
-        entry: ProtoEntry,
-    ) -> Result<openraft::Entry<TypeConfig>, serde_json::Error> {
-        let log_id = Self::from_proto_log_id(entry.log_id)
-            .unwrap_or_else(|| openraft::LogId::new(openraft::CommittedLeaderId::new(0, 0), 0));
-
-        let payload = match entry.payload_type {
-            0 => openraft::EntryPayload::Blank,
-            1 => {
-                let req: super::request::RaftRequest = serde_json::from_slice(&entry.payload)?;
-                openraft::EntryPayload::Normal(req)
-            }
-            2 => {
-                let membership: openraft::Membership<NodeId, openraft::BasicNode> =
-                    serde_json::from_slice(&entry.payload)?;
-                openraft::EntryPayload::Membership(membership)
-            }
-            _ => openraft::EntryPayload::Blank,
-        };
-
-        Ok(openraft::Entry { log_id, payload })
-    }
 }
 
 impl RaftNetwork<TypeConfig> for RaftNetworkConnection {

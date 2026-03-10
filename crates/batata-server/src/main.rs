@@ -90,11 +90,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let is_console_remote = deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE;
 
     if is_console_remote
-        && configuration.console_remote_username() == "nacos"
-        && configuration.console_remote_password() == "nacos"
+        && configuration.console_remote_username() == "batata"
+        && configuration.console_remote_password() == "batata"
     {
         tracing::warn!(
-            "Console remote mode is using default credentials (nacos/nacos). \
+            "Console remote mode is using default credentials (batata/batata). \
              This is insecure for production environments. \
              Set 'nacos.console.remote.username' and 'nacos.console.remote.password'."
         );

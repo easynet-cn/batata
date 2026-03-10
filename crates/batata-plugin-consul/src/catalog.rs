@@ -12,6 +12,7 @@ use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
 use crate::config_entry::ConsulConfigEntryService;
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::{AgentService, ConsulDatacenterConfig, ConsulError, Weights};
 
 // ============================================================================
@@ -75,7 +76,12 @@ pub struct CatalogService {
 
 impl CatalogService {
     /// Create from a Nacos Instance
-    pub fn from_instance(instance: &NacosInstance, node_name: &str, datacenter: &str) -> Self {
+    pub fn from_instance(
+        instance: &NacosInstance,
+        node_name: &str,
+        datacenter: &str,
+        index: u64,
+    ) -> Self {
         let tags = instance
             .metadata
             .get("consul_tags")
@@ -135,8 +141,8 @@ impl CatalogService {
             },
             service_port: instance.port as u16,
             service_enable_tag_override: enable_tag_override,
-            create_index: 1,
-            modify_index: 1,
+            create_index: index,
+            modify_index: index,
         }
     }
 }
@@ -425,6 +431,7 @@ pub struct ConsulCatalogService {
     naming_service: Arc<NamingService>,
     node_name: String,
     datacenter: String,
+    index_provider: ConsulIndexProvider,
 }
 
 impl ConsulCatalogService {
@@ -437,7 +444,13 @@ impl ConsulCatalogService {
             naming_service,
             node_name: "batata-node".to_string(),
             datacenter,
+            index_provider: ConsulIndexProvider::default(),
         }
+    }
+
+    pub fn with_index_provider(mut self, index_provider: ConsulIndexProvider) -> Self {
+        self.index_provider = index_provider;
+        self
     }
 
     /// Get all unique service names with their tags
@@ -501,7 +514,14 @@ impl ConsulCatalogService {
                     true
                 }
             })
-            .map(|inst| CatalogService::from_instance(inst, &self.node_name, &self.datacenter))
+            .map(|inst| {
+                CatalogService::from_instance(
+                    inst,
+                    &self.node_name,
+                    &self.datacenter,
+                    self.index_provider.current_index(),
+                )
+            })
             .collect()
     }
 
@@ -532,8 +552,8 @@ impl ConsulCatalogService {
                         datacenter: self.datacenter.clone(),
                         tagged_addresses: None,
                         meta: None,
-                        create_index: 1,
-                        modify_index: 1,
+                        create_index: self.index_provider.current_index(),
+                        modify_index: self.index_provider.current_index(),
                     });
                 }
             }
@@ -582,8 +602,8 @@ impl ConsulCatalogService {
                             datacenter: self.datacenter.clone(),
                             tagged_addresses: None,
                             meta: None,
-                            create_index: 1,
-                            modify_index: 1,
+                            create_index: self.index_provider.current_index(),
+                            modify_index: self.index_provider.current_index(),
                         });
                     }
 
@@ -602,8 +622,8 @@ impl ConsulCatalogService {
                 datacenter: self.datacenter.clone(),
                 tagged_addresses: None,
                 meta: None,
-                create_index: 1,
-                modify_index: 1,
+                create_index: self.index_provider.current_index(),
+                modify_index: self.index_provider.current_index(),
             });
         }
 
@@ -809,10 +829,10 @@ impl ConsulCatalogService {
             let has_proxy = instances.iter().any(|i| {
                 i.metadata
                     .get("consul_kind")
-                    .map_or(false, |k| k == "connect-proxy")
+                    .is_some_and(|k| k == "connect-proxy")
             });
             let has_connect = instances.iter().any(|i| {
-                i.metadata.get("consul_connect").map_or(false, |c| {
+                i.metadata.get("consul_connect").is_some_and(|c| {
                     serde_json::from_str::<serde_json::Value>(c)
                         .ok()
                         .and_then(|v| v.get("Native").and_then(|n| n.as_bool()))
@@ -820,7 +840,7 @@ impl ConsulCatalogService {
                 })
             });
             let transparent_proxy = instances.iter().any(|i| {
-                i.metadata.get("consul_proxy").map_or(false, |p| {
+                i.metadata.get("consul_proxy").is_some_and(|p| {
                     serde_json::from_str::<serde_json::Value>(p)
                         .ok()
                         .and_then(|v| {
@@ -906,6 +926,7 @@ impl ConsulCatalogService {
                         instance,
                         &self.node_name,
                         &self.datacenter,
+                        self.index_provider.current_index(),
                     ));
                 }
             }
@@ -920,36 +941,29 @@ impl ConsulCatalogService {
     /// 2. It has Connect.Native=true and the service name matches
     fn is_connect_instance_for(instance: &NacosInstance, target_service: &str) -> bool {
         // Check if it's a connect-proxy targeting this service
-        if let Some(kind) = instance.metadata.get("consul_kind") {
-            if kind == "connect-proxy" {
-                if let Some(proxy_json) = instance.metadata.get("consul_proxy") {
-                    if let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json) {
-                        if let Some(dest) = proxy
-                            .get("DestinationServiceName")
-                            .or_else(|| proxy.get("destination_service_name"))
-                            .and_then(|v| v.as_str())
-                        {
-                            return dest == target_service;
-                        }
-                    }
-                }
-            }
+        if let Some(kind) = instance.metadata.get("consul_kind")
+            && kind == "connect-proxy"
+            && let Some(proxy_json) = instance.metadata.get("consul_proxy")
+            && let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json)
+            && let Some(dest) = proxy
+                .get("DestinationServiceName")
+                .or_else(|| proxy.get("destination_service_name"))
+                .and_then(|v| v.as_str())
+        {
+            return dest == target_service;
         }
 
         // Check if it's a native Connect service with matching name
-        if instance.service_name == target_service {
-            if let Some(connect_json) = instance.metadata.get("consul_connect") {
-                if let Ok(connect) = serde_json::from_str::<serde_json::Value>(connect_json) {
-                    if connect
-                        .get("Native")
-                        .or_else(|| connect.get("native"))
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                    {
-                        return true;
-                    }
-                }
-            }
+        if instance.service_name == target_service
+            && let Some(connect_json) = instance.metadata.get("consul_connect")
+            && let Ok(connect) = serde_json::from_str::<serde_json::Value>(connect_json)
+            && connect
+                .get("Native")
+                .or_else(|| connect.get("native"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            return true;
         }
 
         false
@@ -1010,132 +1024,132 @@ impl ConsulCatalogService {
         let mut entries = Vec::new();
 
         // For ingress-gateway, services are in "Listeners[].Services[]"
-        if gateway_kind == "ingress-gateway" {
-            if let Some(listeners) = extra.get("Listeners").and_then(|v| v.as_array()) {
-                for listener in listeners {
-                    let protocol = listener
-                        .get("Protocol")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("tcp")
-                        .to_string();
-                    let port = listener
-                        .get("Port")
-                        .and_then(|v| v.as_i64())
-                        .map(|p| p as i32);
+        if gateway_kind == "ingress-gateway"
+            && let Some(listeners) = extra.get("Listeners").and_then(|v| v.as_array())
+        {
+            for listener in listeners {
+                let protocol = listener
+                    .get("Protocol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tcp")
+                    .to_string();
+                let port = listener
+                    .get("Port")
+                    .and_then(|v| v.as_i64())
+                    .map(|p| p as i32);
 
-                    if let Some(services) = listener.get("Services").and_then(|v| v.as_array()) {
-                        for svc in services {
-                            let svc_name = svc
-                                .get("Name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            if svc_name.is_empty() {
-                                continue;
-                            }
-                            let hosts: Option<Vec<String>> = svc
-                                .get("Hosts")
-                                .and_then(|v| serde_json::from_value(v.clone()).ok());
-                            let from_wildcard = svc_name == "*";
-
-                            entries.push(GatewayServiceEntry {
-                                gateway: GatewayServiceName {
-                                    name: gateway_name.to_string(),
-                                    namespace: None,
-                                    partition: None,
-                                },
-                                service: GatewayServiceName {
-                                    name: svc_name,
-                                    namespace: None,
-                                    partition: None,
-                                },
-                                gateway_kind: gateway_kind.to_string(),
-                                port,
-                                protocol: protocol.clone(),
-                                hosts,
-                                from_wildcard,
-                                create_index,
-                                modify_index,
-                            });
+                if let Some(services) = listener.get("Services").and_then(|v| v.as_array()) {
+                    for svc in services {
+                        let svc_name = svc
+                            .get("Name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if svc_name.is_empty() {
+                            continue;
                         }
+                        let hosts: Option<Vec<String>> = svc
+                            .get("Hosts")
+                            .and_then(|v| serde_json::from_value(v.clone()).ok());
+                        let from_wildcard = svc_name == "*";
+
+                        entries.push(GatewayServiceEntry {
+                            gateway: GatewayServiceName {
+                                name: gateway_name.to_string(),
+                                namespace: None,
+                                partition: None,
+                            },
+                            service: GatewayServiceName {
+                                name: svc_name,
+                                namespace: None,
+                                partition: None,
+                            },
+                            gateway_kind: gateway_kind.to_string(),
+                            port,
+                            protocol: protocol.clone(),
+                            hosts,
+                            from_wildcard,
+                            create_index,
+                            modify_index,
+                        });
                     }
                 }
             }
         }
 
         // For terminating-gateway, services are in "Services[]"
-        if gateway_kind == "terminating-gateway" {
-            if let Some(services) = extra.get("Services").and_then(|v| v.as_array()) {
-                for svc in services {
-                    let svc_name = svc
-                        .get("Name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if svc_name.is_empty() {
-                        continue;
-                    }
-                    entries.push(GatewayServiceEntry {
-                        gateway: GatewayServiceName {
-                            name: gateway_name.to_string(),
-                            namespace: None,
-                            partition: None,
-                        },
-                        service: GatewayServiceName {
-                            name: svc_name,
-                            namespace: None,
-                            partition: None,
-                        },
-                        gateway_kind: gateway_kind.to_string(),
-                        port: None,
-                        protocol: "tcp".to_string(),
-                        hosts: None,
-                        from_wildcard: false,
-                        create_index,
-                        modify_index,
-                    });
+        if gateway_kind == "terminating-gateway"
+            && let Some(services) = extra.get("Services").and_then(|v| v.as_array())
+        {
+            for svc in services {
+                let svc_name = svc
+                    .get("Name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if svc_name.is_empty() {
+                    continue;
                 }
+                entries.push(GatewayServiceEntry {
+                    gateway: GatewayServiceName {
+                        name: gateway_name.to_string(),
+                        namespace: None,
+                        partition: None,
+                    },
+                    service: GatewayServiceName {
+                        name: svc_name,
+                        namespace: None,
+                        partition: None,
+                    },
+                    gateway_kind: gateway_kind.to_string(),
+                    port: None,
+                    protocol: "tcp".to_string(),
+                    hosts: None,
+                    from_wildcard: false,
+                    create_index,
+                    modify_index,
+                });
             }
         }
 
         // For api-gateway, services are in "Listeners[]"
-        if gateway_kind == "api-gateway" {
-            if let Some(listeners) = extra.get("Listeners").and_then(|v| v.as_array()) {
-                for listener in listeners {
-                    let protocol = listener
-                        .get("Protocol")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("tcp")
-                        .to_string();
-                    let port = listener
-                        .get("Port")
-                        .and_then(|v| v.as_i64())
-                        .map(|p| p as i32);
-                    let listener_name = listener
-                        .get("Name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("default");
+        if gateway_kind == "api-gateway"
+            && let Some(listeners) = extra.get("Listeners").and_then(|v| v.as_array())
+        {
+            for listener in listeners {
+                let protocol = listener
+                    .get("Protocol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("tcp")
+                    .to_string();
+                let port = listener
+                    .get("Port")
+                    .and_then(|v| v.as_i64())
+                    .map(|p| p as i32);
+                let listener_name = listener
+                    .get("Name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
 
-                    entries.push(GatewayServiceEntry {
-                        gateway: GatewayServiceName {
-                            name: gateway_name.to_string(),
-                            namespace: None,
-                            partition: None,
-                        },
-                        service: GatewayServiceName {
-                            name: listener_name.to_string(),
-                            namespace: None,
-                            partition: None,
-                        },
-                        gateway_kind: gateway_kind.to_string(),
-                        port,
-                        protocol,
-                        hosts: None,
-                        from_wildcard: false,
-                        create_index,
-                        modify_index,
-                    });
-                }
+                entries.push(GatewayServiceEntry {
+                    gateway: GatewayServiceName {
+                        name: gateway_name.to_string(),
+                        namespace: None,
+                        partition: None,
+                    },
+                    service: GatewayServiceName {
+                        name: listener_name.to_string(),
+                        namespace: None,
+                        partition: None,
+                    },
+                    gateway_kind: gateway_kind.to_string(),
+                    port,
+                    protocol,
+                    hosts: None,
+                    from_wildcard: false,
+                    create_index,
+                    modify_index,
+                });
             }
         }
 
@@ -1155,6 +1169,7 @@ pub async fn list_services(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -1166,7 +1181,7 @@ pub async fn list_services(
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
     let services = catalog.get_services(&namespace);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .insert_header(("X-Consul-Effective-Datacenter", dc))
         .json(services)
 }
@@ -1180,6 +1195,7 @@ pub async fn get_service(
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -1201,11 +1217,11 @@ pub async fn get_service(
 
     if services.is_empty() {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", "1"))
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
             .json(Vec::<CatalogService>::new())
     } else {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", "1"))
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
             .json(services)
     }
 }
@@ -1218,6 +1234,7 @@ pub async fn list_nodes(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for node read
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
@@ -1235,7 +1252,7 @@ pub async fn list_nodes(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(nodes)
 }
 
@@ -1247,6 +1264,7 @@ pub async fn get_node(
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let node_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -1259,7 +1277,7 @@ pub async fn get_node(
 
     match catalog.get_node(&namespace, &node_name) {
         Some(node_services) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", "1"))
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
             .json(node_services),
         None => HttpResponse::NotFound()
             .json(ConsulError::new(format!("Node not found: {}", node_name))),
@@ -1275,6 +1293,7 @@ pub async fn register(
     dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
     body: web::Json<CatalogRegistration>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
     let mut registration = body.into_inner();
@@ -1296,7 +1315,10 @@ pub async fn register(
     }
 
     if catalog.register(&registration, &namespace) {
-        HttpResponse::Ok().json(true)
+        let idx = index_provider.increment();
+        HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", idx.to_string()))
+            .json(true)
     } else {
         HttpResponse::InternalServerError().json(ConsulError::new("Registration failed"))
     }
@@ -1311,6 +1333,7 @@ pub async fn deregister(
     _dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
     body: web::Json<CatalogDeregistration>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
     let deregistration = body.into_inner();
@@ -1332,7 +1355,10 @@ pub async fn deregister(
     }
 
     catalog.deregister(&deregistration, &namespace);
-    HttpResponse::Ok().json(true)
+    let idx = index_provider.increment();
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", idx.to_string()))
+        .json(true)
 }
 
 /// GET /v1/catalog/datacenters
@@ -1340,6 +1366,7 @@ pub async fn deregister(
 pub async fn list_datacenters(
     dc_config: web::Data<ConsulDatacenterConfig>,
     peering_service: web::Data<crate::peering::ConsulPeeringService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let mut datacenters = vec![dc_config.datacenter.clone()];
 
@@ -1352,7 +1379,9 @@ pub async fn list_datacenters(
         }
     }
 
-    HttpResponse::Ok().json(datacenters)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(datacenters)
 }
 
 /// GET /v1/internal/ui/services
@@ -1363,6 +1392,7 @@ pub async fn ui_services(
     acl_service: web::Data<AclService>,
     _dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
@@ -1374,7 +1404,7 @@ pub async fn ui_services(
     let summaries = catalog.get_service_summary(&namespace);
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(summaries)
 }
 
@@ -1387,6 +1417,7 @@ pub async fn get_connect_service(
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -1405,7 +1436,7 @@ pub async fn get_connect_service(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(services)
 }
 
@@ -1418,6 +1449,7 @@ pub async fn get_node_services(
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let node_name = path.into_inner();
     let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
@@ -1438,7 +1470,7 @@ pub async fn get_node_services(
                 services: node_services.services.into_values().collect(),
             };
             HttpResponse::Ok()
-                .insert_header(("X-Consul-Index", "1"))
+                .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
                 .json(list)
         }
         None => HttpResponse::NotFound()
@@ -1454,6 +1486,7 @@ pub async fn get_gateway_services(
     catalog: web::Data<ConsulCatalogService>,
     config_entry_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let gateway_name = path.into_inner();
 
@@ -1465,7 +1498,7 @@ pub async fn get_gateway_services(
     let gateway_services =
         catalog.get_gateway_services_from_config(&gateway_name, &config_entry_service);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", "1"))
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(gateway_services)
 }
 
@@ -1499,7 +1532,7 @@ mod tests {
             .metadata
             .insert("consul_tags".to_string(), r#"["http", "api"]"#.to_string());
 
-        let catalog_service = CatalogService::from_instance(&instance, "node1", "dc1");
+        let catalog_service = CatalogService::from_instance(&instance, "node1", "dc1", 1);
 
         assert_eq!(catalog_service.service_name, "web");
         assert_eq!(catalog_service.service_port, 8080);

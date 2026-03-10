@@ -23,7 +23,7 @@ pub const LDAP_AUTH_PLUGIN_TYPE: &str = "ldap";
 pub const GLOBAL_ADMIN_ROLE: &str = "ROLE_ADMIN";
 pub const AUTHORIZATION_HEADER: &str = "Authorization";
 pub const TOKEN_PREFIX: &str = "Bearer ";
-pub const DEFAULT_USER: &str = "nacos";
+pub const DEFAULT_USER: &str = "batata";
 pub const PARAM_USERNAME: &str = "username";
 pub const PARAM_PASSWORD: &str = "password";
 pub const CONSOLE_RESOURCE_NAME_PREFIX: &str = "console/";
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(GLOBAL_ADMIN_ROLE, "ROLE_ADMIN");
         assert_eq!(AUTHORIZATION_HEADER, "Authorization");
         assert_eq!(TOKEN_PREFIX, "Bearer ");
-        assert_eq!(DEFAULT_USER, "nacos");
+        assert_eq!(DEFAULT_USER, "batata");
         assert_eq!(DEFAULT_TOKEN_EXPIRE_SECONDS, 18000);
     }
 

@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -368,6 +369,7 @@ pub async fn list_config_entries(
     config_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<String>,
     _query: web::Query<ConfigEntryListParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -383,7 +385,9 @@ pub async fn list_config_entries(
     }
 
     let entries = config_service.list_entries(&kind);
-    HttpResponse::Ok().json(entries)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(entries)
 }
 
 /// GET /v1/config/{kind}/{name} - Read a specific config entry
@@ -393,6 +397,7 @@ pub async fn get_config_entry(
     config_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<(String, String)>,
     _query: web::Query<ConfigEntryListParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -401,7 +406,9 @@ pub async fn get_config_entry(
 
     let (kind, name) = path.into_inner();
     match config_service.get_entry(&kind, &name) {
-        Some(entry) => HttpResponse::Ok().json(entry),
+        Some(entry) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(entry),
         None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
     }
 }
@@ -413,6 +420,7 @@ pub async fn apply_config_entry(
     config_service: web::Data<ConsulConfigEntryService>,
     query: web::Query<ConfigEntryApplyParams>,
     body: web::Json<ConfigEntryRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
@@ -428,7 +436,9 @@ pub async fn apply_config_entry(
     }
 
     match config_service.apply_entry(entry_req, query.cas) {
-        Ok(success) => HttpResponse::Ok().json(success),
+        Ok(success) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(success),
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
     }
 }
@@ -440,6 +450,7 @@ pub async fn delete_config_entry(
     config_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<(String, String)>,
     query: web::Query<ConfigEntryDeleteParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
@@ -450,9 +461,13 @@ pub async fn delete_config_entry(
     match config_service.delete_entry(&kind, &name, query.cas) {
         Ok(success) => {
             if query.cas.is_some() {
-                HttpResponse::Ok().json(success)
+                HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .json(success)
             } else {
-                HttpResponse::Ok().json(serde_json::json!({}))
+                HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .json(serde_json::json!({}))
             }
         }
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
@@ -470,6 +485,7 @@ pub async fn list_config_entries_persistent(
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     path: web::Path<String>,
     _query: web::Query<ConfigEntryListParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -485,7 +501,9 @@ pub async fn list_config_entries_persistent(
     }
 
     let entries = config_service.list_entries(&kind).await;
-    HttpResponse::Ok().json(entries)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(entries)
 }
 
 /// GET /v1/config/{kind}/{name} - Read config entry (persistent)
@@ -495,6 +513,7 @@ pub async fn get_config_entry_persistent(
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     path: web::Path<(String, String)>,
     _query: web::Query<ConfigEntryListParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -503,7 +522,9 @@ pub async fn get_config_entry_persistent(
 
     let (kind, name) = path.into_inner();
     match config_service.get_entry(&kind, &name).await {
-        Some(entry) => HttpResponse::Ok().json(entry),
+        Some(entry) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(entry),
         None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
     }
 }
@@ -515,6 +536,7 @@ pub async fn apply_config_entry_persistent(
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     query: web::Query<ConfigEntryApplyParams>,
     body: web::Json<ConfigEntryRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
@@ -530,7 +552,9 @@ pub async fn apply_config_entry_persistent(
     }
 
     match config_service.apply_entry(entry_req, query.cas).await {
-        Ok(success) => HttpResponse::Ok().json(success),
+        Ok(success) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(success),
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
     }
 }
@@ -542,6 +566,7 @@ pub async fn delete_config_entry_persistent(
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     path: web::Path<(String, String)>,
     query: web::Query<ConfigEntryDeleteParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
@@ -552,9 +577,13 @@ pub async fn delete_config_entry_persistent(
     match config_service.delete_entry(&kind, &name, query.cas).await {
         Ok(success) => {
             if query.cas.is_some() {
-                HttpResponse::Ok().json(success)
+                HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .json(success)
             } else {
-                HttpResponse::Ok().json(serde_json::json!({}))
+                HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .json(serde_json::json!({}))
             }
         }
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -297,6 +298,7 @@ impl ConsulCoordinateServicePersistent {
 pub async fn get_coordinate_datacenters(
     coord_service: web::Data<ConsulCoordinateService>,
     peering_service: web::Data<crate::peering::ConsulPeeringService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let mut dc_maps = coord_service.get_datacenters();
 
@@ -312,7 +314,9 @@ pub async fn get_coordinate_datacenters(
         }
     }
 
-    HttpResponse::Ok().json(dc_maps)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(dc_maps)
 }
 
 /// GET /v1/coordinate/nodes - List LAN coordinates for nodes
@@ -321,6 +325,7 @@ pub async fn get_coordinate_nodes(
     acl_service: web::Data<AclService>,
     coord_service: web::Data<ConsulCoordinateService>,
     query: web::Query<CoordinateQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
@@ -328,7 +333,9 @@ pub async fn get_coordinate_nodes(
     }
 
     let entries = coord_service.get_nodes(query.segment.as_deref());
-    HttpResponse::Ok().json(entries)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(entries)
 }
 
 /// GET /v1/coordinate/node/{node} - Read a node's coordinates
@@ -338,6 +345,7 @@ pub async fn get_coordinate_node(
     coord_service: web::Data<ConsulCoordinateService>,
     path: web::Path<String>,
     _query: web::Query<CoordinateQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
@@ -346,7 +354,9 @@ pub async fn get_coordinate_node(
 
     let node = path.into_inner();
     match coord_service.get_node(&node) {
-        Some(entries) => HttpResponse::Ok().json(entries),
+        Some(entries) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(entries),
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node)))
         }
@@ -379,6 +389,7 @@ pub async fn update_coordinate(
 pub async fn get_coordinate_datacenters_persistent(
     coord_service: web::Data<ConsulCoordinateServicePersistent>,
     peering_service: web::Data<crate::peering::ConsulPeeringService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let mut dc_maps = coord_service.get_datacenters();
 
@@ -394,7 +405,9 @@ pub async fn get_coordinate_datacenters_persistent(
         }
     }
 
-    HttpResponse::Ok().json(dc_maps)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(dc_maps)
 }
 
 /// GET /v1/coordinate/nodes (persistent)
@@ -403,6 +416,7 @@ pub async fn get_coordinate_nodes_persistent(
     acl_service: web::Data<AclService>,
     coord_service: web::Data<ConsulCoordinateServicePersistent>,
     query: web::Query<CoordinateQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
@@ -410,7 +424,9 @@ pub async fn get_coordinate_nodes_persistent(
     }
 
     let entries = coord_service.get_nodes(query.segment.as_deref());
-    HttpResponse::Ok().json(entries)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(entries)
 }
 
 /// GET /v1/coordinate/node/{node} (persistent)
@@ -420,6 +436,7 @@ pub async fn get_coordinate_node_persistent(
     coord_service: web::Data<ConsulCoordinateServicePersistent>,
     path: web::Path<String>,
     _query: web::Query<CoordinateQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
     if !authz.allowed {
@@ -428,7 +445,9 @@ pub async fn get_coordinate_node_persistent(
 
     let node = path.into_inner();
     match coord_service.get_node(&node) {
-        Some(entries) => HttpResponse::Ok().json(entries),
+        Some(entries) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(entries),
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node)))
         }

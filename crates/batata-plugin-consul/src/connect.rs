@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -442,6 +443,7 @@ pub async fn get_discovery_chain(
     connect_service: web::Data<ConsulConnectService>,
     path: web::Path<String>,
     _query: web::Query<DiscoveryChainQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -449,7 +451,9 @@ pub async fn get_discovery_chain(
     }
 
     let service_name = path.into_inner();
-    HttpResponse::Ok().json(connect_service.get_discovery_chain(&service_name))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(connect_service.get_discovery_chain(&service_name))
 }
 
 /// GET /v1/exported-services - List exported services
@@ -458,13 +462,16 @@ pub async fn list_exported_services(
     acl_service: web::Data<AclService>,
     connect_service: web::Data<ConsulConnectService>,
     _query: web::Query<ServiceVisibilityQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(connect_service.list_exported_services())
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(connect_service.list_exported_services())
 }
 
 /// GET /v1/imported-services - List imported services
@@ -473,13 +480,16 @@ pub async fn list_imported_services(
     acl_service: web::Data<AclService>,
     connect_service: web::Data<ConsulConnectService>,
     _query: web::Query<ServiceVisibilityQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(connect_service.list_imported_services())
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(connect_service.list_imported_services())
 }
 
 /// POST /v1/discovery-chain/{service} - Read discovery chain with overrides
@@ -490,6 +500,7 @@ pub async fn post_discovery_chain(
     path: web::Path<String>,
     _query: web::Query<DiscoveryChainQueryParams>,
     body: web::Json<DiscoveryChainOverrides>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -498,6 +509,7 @@ pub async fn post_discovery_chain(
 
     let service_name = path.into_inner();
     HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
@@ -512,6 +524,7 @@ pub async fn get_discovery_chain_persistent(
     connect_service: web::Data<ConsulConnectService>,
     path: web::Path<String>,
     _query: web::Query<DiscoveryChainQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -519,7 +532,9 @@ pub async fn get_discovery_chain_persistent(
     }
 
     let service_name = path.into_inner();
-    HttpResponse::Ok().json(connect_service.get_discovery_chain(&service_name))
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(connect_service.get_discovery_chain(&service_name))
 }
 
 /// POST /v1/discovery-chain/{service} (persistent)
@@ -530,6 +545,7 @@ pub async fn post_discovery_chain_persistent(
     path: web::Path<String>,
     _query: web::Query<DiscoveryChainQueryParams>,
     body: web::Json<DiscoveryChainOverrides>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -538,6 +554,7 @@ pub async fn post_discovery_chain_persistent(
 
     let service_name = path.into_inner();
     HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
@@ -547,13 +564,16 @@ pub async fn list_exported_services_persistent(
     acl_service: web::Data<AclService>,
     connect_service: web::Data<ConsulConnectService>,
     _query: web::Query<ServiceVisibilityQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(connect_service.list_exported_services())
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(connect_service.list_exported_services())
 }
 
 /// GET /v1/imported-services (persistent)
@@ -562,13 +582,16 @@ pub async fn list_imported_services_persistent(
     acl_service: web::Data<AclService>,
     connect_service: web::Data<ConsulConnectService>,
     _query: web::Query<ServiceVisibilityQueryParams>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok().json(connect_service.list_imported_services())
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(connect_service.list_imported_services())
 }
 
 #[cfg(test)]

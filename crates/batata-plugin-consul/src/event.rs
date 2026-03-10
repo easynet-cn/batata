@@ -10,6 +10,7 @@ use dashmap::DashMap;
 use sea_orm::DatabaseConnection;
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::model::{ConsulError, EventFireParams, EventFireRequest, EventListParams, UserEvent};
 
 // ConfigService storage constants for events
@@ -355,6 +356,7 @@ pub async fn fire_event(
     query: web::Query<EventFireParams>,
     body: Option<web::Json<EventFireRequest>>,
     acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let name = path.into_inner();
 
@@ -372,7 +374,9 @@ pub async fn fire_event(
     let service = ConsulEventService::new();
     let event = service.fire_event(&name, payload, &node_filter, &service_filter, &tag_filter);
 
-    HttpResponse::Ok().json(event)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(event)
 }
 
 /// GET /v1/event/list
@@ -381,6 +385,7 @@ pub async fn list_events(
     req: HttpRequest,
     query: web::Query<EventListParams>,
     acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for event read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, "", false);
@@ -396,7 +401,9 @@ pub async fn list_events(
         query.tag.as_deref(),
     );
 
-    HttpResponse::Ok().json(events)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(events)
 }
 
 // ============================================================================
@@ -412,6 +419,7 @@ pub async fn fire_event_persistent(
     body: Option<web::Json<EventFireRequest>>,
     acl_service: web::Data<AclService>,
     event_service: web::Data<ConsulEventServicePersistent>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let name = path.into_inner();
 
@@ -430,7 +438,9 @@ pub async fn fire_event_persistent(
         .fire_event(&name, payload, &node_filter, &service_filter, &tag_filter)
         .await;
 
-    HttpResponse::Ok().json(event)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(event)
 }
 
 /// GET /v1/event/list (Persistent)
@@ -440,6 +450,7 @@ pub async fn list_events_persistent(
     query: web::Query<EventListParams>,
     acl_service: web::Data<AclService>,
     event_service: web::Data<ConsulEventServicePersistent>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for event read
     let authz = acl_service.authorize_request(&req, ResourceType::Query, "", false);
@@ -456,7 +467,9 @@ pub async fn list_events_persistent(
         )
         .await;
 
-    HttpResponse::Ok().json(events)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(events)
 }
 
 #[cfg(test)]

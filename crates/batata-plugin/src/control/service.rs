@@ -110,7 +110,7 @@ impl SlidingWindowLimiter {
     pub fn try_acquire(&self) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let current_window = now / self.window_seconds;
@@ -154,7 +154,7 @@ impl SlidingWindowLimiter {
     pub fn remaining(&self) -> u32 {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let current_window = now / self.window_seconds;

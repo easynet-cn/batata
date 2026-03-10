@@ -15,6 +15,7 @@ use batata_consistency::raft::request::RaftRequest;
 use batata_consistency::raft::state_machine::CF_CONSUL_SESSIONS;
 
 use crate::acl::{AclService, ResourceType};
+use crate::index_provider::ConsulIndexProvider;
 use crate::kv::ConsulKVService;
 use crate::model::{ConsulError, Session, SessionCreateRequest, SessionCreateResponse};
 
@@ -229,7 +230,7 @@ impl ConsulSessionService {
         };
 
         if let Some(ref raft) = self.raft_node {
-            let stored_json = serde_json::to_string(&stored).unwrap();
+            let stored_json = serde_json::to_string(&stored).unwrap_or_default();
             match raft
                 .write(RaftRequest::ConsulSessionCreate {
                     session_id: session_id.clone(),
@@ -321,7 +322,7 @@ impl ConsulSessionService {
         stored.last_renewed_unix = current_unix_secs();
 
         if let Some(ref raft) = self.raft_node {
-            let stored_json = serde_json::to_string(&stored).unwrap();
+            let stored_json = serde_json::to_string(&stored).unwrap_or_default();
             match raft
                 .write(RaftRequest::ConsulSessionRenew {
                     session_id: session_id.to_string(),
@@ -520,6 +521,7 @@ pub async fn create_session(
     session_service: web::Data<ConsulSessionService>,
     acl_service: web::Data<AclService>,
     body: web::Json<SessionCreateRequest>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for session write
     let authz = acl_service.authorize_request(&req, ResourceType::Session, "", true);
@@ -532,7 +534,9 @@ pub async fn create_session(
         id: session.id.clone(),
     };
 
-    HttpResponse::Ok().json(response)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(response)
 }
 
 /// PUT /v1/session/destroy/{uuid}
@@ -543,6 +547,7 @@ pub async fn destroy_session(
     kv_service: web::Data<ConsulKVService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let session_id = path.into_inner();
 
@@ -556,7 +561,9 @@ pub async fn destroy_session(
     kv_service.release_session(&session_id).await;
 
     let destroyed = session_service.destroy_session(&session_id).await;
-    HttpResponse::Ok().json(destroyed)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(destroyed)
 }
 
 /// GET /v1/session/info/{uuid}
@@ -566,6 +573,7 @@ pub async fn get_session_info(
     session_service: web::Data<ConsulSessionService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let session_id = path.into_inner();
 
@@ -575,9 +583,14 @@ pub async fn get_session_info(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    let idx = index_provider.current_index().to_string();
     match session_service.get_session(&session_id) {
-        Some(session) => HttpResponse::Ok().json(vec![session]),
-        None => HttpResponse::Ok().json(Vec::<Session>::new()),
+        Some(session) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", idx))
+            .json(vec![session]),
+        None => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", idx))
+            .json(Vec::<Session>::new()),
     }
 }
 
@@ -587,6 +600,7 @@ pub async fn list_sessions(
     req: HttpRequest,
     session_service: web::Data<ConsulSessionService>,
     acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for session read
     let authz = acl_service.authorize_request(&req, ResourceType::Session, "", false);
@@ -598,7 +612,9 @@ pub async fn list_sessions(
     session_service.cleanup_expired();
 
     let sessions = session_service.list_sessions();
-    HttpResponse::Ok().json(sessions)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(sessions)
 }
 
 /// GET /v1/session/node/{node}
@@ -608,6 +624,7 @@ pub async fn list_node_sessions(
     session_service: web::Data<ConsulSessionService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let node = path.into_inner();
 
@@ -618,7 +635,9 @@ pub async fn list_node_sessions(
     }
 
     let sessions = session_service.list_node_sessions(&node);
-    HttpResponse::Ok().json(sessions)
+    HttpResponse::Ok()
+        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .json(sessions)
 }
 
 /// PUT /v1/session/renew/{uuid}
@@ -628,6 +647,7 @@ pub async fn renew_session(
     session_service: web::Data<ConsulSessionService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
+    index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let session_id = path.into_inner();
 
@@ -638,7 +658,9 @@ pub async fn renew_session(
     }
 
     match session_service.renew_session(&session_id).await {
-        Some(session) => HttpResponse::Ok().json(vec![session]),
+        Some(session) => HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .json(vec![session]),
         None => HttpResponse::NotFound().json(ConsulError::new("Session not found or expired")),
     }
 }
