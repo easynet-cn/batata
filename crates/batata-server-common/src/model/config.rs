@@ -7,7 +7,6 @@ use std::time::Duration;
 use clap::Parser;
 use config::Config;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
-use serde_yaml::Value as YamlValue;
 
 use batata_auth::model::{DEFAULT_TOKEN_EXPIRE_SECONDS, TOKEN_EXPIRE_SECONDS};
 
@@ -71,72 +70,6 @@ fn extract_property_overrides() -> (Vec<(String, String)>, Vec<String>) {
     (overrides, filtered_args)
 }
 
-/// Pre-process YAML: rename top-level `nacos:` key to `batata:` for compatibility.
-///
-/// If YAML has both `nacos:` and `batata:`, deep-merge `nacos:` into `batata:` (batata wins).
-/// After this step, all nacos-namespace config lives under `batata:`.
-fn preprocess_yaml(yaml_content: &str) -> String {
-    let mut root: YamlValue =
-        serde_yaml::from_str(yaml_content).expect("Failed to parse YAML configuration file");
-
-    if let YamlValue::Mapping(ref mut map) = root {
-        // 1. Handle nested `nacos:` top-level key → rename to `batata:`
-        let nacos_key = YamlValue::String("nacos".to_string());
-        let batata_key = YamlValue::String("batata".to_string());
-
-        if let Some(nacos_val) = map.remove(&nacos_key) {
-            let batata_val = map.remove(&batata_key);
-            let merged = match batata_val {
-                Some(existing) => deep_merge(nacos_val, existing),
-                None => nacos_val,
-            };
-            map.insert(batata_key, merged);
-        }
-
-        // 2. Handle flat dotted keys: "nacos.xxx.yyy" → "batata.xxx.yyy"
-        let prefix = "nacos.";
-        let renames: Vec<(YamlValue, YamlValue, YamlValue)> = map
-            .iter()
-            .filter_map(|(k, v)| {
-                if let YamlValue::String(key_str) = k
-                    && let Some(suffix) = key_str.strip_prefix(prefix)
-                {
-                    let new_key = format!("batata.{suffix}");
-                    return Some((k.clone(), YamlValue::String(new_key), v.clone()));
-                }
-                None
-            })
-            .collect();
-
-        for (old_key, new_key, val) in renames {
-            map.remove(&old_key);
-            // If there's already a `batata.xxx.yyy` key, it takes priority (don't overwrite)
-            map.entry(new_key).or_insert(val);
-        }
-    }
-
-    serde_yaml::to_string(&root).expect("Failed to serialize merged YAML")
-}
-
-/// Deep-merge two YAML values. `override_val` takes priority on conflict.
-fn deep_merge(base: YamlValue, override_val: YamlValue) -> YamlValue {
-    match (base, override_val) {
-        (YamlValue::Mapping(mut base_map), YamlValue::Mapping(override_map)) => {
-            for (k, v) in override_map {
-                let merged = if let Some(base_v) = base_map.remove(&k) {
-                    deep_merge(base_v, v)
-                } else {
-                    v
-                };
-                base_map.insert(k, merged);
-            }
-            YamlValue::Mapping(base_map)
-        }
-        // For non-mapping types, override wins
-        (_, override_val) => override_val,
-    }
-}
-
 /// Try to parse a string value as bool, int, or float (for env var type coercion).
 fn try_parse_env_value(s: &str) -> config::Value {
     if s.eq_ignore_ascii_case("true") {
@@ -156,26 +89,19 @@ fn try_parse_env_value(s: &str) -> config::Value {
 
 /// Collect environment variable overrides for a given prefix, mapped to config keys.
 ///
-/// - `NACOS_*`: prefix is remapped to `batata.` (e.g., `NACOS_SERVER_MAIN_PORT` → `batata.server.main.port`)
-/// - `BATATA_*`: prefix is kept as `batata.` (e.g., `BATATA_SERVER_MAIN_PORT` → `batata.server.main.port`)
+/// `BATATA_*`: prefix is mapped to `batata.` (e.g., `BATATA_SERVER_MAIN_PORT` → `batata.server.main.port`)
 ///
 /// Returns sorted Vec to ensure deterministic override order.
-fn collect_env_overrides(prefix: &str, remap_to_batata: bool) -> Vec<(String, config::Value)> {
+fn collect_env_overrides(prefix: &str) -> Vec<(String, config::Value)> {
     let prefix_with_sep = format!("{prefix}_");
     let mut overrides: Vec<(String, config::Value)> = std::env::vars()
         .filter_map(|(key, value)| {
             let rest = key.strip_prefix(&prefix_with_sep)?;
-            let config_key = if remap_to_batata {
-                // NACOS_SERVER_MAIN_PORT → batata.server.main.port
-                format!("batata.{}", rest.to_lowercase().replace('_', "."))
-            } else {
-                // BATATA_SERVER_MAIN_PORT → batata.server.main.port (keep_prefix equivalent)
-                format!(
-                    "{}.{}",
-                    prefix.to_lowercase(),
-                    rest.to_lowercase().replace('_', ".")
-                )
-            };
+            let config_key = format!(
+                "{}.{}",
+                prefix.to_lowercase(),
+                rest.to_lowercase().replace('_', ".")
+            );
             Some((config_key, try_parse_env_value(&value)))
         })
         .collect();
@@ -191,36 +117,20 @@ impl Configuration {
         // Step 2: Parse clap from filtered args
         let args = Cli::parse_from(filtered_args);
 
-        // Step 3: Pre-process YAML — rename nacos: → batata: for compatibility
+        // Step 3: Load YAML config file
         let config_file = args
             .config_file
             .as_deref()
             .unwrap_or("conf/application.yml");
-        let yaml_content = std::fs::read_to_string(config_file).map_err(|e| {
-            anyhow::anyhow!("Failed to read configuration file '{}': {}", config_file, e)
-        })?;
-        let merged_yaml = preprocess_yaml(&yaml_content);
 
         // Step 4: Build config with layered sources (lowest to highest priority)
         let mut config_builder = Config::builder()
-            // Priority 4 (lowest): Pre-processed YAML (nacos: already merged into batata:)
-            .add_source(config::File::from_str(
-                &merged_yaml,
-                config::FileFormat::Yaml,
-            ));
+            // Priority 4 (lowest): YAML config file
+            .add_source(config::File::with_name(config_file));
 
-        // Priority 3: NACOS_* and BATATA_* env vars (manual processing)
-        // Both are remapped to batata.* keys. BATATA_* applied after NACOS_* so it wins.
-        let nacos_env = collect_env_overrides("NACOS", true);
-        let batata_env = collect_env_overrides("BATATA", false);
+        // Priority 3: BATATA_* env vars (manual processing)
+        let batata_env = collect_env_overrides("BATATA");
 
-        // Apply NACOS_* first (lower priority)
-        for (key, value) in &nacos_env {
-            config_builder = config_builder
-                .set_override(key, value.clone())
-                .map_err(|e| anyhow::anyhow!("Failed to set NACOS_ env override for {key}: {e}"))?;
-        }
-        // Apply BATATA_* second (higher priority, overwrites NACOS_* for same keys)
         for (key, value) in &batata_env {
             config_builder = config_builder
                 .set_override(key, value.clone())
@@ -294,7 +204,21 @@ impl Configuration {
     }
 
     pub fn version(&self) -> String {
-        self.config.get_string("batata.version").unwrap_or_default()
+        self.config.get_string("nacos.version").unwrap_or_default()
+    }
+
+    pub fn nacos_version(&self) -> String {
+        self.config.get_string("nacos.version").unwrap_or_default()
+    }
+
+    pub fn consul_version(&self) -> String {
+        self.config
+            .get_string("batata.plugin.consul.version")
+            .unwrap_or_default()
+    }
+
+    pub fn batata_version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_string()
     }
 
     // ========================================================================
@@ -334,12 +258,11 @@ impl Configuration {
     /// Read raw cluster member addresses from config or cluster.conf.
     /// Returns addresses in `ip:port` format (with optional `?raft_port=xxx` params).
     pub fn cluster_member_addresses(&self) -> Vec<String> {
-        // 1. Try nacos.member.list / batata.member.list
+        // 1. Try batata.member.list
         let addresses: Vec<String> = self
             .config
             .get_string("batata.member.list")
             .ok()
-            .or_else(|| self.config.get_string("nacos.member.list").ok())
             .map(|list| {
                 list.split(',')
                     .map(|s| s.trim().to_string())
@@ -400,13 +323,13 @@ impl Configuration {
     /// Resolve remote server addresses for console remote mode.
     ///
     /// Resolution order (same as cluster member lookup):
-    /// 1. `nacos.member.list` config property (comma-separated `ip:port`)
+    /// 1. `batata.member.list` config property (comma-separated `ip:port`)
     /// 2. `conf/cluster.conf` file (one `ip:port` per line, skip `#` comments)
-    /// 3. Fall back to `nacos.console.remote.server_addr` (legacy config)
+    /// 3. Fall back to `batata.console.remote.server_addr`
     ///
     /// Each address is normalized to `http://ip:port` format.
     pub fn resolve_remote_server_addrs(&self) -> Vec<String> {
-        // 1. Try nacos.member.list
+        // 1. Try batata.member.list
         let mut addresses: Vec<String> = self
             .config
             .get_string("batata.member.list")
@@ -431,7 +354,7 @@ impl Configuration {
             }
         }
 
-        // 3. Fall back to nacos.console.remote.server_addr (legacy)
+        // 3. Fall back to batata.console.remote.server_addr
         if addresses.is_empty() {
             let server_addr = self.console_remote_server_addr();
             return server_addr
@@ -655,7 +578,7 @@ impl Configuration {
 
         let mut providers = HashMap::new();
 
-        // Load providers from config (e.g., nacos.core.auth.oauth.providers.google)
+        // Load providers from config (e.g., batata.core.auth.oauth.providers.google)
         // This is a simplified version - actual implementation would iterate over providers
         if let Ok(provider_config) = self.config.get_table("batata.core.auth.oauth.providers") {
             for (name, value) in provider_config {
@@ -1215,6 +1138,20 @@ impl Configuration {
             .unwrap_or_else(|_| self.consul_datacenter())
     }
 
+    /// Get the default Nacos namespace for Consul API mapping (default: "public")
+    pub fn consul_default_namespace(&self) -> String {
+        self.config
+            .get_string("batata.plugin.consul.default_namespace")
+            .unwrap_or_else(|_| "public".to_string())
+    }
+
+    /// Get the default Nacos group for Consul API mapping (default: "DEFAULT_GROUP")
+    pub fn consul_default_group(&self) -> String {
+        self.config
+            .get_string("batata.plugin.consul.default_group")
+            .unwrap_or_else(|_| "DEFAULT_GROUP".to_string())
+    }
+
     // ========================================================================
     // MCP Registry Configuration
     // ========================================================================
@@ -1734,49 +1671,4 @@ mod tests {
         assert_eq!(resolved, "/etc/batata/app.yml");
     }
 
-    #[test]
-    fn test_preprocess_yaml_flat_dotted_keys() {
-        // Flat dotted keys like "nacos.server.main.port: 8848" should be renamed
-        let yaml = "nacos.server.main.port: 8848\nnacos.console.port: 8081\n";
-        let result = preprocess_yaml(yaml);
-        assert!(result.contains("batata.server.main.port"));
-        assert!(result.contains("batata.console.port"));
-        assert!(!result.contains("nacos.server.main.port"));
-        assert!(!result.contains("nacos.console.port"));
-    }
-
-    #[test]
-    fn test_preprocess_yaml_nested_key() {
-        // Nested nacos: key should be renamed to batata:
-        let yaml = "nacos:\n  standalone: true\n";
-        let result = preprocess_yaml(yaml);
-        assert!(result.contains("batata"));
-        assert!(!result.contains("nacos"));
-    }
-
-    #[test]
-    fn test_preprocess_yaml_batata_keys_not_overwritten() {
-        // If both nacos.x and batata.x exist, batata.x wins (not overwritten)
-        let yaml = "nacos.server.main.port: 8848\nbatata.server.main.port: 9090\n";
-        let result = preprocess_yaml(yaml);
-        // batata key should keep its value (9090), nacos key removed
-        let config = Config::builder()
-            .add_source(config::File::from_str(&result, config::FileFormat::Yaml))
-            .build()
-            .unwrap();
-        assert_eq!(
-            config.get_int("batata.server.main.port").unwrap(),
-            9090,
-            "Existing batata key should not be overwritten by nacos key"
-        );
-    }
-
-    #[test]
-    fn test_preprocess_yaml_non_nacos_keys_untouched() {
-        // Keys that don't start with nacos. should be left alone
-        let yaml = "batata.db.url: mysql://localhost\nother.key: value\n";
-        let result = preprocess_yaml(yaml);
-        assert!(result.contains("batata.db.url"));
-        assert!(result.contains("other.key"));
-    }
 }

@@ -344,11 +344,16 @@ pub async fn execute_query(
 
     // Execute the query by fetching service instances
     let service_name = &query.service.service;
-    let namespace = "public";
+    let namespace = &dc_config.default_namespace;
     let only_passing = query.service.only_passing;
 
-    let instances =
-        naming_service.get_instances(namespace, "DEFAULT_GROUP", service_name, "", only_passing);
+    let instances = naming_service.get_instances(
+        namespace,
+        &dc_config.default_group,
+        service_name,
+        "",
+        only_passing,
+    );
 
     // Convert to ServiceHealth format
     let nodes: Vec<ServiceHealth> = instances
@@ -375,10 +380,7 @@ pub async fn execute_query(
 
             let mut node_meta = std::collections::HashMap::new();
             node_meta.insert("consul-network-segment".to_string(), "".to_string());
-            node_meta.insert(
-                "consul-version".to_string(),
-                env!("CARGO_PKG_VERSION").to_string(),
-            );
+            node_meta.insert("consul-version".to_string(), dc_config.full_version());
 
             // Build service tagged addresses
             let service_tagged_addresses = instance

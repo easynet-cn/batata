@@ -14,7 +14,6 @@ use crate::index_provider::ConsulIndexProvider;
 use crate::model::{ConsulError, EventFireParams, EventFireRequest, EventListParams, UserEvent};
 
 // ConfigService storage constants for events
-const CONSUL_EVENT_NAMESPACE: &str = "public";
 const CONSUL_EVENT_GROUP: &str = "consul-events";
 
 /// Global event storage
@@ -139,6 +138,8 @@ pub struct ConsulEventServicePersistent {
     cache: Arc<DashMap<String, UserEvent>>,
     ltime: Arc<AtomicU64>,
     initialized: Arc<std::sync::atomic::AtomicBool>,
+    /// Default namespace for event storage
+    default_namespace: String,
 }
 
 impl ConsulEventServicePersistent {
@@ -149,7 +150,16 @@ impl ConsulEventServicePersistent {
             cache: Arc::new(DashMap::new()),
             ltime: Arc::new(AtomicU64::new(1)),
             initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            default_namespace: "public".to_string(),
         }
+    }
+
+    /// Create with a custom default namespace
+    pub fn with_namespace(mut self, namespace: String) -> Self {
+        if !namespace.is_empty() {
+            self.default_namespace = namespace;
+        }
+        self
     }
 
     fn event_data_id(event_id: &str) -> String {
@@ -167,7 +177,7 @@ impl ConsulEventServicePersistent {
             &self.db,
             1,
             1000,
-            CONSUL_EVENT_NAMESPACE,
+            &self.default_namespace,
             "event:*",
             CONSUL_EVENT_GROUP,
             "",
@@ -184,7 +194,7 @@ impl ConsulEventServicePersistent {
                     &self.db,
                     &info.data_id,
                     CONSUL_EVENT_GROUP,
-                    CONSUL_EVENT_NAMESPACE,
+                    &self.default_namespace,
                 )
                 .await
                     && let Ok(event) = serde_json::from_str::<UserEvent>(
@@ -213,7 +223,7 @@ impl ConsulEventServicePersistent {
             &self.db,
             &data_id,
             CONSUL_EVENT_GROUP,
-            CONSUL_EVENT_NAMESPACE,
+            &self.default_namespace,
             &content,
             "consul-event",
             "system",
@@ -240,7 +250,7 @@ impl ConsulEventServicePersistent {
             &self.db,
             &data_id,
             CONSUL_EVENT_GROUP,
-            CONSUL_EVENT_NAMESPACE,
+            &self.default_namespace,
             "",
             "127.0.0.1",
             "system",

@@ -14,6 +14,14 @@ pub struct ConsulDatacenterConfig {
     pub datacenter: String,
     /// The primary datacenter name (defaults to same as datacenter)
     pub primary_datacenter: String,
+    /// The Consul compatibility version (e.g., "1.22.5")
+    pub consul_version: String,
+    /// The Batata version (e.g., "0.1.0")
+    pub batata_version: String,
+    /// Default Nacos namespace for Consul API mapping (e.g., "public")
+    pub default_namespace: String,
+    /// Default Nacos group for Consul API mapping (e.g., "DEFAULT_GROUP")
+    pub default_group: String,
 }
 
 impl ConsulDatacenterConfig {
@@ -21,11 +29,39 @@ impl ConsulDatacenterConfig {
         Self {
             primary_datacenter: datacenter.clone(),
             datacenter,
+            consul_version: "1.22.5".to_string(),
+            batata_version: env!("CARGO_PKG_VERSION").to_string(),
+            default_namespace: "public".to_string(),
+            default_group: "DEFAULT_GROUP".to_string(),
         }
     }
 
     pub fn with_primary(mut self, primary: String) -> Self {
         self.primary_datacenter = primary;
+        self
+    }
+
+    pub fn with_consul_version(mut self, version: String) -> Self {
+        self.consul_version = version;
+        self
+    }
+
+    pub fn with_batata_version(mut self, version: String) -> Self {
+        self.batata_version = version;
+        self
+    }
+
+    pub fn with_default_namespace(mut self, ns: String) -> Self {
+        if !ns.is_empty() {
+            self.default_namespace = ns;
+        }
+        self
+    }
+
+    pub fn with_default_group(mut self, group: String) -> Self {
+        if !group.is_empty() {
+            self.default_group = group;
+        }
         self
     }
 
@@ -35,6 +71,23 @@ impl ConsulDatacenterConfig {
             .filter(|s| !s.is_empty())
             .unwrap_or(&self.datacenter)
             .to_string()
+    }
+
+    /// Resolve namespace from query parameter, falling back to default namespace
+    pub fn resolve_ns(&self, ns: &Option<String>) -> String {
+        ns.as_deref()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&self.default_namespace)
+            .to_string()
+    }
+
+    /// Full Consul-compatible version string (e.g., "1.22.5-batata-0.1.0")
+    pub fn full_version(&self) -> String {
+        if self.consul_version.is_empty() {
+            format!("batata-{}", self.batata_version)
+        } else {
+            format!("{}-batata-{}", self.consul_version, self.batata_version)
+        }
     }
 }
 
@@ -726,10 +779,7 @@ impl Default for Node {
 
         let mut meta = HashMap::new();
         meta.insert("consul-network-segment".to_string(), "".to_string());
-        meta.insert(
-            "consul-version".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-        );
+        meta.insert("consul-version".to_string(), "1.22.5".to_string());
 
         Self {
             id: uuid::Uuid::new_v4().to_string(),

@@ -13,8 +13,8 @@
 //!
 //! OAuth providers are configured via environment variables or application.yml:
 //! ```yaml
-//! nacos.core.auth.oauth.enabled: true
-//! nacos.core.auth.oauth.providers:
+//! batata.core.auth.oauth.enabled: true
+//! batata.core.auth.oauth.providers:
 //!   google:
 //!     client_id: ${GOOGLE_CLIENT_ID}
 //!     client_secret: ${GOOGLE_CLIENT_SECRET}

@@ -64,6 +64,8 @@ pub trait ServerPushHandler: Send + Sync + 'static {
 pub struct GrpcClientConfig {
     /// Server addresses (HTTP addresses, e.g., "127.0.0.1:8848")
     pub server_addrs: Vec<String>,
+    /// Server context path (e.g., "/nacos"). Default: "/nacos".
+    pub context_path: String,
     /// Username for authentication (empty to skip auth)
     pub username: String,
     /// Password for authentication
@@ -80,6 +82,7 @@ impl Default for GrpcClientConfig {
     fn default() -> Self {
         Self {
             server_addrs: vec!["127.0.0.1:8848".to_string()],
+            context_path: "/nacos".to_string(),
             username: String::new(),
             password: String::new(),
             module: "config".to_string(),
@@ -113,7 +116,12 @@ impl GrpcClient {
             } else {
                 format!("http://{}", config.server_addrs[0])
             };
-            AuthProvider::new(&auth_addr, &config.username, &config.password)?
+            AuthProvider::with_context_path(
+                &auth_addr,
+                &config.context_path,
+                &config.username,
+                &config.password,
+            )?
         };
 
         Ok(Self {
@@ -376,6 +384,7 @@ mod tests {
                 m.insert("env".to_string(), "prod".to_string());
                 m
             },
+            ..Default::default()
         };
         assert_eq!(config.server_addrs.len(), 2);
         assert_eq!(config.module, "naming");

@@ -251,10 +251,10 @@ curl -s -X POST http://127.0.0.1:8081/v3/auth/user/login \
 
 ### Cluster nodes not discovering each other
 
-Ensure `conf/cluster.conf` contains all node addresses, or set `nacos.member.list` in `conf/application.yml`:
+Ensure `conf/cluster.conf` contains all node addresses, or set `batata.member.list` in `conf/application.yml`:
 
 ```yaml
-nacos.member.list: "127.0.0.1:8848,127.0.0.1:8858,127.0.0.1:8868"
+batata.member.list: "127.0.0.1:8848,127.0.0.1:8858,127.0.0.1:8868"
 ```
 
 ### Embedded mode but using external DB

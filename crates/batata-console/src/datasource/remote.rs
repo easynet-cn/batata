@@ -35,9 +35,9 @@ use std::collections::HashMap;
 /// Build MaintainerClientConfig from server Configuration.
 ///
 /// Server discovery order (same as Nacos 3.x cluster member lookup):
-/// 1. `nacos.member.list` config property
+/// 1. `batata.member.list` config property
 /// 2. `conf/cluster.conf` file
-/// 3. `nacos.console.remote.server_addr` (legacy fallback)
+/// 3. `batata.console.remote.server_addr` (fallback)
 ///
 /// Authentication priority:
 /// 1. Server identity headers (no login needed, used for console-server trust)

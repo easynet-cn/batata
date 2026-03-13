@@ -1,545 +1,326 @@
 #
-# Copyright 1999-2025 Alibaba Group Holding Ltd.
+# Batata Configuration
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Batata is a Rust implementation compatible with Nacos 3.x.
+# All config keys use the `batata.*` prefix. Override any key via:
+#   - BATATA_* environment variables (e.g., BATATA_SERVER_MAIN_PORT=9090)
+#   - CLI property overrides (e.g., --batata.server.main.port=9090)
 #
 
-#--------------- Nacos Common Configurations ---------------#
+# =============================================================================
+# Server
+# =============================================================================
 
-#*************** Nacos port Related Configurations ***************#
-### Nacos Server Main port
-nacos.server.main.port: 8848
+# Main HTTP server port (SDK clients connect here)
+batata.server.main.port: 8848
 
-#*************** Network Related Configurations ***************#
-### If prefer hostname over ip for Nacos server addresses in cluster.conf:
-# nacos.inetutils.prefer-hostname-over-ip=false
+# Server web context path (used for HTTP API prefix, e.g., /nacos/v2/cs/*)
+batata.server.contextPath: /nacos
 
-### Specify local server's IP:
-# nacos.inetutils.ip-address=
+# Standalone mode: true = single node, false = cluster mode
+batata.standalone: true
 
-#*************** Datasource Related Configurations ***************#
-### Storage mode is auto-derived from batata.sql.init.platform + batata.standalone:
-###   batata.sql.init.platform = "mysql"/"postgresql" → External DB (requires db.url)
-###   batata.sql.init.platform = empty + standalone   → Embedded RocksDB (single node)
-###   batata.sql.init.platform = empty + cluster      → Distributed Raft + RocksDB (multi-node)
-### Database platform: mysql, postgresql, or empty (embedded RocksDB)
+# Deployment type: merged | server | console | serverWithMcp
+# - merged (default): Main Server (8848) + Console (8081) in same process
+# - server:           Main Server only (no console)
+# - console:          Console only (connects to remote server)
+# - serverWithMcp:    Main Server + MCP Registry (9080)
+#batata.deployment.type: merged
+
+# =============================================================================
+# Network
+# =============================================================================
+
+# Specify local server's IP (auto-detected if not set)
+#batata.inetutils.ip-address:
+
+# Prefer hostname over IP for cluster.conf addresses
+#batata.inetutils.prefer-hostname-over-ip: false
+
+# =============================================================================
+# Console
+# =============================================================================
+
+# Console HTTP server port
+batata.console.port: 8081
+
+# Console web context path (empty = root)
+batata.console.contextPath:
+
+# Enable/disable console UI
+#batata.console.ui.enabled: true
+
+# --- Console Remote Mode (used when deployment type is `console`) ---
+
+# Server context path for remote server communication
+batata.console.remote.server.context-path: /nacos
+
+# Remote server address (fallback if batata.member.list and cluster.conf are not configured)
+#batata.console.remote.server_addr: http://127.0.0.1:8848
+
+# Remote server credentials (used as fallback when server identity is not configured)
+#batata.console.remote.username: nacos
+#batata.console.remote.password: nacos
+
+# =============================================================================
+# Database
+# =============================================================================
+
+# Storage mode is auto-derived:
+#   platform = "mysql"/"postgresql"       → External DB (requires batata.db.url)
+#   platform = empty + standalone=true    → Embedded RocksDB (single node)
+#   platform = empty + standalone=false   → Distributed Raft + RocksDB (cluster)
 batata.sql.init.platform: mysql
 
-### RocksDB data directory for embedded modes (when batata.sql.init.platform is empty)
-#nacos.persistence.embedded.data_dir: data/rocksdb
-
-### nacos.plugin.datasource.log.enabled=true
-### Count of DB:
-### Connect URL of DB:
-### Use environment variable for security (e.g., export DATABASE_URL="mysql://user:pass@localhost:3306/batata")
-### For MySQL:
-# batata.db.url: mysql://user:password@localhost:3306/batata
-### For PostgreSQL:
-# batata.db.url: postgres://user:password@localhost:5432/batata
-### Default: use DATABASE_URL environment variable or --db-url CLI arg
+# Database connection URL
+# For MySQL:      mysql://user:password@localhost:3306/batata
+# For PostgreSQL: postgres://user:password@localhost:5432/batata
+# Also configurable via DATABASE_URL env var or --db-url CLI arg
 batata.db.url:
 
-### Database connection pool configuration
+# Connection pool settings
 batata.db.pool.max_connections: 100
 batata.db.pool.min_connections: 10
 batata.db.pool.connect_timeout: 30
 batata.db.pool.acquire_timeout: 30
 batata.db.pool.idle_timeout: 600
 batata.db.pool.max_lifetime: 1800
-### Enable SQL logging (true in dev, false in production)
 batata.db.pool.sqlx_logging: false
 
-#*************** Metrics Related Configurations ***************#
-### Metrics for prometheus
-#management.endpoints.web.exposure.include=prometheus
+# RocksDB data directory (for embedded modes only)
+#batata.persistence.embedded.data_dir: data/rocksdb
 
-### Metrics for elastic search
-management.metrics.export.elastic.enabled: false
-#management.metrics.export.elastic.host=http://localhost:9200
+# =============================================================================
+# Authentication
+# =============================================================================
 
-### Metrics for influx
-management.metrics.export.influx.enabled: false
-#management.metrics.export.influx.db=springboot
-#management.metrics.export.influx.uri=http://localhost:8086
-#management.metrics.export.influx.auto-create-db=true
-#management.metrics.export.influx.consistency=one
-#management.metrics.export.influx.compressed=true
+# Auth system type: nacos (default), ldap, or oauth
+batata.core.auth.system.type: nacos
 
-#*************** Core Related Configurations ***************#
+# Enable auth for each API surface
+batata.core.auth.enabled: true
+batata.core.auth.admin.enabled: true
+batata.core.auth.console.enabled: true
 
-### set the WorkerID manually
-# nacos.core.snowflake.worker-id=
+# Cache auth information (15s delay for auth updates when enabled)
+batata.core.auth.caching.enabled: true
 
-### Member-MetaData
-# nacos.core.member.meta.site=
-# nacos.core.member.meta.adweight=
-# nacos.core.member.meta.weight=
+# Server identity for trusted server-to-server communication
+# Used by InnerApi auth bypass and Console remote mode
+batata.core.auth.server.identity.key: nacos-server-key
+batata.core.auth.server.identity.value: nacos-server-value
 
-### MemberLookup
-### Addressing pattern category, If set, the priority is highest
-# nacos.core.member.lookup.type=[file,address-server]
+# JWT token configuration
+batata.core.auth.plugin.nacos.token.cache.enable: false
+batata.core.auth.plugin.nacos.token.expire.seconds: 18000
+# Secret key (Base64-encoded). Generate with: openssl rand -base64 32
+batata.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm
 
-## Set the cluster list with a configuration file or command-line argument
-# nacos.member.list=192.168.16.101:8847?raft_port=8807,192.168.16.101?raft_port=8808,192.168.16.101:8849?raft_port=8809
+# --- LDAP Configuration (when batata.core.auth.system.type=ldap) ---
+#batata.core.auth.ldap.url: ldap://localhost:389
+#batata.core.auth.ldap.basedc: dc=example,dc=org
+#batata.core.auth.ldap.userDn: cn=admin,${batata.core.auth.ldap.basedc}
+#batata.core.auth.ldap.password: admin
+#batata.core.auth.ldap.userdn: cn={0},dc=example,dc=org
+#batata.core.auth.ldap.filter.prefix: uid
+#batata.core.auth.ldap.case.sensitive: true
+#batata.core.auth.ldap.ignore.partial.result.exception: false
 
-## for AddressServerMemberLookup
-# Maximum number of retries to query the address server upon initialization
-# nacos.core.address-server.retry=5
-## Server domain name address of [address-server] mode
-# address.server.domain=jmenv.tbsite.net
-## Server port of [address-server] mode
-# address.server.port=8080
-## Request address of [address-server] mode
-# address.server.url=/nacos/serverlist
+# --- OAuth2/OIDC Configuration ---
+#batata.core.auth.oauth.enabled: false
+#batata.core.auth.oauth.user.creation: auto
+#batata.core.auth.oauth.role.sync: on_login
 
-#*************** JRaft Related Configurations ***************#
+# Auth URL ignore list
+batata.security.ignore.urls: /,/error,/**/*.css,/**/*.js,/**/*.html,/**/*.map,/**/*.svg,/**/*.png,/**/*.ico,/console-ui/public/**,/v1/auth/**,/v1/console/health/**,/actuator/**,/v1/console/server/**
 
-### Sets the Raft cluster election timeout, default value is 5 second
-# nacos.core.protocol.raft.data.election_timeout_ms=5000
-### Sets the amount of time the Raft snapshot will execute periodically, default is 30 minute
-# nacos.core.protocol.raft.data.snapshot_interval_secs=30
-### raft internal worker threads
-# nacos.core.protocol.raft.data.core_thread_num=8
-### Number of threads required for raft business request processing
-# nacos.core.protocol.raft.data.cli_service_thread_num=4
-### raft linear read strategy. Safe linear reads are used by default, that is, the Leader tenure is confirmed by heartbeat
-# nacos.core.protocol.raft.data.read_index_type=ReadOnlySafe
-### rpc request timeout, default 5 seconds
-# nacos.core.protocol.raft.data.rpc_request_timeout_ms=5000
-### enable to support prometheus service discovery
-#nacos.prometheus.metrics.enabled=true
+# =============================================================================
+# Rate Limiting
+# =============================================================================
 
-#*************** Distro Related Configurations ***************#
+# API rate limiting
+batata.ratelimit.enabled: false
+batata.ratelimit.max_requests: 10000
+batata.ratelimit.window_seconds: 60
 
-### Distro data sync delay time, when sync task delayed, task will be merged for same data key. Default 1 second.
-# nacos.core.protocol.distro.data.sync.delayMs=1000
-### Distro data sync timeout for one sync data, default 3 seconds.
-# nacos.core.protocol.distro.data.sync.timeoutMs=3000
-### Distro data sync retry delay time when sync data failed or timeout, same behavior with delayMs, default 3 seconds.
-# nacos.core.protocol.distro.data.sync.retryDelayMs=3000
-### Distro data verify interval time, verify synced data whether expired for a interval. Default 5 seconds.
-# nacos.core.protocol.distro.data.verify.intervalMs=5000
-### Distro data verify timeout for one verify, default 3 seconds.
-# nacos.core.protocol.distro.data.verify.timeoutMs=3000
-### Distro data load retry delay when load snapshot data failed, default 30 seconds.
-# nacos.core.protocol.distro.data.load.retryDelayMs=30000
-### enable to support prometheus service discovery
-#nacos.prometheus.metrics.enabled=true
+# Authentication rate limiting (brute force protection)
+batata.ratelimit.auth.enabled: false
+batata.ratelimit.auth.max_attempts: 5
+batata.ratelimit.auth.window_seconds: 60
+batata.ratelimit.auth.lockout_seconds: 300
 
-#*************** Grpc Configurations ***************#
+# =============================================================================
+# Config Module
+# =============================================================================
 
-### Sets the maximum message size allowed to be received on the server.
-#nacos.remote.server.grpc.sdk.max-inbound-message-size=10485760
-### Sets the time(milliseconds) without read activity before sending a keepalive ping. The typical default is two hours.
-#nacos.remote.server.grpc.sdk.keep-alive-time=7200000
-### Sets a time(milliseconds) waiting for read activity after sending a keepalive ping. Defaults to 20 seconds.
-#nacos.remote.server.grpc.sdk.keep-alive-timeout=20000
-### Sets a time(milliseconds) that specify the most aggressive keep-alive time clients are permitted to configure. The typical default is 5 minutes
-#nacos.remote.server.grpc.sdk.permit-keep-alive-time=300000
-### cluster grpc(inside the nacos server) configuration
-#nacos.remote.server.grpc.cluster.max-inbound-message-size=10485760
-### Sets the time(milliseconds) without read activity before sending a keepalive ping. The typical default is two hours.
-#nacos.remote.server.grpc.cluster.keep-alive-time=7200000
-### Sets a time(milliseconds) waiting for read activity after sending a keepalive ping. Defaults to 20 seconds.
-#nacos.remote.server.grpc.cluster.keep-alive-timeout=20000
-### Sets a time(milliseconds) that specify the most aggressive keep-alive time clients are permitted to configure. The typical default is 5 minutes
-#nacos.remote.server.grpc.cluster.permit-keep-alive-time=300000
-### Cluster client connection timeout in milliseconds. Default 5 seconds.
-#nacos.remote.server.grpc.cluster.connect-timeout=5000
-### Cluster client request timeout in milliseconds. Default 5 seconds.
-#nacos.remote.server.grpc.cluster.request-timeout=5000
-### Maximum retry count for cluster client requests. Default 3.
-#nacos.remote.server.grpc.cluster.max-retries=3
-### Retry delay in milliseconds between cluster client request retries. Default 500ms.
-#nacos.remote.server.grpc.cluster.retry-delay=500
-### Idle connection timeout in milliseconds. Connections unused for this duration will be removed. Default 5 minutes.
-#nacos.remote.server.grpc.cluster.idle-timeout=300000
+# Maximum retry times for config push
+batata.config.push.maxRetryTime: 50
 
-#*************** gRPC TLS Configurations ***************#
-### Enable TLS for SDK gRPC server (client connections)
-#nacos.remote.server.grpc.sdk.tls.enabled=false
-### Enable TLS for cluster gRPC server (inter-node communication)
-#nacos.remote.server.grpc.cluster.tls.enabled=false
+# Config retention days
+#batata.config.retention.days: 30
 
-### Path to the server certificate file (PEM format)
-#nacos.remote.server.grpc.tls.cert.path=/path/to/server.crt
-### Path to the server private key file (PEM format)
-#nacos.remote.server.grpc.tls.key.path=/path/to/server.key
-
-### Mutual TLS (mTLS) configuration
-### Enable mTLS to require client certificates
-#nacos.remote.server.grpc.tls.mtls.enabled=false
-### Path to the CA certificate for verifying client certificates
-#nacos.remote.server.grpc.tls.ca.cert.path=/path/to/ca.crt
-
-#*************** gRPC Client TLS Configurations (Cluster) ***************#
-### Enable TLS for cluster client connections (inter-node communication)
-#nacos.remote.client.grpc.cluster.tls.enabled=false
-### Path to client certificate for mTLS (optional)
-#nacos.remote.client.grpc.cluster.tls.cert.path=/path/to/client.crt
-### Path to client private key for mTLS (optional)
-#nacos.remote.client.grpc.cluster.tls.key.path=/path/to/client.key
-### Path to CA certificate for server verification
-#nacos.remote.client.grpc.cluster.tls.ca.cert.path=/path/to/ca.crt
-### Domain name for TLS SNI verification (optional)
-#nacos.remote.client.grpc.cluster.tls.domain=cluster.local
-
-#*************** Config Module Related Configurations ***************#
-
-### the maximum retry times for push
-nacos.config.push.maxRetryTime: 50
-
-#*************** Naming Module Related Configurations ***************#
-### Data dispatch task execution period in milliseconds:
-
-### If enable data warmup. If set to false, the server would accept request without local data preparation:
-# nacos.naming.data.warmup=true
-
-### If enable the instance auto expiration, kind like of health check of instance:
-# nacos.naming.expireInstance=true
-
-nacos.naming.empty-service.auto-clean: true
-nacos.naming.empty-service.clean.initial-delay-ms: 50000
-nacos.naming.empty-service.clean.period-time-ms: 30000
-
-#--------------- Nacos Web Server Configurations ---------------#
-
-#*************** Nacos Web Server Related Configurations ***************#
-### Nacos Server Web context path:
-nacos.server.contextPath: /nacos
-
-#*************** Access Log Related Configurations ***************#
-### If turn on the access log:
-# server.tomcat.accesslog.enabled=true
-
-### accesslog automatic cleaning time
-# server.tomcat.accesslog.max-days=30
-
-### The access log pattern:
-# server.tomcat.accesslog.pattern=%h %l %u %t "%r" %s %b %D %{User-Agent}i %{Request-Source}i
-
-### The directory of access log:
-# server.tomcat.basedir=file:.
-
-#*************** API Related Configurations ***************#
-### Include message field
-server.error.include-message: ALWAYS
-
-### Enabled for open API compatibility
-# nacos.core.api.compatibility.client.enabled=true
-### Enabled for admin API compatibility
-# nacos.core.api.compatibility.admin.enabled=false
-### Enabled for console API compatibility
-# nacos.core.api.compatibility.console.enabled=false
-
-#--------------- Nacos Console Configurations ---------------#
-
-#*************** Nacos Console Related Configurations ***************#
-### Nacos Console Main port
-nacos.console.port: 8081
-### Nacos Server Web context path:
-nacos.console.contextPath:
-
-### Console mode is auto-derived from nacos.deployment.type (-d flag):
-###   merged (default)  → Local console (in-process data access)
-###   server            → No console
-###   console           → Remote console (HTTP calls to Server)
-###   serverWithMcp     → Local console + MCP
-
-### Nacos Server context path, which link to nacos server `nacos.server.contextPath`, works when deployment type is `console`
-nacos.console.remote.server.context-path: /nacos
-
-### Remote Server configurations (used when deployment type is `console`)
-### Server addresses are resolved in order: nacos.member.list → conf/cluster.conf → server_addr below.
-### Typically, cluster.conf or nacos.member.list is already configured for cluster mode,
-### so no extra configuration is needed for console remote mode.
-#nacos.console.remote.server_addr: http://127.0.0.1:8848
-### Authentication: primary auth uses server identity headers (nacos.core.auth.server.identity.key/value).
-### JWT username/password is used as fallback when server identity is not configured.
-#nacos.console.remote.username: nacos
-#nacos.console.remote.password: nacos
-
-#************** Console UI Configuration ***************#
-
-### Turn on/off the nacos console ui.
-#nacos.console.ui.enabled=true
-
-#--------------- Nacos Plugin Configurations ---------------#
-
-#*************** CMDB Plugin Related Configurations ***************#
-### The interval to dump external CMDB in seconds:
-# nacos.cmdb.dumpTaskInterval=3600
-
-### The interval of polling data change event in seconds:
-# nacos.cmdb.eventTaskInterval=10
-
-### The interval of loading labels in seconds:
-# nacos.cmdb.labelTaskInterval=300
-
-### If turn on data loading task:
-# nacos.cmdb.loadDataAtStart=false
-
-#*************** Auth Plugin Related Configurations ***************#
-### The ignore urls of auth, will be deprecated in the future:
-nacos.security.ignore.urls: /,/error,/**/*.css,/**/*.js,/**/*.html,/**/*.map,/**/*.svg,/**/*.png,/**/*.ico,/console-ui/public/**,/v1/auth/**,/v1/console/health/**,/actuator/**,/v1/console/server/**
-
-### The auth system to use, default 'nacos' and 'ldap' is supported, other type should be implemented by yourself:
-nacos.core.auth.system.type: nacos
-
-### If turn on auth system:
-# Whether open nacos server API auth system
-nacos.core.auth.enabled: true
-# Whether open nacos admin API auth system
-nacos.core.auth.admin.enabled: true
-# Whether open nacos console API auth system
-nacos.core.auth.console.enabled: true
-
-### Turn on/off caching of auth information. By turning on this switch, the update of auth information would have a 15 seconds delay.
-nacos.core.auth.caching.enabled: true
-
-### worked when nacos.core.auth.enabled=true
-### Server identity key/value for trusted server-to-server communication.
-### Used by: (1) InnerApi auth bypass, (2) Console remote mode → Server trust (no JWT login needed).
-### When console is deployed separately (-d console), it sends these headers to the server,
-### and the server's AdminApi endpoints accept them as proof of identity (bypassing JWT).
-nacos.core.auth.server.identity.key: nacos-server-key
-nacos.core.auth.server.identity.value: nacos-server-value
-
-### worked when nacos.core.auth.system.type=nacos or nacos.core.auth.console.enabled=true
-### The token expiration in seconds:
-nacos.core.auth.plugin.nacos.token.cache.enable: false
-nacos.core.auth.plugin.nacos.token.expire.seconds: 18000
-### The default token (Base64 string):
-#nacos.core.auth.plugin.nacos.token.secret.key=VGhpc0lzTXlDdXN0b21TZWNyZXRLZXkwMTIzNDU2Nzg=
-nacos.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm
-
-### worked when nacos.core.auth.system.type=ldap，{0} is Placeholder,replace login username
-#nacos.core.auth.ldap.url=ldap://localhost:389
-#nacos.core.auth.ldap.basedc=dc=example,dc=org
-#nacos.core.auth.ldap.userDn=cn=admin,${nacos.core.auth.ldap.basedc}
-#nacos.core.auth.ldap.password=admin
-#nacos.core.auth.ldap.userdn=cn={0},dc=example,dc=org
-#nacos.core.auth.ldap.filter.prefix=uid
-#nacos.core.auth.ldap.case.sensitive=true
-#nacos.core.auth.ldap.ignore.partial.result.exception=false
-
-#*************** Rate Limiting Configurations ***************#
-### Enable API rate limiting
-nacos.ratelimit.enabled: false
-### Maximum requests per minute per IP for general API
-nacos.ratelimit.max_requests: 10000
-### Rate limit window duration in seconds
-nacos.ratelimit.window_seconds: 60
-
-### Authentication rate limiting (brute force protection)
-nacos.ratelimit.auth.enabled: false
-### Maximum login attempts before lockout
-nacos.ratelimit.auth.max_attempts: 5
-### Login attempt window in seconds
-nacos.ratelimit.auth.window_seconds: 60
-### Lockout duration in seconds after exceeding max attempts
-nacos.ratelimit.auth.lockout_seconds: 300
-
-#*************** Encryption Plugin Related Configurations ***************#
-### Enable configuration encryption
-nacos.config.encryption.enabled: false
-### Encryption plugin type (aes-gcm is the default and only supported type currently)
-nacos.config.encryption.plugin.type: aes-gcm
-### Encryption key (32-byte Base64-encoded key for AES-256)
-### Generate with: openssl rand -base64 32
-#nacos.config.encryption.key: YOUR_BASE64_ENCODED_32_BYTE_KEY
-### Encryption patterns - data_ids matching these patterns will be encrypted
-### Pattern type: prefix, suffix, contains, exact, regex
-nacos.config.encryption.patterns:
+# --- Config Encryption ---
+batata.config.encryption.enabled: false
+batata.config.encryption.plugin.type: aes-gcm
+# Encryption key (32-byte Base64-encoded). Generate with: openssl rand -base64 32
+#batata.config.encryption.key: YOUR_BASE64_ENCODED_32_BYTE_KEY
+# Encryption patterns (data_ids matching these patterns will be encrypted)
+batata.config.encryption.patterns:
   - type: prefix
     value: "cipher-"
-### Hot reload interval for encryption plugin configuration (milliseconds, 0 to disable)
-nacos.config.encryption.reload.interval.ms: 0
+# Hot reload interval in ms (0 = disabled)
+batata.config.encryption.reload.interval.ms: 0
 
-#*************** Control Plugin Related Configurations ***************#
-# plugin type
-#nacos.plugin.control.manager.type=nacos
+# =============================================================================
+# Naming Module
+# =============================================================================
 
-# local control rule storage dir, default ${nacos.home}/data/connection and ${nacos.home}/data/tps
-#nacos.plugin.control.rule.local.basedir=${nacos.home}
+# Enable instance auto-expiration (health check based)
+#batata.naming.expireInstance: true
 
-# external control rule storage type, if exist
-#nacos.plugin.control.rule.external.storage=
+# Enable data warmup (server waits for data sync before accepting requests)
+#batata.naming.data.warmup: false
 
-#*************** Config Change Plugin Related Configurations ***************#
-# webhook
-#nacos.core.config.plugin.webhook.enabled=false
-# It is recommended to use EB https://help.aliyun.com/document_detail/413974.html
-#nacos.core.config.plugin.webhook.url=http://localhost:8080/webhook/send?token=***
-# The content push max capacity ,byte
-#nacos.core.config.plugin.webhook.contentMaxCapacity=102400
+batata.naming.empty-service.auto-clean: true
+batata.naming.empty-service.clean.initial-delay-ms: 50000
+batata.naming.empty-service.clean.period-time-ms: 30000
 
-# whitelist
-#nacos.core.config.plugin.whitelist.enabled=false
-# The import file suffixs
-#nacos.core.config.plugin.whitelist.suffixs=xml,text,properties,yaml,html
-# fileformatcheck,which validate the import file of type and content
-#nacos.core.config.plugin.fileformatcheck.enabled=false
+# =============================================================================
+# Cluster
+# =============================================================================
 
-#*************** Istio Plugin Related Configurations ***************#
-### If turn on the MCP server:
-nacos.istio.mcp.server.enabled: false
+# Member list for cluster mode (alternative to conf/cluster.conf)
+# Format: comma-separated ip:port or ip:port?raft_port=xxx
+#batata.member.list: "192.168.1.10:8848,192.168.1.11:8848,192.168.1.12:8848"
 
-#*************** Consul Compatibility Plugin Configurations ***************#
-### Enable Consul API compatibility server on its own port
-nacos.plugin.consul.enabled: false
-### Consul compatibility server port (default: 8500, same as real Consul)
-nacos.plugin.consul.port: 8500
-### Consul data directory for RocksDB persistence (default: data/consul_rocksdb)
-nacos.plugin.consul.data_dir: data/consul_rocksdb
-### Register Consul as a service (default: true, only effective when consul.enabled=true)
-nacos.plugin.consul.register_self: true
-### Enable Consul ACL (default: false, Consul can work without ACL)
-nacos.plugin.consul.acl.enabled: false
-### Interval in seconds to reap services with critical health checks (default: 30)
-### Only deregisters services that have deregister_critical_service_after configured
-nacos.plugin.consul.check_reap_interval: 30
-### Consul datacenter name (default: dc1)
-nacos.plugin.consul.datacenter: dc1
-### Consul primary datacenter name (defaults to same as datacenter)
-# nacos.plugin.consul.primary_datacenter: dc1
+# Member lookup type: file (default) or address-server
+#batata.core.member.lookup.type: file
 
-#*************** MCP Registry Configurations ***************#
-### Enable MCP Registry server (official MCP Registry OpenAPI on separate port)
-### Automatically enabled when deployment type is 'serverWithMcp'
-nacos.ai.mcp.registry.enabled: false
-### MCP Registry server port (default: 9080)
-nacos.ai.mcp.registry.port: 9080
+# --- Raft Configuration ---
+#batata.core.protocol.raft.data.election_timeout_ms: 5000
+#batata.core.protocol.raft.data.snapshot_interval_secs: 30
+#batata.core.protocol.raft.data.core_thread_num: 8
+#batata.core.protocol.raft.data.rpc_request_timeout_ms: 5000
 
-#*************** Service Mesh / xDS Configurations ***************#
-### Enable xDS server for Envoy/Istio integration
-nacos.mesh.xds.enabled: false
-### xDS server port (default: 15010, standard xDS port)
-nacos.mesh.xds.port: 15010
-### xDS server identifier
-nacos.mesh.xds.server.id: batata-xds-server
-### Sync interval in milliseconds (how often to sync services to xDS)
-nacos.mesh.xds.sync.interval.ms: 5000
-### Whether to auto-generate default listeners for services
-nacos.mesh.xds.generate.listeners: true
-### Whether to auto-generate default routes for services
-nacos.mesh.xds.generate.routes: true
-### Default listener port for generated listeners
-nacos.mesh.xds.default.listener.port: 15001
-### Enable TLS for xDS server
-#nacos.mesh.xds.tls.enabled: false
-### Path to xDS server TLS certificate
-#nacos.mesh.xds.tls.cert.path: /path/to/xds-server.crt
-### Path to xDS server TLS private key
-#nacos.mesh.xds.tls.key.path: /path/to/xds-server.key
+# =============================================================================
+# gRPC
+# =============================================================================
 
-#--------------- Nacos Experimental Features Configurations ---------------#
+# --- SDK gRPC Server (client connections, port = main port + 1000) ---
+#batata.remote.server.grpc.sdk.max-inbound-message-size: 10485760
+#batata.remote.server.grpc.sdk.keep-alive-time: 7200000
+#batata.remote.server.grpc.sdk.keep-alive-timeout: 20000
+#batata.remote.server.grpc.sdk.permit-keep-alive-time: 300000
 
-#*************** K8s Related Configurations ***************#
-### If turn on the K8s sync:
-nacos.k8s.sync.enabled: false
+# --- Cluster gRPC Server (inter-node, port = main port + 1001) ---
+#batata.remote.server.grpc.cluster.max-inbound-message-size: 10485760
+#batata.remote.server.grpc.cluster.keep-alive-time: 7200000
+#batata.remote.server.grpc.cluster.keep-alive-timeout: 20000
+#batata.remote.server.grpc.cluster.permit-keep-alive-time: 300000
+#batata.remote.server.grpc.cluster.connect-timeout: 5000
+#batata.remote.server.grpc.cluster.request-timeout: 5000
+#batata.remote.server.grpc.cluster.max-retries: 3
+#batata.remote.server.grpc.cluster.retry-delay: 500
+#batata.remote.server.grpc.cluster.idle-timeout: 300000
 
-### If use the Java API from an application outside a kubernetes cluster
-#nacos.k8s.sync.outsideCluster=false
-#nacos.k8s.sync.kubeConfig=/.kube/config
+# --- gRPC Server TLS ---
+#batata.remote.server.grpc.sdk.tls.enabled: false
+#batata.remote.server.grpc.cluster.tls.enabled: false
+#batata.remote.server.grpc.tls.cert.path: /path/to/server.crt
+#batata.remote.server.grpc.tls.key.path: /path/to/server.key
+#batata.remote.server.grpc.tls.mtls.enabled: false
+#batata.remote.server.grpc.tls.ca.cert.path: /path/to/ca.crt
 
-#--------------- Nacos Cluster Configurations ---------------#
+# --- gRPC Client TLS (Cluster inter-node) ---
+#batata.remote.client.grpc.cluster.tls.enabled: false
+#batata.remote.client.grpc.cluster.tls.cert.path: /path/to/client.crt
+#batata.remote.client.grpc.cluster.tls.key.path: /path/to/client.key
+#batata.remote.client.grpc.cluster.tls.ca.cert.path: /path/to/ca.crt
+#batata.remote.client.grpc.cluster.tls.domain: cluster.local
 
-#*************** Cluster Mode Related Configurations ***************#
-### Standalone mode (default: true)
-### Set to false to enable cluster mode
-nacos.standalone: true
+# =============================================================================
+# Logging
+# =============================================================================
 
-### Member list for cluster mode (alternative to cluster.conf file)
-### Format: comma-separated list of ip:port or ip:port?raft_port=xxx
-#nacos.member.list: "192.168.1.10:8848,192.168.1.11:8848,192.168.1.12:8848"
+# Log directory path
+batata.logs.path: logs
 
-### Member lookup type: file (default) or address-server
-#nacos.core.member.lookup.type: file
+# Console output (stdout)
+batata.logs.console.enabled: true
 
-### Address server configuration (when lookup.type=address-server)
-#address.server.domain: jmenv.tbsite.net
-#address.server.port: 8080
-#address.server.url: /nacos/serverlist
+# File logging (creates per-module log files: batata.log, naming-server.log, etc.)
+batata.logs.file.enabled: true
 
-### Maximum retries for address server on startup
-#nacos.core.address-server.retry: 5
+# Log level: trace, debug, info, warn, error
+batata.logs.level: info
 
-#*************** Logging Configurations ***************#
-### Log directory path (default: ~/batata/logs)
-nacos.logs.path: logs
+# Environment variables:
+#   BATATA_LOG_DIR, BATATA_LOG_CONSOLE, BATATA_LOG_FILE, BATATA_LOG_LEVEL
+#   RUST_LOG: Fine-grained per-module control (e.g., batata_config=debug,info)
 
-### Enable console output (default: true)
-nacos.logs.console.enabled: true
+# =============================================================================
+# OpenTelemetry (Distributed Tracing)
+# =============================================================================
 
-### Enable file logging (default: true)
-### When enabled, creates the following log files (inspired by Nacos):
-###   batata.log          - Root logger (captures all events)
-###   naming-server.log   - Service discovery (batata_naming)
-###   config-server.log   - Configuration management (batata_config)
-###   nacos-cluster.log   - Cluster communication (batata_core::cluster)
-###   core-auth.log       - Authentication and authorization (batata_auth)
-###   remote.log          - Remote/gRPC communication (batata_api)
-###   console.log         - Console management API (batata_console)
-###   protocol-raft.log   - Raft consensus protocol (batata_consistency)
-###   plugin-control.log  - Plugin system (batata_plugin*)
-###   mesh.log            - Service mesh / xDS (batata_mesh)
-###   persistence.log     - Database persistence (batata_persistence)
-nacos.logs.file.enabled: true
+batata.otel.enabled: false
+#batata.otel.exporter: otlp
+#batata.otel.endpoint: http://localhost:4317
+batata.otel.service_name: batata
+batata.otel.sampling_ratio: 0.1
+batata.otel.export_timeout_secs: 10
 
-### Log level: trace, debug, info, warn, error (default: info)
-nacos.logs.level: info
+# =============================================================================
+# Consul Compatibility Plugin
+# =============================================================================
 
-### Environment variables for logging configuration:
-### BATATA_LOG_DIR: Override log directory path
-### BATATA_LOG_CONSOLE: Enable/disable console logging (true/false)
-### BATATA_LOG_FILE: Enable/disable file logging (true/false)
-### BATATA_LOG_LEVEL: Set log level (trace/debug/info/warn/error)
-### BATATA_LOG_FILE_LEVEL: Separate file log level (defaults to BATATA_LOG_LEVEL)
-### RUST_LOG: Fine-grained per-module control (e.g., batata_config=debug,batata_naming=info,info)
+batata.plugin.consul.enabled: false
+batata.plugin.consul.port: 8500
+batata.plugin.consul.version: 1.22.5
+batata.plugin.consul.datacenter: dc1
+#batata.plugin.consul.primary_datacenter: dc1
+batata.plugin.consul.data_dir: data/consul_rocksdb
+batata.plugin.consul.register_self: true
+batata.plugin.consul.acl.enabled: false
+batata.plugin.consul.check_reap_interval: 30
+batata.plugin.consul.default_namespace: public
+batata.plugin.consul.default_group: DEFAULT_GROUP
 
-#*************** Distributed Tracing (OpenTelemetry) ***************#
-### Enable OpenTelemetry distributed tracing
-nacos.otel.enabled: false
+# =============================================================================
+# MCP Registry
+# =============================================================================
 
-### Exporter type: otlp (default), jaeger, zipkin, console
-#nacos.otel.exporter: otlp
+# Official MCP Registry OpenAPI server (automatically enabled with serverWithMcp deployment)
+batata.ai.mcp.registry.enabled: false
+batata.ai.mcp.registry.port: 9080
 
-### OTLP endpoint (for otlp exporter)
-#nacos.otel.endpoint: http://localhost:4317
+# =============================================================================
+# Service Mesh (xDS / Istio)
+# =============================================================================
 
-### Jaeger endpoint (for jaeger exporter)
-#nacos.otel.jaeger.endpoint: http://localhost:14268/api/traces
+batata.mesh.xds.enabled: false
+batata.mesh.xds.port: 15010
+batata.mesh.xds.server.id: batata-xds-server
+batata.mesh.xds.sync.interval.ms: 5000
+batata.mesh.xds.generate.listeners: true
+batata.mesh.xds.generate.routes: true
+batata.mesh.xds.default.listener.port: 15001
+#batata.mesh.xds.tls.enabled: false
+#batata.mesh.xds.tls.cert.path: /path/to/xds-server.crt
+#batata.mesh.xds.tls.key.path: /path/to/xds-server.key
 
-### Zipkin endpoint (for zipkin exporter)
-#nacos.otel.zipkin.endpoint: http://localhost:9411/api/v2/spans
+batata.istio.mcp.server.enabled: false
 
-### Service name for traces
-nacos.otel.service_name: batata
+# =============================================================================
+# Kubernetes Sync (Experimental)
+# =============================================================================
 
-### Sampling ratio (0.0 to 1.0, 1.0 = sample all traces, 0.1 recommended for production)
-nacos.otel.sampling_ratio: 0.1
+batata.k8s.sync.enabled: false
+#batata.k8s.sync.outsideCluster: false
+#batata.k8s.sync.kubeConfig: /.kube/config
 
-### Export timeout in seconds
-nacos.otel.export_timeout_secs: 10
+# =============================================================================
+# Version Information
+# =============================================================================
 
-### Environment variables for OpenTelemetry:
-### OTEL_ENABLED: Enable/disable tracing (true/false)
-### OTEL_EXPORTER_TYPE: Exporter type (otlp/jaeger/zipkin/console)
-### OTEL_EXPORTER_OTLP_ENDPOINT: OTLP collector endpoint
-### OTEL_EXPORTER_JAEGER_ENDPOINT: Jaeger collector endpoint
-### OTEL_EXPORTER_ZIPKIN_ENDPOINT: Zipkin collector endpoint
-### OTEL_SERVICE_NAME: Service name for traces
-### OTEL_SAMPLING_RATIO: Trace sampling ratio
-
-nacos.version: 3.1.0
+# Nacos compatibility version (the Nacos version that Batata is compatible with)
+nacos.version: 3.1.1

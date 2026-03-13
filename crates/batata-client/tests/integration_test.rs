@@ -36,6 +36,7 @@ fn create_grpc_config(module: &str) -> GrpcClientConfig {
         module: module.to_string(),
         tenant: TEST_NAMESPACE.to_string(),
         labels: std::collections::HashMap::new(),
+        ..Default::default()
     }
 }
 

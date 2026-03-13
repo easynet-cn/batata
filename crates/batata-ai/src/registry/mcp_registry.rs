@@ -5,7 +5,7 @@
 //! in the standardized format from `https://static.modelcontextprotocol.io/`.
 //!
 //! This is served on a separate port (default 9080) and enabled via
-//! `nacos.ai.mcp.registry.enabled` or the `serverWithMcp` deployment type.
+//! `batata.ai.mcp.registry.enabled` or the `serverWithMcp` deployment type.
 
 use std::sync::Arc;
 

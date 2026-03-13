@@ -244,11 +244,9 @@ impl ServerReloadHandler {
         // Basic validation: check for required sections
         if !content.contains("batata.server.main.port")
             && !content.contains("batata.server.main-port")
-            && !content.contains("nacos.server.main.port")
-            && !content.contains("nacos.server.main-port")
         {
             return Err(anyhow::anyhow!(
-                "Invalid configuration: missing required 'batata.server.main.port' (or 'nacos.server.main.port') section"
+                "Invalid configuration: missing required 'batata.server.main.port' section"
             ));
         }
 

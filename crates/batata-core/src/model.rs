@@ -213,12 +213,11 @@ impl Configuration {
     ///
     /// Returns addresses like `["127.0.0.1:8848", "127.0.0.1:8858"]`.
     pub fn cluster_member_addresses(&self) -> Vec<String> {
-        // 1. Try batata.member.list / nacos.member.list
+        // 1. Try batata.member.list
         let addresses: Vec<String> = self
             .config
             .get_string("batata.member.list")
             .ok()
-            .or_else(|| self.config.get_string("nacos.member.list").ok())
             .map(|list| {
                 list.split(',')
                     .map(|s| s.trim().to_string())

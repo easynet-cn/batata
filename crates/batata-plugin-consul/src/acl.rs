@@ -2010,17 +2010,17 @@ pub async fn acl_replication(
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(AclReplicationStatus {
-        enabled: false,
-        running: false,
-        source_datacenter: dc_config.primary_datacenter.clone(),
-        replication_type: "tokens".to_string(),
-        replicated_index: 0,
-        replicated_role_index: 0,
-        replicated_token_index: 0,
-        last_success: None,
-        last_error: None,
-        last_error_message: None,
-    })
+            enabled: false,
+            running: false,
+            source_datacenter: dc_config.primary_datacenter.clone(),
+            replication_type: "tokens".to_string(),
+            replicated_index: 0,
+            replicated_role_index: 0,
+            replicated_token_index: 0,
+            last_success: None,
+            last_error: None,
+            last_error_message: None,
+        })
 }
 
 /// GET /v1/acl/binding-rules - List binding rules

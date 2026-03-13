@@ -79,6 +79,7 @@ fn test_grpc_config_custom() {
             map.insert("version".to_string(), "1.0".to_string());
             map
         },
+        ..Default::default()
     };
 
     assert_eq!(config.server_addrs.len(), 2);

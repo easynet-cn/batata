@@ -176,12 +176,22 @@ pub async fn ui_nodes(
     let dc = dc_config.resolve_dc(&query.dc);
 
     // Collect unique nodes from all service instances
-    let (_, service_names) = naming_service.list_services("public", "DEFAULT_GROUP", 1, 10000);
+    let (_, service_names) = naming_service.list_services(
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+        1,
+        10000,
+    );
     let mut node_map: HashMap<String, UINode> = HashMap::new();
 
     for service_name in &service_names {
-        let instances =
-            naming_service.get_instances("public", "DEFAULT_GROUP", service_name, "", false);
+        let instances = naming_service.get_instances(
+            &dc_config.default_namespace,
+            &dc_config.default_group,
+            service_name,
+            "",
+            false,
+        );
         for instance in &instances {
             let node_name = instance
                 .metadata
@@ -225,11 +235,21 @@ pub async fn ui_node_info(
     }
 
     let node_name = path.into_inner();
-    let (_, service_names) = naming_service.list_services("public", "DEFAULT_GROUP", 1, 10000);
+    let (_, service_names) = naming_service.list_services(
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+        1,
+        10000,
+    );
 
     for service_name in &service_names {
-        let instances =
-            naming_service.get_instances("public", "DEFAULT_GROUP", service_name, "", false);
+        let instances = naming_service.get_instances(
+            &dc_config.default_namespace,
+            &dc_config.default_group,
+            service_name,
+            "",
+            false,
+        );
         for instance in &instances {
             let instance_node = instance
                 .metadata
@@ -284,6 +304,7 @@ pub async fn ui_catalog_overview(
     naming_service: web::Data<Arc<NamingService>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     _query: web::Query<UICatalogOverviewQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -292,8 +313,12 @@ pub async fn ui_catalog_overview(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let (service_count, service_names) =
-        naming_service.list_services("public", "DEFAULT_GROUP", 1, 10000);
+    let (service_count, service_names) = naming_service.list_services(
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+        1,
+        10000,
+    );
 
     // Count total instances and collect unique nodes
     let mut total_instances: i64 = 0;
@@ -304,8 +329,13 @@ pub async fn ui_catalog_overview(
     let mut critical_checks: i64 = 0;
 
     for service_name in &service_names {
-        let instances =
-            naming_service.get_instances("public", "DEFAULT_GROUP", service_name, "", false);
+        let instances = naming_service.get_instances(
+            &dc_config.default_namespace,
+            &dc_config.default_group,
+            service_name,
+            "",
+            false,
+        );
         for instance in &instances {
             total_instances += 1;
             let node_name = instance
@@ -456,11 +486,13 @@ pub async fn ui_service_topology(
     }
 
     // Also check proxy config for upstream dependencies
-    let namespace = "public";
-    let (_, all_services) = naming_service.list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+    let namespace = &dc_config.default_namespace;
+    let (_, all_services) =
+        naming_service.list_services(namespace, &dc_config.default_group, 1, 10000);
 
     for svc in &all_services {
-        let instances = naming_service.get_instances(namespace, "DEFAULT_GROUP", svc, "", false);
+        let instances =
+            naming_service.get_instances(namespace, &dc_config.default_group, svc, "", false);
         for instance in &instances {
             if let Some(kind) = instance.metadata.get("consul_kind")
                 && kind == "connect-proxy"
@@ -541,13 +573,16 @@ pub async fn ui_metrics_proxy(
 fn collect_mesh_gateways(
     naming_service: &Arc<NamingService>,
     datacenter: &str,
+    default_namespace: &str,
+    default_group: &str,
 ) -> Vec<serde_json::Value> {
-    let namespace = "public";
-    let (_, service_names) = naming_service.list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+    let (_, service_names) =
+        naming_service.list_services(default_namespace, default_group, 1, 10000);
     let mut gateways = Vec::new();
 
     for svc in service_names {
-        let instances = naming_service.get_instances(namespace, "DEFAULT_GROUP", &svc, "", false);
+        let instances =
+            naming_service.get_instances(default_namespace, default_group, &svc, "", false);
         for instance in instances {
             if instance
                 .metadata
@@ -602,7 +637,12 @@ pub async fn federation_state_list(
     }
 
     // Collect mesh-gateway instances for the local datacenter
-    let mesh_gateways = collect_mesh_gateways(&naming_service, &dc_config.datacenter);
+    let mesh_gateways = collect_mesh_gateways(
+        &naming_service,
+        &dc_config.datacenter,
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+    );
 
     let state = FederationState {
         datacenter: dc_config.datacenter.clone(),
@@ -630,13 +670,23 @@ pub async fn federation_state_mesh_gateways(
     }
 
     // Find mesh-gateway instances and group by datacenter
-    let namespace = "public";
-    let (_, service_names) = naming_service.list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+    let (_, service_names) = naming_service.list_services(
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+        1,
+        10000,
+    );
 
     let mut gateways_by_dc: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
 
     for svc in service_names {
-        let instances = naming_service.get_instances(namespace, "DEFAULT_GROUP", &svc, "", false);
+        let instances = naming_service.get_instances(
+            &dc_config.default_namespace,
+            &dc_config.default_group,
+            &svc,
+            "",
+            false,
+        );
         for instance in instances {
             if instance
                 .metadata
@@ -675,7 +725,12 @@ pub async fn federation_state_get(
 
     let dc = path.into_inner();
     let mesh_gateways = if dc == dc_config.datacenter {
-        collect_mesh_gateways(&naming_service, &dc)
+        collect_mesh_gateways(
+            &naming_service,
+            &dc,
+            &dc_config.default_namespace,
+            &dc_config.default_group,
+        )
     } else {
         Vec::new()
     };
@@ -700,6 +755,7 @@ pub async fn federation_state_get(
 pub async fn assign_service_virtual_ip(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     naming_service: web::Data<Arc<NamingService>>,
     body: web::Json<AssignServiceVIPsRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -712,8 +768,13 @@ pub async fn assign_service_virtual_ip(
     let request = body.into_inner();
 
     // Check if the service exists in the naming service
-    let instances =
-        naming_service.get_instances("public", "DEFAULT_GROUP", &request.service_name, "", false);
+    let instances = naming_service.get_instances(
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+        &request.service_name,
+        "",
+        false,
+    );
     let found = !instances.is_empty();
 
     HttpResponse::Ok()

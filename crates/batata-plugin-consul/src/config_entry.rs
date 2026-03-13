@@ -199,7 +199,6 @@ impl Default for ConsulConfigEntryService {
 // Config Entry Service (Persistent)
 // ============================================================================
 
-const CONSUL_CONFIG_ENTRY_NAMESPACE: &str = "public";
 const CONSUL_CONFIG_ENTRY_GROUP: &str = "consul-config-entries";
 
 /// Persistent config entry service backed by database via ConfigService pattern
@@ -208,6 +207,8 @@ pub struct ConsulConfigEntryServicePersistent {
     /// L1 cache
     cache: Arc<DashMap<String, ConfigEntry>>,
     index: Arc<AtomicU64>,
+    /// Default namespace for config entry storage
+    default_namespace: String,
 }
 
 impl ConsulConfigEntryServicePersistent {
@@ -216,7 +217,16 @@ impl ConsulConfigEntryServicePersistent {
             db,
             cache: Arc::new(DashMap::new()),
             index: Arc::new(AtomicU64::new(1)),
+            default_namespace: "public".to_string(),
         }
+    }
+
+    /// Create with a custom default namespace
+    pub fn with_namespace(mut self, namespace: String) -> Self {
+        if !namespace.is_empty() {
+            self.default_namespace = namespace;
+        }
+        self
     }
 
     fn entry_key(kind: &str, name: &str) -> String {
@@ -346,7 +356,7 @@ impl ConsulConfigEntryServicePersistent {
         _entry: &ConfigEntry,
     ) -> Result<(), String> {
         let _ = &self.db;
-        let _ = CONSUL_CONFIG_ENTRY_NAMESPACE;
+        let _ = &self.default_namespace;
         let _ = CONSUL_CONFIG_ENTRY_GROUP;
         let _ = Self::data_id(_kind, _name);
         Ok(())

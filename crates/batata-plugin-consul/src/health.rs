@@ -31,6 +31,8 @@ pub struct ConsulHealthService {
     registry: Arc<InstanceCheckRegistry>,
     /// Node name for this agent
     node_name: String,
+    default_namespace: String,
+    default_group: String,
 }
 
 impl ConsulHealthService {
@@ -39,7 +41,19 @@ impl ConsulHealthService {
             naming_service,
             registry,
             node_name: "batata-node".to_string(),
+            default_namespace: "public".to_string(),
+            default_group: "DEFAULT_GROUP".to_string(),
         }
+    }
+
+    pub fn with_defaults(mut self, namespace: String, group: String) -> Self {
+        if !namespace.is_empty() {
+            self.default_namespace = namespace;
+        }
+        if !group.is_empty() {
+            self.default_group = group;
+        }
+        self
     }
 
     /// Get registry reference
@@ -105,8 +119,8 @@ impl ConsulHealthService {
             check_id: check_id.clone(),
             name: registration.name.clone(),
             check_type,
-            namespace: "public".to_string(),
-            group_name: "DEFAULT_GROUP".to_string(),
+            namespace: self.default_namespace.clone(),
+            group_name: self.default_group.clone(),
             service_name: registration
                 .service_name
                 .clone()
@@ -264,7 +278,7 @@ pub async fn get_service_health(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let passing_only = query.passing.unwrap_or(false);
 
     // Check ACL authorization for service read
@@ -279,8 +293,13 @@ pub async fn get_service_health(
     }
 
     // Get instances from naming service
-    let instances =
-        naming_service.get_instances(&namespace, "DEFAULT_GROUP", &service_name, "", passing_only);
+    let instances = naming_service.get_instances(
+        &namespace,
+        &dc_config.default_group,
+        &service_name,
+        "",
+        passing_only,
+    );
 
     // Filter by tag if specified
     let instances: Vec<_> = if let Some(ref tag) = query.tag {
@@ -343,10 +362,7 @@ pub async fn get_service_health(
 
         let mut node_meta = std::collections::HashMap::new();
         node_meta.insert("consul-network-segment".to_string(), "".to_string());
-        node_meta.insert(
-            "consul-version".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-        );
+        node_meta.insert("consul-version".to_string(), dc_config.full_version());
 
         results.push(ServiceHealth {
             node: Node {
@@ -450,17 +466,19 @@ fn resolve_service_health_field(entry: &ServiceHealth, selector: &str) -> Option
 
 /// GET /v1/health/checks/:service
 /// Returns the checks for a service
+#[allow(clippy::too_many_arguments)]
 pub async fn get_service_checks(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(
@@ -474,8 +492,13 @@ pub async fn get_service_checks(
     }
 
     // Get instances to find all checks
-    let instances =
-        naming_service.get_instances(&namespace, "DEFAULT_GROUP", &service_name, "", false);
+    let instances = naming_service.get_instances(
+        &namespace,
+        &dc_config.default_group,
+        &service_name,
+        "",
+        false,
+    );
 
     let mut all_checks: Vec<HealthCheck> = Vec::new();
 
@@ -779,7 +802,7 @@ pub async fn get_connect_health(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let passing_only = query.passing.unwrap_or(false);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
@@ -789,13 +812,18 @@ pub async fn get_connect_health(
 
     // Get all services and find Connect-enabled instances for this target service
     let (_, all_service_names) =
-        naming_service.list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+        naming_service.list_services(&namespace, &dc_config.default_group, 1, 10000);
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
     for svc_name in all_service_names {
-        let instances =
-            naming_service.get_instances(&namespace, "DEFAULT_GROUP", &svc_name, "", passing_only);
+        let instances = naming_service.get_instances(
+            &namespace,
+            &dc_config.default_group,
+            &svc_name,
+            "",
+            passing_only,
+        );
 
         for instance in instances {
             if !is_connect_instance_for(&instance, &service_name) {
@@ -857,7 +885,7 @@ pub async fn get_ingress_health(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let passing_only = query.passing.unwrap_or(false);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
@@ -867,13 +895,18 @@ pub async fn get_ingress_health(
 
     // Find ingress gateway instances
     let (_, all_service_names) =
-        naming_service.list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+        naming_service.list_services(&namespace, &dc_config.default_group, 1, 10000);
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
     for svc_name in all_service_names {
-        let instances =
-            naming_service.get_instances(&namespace, "DEFAULT_GROUP", &svc_name, "", passing_only);
+        let instances = naming_service.get_instances(
+            &namespace,
+            &dc_config.default_group,
+            &svc_name,
+            "",
+            passing_only,
+        );
 
         for instance in instances {
             // Only include ingress-gateway instances

@@ -431,6 +431,7 @@ pub struct ConsulCatalogService {
     naming_service: Arc<NamingService>,
     node_name: String,
     datacenter: String,
+    default_group: String,
     index_provider: ConsulIndexProvider,
 }
 
@@ -444,8 +445,16 @@ impl ConsulCatalogService {
             naming_service,
             node_name: "batata-node".to_string(),
             datacenter,
+            default_group: "DEFAULT_GROUP".to_string(),
             index_provider: ConsulIndexProvider::default(),
         }
+    }
+
+    pub fn with_default_group(mut self, group: String) -> Self {
+        if !group.is_empty() {
+            self.default_group = group;
+        }
+        self
     }
 
     pub fn with_index_provider(mut self, index_provider: ConsulIndexProvider) -> Self {
@@ -457,14 +466,14 @@ impl ConsulCatalogService {
     pub fn get_services(&self, namespace: &str) -> HashMap<String, Vec<String>> {
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+                .list_services(namespace, &self.default_group, 1, 10000);
 
         let mut services: HashMap<String, Vec<String>> = HashMap::new();
 
         for service_name in service_names {
             let instances = self.naming_service.get_instances(
                 namespace,
-                "DEFAULT_GROUP",
+                &self.default_group,
                 &service_name,
                 "",
                 false,
@@ -497,9 +506,13 @@ impl ConsulCatalogService {
         service_name: &str,
         tag_filter: Option<&str>,
     ) -> Vec<CatalogService> {
-        let instances =
-            self.naming_service
-                .get_instances(namespace, "DEFAULT_GROUP", service_name, "", false);
+        let instances = self.naming_service.get_instances(
+            namespace,
+            &self.default_group,
+            service_name,
+            "",
+            false,
+        );
 
         instances
             .iter()
@@ -529,14 +542,14 @@ impl ConsulCatalogService {
     pub fn get_nodes(&self, namespace: &str) -> Vec<CatalogNode> {
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+                .list_services(namespace, &self.default_group, 1, 10000);
 
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
         for service_name in service_names {
             let instances = self.naming_service.get_instances(
                 namespace,
-                "DEFAULT_GROUP",
+                &self.default_group,
                 &service_name,
                 "",
                 false,
@@ -570,7 +583,7 @@ impl ConsulCatalogService {
 
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+                .list_services(namespace, &self.default_group, 1, 10000);
 
         let mut node: Option<CatalogNode> = None;
         let mut services: HashMap<String, AgentService> = HashMap::new();
@@ -578,7 +591,7 @@ impl ConsulCatalogService {
         for service_name in service_names {
             let instances = self.naming_service.get_instances(
                 namespace,
-                "DEFAULT_GROUP",
+                &self.default_group,
                 &service_name,
                 "",
                 false,
@@ -686,7 +699,7 @@ impl ConsulCatalogService {
 
             self.naming_service.register_instance(
                 namespace,
-                "DEFAULT_GROUP",
+                &self.default_group,
                 &service.service,
                 instance,
             )
@@ -702,12 +715,12 @@ impl ConsulCatalogService {
             // Find and deregister the service
             let (_, service_names) =
                 self.naming_service
-                    .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+                    .list_services(namespace, &self.default_group, 1, 10000);
 
             for service_name in service_names {
                 let instances = self.naming_service.get_instances(
                     namespace,
-                    "DEFAULT_GROUP",
+                    &self.default_group,
                     &service_name,
                     "",
                     false,
@@ -717,7 +730,7 @@ impl ConsulCatalogService {
                     if &instance.instance_id == service_id {
                         return self.naming_service.deregister_instance(
                             namespace,
-                            "DEFAULT_GROUP",
+                            &self.default_group,
                             &service_name,
                             &instance,
                         );
@@ -730,14 +743,14 @@ impl ConsulCatalogService {
             let node = &deregistration.node;
             let (_, service_names) =
                 self.naming_service
-                    .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+                    .list_services(namespace, &self.default_group, 1, 10000);
 
             let mut deregistered = false;
 
             for service_name in service_names {
                 let instances = self.naming_service.get_instances(
                     namespace,
-                    "DEFAULT_GROUP",
+                    &self.default_group,
                     &service_name,
                     "",
                     false,
@@ -748,7 +761,7 @@ impl ConsulCatalogService {
                     if &instance_node == node || &instance.ip == node {
                         self.naming_service.deregister_instance(
                             namespace,
-                            "DEFAULT_GROUP",
+                            &self.default_group,
                             &service_name,
                             &instance,
                         );
@@ -766,14 +779,14 @@ impl ConsulCatalogService {
     pub fn get_service_summary(&self, namespace: &str) -> Vec<ServiceListingSummary> {
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+                .list_services(namespace, &self.default_group, 1, 10000);
 
         let mut summaries: Vec<ServiceListingSummary> = Vec::new();
 
         for service_name in service_names {
             let instances = self.naming_service.get_instances(
                 namespace,
-                "DEFAULT_GROUP",
+                &self.default_group,
                 &service_name,
                 "",
                 false,
@@ -906,14 +919,14 @@ impl ConsulCatalogService {
     ) -> Vec<CatalogService> {
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, "DEFAULT_GROUP", 1, 10000);
+                .list_services(namespace, &self.default_group, 1, 10000);
 
         let mut results = Vec::new();
 
         for service_name in service_names {
             let instances = self.naming_service.get_instances(
                 namespace,
-                "DEFAULT_GROUP",
+                &self.default_group,
                 &service_name,
                 "",
                 false,
@@ -1178,7 +1191,7 @@ pub async fn list_services(
     }
 
     let dc = dc_config.resolve_dc(&query.dc);
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let services = catalog.get_services(&namespace);
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
@@ -1198,7 +1211,7 @@ pub async fn get_service(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let tag_filter = query.tag.as_deref();
     let dc = dc_config.resolve_dc(&query.dc);
 
@@ -1243,7 +1256,7 @@ pub async fn list_nodes(
     }
 
     let dc = dc_config.resolve_dc(&query.dc);
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let mut nodes = catalog.get_nodes(&namespace);
 
     // Override datacenter with resolved DC from query params
@@ -1262,12 +1275,13 @@ pub async fn get_node(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let node_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for node read
     let authz = acl_service.authorize_request(&req, ResourceType::Node, &node_name, false);
@@ -1295,7 +1309,7 @@ pub async fn register(
     body: web::Json<CatalogRegistration>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let mut registration = body.into_inner();
 
     // Use resolved DC if registration doesn't specify one
@@ -1330,12 +1344,12 @@ pub async fn deregister(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
-    _dc_config: web::Data<ConsulDatacenterConfig>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
     body: web::Json<CatalogDeregistration>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let deregistration = body.into_inner();
 
     // Check ACL authorization for service/node write
@@ -1390,7 +1404,7 @@ pub async fn ui_services(
     req: HttpRequest,
     catalog: web::Data<ConsulCatalogService>,
     acl_service: web::Data<AclService>,
-    _dc_config: web::Data<ConsulDatacenterConfig>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -1400,7 +1414,7 @@ pub async fn ui_services(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let summaries = catalog.get_service_summary(&namespace);
 
     HttpResponse::Ok()
@@ -1420,7 +1434,7 @@ pub async fn get_connect_service(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let dc = dc_config.resolve_dc(&query.dc);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
@@ -1452,7 +1466,7 @@ pub async fn get_node_services(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let node_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
     let dc = dc_config.resolve_dc(&query.dc);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Node, &node_name, false);

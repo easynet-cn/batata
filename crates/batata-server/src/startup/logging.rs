@@ -18,7 +18,7 @@
 //! | persistence.log     | Database persistence              | batata_persistence                  |
 //!
 //! Log files are stored in `~/batata/logs` by default.
-//! Override with `BATATA_LOG_DIR` environment variable or `nacos.logs.path` config.
+//! Override with `BATATA_LOG_DIR` environment variable or `batata.logs.path` config.
 
 use std::path::PathBuf;
 

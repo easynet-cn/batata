@@ -12,4 +12,4 @@ cd "$(dirname "$0")/.."
 SERVER_ADDR="${1:-http://127.0.0.1:8848}"
 
 cargo run -p batata-server -- -d console \
-  --nacos.console.remote.server_addr="$SERVER_ADDR"
+  --batata.console.remote.server_addr="$SERVER_ADDR"

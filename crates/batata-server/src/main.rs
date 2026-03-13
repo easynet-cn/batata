@@ -35,10 +35,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Validate JWT secret key when auth is enabled
     if configuration.auth_enabled() && configuration.token_secret_key().is_empty() {
         eprintln!(
-            "FATAL: Authentication is enabled (nacos.core.auth.enabled=true) but no JWT secret key is configured."
+            "FATAL: Authentication is enabled (batata.core.auth.enabled=true) but no JWT secret key is configured."
         );
         eprintln!(
-            "Set 'nacos.core.auth.plugin.nacos.token.secret.key' to a non-empty Base64-encoded secret."
+            "Set 'batata.core.auth.plugin.nacos.token.secret.key' to a non-empty Base64-encoded secret."
         );
         std::process::exit(1);
     }
@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         eprintln!("WARNING: Using the default JWT secret key. This is insecure for production!");
         eprintln!("Generate a new key with: openssl rand -base64 32");
-        eprintln!("Set it via: nacos.core.auth.plugin.nacos.token.secret.key=<your-key>");
+        eprintln!("Set it via: batata.core.auth.plugin.nacos.token.secret.key=<your-key>");
     }
 
     // Initialize multi-file logging with optional OpenTelemetry support
@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!(
             "Console remote mode is using default credentials (batata/batata). \
              This is insecure for production environments. \
-             Set 'nacos.console.remote.username' and 'nacos.console.remote.password'."
+             Set 'batata.console.remote.username' and 'batata.console.remote.password'."
         );
     }
 
@@ -114,7 +114,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let consul_server_address = server_address.clone();
     let consul_dc_config =
         batata_plugin_consul::model::ConsulDatacenterConfig::new(configuration.consul_datacenter())
-            .with_primary(configuration.consul_primary_datacenter());
+            .with_primary(configuration.consul_primary_datacenter())
+            .with_consul_version(configuration.consul_version())
+            .with_batata_version(configuration.batata_version())
+            .with_default_namespace(configuration.consul_default_namespace())
+            .with_default_group(configuration.consul_default_group());
     let mcp_registry_enabled = configuration.mcp_registry_enabled()
         || deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP;
     let mcp_registry_port = configuration.mcp_registry_port();

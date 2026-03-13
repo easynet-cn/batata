@@ -23,6 +23,7 @@ struct TokenInfo {
 pub struct AuthProvider {
     http_client: Client,
     server_addr: String,
+    context_path: String,
     username: String,
     password: String,
     token: RwLock<Option<TokenInfo>>,
@@ -35,16 +36,40 @@ impl AuthProvider {
     /// Create a new AuthProvider.
     ///
     /// `server_addr` should be the base HTTP address, e.g. `http://127.0.0.1:8848`.
+    /// `context_path` is the server context path, e.g. `/nacos` (default if empty).
     pub fn new(server_addr: &str, username: &str, password: &str) -> Result<Self> {
+        Self::with_context_path(server_addr, "/nacos", username, password)
+    }
+
+    /// Create a new AuthProvider with a custom context path.
+    ///
+    /// `server_addr` should be the base HTTP address, e.g. `http://127.0.0.1:8848`.
+    /// `context_path` is the server context path, e.g. `/nacos`. Use empty string for root.
+    pub fn with_context_path(
+        server_addr: &str,
+        context_path: &str,
+        username: &str,
+        password: &str,
+    ) -> Result<Self> {
         let http_client = Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10))
             .build()
             .map_err(|e| ClientError::Other(e.into()))?;
 
+        // Normalize context path: ensure it starts with "/" if non-empty, or is empty for root
+        let normalized_context_path = if context_path.is_empty() || context_path == "/" {
+            String::new()
+        } else if context_path.starts_with('/') {
+            context_path.to_string()
+        } else {
+            format!("/{context_path}")
+        };
+
         Ok(Self {
             http_client,
             server_addr: server_addr.trim_end_matches('/').to_string(),
+            context_path: normalized_context_path,
             username: username.to_string(),
             password: password.to_string(),
             token: RwLock::new(None),
@@ -56,6 +81,7 @@ impl AuthProvider {
         Self {
             http_client: Client::new(),
             server_addr: String::new(),
+            context_path: String::new(),
             username: String::new(),
             password: String::new(),
             token: RwLock::new(None),
@@ -93,7 +119,7 @@ impl AuthProvider {
 
     /// Perform HTTP login to get JWT token.
     async fn login(&self) -> Result<()> {
-        let url = format!("{}/nacos/v3/auth/user/login", self.server_addr);
+        let url = format!("{}{}/v3/auth/user/login", self.server_addr, self.context_path);
 
         debug!("Authenticating with server: {}", url);
 

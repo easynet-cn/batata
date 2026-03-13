@@ -30,6 +30,8 @@ use crate::model::{
 pub struct ConsulAgentService {
     naming_service: Arc<NamingService>,
     registry: Arc<InstanceCheckRegistry>,
+    default_namespace: String,
+    default_group: String,
 }
 
 impl ConsulAgentService {
@@ -37,7 +39,19 @@ impl ConsulAgentService {
         Self {
             naming_service,
             registry,
+            default_namespace: "public".to_string(),
+            default_group: "DEFAULT_GROUP".to_string(),
         }
+    }
+
+    pub fn with_defaults(mut self, namespace: String, group: String) -> Self {
+        if !namespace.is_empty() {
+            self.default_namespace = namespace;
+        }
+        if !group.is_empty() {
+            self.default_group = group;
+        }
+        self
     }
 
     /// Register Consul itself as a service
@@ -71,17 +85,18 @@ impl ConsulAgentService {
         };
 
         let success = self.naming_service.register_instance(
-            "public",
-            "DEFAULT_GROUP",
+            &self.default_namespace,
+            &self.default_group,
             service_name,
             instance,
         );
 
         if success {
             tracing::info!(
-                "Consul service registered: {}:{} in namespace public",
+                "Consul service registered: {}:{} in namespace {}",
                 ip,
-                port
+                port,
+                self.default_namespace
             );
             Ok(())
         } else {
@@ -94,8 +109,8 @@ impl ConsulAgentService {
 
     /// Deregister Consul service
     pub async fn deregister_consul_service(&self) {
-        let namespace = "public";
-        let group = "DEFAULT_GROUP";
+        let namespace = &self.default_namespace;
+        let group = &self.default_group;
         let service_name = "consul";
 
         // Get the Consul instance
@@ -136,7 +151,7 @@ pub async fn register_service(
     body: web::Json<AgentServiceRegistration>,
 ) -> HttpResponse {
     let registration = body.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service write
     let authz = acl_service.authorize_request(
@@ -191,10 +206,10 @@ pub async fn register_service(
     );
 
     // Register with naming service
-    // Consul doesn't have a concept of group, use DEFAULT_GROUP
+    // Consul doesn't have a concept of group, use default group
     let success = agent.naming_service.register_instance(
         &namespace,
-        "DEFAULT_GROUP",
+        &dc_config.default_group,
         &registration.name,
         nacos_instance,
     );
@@ -228,17 +243,19 @@ pub async fn register_service(
 
 /// PUT /v1/agent/service/deregister/{service_id}
 /// Deregister a service from the local agent
+#[allow(clippy::too_many_arguments)]
 pub async fn deregister_service(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     health_service: web::Data<ConsulHealthService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
 ) -> HttpResponse {
     let service_id = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service write (deregister requires write)
     let authz = acl_service.authorize_request(
@@ -252,75 +269,75 @@ pub async fn deregister_service(
     }
 
     // Use registry O(1) lookup to find the service by Consul service ID
-    let deregistered = if let Some((_, instance_key)) =
-        agent.registry.lookup_consul_service_id(&service_id)
-    {
-        // Parse instance_key: namespace#group#service#ip#port#cluster
-        let parts: Vec<&str> = instance_key.splitn(6, '#').collect();
-        if parts.len() >= 6 {
-            let ip = parts[3];
-            let port: i32 = parts[4].parse().unwrap_or(0);
-            let cluster = parts[5];
-            let svc_name = parts[2];
-            let instance = Instance {
-                instance_id: service_id.clone(),
-                ip: ip.to_string(),
-                port,
-                cluster_name: cluster.to_string(),
-                ephemeral: false,
-                ..Default::default()
-            };
-            let success = agent.naming_service.deregister_instance(
-                &namespace,
-                "DEFAULT_GROUP",
-                svc_name,
-                &instance,
-            );
-            if success {
-                // Clean up registry entries
-                agent.registry.deregister_all_instance_checks(&instance_key);
-                agent.registry.remove_consul_service_id(&service_id);
+    let deregistered =
+        if let Some((_, instance_key)) = agent.registry.lookup_consul_service_id(&service_id) {
+            // Parse instance_key: namespace#group#service#ip#port#cluster
+            let parts: Vec<&str> = instance_key.splitn(6, '#').collect();
+            if parts.len() >= 6 {
+                let ip = parts[3];
+                let port: i32 = parts[4].parse().unwrap_or(0);
+                let cluster = parts[5];
+                let svc_name = parts[2];
+                let instance = Instance {
+                    instance_id: service_id.clone(),
+                    ip: ip.to_string(),
+                    port,
+                    cluster_name: cluster.to_string(),
+                    ephemeral: false,
+                    ..Default::default()
+                };
+                let success = agent.naming_service.deregister_instance(
+                    &namespace,
+                    &dc_config.default_group,
+                    svc_name,
+                    &instance,
+                );
+                if success {
+                    // Clean up registry entries
+                    agent.registry.deregister_all_instance_checks(&instance_key);
+                    agent.registry.remove_consul_service_id(&service_id);
+                }
+                success
+            } else {
+                false
             }
-            success
         } else {
-            false
-        }
-    } else {
-        // Fallback: O(n) scan for backward compatibility
-        let mut found = false;
-        let services = agent
-            .naming_service
-            .list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+            // Fallback: O(n) scan for backward compatibility
+            let mut found = false;
+            let services =
+                agent
+                    .naming_service
+                    .list_services(&namespace, &dc_config.default_group, 1, 10000);
 
-        for service_name in services.1 {
-            let instances = agent.naming_service.get_instances(
-                &namespace,
-                "DEFAULT_GROUP",
-                &service_name,
-                "",
-                false,
-            );
+            for service_name in services.1 {
+                let instances = agent.naming_service.get_instances(
+                    &namespace,
+                    &dc_config.default_group,
+                    &service_name,
+                    "",
+                    false,
+                );
 
-            for instance in instances {
-                if instance.instance_id == service_id {
-                    let success = agent.naming_service.deregister_instance(
-                        &namespace,
-                        "DEFAULT_GROUP",
-                        &service_name,
-                        &instance,
-                    );
-                    if success {
-                        found = true;
-                        break;
+                for instance in instances {
+                    if instance.instance_id == service_id {
+                        let success = agent.naming_service.deregister_instance(
+                            &namespace,
+                            &dc_config.default_group,
+                            &service_name,
+                            &instance,
+                        );
+                        if success {
+                            found = true;
+                            break;
+                        }
                     }
                 }
+                if found {
+                    break;
+                }
             }
-            if found {
-                break;
-            }
-        }
-        found
-    };
+            found
+        };
 
     if deregistered {
         index_provider.increment();
@@ -346,10 +363,11 @@ pub async fn list_services(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<ServiceQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service read (list requires read on all services)
     let authz = acl_service.authorize_request(
@@ -366,7 +384,7 @@ pub async fn list_services(
     let (_, service_names) =
         agent
             .naming_service
-            .list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+            .list_services(&namespace, &dc_config.default_group, 1, 10000);
 
     let mut services: std::collections::HashMap<String, AgentService> =
         std::collections::HashMap::new();
@@ -374,7 +392,7 @@ pub async fn list_services(
     for service_name in service_names {
         let instances = agent.naming_service.get_instances(
             &namespace,
-            "DEFAULT_GROUP",
+            &dc_config.default_group,
             &service_name,
             "",
             false,
@@ -398,12 +416,13 @@ pub async fn get_service(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_id = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(
@@ -420,12 +439,12 @@ pub async fn get_service(
     let (_, service_names) =
         agent
             .naming_service
-            .list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+            .list_services(&namespace, &dc_config.default_group, 1, 10000);
 
     for service_name in service_names {
         let instances = agent.naming_service.get_instances(
             &namespace,
-            "DEFAULT_GROUP",
+            &dc_config.default_group,
             &service_name,
             "",
             false,
@@ -513,17 +532,19 @@ fn aggregate_status(checks: &[HealthCheck]) -> String {
 
 /// GET /v1/agent/health/service/id/{service_id}
 /// Returns the aggregated health status of a service by its ID
+#[allow(clippy::too_many_arguments)]
 pub async fn agent_health_service_by_id(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_id = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, &service_id, false);
     if !authz.allowed {
@@ -534,12 +555,12 @@ pub async fn agent_health_service_by_id(
     let (_, service_names) =
         agent
             .naming_service
-            .list_services(&namespace, "DEFAULT_GROUP", 1, 10000);
+            .list_services(&namespace, &dc_config.default_group, 1, 10000);
 
     for service_name in service_names {
         let instances = agent.naming_service.get_instances(
             &namespace,
-            "DEFAULT_GROUP",
+            &dc_config.default_group,
             &service_name,
             "",
             false,
@@ -568,8 +589,12 @@ pub async fn agent_health_service_by_id(
                 let idx_header = ("X-Consul-Index", index_provider.current_index().to_string());
                 return match status.as_str() {
                     "passing" => HttpResponse::Ok().insert_header(idx_header).json(info),
-                    "warning" => HttpResponse::TooManyRequests().insert_header(idx_header).json(info),
-                    _ => HttpResponse::ServiceUnavailable().insert_header(idx_header).json(info),
+                    "warning" => HttpResponse::TooManyRequests()
+                        .insert_header(idx_header)
+                        .json(info),
+                    _ => HttpResponse::ServiceUnavailable()
+                        .insert_header(idx_header)
+                        .json(info),
                 };
             }
         }
@@ -583,27 +608,32 @@ pub async fn agent_health_service_by_id(
 
 /// GET /v1/agent/health/service/name/{service_name}
 /// Returns the aggregated health status of all instances of a service by name
+#[allow(clippy::too_many_arguments)]
 pub async fn agent_health_service_by_name(
     req: HttpRequest,
     agent: web::Data<ConsulAgentService>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<ServiceQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = query.ns.clone().unwrap_or_else(|| "public".to_string());
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, &service_name, false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let instances =
-        agent
-            .naming_service
-            .get_instances(&namespace, "DEFAULT_GROUP", &service_name, "", false);
+    let instances = agent.naming_service.get_instances(
+        &namespace,
+        &dc_config.default_group,
+        &service_name,
+        "",
+        false,
+    );
 
     if instances.is_empty() {
         return HttpResponse::NotFound().json(ConsulError::new(format!(
@@ -646,8 +676,12 @@ pub async fn agent_health_service_by_name(
     let idx_header = ("X-Consul-Index", index_provider.current_index().to_string());
     match worst_status {
         "passing" => HttpResponse::Ok().insert_header(idx_header).json(results),
-        "warning" => HttpResponse::TooManyRequests().insert_header(idx_header).json(results),
-        _ => HttpResponse::ServiceUnavailable().insert_header(idx_header).json(results),
+        "warning" => HttpResponse::TooManyRequests()
+            .insert_header(idx_header)
+            .json(results),
+        _ => HttpResponse::ServiceUnavailable()
+            .insert_header(idx_header)
+            .json(results),
     }
 }
 
@@ -731,8 +765,8 @@ pub async fn get_agent_self(
         node_name: hostname.clone(),
         node_id: node_id.clone(),
         server: true,
-        revision: env!("CARGO_PKG_VERSION").to_string(),
-        version: format!("1.15.0-batata-{}", env!("CARGO_PKG_VERSION")),
+        revision: dc_config.batata_version.clone(),
+        version: dc_config.full_version(),
         primary_datacenter: dc_config.primary_datacenter.clone(),
     };
 
@@ -740,7 +774,7 @@ pub async fn get_agent_self(
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
     tags.insert("port".to_string(), "8300".to_string());
-    tags.insert("build".to_string(), env!("CARGO_PKG_VERSION").to_string());
+    tags.insert("build".to_string(), dc_config.batata_version.clone());
 
     let member = AgentMember {
         name: hostname.clone(),
@@ -811,7 +845,7 @@ pub async fn get_agent_members(
     tags.insert("vsn".to_string(), "2".to_string());
     tags.insert("vsn_min".to_string(), "1".to_string());
     tags.insert("vsn_max".to_string(), "3".to_string());
-    tags.insert("build".to_string(), env!("CARGO_PKG_VERSION").to_string());
+    tags.insert("build".to_string(), dc_config.batata_version.clone());
 
     // Return self as the only member (single node mode)
     let member = AgentMember {
@@ -871,7 +905,7 @@ pub async fn get_agent_members_real(
             tags.insert("vsn".to_string(), "2".to_string());
             tags.insert("vsn_min".to_string(), "1".to_string());
             tags.insert("vsn_max".to_string(), "3".to_string());
-            tags.insert("build".to_string(), env!("CARGO_PKG_VERSION").to_string());
+            tags.insert("build".to_string(), dc_config.batata_version.clone());
 
             // Add node state as tag
             let state_str = match m.state {
@@ -936,8 +970,8 @@ pub async fn get_agent_self_real(
         node_name: hostname.clone(),
         node_id: node_id.clone(),
         server: true,
-        revision: env!("CARGO_PKG_VERSION").to_string(),
-        version: format!("1.15.0-batata-{}", env!("CARGO_PKG_VERSION")),
+        revision: dc_config.batata_version.clone(),
+        version: dc_config.full_version(),
         primary_datacenter: dc_config.primary_datacenter.clone(),
     };
 
@@ -945,7 +979,7 @@ pub async fn get_agent_self_real(
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
     tags.insert("port".to_string(), "8300".to_string());
-    tags.insert("build".to_string(), env!("CARGO_PKG_VERSION").to_string());
+    tags.insert("build".to_string(), dc_config.batata_version.clone());
 
     // Parse self_member address
     let (addr, port) = if let Some(pos) = self_member.address.rfind(':') {
@@ -1020,7 +1054,11 @@ pub async fn get_agent_self_real(
 
 /// GET /v1/agent/host
 /// Returns information about the host the agent is running on
-pub async fn get_agent_host(req: HttpRequest, acl_service: web::Data<AclService>, index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
+pub async fn get_agent_host(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     // Check ACL authorization for agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
@@ -1113,13 +1151,16 @@ pub async fn get_agent_host(req: HttpRequest, acl_service: web::Data<AclService>
 
 /// GET /v1/agent/version
 /// Returns the Consul version of the agent
-pub async fn get_agent_version(index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
-    let version = env!("CARGO_PKG_VERSION");
+pub async fn get_agent_version(
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    let full_version = dc_config.full_version();
     let response = AgentVersion {
-        version: format!("1.15.0-batata-{}", version),
-        revision: version.to_string(),
+        version: full_version.clone(),
+        revision: dc_config.batata_version.clone(),
         prerelease: "".to_string(),
-        human_version: format!("1.15.0-batata-{}", version),
+        human_version: full_version,
         build_date: "2024-01-01T00:00:00Z".to_string(),
         fips: "".to_string(),
     };
@@ -1154,7 +1195,11 @@ pub async fn agent_join(
 
 /// PUT /v1/agent/leave
 /// Triggers a graceful leave and shutdown of the agent
-pub async fn agent_leave(req: HttpRequest, acl_service: web::Data<AclService>, index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
+pub async fn agent_leave(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
@@ -1194,7 +1239,11 @@ pub async fn agent_force_leave(
 
 /// PUT /v1/agent/reload
 /// Triggers a reload of the agent's configuration
-pub async fn agent_reload(req: HttpRequest, acl_service: web::Data<AclService>, index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
+pub async fn agent_reload(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
     // Check ACL authorization for agent write
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", true);
     if !authz.allowed {
@@ -1401,10 +1450,12 @@ pub async fn get_agent_metrics_real(
     ));
 
     // Service metrics from NamingService
-    let (total_services, service_names) =
-        agent
-            .naming_service
-            .list_services("public", "DEFAULT_GROUP", 1, 10000);
+    let (total_services, service_names) = agent.naming_service.list_services(
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+        1,
+        10000,
+    );
 
     gauges.push(
         GaugeMetric::new("consul.catalog.service_count", total_services as f64)
@@ -1412,8 +1463,8 @@ pub async fn get_agent_metrics_real(
     );
     gauges.push(
         GaugeMetric::new("batata.naming.service_count", total_services as f64)
-            .with_label("namespace", "public")
-            .with_label("group", "DEFAULT_GROUP"),
+            .with_label("namespace", &dc_config.default_namespace)
+            .with_label("group", &dc_config.default_group),
     );
 
     // Count total instances across all services
@@ -1422,10 +1473,13 @@ pub async fn get_agent_metrics_real(
     let mut unhealthy_instances = 0u64;
 
     for service_name in &service_names {
-        let instances =
-            agent
-                .naming_service
-                .get_instances("public", "DEFAULT_GROUP", service_name, "", false);
+        let instances = agent.naming_service.get_instances(
+            &dc_config.default_namespace,
+            &dc_config.default_group,
+            service_name,
+            "",
+            false,
+        );
 
         total_instances += instances.len() as u64;
         for instance in &instances {
@@ -1443,7 +1497,7 @@ pub async fn get_agent_metrics_real(
                 instances.len() as f64,
             )
             .with_label("service", service_name)
-            .with_label("namespace", "public"),
+            .with_label("namespace", &dc_config.default_namespace),
         );
     }
 
@@ -1602,6 +1656,7 @@ pub async fn agent_metrics_stream(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -1610,13 +1665,24 @@ pub async fn agent_metrics_stream(
     }
 
     // Collect current metrics and return as a single streamed JSON response
-    let (_, service_names) = naming_service.list_services("public", "DEFAULT_GROUP", 1, 10000);
+    let (_, service_names) = naming_service.list_services(
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+        1,
+        10000,
+    );
     let service_count = service_names.len();
 
     let mut total_instances: usize = 0;
     let mut healthy_instances: usize = 0;
     for sn in &service_names {
-        let instances = naming_service.get_instances("public", "DEFAULT_GROUP", sn, "", false);
+        let instances = naming_service.get_instances(
+            &dc_config.default_namespace,
+            &dc_config.default_group,
+            sn,
+            "",
+            false,
+        );
         total_instances += instances.len();
         healthy_instances += instances.iter().filter(|i| i.healthy).count();
     }
@@ -1652,6 +1718,7 @@ pub async fn agent_metrics_stream_real(
     naming_service: web::Data<Arc<NamingService>>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
     acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
@@ -1659,13 +1726,24 @@ pub async fn agent_metrics_stream_real(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let (_, service_names) = naming_service.list_services("public", "DEFAULT_GROUP", 1, 10000);
+    let (_, service_names) = naming_service.list_services(
+        &dc_config.default_namespace,
+        &dc_config.default_group,
+        1,
+        10000,
+    );
     let service_count = service_names.len();
 
     let mut total_instances: usize = 0;
     let mut healthy_instances: usize = 0;
     for sn in &service_names {
-        let instances = naming_service.get_instances("public", "DEFAULT_GROUP", sn, "", false);
+        let instances = naming_service.get_instances(
+            &dc_config.default_namespace,
+            &dc_config.default_group,
+            sn,
+            "",
+            false,
+        );
         total_instances += instances.len();
         healthy_instances += instances.iter().filter(|i| i.healthy).count();
     }

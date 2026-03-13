@@ -70,13 +70,20 @@ impl ConsulServices {
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
 
         Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
-            health: ConsulHealthService::new(naming_service.clone(), registry),
+            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
+                dc_config.default_namespace.clone(),
+                dc_config.default_group.clone(),
+            ),
+            health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
+                dc_config.default_namespace.clone(),
+                dc_config.default_group.clone(),
+            ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_service,
                 dc_config.datacenter.clone(),
             )
+            .with_default_group(dc_config.default_group.clone())
             .with_index_provider(index_provider.clone()),
             index_provider,
             acl: if acl_enabled {
@@ -111,13 +118,20 @@ impl ConsulServices {
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
 
         Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
-            health: ConsulHealthService::new(naming_service.clone(), registry),
+            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
+                dc_config.default_namespace.clone(),
+                dc_config.default_group.clone(),
+            ),
+            health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
+                dc_config.default_namespace.clone(),
+                dc_config.default_group.clone(),
+            ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_service,
                 dc_config.datacenter.clone(),
             )
+            .with_default_group(dc_config.default_group.clone())
             .with_index_provider(index_provider.clone()),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
@@ -153,13 +167,20 @@ impl ConsulServices {
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
 
         Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()),
-            health: ConsulHealthService::new(naming_service.clone(), registry),
+            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
+                dc_config.default_namespace.clone(),
+                dc_config.default_group.clone(),
+            ),
+            health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
+                dc_config.default_namespace.clone(),
+                dc_config.default_group.clone(),
+            ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_service,
                 dc_config.datacenter.clone(),
             )
+            .with_default_group(dc_config.default_group.clone())
             .with_index_provider(index_provider.clone()),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
