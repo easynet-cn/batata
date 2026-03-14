@@ -411,4 +411,105 @@ mod tests {
         let app_err = AppError::from(anyhow_err);
         assert_eq!(format!("{}", app_err), "test error");
     }
+
+    #[test]
+    fn test_batata_error_all_variants() {
+        let errors = vec![
+            (
+                BatataError::IllegalArgument("bad arg".into()),
+                "caused: bad arg",
+            ),
+            (
+                BatataError::UserNotExist("alice".into()),
+                "user 'alice' not exist!",
+            ),
+            (
+                BatataError::NetworkError("timeout".into()),
+                "network error: timeout",
+            ),
+            (
+                BatataError::DatabaseError("connection lost".into()),
+                "database error: connection lost",
+            ),
+            (
+                BatataError::AuthError("invalid token".into()),
+                "authentication error: invalid token",
+            ),
+            (
+                BatataError::ConfigError("missing key".into()),
+                "configuration error: missing key",
+            ),
+            (
+                BatataError::InternalError("panic".into()),
+                "internal error: panic",
+            ),
+            (
+                BatataError::NamespaceNotExist("ns1".into()),
+                "namespace 'ns1' not exist",
+            ),
+            (
+                BatataError::NamespaceAlreadyExist("ns1".into()),
+                "namespace 'ns1' already exist",
+            ),
+        ];
+
+        for (err, expected) in errors {
+            assert_eq!(format!("{}", err), expected);
+        }
+    }
+
+    #[test]
+    fn test_batata_error_api_error() {
+        let err = BatataError::ApiError(400, 20002, "validation failed".into(), "detail".into());
+        assert_eq!(format!("{}", err), "validation failed");
+    }
+
+    #[test]
+    fn test_app_error_downcast() {
+        let batata_err = BatataError::AuthError("forbidden".to_string());
+        let anyhow_err: anyhow::Error = batata_err.into();
+        let app_err = AppError::from(anyhow_err);
+
+        let downcast = app_err.downcast_ref::<BatataError>();
+        assert!(downcast.is_some());
+        match downcast.unwrap() {
+            BatataError::AuthError(msg) => assert_eq!(msg, "forbidden"),
+            _ => panic!("unexpected error variant"),
+        }
+    }
+
+    #[test]
+    fn test_app_error_display() {
+        let err = AppError::from(anyhow::anyhow!("something went wrong"));
+        assert_eq!(format!("{}", err), "something went wrong");
+    }
+
+    #[test]
+    fn test_error_code_values() {
+        assert_eq!(PARAMETER_VALIDATE_ERROR.code, 20002);
+        assert_eq!(RESOURCE_NOT_FOUND.code, 20004);
+        assert_eq!(RESOURCE_CONFLICT.code, 20005);
+        assert_eq!(SERVICE_NAME_ERROR.code, 21000);
+        assert_eq!(INSTANCE_NOT_FOUND.code, 21003);
+        assert_eq!(NAMESPACE_NOT_EXIST.code, 22001);
+        assert_eq!(NAMESPACE_ALREADY_EXIST.code, 22002);
+        assert_eq!(SERVER_ERROR.code, 30000);
+        assert_eq!(MCP_SERVER_NOT_FOUND.code, 50000);
+        assert_eq!(AGENT_NOT_FOUND.code, 50100);
+    }
+
+    #[test]
+    fn test_error_code_serialization() {
+        let code = SUCCESS;
+        let json = serde_json::to_string(&code).unwrap();
+        assert!(json.contains("\"code\":0"));
+        assert!(json.contains("\"message\":\"success\""));
+    }
+
+    #[test]
+    fn test_error_code_default() {
+        let code = ErrorCode::default();
+        assert_eq!(code.code, 0);
+        assert_eq!(code.message, "");
+    }
 }

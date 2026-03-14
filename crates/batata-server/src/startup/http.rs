@@ -19,10 +19,10 @@ use crate::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
     },
     api::consul::{
-        AclService, ConsulEventService, ConsulIndexProvider, ConsulLockService, ConsulQueryService,
-        ConsulSemaphoreService, ConsulSessionService, agent::ConsulAgentService,
-        catalog::ConsulCatalogService, health::ConsulHealthService, kv::ConsulKVService,
-        model::ConsulDatacenterConfig, route::consul_routes,
+        AclService, ConsulEventService, ConsulIndexProvider, ConsulLockService,
+        ConsulPeeringService, ConsulQueryService, ConsulSemaphoreService, ConsulSessionService,
+        agent::ConsulAgentService, catalog::ConsulCatalogService, health::ConsulHealthService,
+        kv::ConsulKVService, model::ConsulDatacenterConfig, route::consul_routes,
     },
     api::v2::route::{cluster_routes, config_routes, naming_routes},
     api::v3::admin::route::admin_routes as v3_admin_routes,
@@ -49,6 +49,7 @@ pub struct ConsulServices {
     pub query: ConsulQueryService,
     pub lock: ConsulLockService,
     pub semaphore: ConsulSemaphoreService,
+    pub peering: Arc<ConsulPeeringService>,
     pub dc_config: ConsulDatacenterConfig,
     pub index_provider: ConsulIndexProvider,
 }
@@ -96,6 +97,7 @@ impl ConsulServices {
             query: ConsulQueryService::new(),
             lock,
             semaphore,
+            peering: Arc::new(ConsulPeeringService::new()),
             dc_config,
         }
     }
@@ -143,6 +145,7 @@ impl ConsulServices {
             query: ConsulQueryService::with_rocks(db),
             lock,
             semaphore,
+            peering: Arc::new(ConsulPeeringService::new()),
             dc_config,
             index_provider,
         }
@@ -192,6 +195,7 @@ impl ConsulServices {
             query: ConsulQueryService::with_rocks(db),
             lock,
             semaphore,
+            peering: Arc::new(ConsulPeeringService::new()),
             dc_config,
             index_provider,
         }
@@ -286,6 +290,7 @@ pub fn consul_server(
             .app_data(web::Data::new(consul_services.query.clone()))
             .app_data(web::Data::new(consul_services.lock.clone()))
             .app_data(web::Data::new(consul_services.semaphore.clone()))
+            .app_data(web::Data::from(consul_services.peering.clone()))
             .app_data(web::Data::new(consul_services.dc_config.clone()))
             .app_data(web::Data::new(consul_services.index_provider.clone()))
             .app_data(web::QueryConfig::default().error_handler(|err, _req| {

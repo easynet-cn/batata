@@ -399,4 +399,110 @@ mod tests {
         let decrypted = plugin.decrypt(plaintext, "").await.unwrap();
         assert_eq!(decrypted, plaintext);
     }
+
+    #[test]
+    fn test_encrypt_decrypt_empty_string() {
+        let key = ConfigEncryptionService::generate_key();
+        let service = ConfigEncryptionService::new(&key);
+        let encrypted = service.encrypt("").unwrap();
+        let decrypted = service.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, "");
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_unicode() {
+        let key = ConfigEncryptionService::generate_key();
+        let service = ConfigEncryptionService::new(&key);
+        let plaintext = "こんにちは世界 🌍 Ünïcödé";
+        let encrypted = service.encrypt(plaintext).unwrap();
+        let decrypted = service.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_encrypt_decrypt_large_content() {
+        let key = ConfigEncryptionService::generate_key();
+        let service = ConfigEncryptionService::new(&key);
+        let plaintext = "x".repeat(1024 * 100); // 100KB
+        let encrypted = service.encrypt(&plaintext).unwrap();
+        let decrypted = service.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_encrypt_produces_different_ciphertext() {
+        let key = ConfigEncryptionService::generate_key();
+        let service = ConfigEncryptionService::new(&key);
+        let plaintext = "same content";
+        let encrypted1 = service.encrypt(plaintext).unwrap();
+        let encrypted2 = service.encrypt(plaintext).unwrap();
+        // Due to random nonce, encrypted outputs should differ
+        assert_ne!(encrypted1, encrypted2);
+        // But both should decrypt to the same plaintext
+        assert_eq!(service.decrypt(&encrypted1).unwrap(), plaintext);
+        assert_eq!(service.decrypt(&encrypted2).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn test_different_keys_cannot_decrypt() {
+        let key1 = ConfigEncryptionService::generate_key();
+        let key2 = ConfigEncryptionService::generate_key();
+        let service1 = ConfigEncryptionService::new(&key1);
+        let service2 = ConfigEncryptionService::new(&key2);
+
+        let encrypted = service1.encrypt("secret").unwrap();
+        assert!(service2.decrypt(&encrypted).is_err());
+    }
+
+    #[test]
+    fn test_tampered_ciphertext_fails() {
+        let key = ConfigEncryptionService::generate_key();
+        let service = ConfigEncryptionService::new(&key);
+        let encrypted = service.encrypt("data").unwrap();
+
+        // Decode, tamper, re-encode
+        let mut bytes = BASE64.decode(&encrypted).unwrap();
+        if let Some(b) = bytes.last_mut() {
+            *b ^= 0xFF;
+        }
+        let tampered = BASE64.encode(&bytes);
+        assert!(service.decrypt(&tampered).is_err());
+    }
+
+    #[test]
+    fn test_crypto_error_display() {
+        let err = CryptoError::EncryptionFailed("test".to_string());
+        assert_eq!(format!("{}", err), "Encryption failed: test");
+
+        let err = CryptoError::DecryptionFailed("test".to_string());
+        assert_eq!(format!("{}", err), "Decryption failed: test");
+
+        let err = CryptoError::InvalidKey("bad key".to_string());
+        assert_eq!(format!("{}", err), "Invalid key: bad key");
+
+        let err = CryptoError::InvalidData("bad data".to_string());
+        assert_eq!(format!("{}", err), "Invalid data: bad data");
+
+        let err = CryptoError::Base64Error("decode failed".to_string());
+        assert_eq!(format!("{}", err), "Base64 decode error: decode failed");
+    }
+
+    #[tokio::test]
+    async fn test_plugin_with_empty_key() {
+        let plugin = AesGcmEncryptionPlugin::new("").unwrap();
+        assert!(!plugin.is_enabled());
+    }
+
+    #[test]
+    fn test_generate_key_uniqueness() {
+        let key1 = ConfigEncryptionService::generate_key();
+        let key2 = ConfigEncryptionService::generate_key();
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_from_base64_key_invalid_base64() {
+        let result = ConfigEncryptionService::from_base64_key("not valid base64!!!");
+        assert!(result.is_err());
+    }
 }

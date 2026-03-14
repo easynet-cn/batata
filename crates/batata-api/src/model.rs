@@ -571,4 +571,79 @@ mod tests {
         assert_eq!(member.port, 8848);
         assert_eq!(member.address, "127.0.0.1:8848");
     }
+
+    #[test]
+    fn test_page_pagination_calculation() {
+        // 25 items, page 1, page size 10 -> 3 pages
+        let page: Page<i32> = Page::new(25, 1, 10, vec![1, 2, 3]);
+        assert_eq!(page.pages_available, 3);
+        assert_eq!(page.total_count, 25);
+        assert_eq!(page.page_number, 1);
+    }
+
+    #[test]
+    fn test_page_exact_division() {
+        let page: Page<i32> = Page::new(20, 1, 10, vec![]);
+        assert_eq!(page.pages_available, 2);
+    }
+
+    #[test]
+    fn test_page_single_item() {
+        let page: Page<i32> = Page::new(1, 1, 10, vec![1]);
+        assert_eq!(page.pages_available, 1);
+    }
+
+    #[test]
+    fn test_page_zero_page_size() {
+        let page: Page<i32> = Page::new(10, 1, 0, vec![]);
+        assert_eq!(page.pages_available, 0);
+    }
+
+    #[test]
+    fn test_node_state_all_variants() {
+        let states = vec![
+            NodeState::Starting,
+            NodeState::Up,
+            NodeState::Suspicious,
+            NodeState::Down,
+            NodeState::Isolation,
+        ];
+        for state in states {
+            // Ensure Display and Debug work
+            let _ = format!("{}", state);
+            let _ = format!("{:?}", state);
+        }
+    }
+
+    #[test]
+    fn test_member_builder_with_ip_port() {
+        let member = MemberBuilder::new("192.168.1.1".to_string(), 8848)
+            .node_state(NodeState::Up)
+            .build();
+        assert_eq!(member.ip, "192.168.1.1");
+        assert_eq!(member.port, 8848);
+        assert_eq!(member.address, "192.168.1.1:8848");
+    }
+
+    #[test]
+    fn test_member_address_format() {
+        let member = MemberBuilder::new("10.0.0.1".to_string(), 9848).build();
+        assert_eq!(member.address, "10.0.0.1:9848");
+    }
+
+    #[test]
+    fn test_api_constants() {
+        assert_eq!(super::CLIENT_VERSION, "3.0.0");
+        assert_eq!(super::SDK_GRPC_PORT_DEFAULT_OFFSET, 1000);
+        assert_eq!(super::CLUSTER_GRPC_PORT_DEFAULT_OFFSET, 1001);
+    }
+
+    #[test]
+    fn test_page_serialization() {
+        let page = Page::new(10, 1, 5, vec!["item1".to_string(), "item2".to_string()]);
+        let json = serde_json::to_string(&page).unwrap();
+        assert!(json.contains("\"totalCount\":10"));
+        assert!(json.contains("\"pageNumber\":1"));
+        assert!(json.contains("\"pagesAvailable\":2"));
+    }
 }

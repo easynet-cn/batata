@@ -197,4 +197,81 @@ mod tests {
         assert_eq!(ApiType::AdminApi.description(), "ADMIN_API");
         assert_eq!("ADMIN_API".parse::<ApiType>().unwrap(), ApiType::AdminApi);
     }
+
+    #[test]
+    fn test_action_types_display() {
+        assert_eq!(format!("{}", ActionTypes::Read), "r");
+        assert_eq!(format!("{}", ActionTypes::Write), "w");
+    }
+
+    #[test]
+    fn test_action_types_from_str_invalid() {
+        assert!("x".parse::<ActionTypes>().is_err());
+        assert!("read".parse::<ActionTypes>().is_err());
+        assert!("write".parse::<ActionTypes>().is_err());
+        assert!("".parse::<ActionTypes>().is_err());
+    }
+
+    #[test]
+    fn test_sign_type_all_variants() {
+        let variants = vec![
+            (SignType::Naming, "naming"),
+            (SignType::Config, "config"),
+            (SignType::Lock, "lock"),
+            (SignType::Ai, "ai"),
+            (SignType::Console, "console"),
+            (SignType::Specified, "specified"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.as_str(), expected);
+            assert_eq!(format!("{}", variant), expected);
+            assert_eq!(expected.parse::<SignType>().unwrap(), variant);
+        }
+    }
+
+    #[test]
+    fn test_sign_type_from_str_invalid() {
+        assert!("unknown".parse::<SignType>().is_err());
+        assert!("".parse::<SignType>().is_err());
+    }
+
+    #[test]
+    fn test_api_type_all_variants() {
+        let variants = vec![
+            (ApiType::AdminApi, "ADMIN_API"),
+            (ApiType::ConsoleApi, "CONSOLE_API"),
+            (ApiType::OpenApi, "OPEN_API"),
+            (ApiType::InnerApi, "INNER_API"),
+        ];
+        for (variant, expected) in variants {
+            assert_eq!(variant.description(), expected);
+            assert_eq!(format!("{}", variant), expected);
+            assert_eq!(expected.parse::<ApiType>().unwrap(), variant);
+        }
+    }
+
+    #[test]
+    fn test_api_type_from_str_invalid() {
+        assert!("UNKNOWN".parse::<ApiType>().is_err());
+        assert!("admin_api".parse::<ApiType>().is_err()); // Case sensitive
+    }
+
+    #[test]
+    fn test_default_pagination() {
+        assert_eq!(default_page_no(), 1);
+        assert_eq!(default_page_size(), 100);
+        assert_eq!(default_page_size_small(), 20);
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(DEFAULT_NAMESPACE_ID, "public");
+        assert_eq!(DEFAULT_GROUP, "DEFAULT_GROUP");
+        assert_eq!(TENANT, "tenant");
+        assert_eq!(NAMESPACE_ID, "namespaceId");
+        assert_eq!(GROUP, "group");
+        assert_eq!(GROUP_NAME, "groupName");
+        assert_eq!(DATA_ID, "dataId");
+        assert_eq!(SERVICE_NAME, "serviceName");
+    }
 }

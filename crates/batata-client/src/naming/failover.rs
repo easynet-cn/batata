@@ -137,20 +137,21 @@ mod tests {
     }
 
     fn create_test_service() -> Service {
-        let mut service = Service::default();
-        service.name = "test-service".to_string();
-        service.group_name = "DEFAULT_GROUP".to_string();
-        service.hosts.push(Instance {
-            ip: "10.0.0.1".to_string(),
-            port: 8080,
-            healthy: true,
-            weight: 1.0,
-            enabled: true,
-            ephemeral: true,
-            cluster_name: "DEFAULT".to_string(),
+        Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![Instance {
+                ip: "10.0.0.1".to_string(),
+                port: 8080,
+                healthy: true,
+                weight: 1.0,
+                enabled: true,
+                ephemeral: true,
+                cluster_name: "DEFAULT".to_string(),
+                ..Default::default()
+            }],
             ..Default::default()
-        });
-        service
+        }
     }
 
     #[test]

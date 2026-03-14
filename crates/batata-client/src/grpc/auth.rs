@@ -119,7 +119,10 @@ impl AuthProvider {
 
     /// Perform HTTP login to get JWT token.
     async fn login(&self) -> Result<()> {
-        let url = format!("{}{}/v3/auth/user/login", self.server_addr, self.context_path);
+        let url = format!(
+            "{}{}/v3/auth/user/login",
+            self.server_addr, self.context_path
+        );
 
         debug!("Authenticating with server: {}", url);
 

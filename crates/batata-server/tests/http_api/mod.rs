@@ -9,6 +9,8 @@ pub mod config_encryption_test;
 pub mod config_import_export_test;
 pub mod config_listener_test;
 pub mod config_longpoll_test;
+pub mod console_api_test;
+pub mod error_path_test;
 pub mod namespace_api_test;
 pub mod naming_api_test;
 pub mod naming_cluster_test;

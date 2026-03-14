@@ -538,8 +538,10 @@ mod tests {
         use batata_api::remote::model::{ResponseTrait, ServerCheckResponse};
 
         // Build a payload using the trait method
-        let mut original = ServerCheckResponse::default();
-        original.connection_id = "test-conn-id".to_string();
+        let original = ServerCheckResponse {
+            connection_id: "test-conn-id".to_string(),
+            ..Default::default()
+        };
         let payload = original.build_payload();
 
         let resp: ServerCheckResponse = deserialize_payload(&payload);

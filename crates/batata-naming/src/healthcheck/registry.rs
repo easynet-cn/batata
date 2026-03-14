@@ -144,6 +144,8 @@ pub struct InstanceCheckConfig {
     pub initial_status: CheckStatus,
     /// Consul service ID for reverse lookup
     pub consul_service_id: Option<String>,
+    /// Notes / maintenance reason
+    pub notes: String,
 }
 
 /// Check runtime status (updated frequently)
@@ -755,6 +757,7 @@ mod tests {
             origin: CheckOrigin::ConsulService,
             initial_status,
             consul_service_id: None,
+            notes: String::new(),
         }
     }
 
@@ -1027,6 +1030,7 @@ mod tests {
             origin: CheckOrigin::ConsulService,
             initial_status: CheckStatus::Passing,
             consul_service_id,
+            notes: String::new(),
         }
     }
 

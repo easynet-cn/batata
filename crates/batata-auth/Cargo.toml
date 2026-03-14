@@ -48,3 +48,6 @@ anyhow = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

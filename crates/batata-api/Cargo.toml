@@ -34,5 +34,8 @@ chrono = { workspace = true }
 # Input validation
 validator = { workspace = true }
 
+[dev-dependencies]
+proptest = { workspace = true }
+
 [build-dependencies]
 tonic-prost-build = { workspace = true }

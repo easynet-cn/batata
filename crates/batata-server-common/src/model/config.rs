@@ -1554,13 +1554,12 @@ mod tests {
         let mut overrides = Vec::new();
         let mut filtered = Vec::new();
         for arg in args {
-            if let Some(rest) = arg.strip_prefix("--") {
-                if let Some((key, value)) = rest.split_once('=') {
-                    if key.contains('.') {
-                        overrides.push((key.to_string(), value.to_string()));
-                        continue;
-                    }
-                }
+            if let Some(rest) = arg.strip_prefix("--")
+                && let Some((key, value)) = rest.split_once('=')
+                && key.contains('.')
+            {
+                overrides.push((key.to_string(), value.to_string()));
+                continue;
             }
             filtered.push(arg);
         }
@@ -1670,5 +1669,4 @@ mod tests {
         let resolved = custom_path.as_deref().unwrap_or("conf/application.yml");
         assert_eq!(resolved, "/etc/batata/app.yml");
     }
-
 }

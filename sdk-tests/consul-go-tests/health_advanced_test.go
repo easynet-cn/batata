@@ -534,10 +534,11 @@ func TestHealthChecksFilter(t *testing.T) {
 				Status:  "passing",
 			},
 			&api.AgentServiceCheck{
-				CheckID: serviceName + "-tcp",
-				Name:    "TCP Check",
-				TCP:     "localhost:8080",
-				Timeout: "5s",
+				CheckID:  serviceName + "-tcp",
+				Name:     "TCP Check",
+				TCP:      "localhost:8080",
+				Interval: "10s",
+				Timeout:  "5s",
 			},
 		},
 	}

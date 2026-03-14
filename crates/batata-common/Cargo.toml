@@ -35,3 +35,4 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
+proptest = { workspace = true }

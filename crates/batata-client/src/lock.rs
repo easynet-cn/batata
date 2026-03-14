@@ -193,15 +193,17 @@ mod tests {
 
     #[test]
     fn test_lock_operation_request_acquire() {
-        let mut req = LockOperationRequest::default();
-        req.module = "lock".to_string();
-        req.lock_operation = LOCK_OP_ACQUIRE.to_string();
-        req.lock_instance = Some(LockInstance {
-            key: "my-lock".to_string(),
-            expired_time: 30000,
-            lock_type: "mutex".to_string(),
-            params: Default::default(),
-        });
+        let req = LockOperationRequest {
+            module: "lock".to_string(),
+            lock_operation: LOCK_OP_ACQUIRE.to_string(),
+            lock_instance: Some(LockInstance {
+                key: "my-lock".to_string(),
+                expired_time: 30000,
+                lock_type: "mutex".to_string(),
+                params: Default::default(),
+            }),
+            ..Default::default()
+        };
 
         assert_eq!(req.lock_operation, "ACQUIRE");
         assert_eq!(req.module, "lock");
@@ -213,15 +215,17 @@ mod tests {
 
     #[test]
     fn test_lock_operation_request_release() {
-        let mut req = LockOperationRequest::default();
-        req.module = "lock".to_string();
-        req.lock_operation = LOCK_OP_RELEASE.to_string();
-        req.lock_instance = Some(LockInstance {
-            key: "my-lock".to_string(),
-            expired_time: 0,
-            lock_type: String::new(),
-            params: Default::default(),
-        });
+        let req = LockOperationRequest {
+            module: "lock".to_string(),
+            lock_operation: LOCK_OP_RELEASE.to_string(),
+            lock_instance: Some(LockInstance {
+                key: "my-lock".to_string(),
+                expired_time: 0,
+                lock_type: String::new(),
+                params: Default::default(),
+            }),
+            ..Default::default()
+        };
 
         assert_eq!(req.lock_operation, "RELEASE");
         let instance = req.lock_instance.unwrap();

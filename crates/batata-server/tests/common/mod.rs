@@ -10,7 +10,12 @@ pub mod client;
 #[allow(dead_code, unused_imports)]
 pub mod db;
 #[allow(dead_code, unused_imports)]
+pub mod fixtures;
+#[allow(dead_code, unused_imports)]
 pub mod server;
+
+#[allow(unused_imports)]
+pub use fixtures::{AuthFixture, ConfigFixture, InstanceFixture, NamespaceFixture};
 
 pub use client::TestClient;
 #[allow(unused_imports)]

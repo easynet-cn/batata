@@ -141,6 +141,7 @@ impl ConsulHealthService {
             origin: CheckOrigin::ConsulAgent,
             initial_status,
             consul_service_id,
+            notes: registration.notes.clone().unwrap_or_default(),
         };
 
         self.registry.register_check(config);
@@ -246,7 +247,7 @@ impl ConsulHealthService {
             check_id: config.check_id.clone(),
             name: config.name.clone(),
             status: status.status.as_str().to_string(),
-            notes: String::new(),
+            notes: config.notes.clone(),
             output: status.output.clone(),
             service_id: config.consul_service_id.clone().unwrap_or_default(),
             service_name: config.service_name.clone(),
@@ -516,6 +517,11 @@ pub async fn get_service_checks(
         }
 
         all_checks.extend(checks);
+    }
+
+    // Apply filter expression if provided
+    if let Some(ref filter) = query.filter {
+        all_checks = apply_health_check_filter(all_checks, filter);
     }
 
     HttpResponse::Ok()
@@ -1023,6 +1029,75 @@ fn parse_duration(s: &str) -> Option<u64> {
 /// Parse a duration string into std::time::Duration
 fn parse_duration_to_std(s: &str) -> Option<Duration> {
     parse_duration(s).map(Duration::from_secs)
+}
+
+/// Apply a Consul bexpr-style filter to health checks.
+///
+/// Supports basic expressions:
+/// - `<Field> contains "<value>"`
+/// - `<Field> == "<value>"`
+/// - `<Field> != "<value>"`
+///
+/// Supported fields: Name, CheckID, Status, ServiceName, ServiceID.
+fn apply_health_check_filter(checks: Vec<HealthCheck>, filter: &str) -> Vec<HealthCheck> {
+    let filter = filter.trim();
+
+    // Parse: <field> <operator> "<value>"
+    if let Some(rest) = filter.strip_suffix('"')
+        && let Some(pos) = rest.rfind('"')
+    {
+        let value = &rest[pos + 1..];
+        let before = rest[..pos].trim();
+
+        let get_field = |check: &HealthCheck, field: &str| -> Option<String> {
+            match field {
+                "Name" => Some(check.name.clone()),
+                "CheckID" => Some(check.check_id.clone()),
+                "Status" => Some(check.status.clone()),
+                "ServiceName" => Some(check.service_name.clone()),
+                "ServiceID" => Some(check.service_id.clone()),
+                _ => None,
+            }
+        };
+
+        if let Some(field) = before.strip_suffix("contains") {
+            let field = field.trim();
+            return checks
+                .into_iter()
+                .filter(|check| {
+                    get_field(check, field)
+                        .map(|actual| actual.contains(value))
+                        .unwrap_or(true)
+                })
+                .collect();
+        }
+
+        if let Some(field) = before.strip_suffix("==") {
+            let field = field.trim();
+            return checks
+                .into_iter()
+                .filter(|check| {
+                    get_field(check, field)
+                        .map(|actual| actual == value)
+                        .unwrap_or(true)
+                })
+                .collect();
+        }
+
+        if let Some(field) = before.strip_suffix("!=") {
+            let field = field.trim();
+            return checks
+                .into_iter()
+                .filter(|check| {
+                    get_field(check, field)
+                        .map(|actual| actual != value)
+                        .unwrap_or(true)
+                })
+                .collect();
+        }
+    }
+
+    checks
 }
 
 #[cfg(test)]

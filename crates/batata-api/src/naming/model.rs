@@ -889,3 +889,153 @@ pub struct HealthCheckerConfigForm {
 fn default_health_check_type() -> String {
     "TCP".to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_instance_default() {
+        let instance = Instance::default();
+        assert!(instance.ip.is_empty());
+        assert_eq!(instance.port, 0);
+        assert_eq!(instance.weight, 0.0);
+        assert!(!instance.healthy);
+        assert!(!instance.enabled);
+    }
+
+    #[test]
+    fn test_instance_new() {
+        let instance = Instance::new("192.168.1.1".to_string(), 8080);
+        assert_eq!(instance.ip, "192.168.1.1");
+        assert_eq!(instance.port, 8080);
+        assert_eq!(instance.weight, 1.0);
+        assert!(instance.healthy);
+        assert!(instance.enabled);
+        assert!(instance.ephemeral);
+    }
+
+    #[test]
+    fn test_instance_key() {
+        let instance = Instance {
+            ip: "192.168.1.1".to_string(),
+            port: 8080,
+            ..Default::default()
+        };
+        let key = instance.key();
+        assert!(key.contains("192.168.1.1"));
+        assert!(key.contains("8080"));
+    }
+
+    #[test]
+    fn test_instance_weight_clamping() {
+        // Negative values get clamped to DEFAULT_INSTANCE_WEIGHT (1.0)
+        assert_eq!(clamp_weight(-1.0), 1.0);
+        // Zero is at the boundary (not less than MIN_WEIGHT_VALUE 0.0)
+        assert_eq!(clamp_weight(0.0), 0.0);
+        // Normal values pass through
+        assert_eq!(clamp_weight(0.01), 0.01);
+        assert_eq!(clamp_weight(1.0), 1.0);
+        assert_eq!(clamp_weight(10000.0), 10000.0);
+        // Over max gets clamped
+        assert_eq!(clamp_weight(10001.0), 10000.0);
+        assert_eq!(clamp_weight(99999.0), 10000.0);
+    }
+
+    #[test]
+    fn test_instance_heartbeat_intervals() {
+        let instance = Instance::new("127.0.0.1".to_string(), 8080);
+        assert_eq!(instance.get_heartbeat_interval(), 5000);
+        assert_eq!(instance.get_heartbeat_timeout(), 15000);
+        assert_eq!(instance.get_ip_delete_timeout(), 30000);
+    }
+
+    #[test]
+    fn test_instance_custom_heartbeat() {
+        let mut instance = Instance::new("127.0.0.1".to_string(), 8080);
+        instance.metadata.insert(
+            "preserved.heart.beat.interval".to_string(),
+            "3000".to_string(),
+        );
+        assert_eq!(instance.get_heartbeat_interval(), 3000);
+    }
+
+    #[test]
+    fn test_service_creation() {
+        let service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            clusters: "DEFAULT".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(service.name, "test-service");
+    }
+
+    #[test]
+    fn test_service_healthy_hosts() {
+        let mut service = Service::default();
+        service.hosts.push(Instance {
+            ip: "10.0.0.1".to_string(),
+            port: 8080,
+            healthy: true,
+            enabled: true,
+            ..Default::default()
+        });
+        service.hosts.push(Instance {
+            ip: "10.0.0.2".to_string(),
+            port: 8080,
+            healthy: false,
+            enabled: true,
+            ..Default::default()
+        });
+        let healthy = service.healthy_hosts();
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy[0].ip, "10.0.0.1");
+    }
+
+    #[test]
+    fn test_generate_instance_id() {
+        let id = generate_instance_id("192.168.1.1", 8080, "DEFAULT", "test-service");
+        assert!(!id.is_empty());
+        assert!(id.contains("192.168.1.1"));
+        assert!(id.contains("8080"));
+        assert!(id.contains("DEFAULT"));
+        assert!(id.contains("test-service"));
+    }
+
+    #[test]
+    fn test_service_new() {
+        let service = Service::new("my-service".to_string(), "DEFAULT_GROUP".to_string());
+        assert_eq!(service.name, "my-service");
+        assert_eq!(service.group_name, "DEFAULT_GROUP");
+        assert_eq!(service.cache_millis, 1000);
+    }
+
+    #[test]
+    fn test_instance_id_generator_default() {
+        let instance = Instance::new("127.0.0.1".to_string(), 8080);
+        assert_eq!(instance.get_instance_id_generator(), "simple");
+    }
+
+    #[test]
+    fn test_instance_register_form_to_instance() {
+        let form = InstanceRegisterForm {
+            namespace_id: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: "test-svc".to_string(),
+            ip: "10.0.0.1".to_string(),
+            port: 8080,
+            weight: 1.5,
+            enabled: true,
+            healthy: true,
+            ephemeral: true,
+            cluster_name: "".to_string(),
+            metadata: None,
+        };
+        let instance = form.to_instance();
+        assert_eq!(instance.ip, "10.0.0.1");
+        assert_eq!(instance.port, 8080);
+        assert_eq!(instance.weight, 1.5);
+        assert_eq!(instance.cluster_name, "DEFAULT");
+    }
+}

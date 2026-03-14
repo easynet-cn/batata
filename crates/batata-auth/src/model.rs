@@ -367,4 +367,215 @@ mod tests {
         };
         assert_eq!(user.username, "test");
     }
+
+    #[test]
+    fn test_nacos_user_serialization() {
+        let user = NacosUser {
+            username: "admin".to_string(),
+            password: "hashed".to_string(),
+            token: "jwt.token.here".to_string(),
+            global_admin: true,
+        };
+        let json = serde_json::to_string(&user).unwrap();
+        assert!(json.contains("\"globalAdmin\":true"));
+        assert!(json.contains("\"username\":\"admin\""));
+    }
+
+    #[test]
+    fn test_nacos_user_deserialization() {
+        let json = r#"{"username":"admin","password":"pass","token":"tok","globalAdmin":false}"#;
+        let user: NacosUser = serde_json::from_str(json).unwrap();
+        assert_eq!(user.username, "admin");
+        assert!(!user.global_admin);
+    }
+
+    #[test]
+    fn test_nacos_jwt_payload_serialization() {
+        let payload = NacosJwtPayload {
+            sub: "testuser".to_string(),
+            exp: 1700000000,
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        let deserialized: NacosJwtPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.sub, "testuser");
+        assert_eq!(deserialized.exp, 1700000000);
+    }
+
+    #[test]
+    fn test_role_info_serialization() {
+        let role = RoleInfo {
+            role: "ROLE_ADMIN".to_string(),
+            username: "admin".to_string(),
+        };
+        let json = serde_json::to_string(&role).unwrap();
+        assert!(json.contains("\"role\":\"ROLE_ADMIN\""));
+
+        let deserialized: RoleInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.role, "ROLE_ADMIN");
+        assert_eq!(deserialized.username, "admin");
+    }
+
+    #[test]
+    fn test_permission_info_serialization() {
+        let perm = PermissionInfo {
+            role: "developer".to_string(),
+            resource: "public:*:config/*".to_string(),
+            action: "rw".to_string(),
+        };
+        let json = serde_json::to_string(&perm).unwrap();
+        let deserialized: PermissionInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.role, "developer");
+        assert_eq!(deserialized.resource, "public:*:config/*");
+        assert_eq!(deserialized.action, "rw");
+    }
+
+    #[test]
+    fn test_resource_default() {
+        let resource = Resource::default();
+        assert!(resource.namespace_id.is_empty());
+        assert!(resource.group.is_empty());
+        assert!(resource.name.is_empty());
+        assert!(resource.r#type.is_empty());
+        assert!(resource.properties.is_empty());
+    }
+
+    #[test]
+    fn test_resource_with_properties() {
+        let mut resource = Resource {
+            namespace_id: "public".to_string(),
+            group: "DEFAULT_GROUP".to_string(),
+            name: "app.properties".to_string(),
+            r#type: "config".to_string(),
+            ..Default::default()
+        };
+        resource.properties.insert(
+            Resource::ACTION.to_string(),
+            serde_json::Value::String("r".to_string()),
+        );
+        assert_eq!(resource.properties.len(), 1);
+    }
+
+    #[test]
+    fn test_auth_context_jwt_error_expired() {
+        let ctx = AuthContext {
+            jwt_error: Some(jsonwebtoken::errors::Error::from(
+                ErrorKind::ExpiredSignature,
+            )),
+            ..Default::default()
+        };
+        assert_eq!(ctx.jwt_error_string(), "token expired!");
+    }
+
+    #[test]
+    fn test_auth_context_jwt_error_invalid() {
+        let ctx = AuthContext {
+            jwt_error: Some(jsonwebtoken::errors::Error::from(ErrorKind::InvalidToken)),
+            ..Default::default()
+        };
+        let error_str = ctx.jwt_error_string();
+        assert!(!error_str.is_empty());
+        assert_ne!(error_str, "token expired!");
+    }
+
+    #[test]
+    fn test_auth_result_creation() {
+        let result = AuthResult {
+            success: true,
+            username: "admin".to_string(),
+            error_message: None,
+            is_ldap_user: false,
+        };
+        assert!(result.success);
+        assert!(!result.is_ldap_user);
+        assert!(result.error_message.is_none());
+    }
+
+    #[test]
+    fn test_auth_result_failure() {
+        let result = AuthResult {
+            success: false,
+            username: "user".to_string(),
+            error_message: Some("Invalid credentials".to_string()),
+            is_ldap_user: true,
+        };
+        assert!(!result.success);
+        assert!(result.is_ldap_user);
+        assert_eq!(result.error_message.unwrap(), "Invalid credentials");
+    }
+
+    #[test]
+    fn test_ldap_config_not_configured_when_empty_url() {
+        let config = LdapConfig {
+            url: "".to_string(),
+            ..Default::default()
+        };
+        assert!(!config.is_configured());
+    }
+
+    #[test]
+    fn test_ldap_config_configured_with_url() {
+        let config = LdapConfig {
+            url: "ldap://localhost:389".to_string(),
+            ..Default::default()
+        };
+        assert!(config.is_configured());
+    }
+
+    #[test]
+    fn test_ldap_config_build_user_dn_with_custom_prefix() {
+        let config = LdapConfig {
+            base_dn: "dc=company,dc=com".to_string(),
+            filter_prefix: "cn".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.build_user_dn("john"), "cn=john,dc=company,dc=com");
+    }
+
+    #[test]
+    fn test_user_from_model() {
+        let model = users::Model {
+            username: "testuser".to_string(),
+            password: "hashed_password".to_string(),
+            enabled: 1,
+        };
+        let user = User::from(model);
+        assert_eq!(user.username, "testuser");
+        assert_eq!(user.password, "hashed_password");
+    }
+
+    #[test]
+    fn test_role_info_from_model() {
+        let model = roles::Model {
+            username: "admin".to_string(),
+            role: "ROLE_ADMIN".to_string(),
+        };
+        let role_info = RoleInfo::from(&model);
+        assert_eq!(role_info.username, "admin");
+        assert_eq!(role_info.role, "ROLE_ADMIN");
+    }
+
+    #[test]
+    fn test_permission_info_from_model() {
+        let model = permissions::Model {
+            role: "dev".to_string(),
+            resource: "public:*:config/*".to_string(),
+            action: "r".to_string(),
+        };
+        let perm = PermissionInfo::from(&model);
+        assert_eq!(perm.role, "dev");
+        assert_eq!(perm.resource, "public:*:config/*");
+        assert_eq!(perm.action, "r");
+    }
+
+    #[test]
+    fn test_max_password_length() {
+        assert_eq!(MAX_PASSWORD_LENGTH, 72);
+    }
+
+    #[test]
+    fn test_path_constants() {
+        assert_eq!(USER_PATH, "/v3/auth/user");
+        assert_eq!(ROLE_PATH, "/v3/auth/role");
+        assert_eq!(PERMISSION_PATH, "/v3/auth/permission");
+    }
 }

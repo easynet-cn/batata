@@ -201,6 +201,19 @@ mod tests {
         let ns = NamespaceInfo::default();
         assert!(ns.namespace_id.is_empty());
         assert!(ns.namespace_name.is_empty());
+        assert_eq!(ns.config_count, 0);
         assert_eq!(ns.quota, 0);
+    }
+
+    #[test]
+    fn test_member_info_creation() {
+        let member = MemberInfo {
+            ip: "192.168.1.1".to_string(),
+            port: 8848,
+            address: "192.168.1.1:8848".to_string(),
+            state: MemberState::Up,
+        };
+        assert_eq!(member.ip, "192.168.1.1");
+        assert_eq!(member.port, 8848);
     }
 }

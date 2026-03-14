@@ -545,10 +545,12 @@ mod tests {
         let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
         let naming_service = BatataNamingService::new(client);
 
-        let mut service = Service::default();
-        service.name = "test-service".to_string();
-        service.group_name = "DEFAULT_GROUP".to_string();
-        service.hosts = vec![make_instance("10.0.0.1", 8080, true)];
+        let service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![make_instance("10.0.0.1", 8080, true)],
+            ..Default::default()
+        };
 
         let req = NotifySubscriberRequest::for_service(
             "public",
@@ -574,19 +576,23 @@ mod tests {
 
         // Pre-populate cache
         let key = build_service_key("DEFAULT_GROUP", "test-service");
-        let mut old_service = Service::default();
-        old_service.name = "test-service".to_string();
-        old_service.hosts = vec![make_instance("10.0.0.1", 8080, true)];
+        let old_service = Service {
+            name: "test-service".to_string(),
+            hosts: vec![make_instance("10.0.0.1", 8080, true)],
+            ..Default::default()
+        };
         naming_service.service_info_holder.update(&key, old_service);
 
         // Notify with new instances
-        let mut new_service = Service::default();
-        new_service.name = "test-service".to_string();
-        new_service.group_name = "DEFAULT_GROUP".to_string();
-        new_service.hosts = vec![
-            make_instance("10.0.0.1", 8080, true),
-            make_instance("10.0.0.2", 8080, true),
-        ];
+        let new_service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![
+                make_instance("10.0.0.1", 8080, true),
+                make_instance("10.0.0.2", 8080, true),
+            ],
+            ..Default::default()
+        };
 
         let req = NotifySubscriberRequest::for_service(
             "public",
@@ -626,10 +632,12 @@ mod tests {
             .or_default()
             .push(listener);
 
-        let mut service = Service::default();
-        service.name = "test-service".to_string();
-        service.group_name = "DEFAULT_GROUP".to_string();
-        service.hosts = vec![make_instance("10.0.0.1", 8080, true)];
+        let service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![make_instance("10.0.0.1", 8080, true)],
+            ..Default::default()
+        };
 
         let req = NotifySubscriberRequest::for_service(
             "public",
@@ -648,10 +656,12 @@ mod tests {
         let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
         let naming_service = BatataNamingService::new(client);
 
-        let mut service = Service::default();
-        service.name = "test-service".to_string();
-        service.group_name = "DEFAULT_GROUP".to_string();
-        service.hosts = vec![make_instance("10.0.0.1", 8080, true)];
+        let service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![make_instance("10.0.0.1", 8080, true)],
+            ..Default::default()
+        };
 
         let req = NotifySubscriberRequest::for_service(
             "public",
@@ -676,11 +686,13 @@ mod tests {
 
         // Pre-populate with inst1 and inst2
         let key = build_service_key("DEFAULT_GROUP", "test-service");
-        let mut old_service = Service::default();
-        old_service.hosts = vec![
-            make_instance("10.0.0.1", 8080, true),
-            make_instance("10.0.0.2", 8080, true),
-        ];
+        let old_service = Service {
+            hosts: vec![
+                make_instance("10.0.0.1", 8080, true),
+                make_instance("10.0.0.2", 8080, true),
+            ],
+            ..Default::default()
+        };
         naming_service.service_info_holder.update(&key, old_service);
 
         let diff_received = Arc::new(std::sync::Mutex::new(None));
@@ -697,13 +709,15 @@ mod tests {
             .push(listener);
 
         // Notify: remove inst2, add inst3
-        let mut new_service = Service::default();
-        new_service.name = "test-service".to_string();
-        new_service.group_name = "DEFAULT_GROUP".to_string();
-        new_service.hosts = vec![
-            make_instance("10.0.0.1", 8080, true),
-            make_instance("10.0.0.3", 8080, true),
-        ];
+        let new_service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![
+                make_instance("10.0.0.1", 8080, true),
+                make_instance("10.0.0.3", 8080, true),
+            ],
+            ..Default::default()
+        };
 
         let req = NotifySubscriberRequest::for_service(
             "public",

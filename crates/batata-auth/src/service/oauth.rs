@@ -632,4 +632,158 @@ mod tests {
         // They should be different (with very high probability)
         assert_ne!(s1, s2);
     }
+
+    #[test]
+    fn test_oauth_provider_type_variants() {
+        assert_eq!(OAuthProviderType::default(), OAuthProviderType::Oidc);
+        let types = vec![
+            OAuthProviderType::Generic,
+            OAuthProviderType::Oidc,
+            OAuthProviderType::Google,
+            OAuthProviderType::GitHub,
+            OAuthProviderType::Microsoft,
+            OAuthProviderType::Custom("keycloak".to_string()),
+        ];
+        for t in types {
+            // Ensure debug works
+            let _ = format!("{:?}", t);
+        }
+    }
+
+    #[test]
+    fn test_oauth_config_disabled_by_default() {
+        let config = OAuthConfig::from_env();
+        assert!(!config.enabled);
+        assert!(config.providers.is_empty());
+    }
+
+    #[test]
+    fn test_oauth_config_get_provider() {
+        let mut config = OAuthConfig::from_env();
+        config.providers.insert(
+            "test".to_string(),
+            OAuthProviderConfig {
+                provider_type: OAuthProviderType::Generic,
+                enabled: true,
+                client_id: "client123".to_string(),
+                client_secret: "secret456".to_string(),
+                discovery_url: None,
+                authorize_endpoint: Some("https://auth.example.com/authorize".to_string()),
+                token_endpoint: Some("https://auth.example.com/token".to_string()),
+                userinfo_endpoint: Some("https://auth.example.com/userinfo".to_string()),
+                jwks_uri: None,
+                scopes: vec!["openid".to_string(), "profile".to_string()],
+                redirect_uri: None,
+                userinfo_mapping: UserInfoMapping::default(),
+            },
+        );
+        assert!(config.get_provider("test").is_some());
+        assert!(config.get_provider("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_oauth_config_enabled_providers() {
+        let mut config = OAuthConfig::from_env();
+        config.providers.insert(
+            "enabled1".to_string(),
+            OAuthProviderConfig {
+                provider_type: OAuthProviderType::Google,
+                enabled: true,
+                client_id: "id".to_string(),
+                client_secret: "secret".to_string(),
+                discovery_url: None,
+                authorize_endpoint: None,
+                token_endpoint: None,
+                userinfo_endpoint: None,
+                jwks_uri: None,
+                scopes: vec![],
+                redirect_uri: None,
+                userinfo_mapping: UserInfoMapping::default(),
+            },
+        );
+        config.providers.insert(
+            "disabled1".to_string(),
+            OAuthProviderConfig {
+                provider_type: OAuthProviderType::GitHub,
+                enabled: false,
+                client_id: "id".to_string(),
+                client_secret: "secret".to_string(),
+                discovery_url: None,
+                authorize_endpoint: None,
+                token_endpoint: None,
+                userinfo_endpoint: None,
+                jwks_uri: None,
+                scopes: vec![],
+                redirect_uri: None,
+                userinfo_mapping: UserInfoMapping::default(),
+            },
+        );
+        let enabled = config.enabled_providers();
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].0, "enabled1");
+    }
+
+    #[test]
+    fn test_oauth_service_creation() {
+        let config = OAuthConfig::from_env();
+        let service = OAuthService::new(config).unwrap();
+        assert!(!service.is_enabled());
+        assert!(service.get_enabled_providers().is_empty());
+    }
+
+    #[test]
+    fn test_oauth_service_enabled() {
+        let mut config = OAuthConfig::from_env();
+        config.enabled = true;
+        let service = OAuthService::new(config).unwrap();
+        assert!(service.is_enabled());
+    }
+
+    #[test]
+    fn test_parse_id_token_expired() {
+        let config = OAuthConfig::from_env();
+        let service = OAuthService::new(config).unwrap();
+        // Create a JWT-like token with expired exp claim
+        use base64::Engine;
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(format!(r#"{{"sub":"user","exp":{}}}"#, 1000000));
+        let token = format!("{}.{}.sig", header, payload);
+        let result = service.parse_id_token(&token);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_token_response_fields() {
+        let json = r#"{
+            "access_token": "at123",
+            "token_type": "bearer",
+            "expires_in": 3600,
+            "refresh_token": "rt456",
+            "id_token": "id789",
+            "scope": "openid profile"
+        }"#;
+        let response: TokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.access_token, "at123");
+        assert_eq!(response.token_type, "bearer");
+        assert_eq!(response.expires_in, Some(3600));
+        assert_eq!(response.refresh_token.as_deref(), Some("rt456"));
+    }
+
+    #[test]
+    fn test_oidc_discovery_deserialization() {
+        let json = r#"{
+            "issuer": "https://auth.example.com",
+            "authorization_endpoint": "https://auth.example.com/authorize",
+            "token_endpoint": "https://auth.example.com/token",
+            "userinfo_endpoint": "https://auth.example.com/userinfo",
+            "jwks_uri": "https://auth.example.com/.well-known/jwks.json",
+            "scopes_supported": ["openid", "profile", "email"],
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code"]
+        }"#;
+        let discovery: OidcDiscovery = serde_json::from_str(json).unwrap();
+        assert_eq!(discovery.issuer, "https://auth.example.com");
+        assert_eq!(discovery.scopes_supported.len(), 3);
+    }
 }

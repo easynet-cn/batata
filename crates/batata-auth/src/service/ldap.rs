@@ -284,4 +284,52 @@ mod tests {
         assert!(result.error_message.is_some());
         assert!(result.error_message.unwrap().contains("not configured"));
     }
+
+    #[test]
+    fn test_ldap_auth_service_with_full_config() {
+        let config = LdapConfig {
+            url: "ldap://ldap.example.com:389".to_string(),
+            base_dn: "dc=example,dc=com".to_string(),
+            bind_dn: "cn=admin,dc=example,dc=com".to_string(),
+            bind_password: "admin_secret".to_string(),
+            user_dn_pattern: "uid={0},ou=users,dc=example,dc=com".to_string(),
+            filter_prefix: "uid".to_string(),
+            timeout_ms: 10000,
+            case_sensitive: false,
+            ignore_partial_result_exception: true,
+        };
+        let service = LdapAuthService::new(config.clone());
+        assert!(service.is_configured());
+        assert_eq!(service.config().url, "ldap://ldap.example.com:389");
+        assert!(!service.config().case_sensitive);
+        assert!(service.config().ignore_partial_result_exception);
+    }
+
+    #[tokio::test]
+    async fn test_ldap_authenticate_unconfigured_returns_failure() {
+        let config = LdapConfig::default();
+        let service = LdapAuthService::new(config);
+        let result = service.authenticate("user", "pass").await;
+        assert!(!result.success);
+        assert!(result.error_message.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_ldap_user_exists_unconfigured() {
+        let config = LdapConfig::default();
+        let service = LdapAuthService::new(config);
+        let result = service.user_exists("anyuser").await;
+        // Should return error for unconfigured
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_ldap_test_connection_unconfigured() {
+        let config = LdapConfig::default();
+        let service = LdapAuthService::new(config);
+        let result = service.test_connection().await;
+        // test_connection returns Ok(false) when not configured
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
 }

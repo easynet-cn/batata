@@ -759,4 +759,46 @@ mod tests {
         assert_eq!(req.request_type(), "ConfigChangeClusterSyncRequest");
         assert_eq!(req.last_modified, 0);
     }
+
+    #[test]
+    fn test_config_publish_request_creation() {
+        let mut req = ConfigPublishRequest::new();
+        req.config_request.data_id = "test.yaml".to_string();
+        req.config_request.group = "DEFAULT_GROUP".to_string();
+        req.content = "key: value".to_string();
+
+        assert_eq!(req.config_request.data_id, "test.yaml");
+        assert_eq!(req.content, "key: value");
+    }
+
+    #[test]
+    fn test_config_query_request_creation() {
+        let mut req = ConfigQueryRequest::new();
+        req.config_request.data_id = "app.properties".to_string();
+        req.config_request.group = "DEFAULT_GROUP".to_string();
+        req.config_request.tenant = "public".to_string();
+
+        assert_eq!(req.config_request.data_id, "app.properties");
+        assert_eq!(req.config_request.tenant, "public");
+    }
+
+    #[test]
+    fn test_config_remove_request_creation() {
+        let mut req = ConfigRemoveRequest::new();
+        req.config_request.data_id = "old-config.yaml".to_string();
+        req.config_request.group = "DEFAULT_GROUP".to_string();
+
+        assert_eq!(req.config_request.data_id, "old-config.yaml");
+    }
+
+    #[test]
+    fn test_config_batch_listen_request() {
+        let req = ConfigBatchListenRequest {
+            config_request: ConfigRequest::new(),
+            listen: true,
+            config_listen_contexts: vec![],
+        };
+        assert!(req.listen);
+        assert!(req.config_listen_contexts.is_empty());
+    }
 }
