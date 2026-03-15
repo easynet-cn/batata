@@ -9,11 +9,34 @@ use std::sync::Arc;
 use actix_web::{HttpResponse, delete, get, post, put, web};
 use chrono::Utc;
 use dashmap::DashMap;
+use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::model::*;
 use batata_server_common::model::response::RestResult;
+
+/// Agent card change event for subscriptions
+#[derive(Debug, Clone)]
+pub struct AgentCardChangeEvent {
+    /// Name of the agent that changed
+    pub agent_name: String,
+    /// Namespace of the agent
+    pub namespace: String,
+    /// Type of change that occurred
+    pub change_type: AgentChangeType,
+}
+
+/// Type of change that occurred on an agent
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentChangeType {
+    /// A new agent was registered
+    Created,
+    /// An existing agent was updated
+    Updated,
+    /// An agent was deregistered
+    Deleted,
+}
 
 /// A2A Agent Registry
 ///
@@ -26,16 +49,34 @@ pub struct AgentRegistry {
     name_index: DashMap<String, DashMap<String, String>>,
     /// Index by skill -> IDs
     skill_index: DashMap<String, Vec<String>>,
+    /// Broadcast channel for change notifications
+    change_sender: broadcast::Sender<AgentCardChangeEvent>,
 }
 
 impl AgentRegistry {
     /// Create a new registry
     pub fn new() -> Self {
+        let (change_sender, _) = broadcast::channel(256);
         Self {
             agents: DashMap::new(),
             name_index: DashMap::new(),
             skill_index: DashMap::new(),
+            change_sender,
         }
+    }
+
+    /// Subscribe to agent change events
+    pub fn subscribe(&self) -> broadcast::Receiver<AgentCardChangeEvent> {
+        self.change_sender.subscribe()
+    }
+
+    /// Subscribe to changes for a specific agent name.
+    /// Returns a receiver and the name to filter on.
+    pub fn subscribe_by_name(
+        &self,
+        agent_name: &str,
+    ) -> (broadcast::Receiver<AgentCardChangeEvent>, String) {
+        (self.change_sender.subscribe(), agent_name.to_string())
     }
 
     /// Register a new agent
@@ -84,6 +125,12 @@ impl AgentRegistry {
             agent_id = %agent.id,
             "Agent registered"
         );
+
+        let _ = self.change_sender.send(AgentCardChangeEvent {
+            agent_name: name.clone(),
+            namespace: namespace.clone(),
+            change_type: AgentChangeType::Created,
+        });
 
         Ok(agent)
     }
@@ -135,6 +182,12 @@ impl AgentRegistry {
             "Agent updated"
         );
 
+        let _ = self.change_sender.send(AgentCardChangeEvent {
+            agent_name: name.to_string(),
+            namespace: namespace.to_string(),
+            change_type: AgentChangeType::Updated,
+        });
+
         Ok(agent.clone())
     }
 
@@ -167,6 +220,12 @@ impl AgentRegistry {
             namespace = %namespace,
             "Agent deregistered"
         );
+
+        let _ = self.change_sender.send(AgentCardChangeEvent {
+            agent_name: name.to_string(),
+            namespace: namespace.to_string(),
+            change_type: AgentChangeType::Deleted,
+        });
 
         Ok(())
     }
@@ -417,6 +476,55 @@ impl AgentRegistry {
     /// Get all namespaces
     pub fn namespaces(&self) -> Vec<String> {
         self.name_index.iter().map(|e| e.key().clone()).collect()
+    }
+
+    /// Register an endpoint for an existing agent
+    pub fn register_endpoint(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        endpoint_url: &str,
+    ) -> Result<(), String> {
+        if let Some(ns_index) = self.name_index.get(namespace)
+            && let Some(id) = ns_index.get(agent_name).map(|v| v.clone())
+            && let Some(mut agent) = self.agents.get_mut(&id)
+        {
+            agent.card.endpoint = endpoint_url.to_string();
+            agent.updated_at = Utc::now().timestamp_millis();
+
+            let _ = self.change_sender.send(AgentCardChangeEvent {
+                agent_name: agent_name.to_string(),
+                namespace: namespace.to_string(),
+                change_type: AgentChangeType::Updated,
+            });
+            return Ok(());
+        }
+        Err(format!(
+            "Agent '{}' not found in namespace '{}'",
+            agent_name, namespace
+        ))
+    }
+
+    /// Deregister an endpoint from an existing agent (sets endpoint to empty)
+    pub fn deregister_endpoint(&self, namespace: &str, agent_name: &str) -> Result<(), String> {
+        if let Some(ns_index) = self.name_index.get(namespace)
+            && let Some(id) = ns_index.get(agent_name).map(|v| v.clone())
+            && let Some(mut agent) = self.agents.get_mut(&id)
+        {
+            agent.card.endpoint = String::new();
+            agent.updated_at = Utc::now().timestamp_millis();
+
+            let _ = self.change_sender.send(AgentCardChangeEvent {
+                agent_name: agent_name.to_string(),
+                namespace: namespace.to_string(),
+                change_type: AgentChangeType::Updated,
+            });
+            return Ok(());
+        }
+        Err(format!(
+            "Agent '{}' not found in namespace '{}'",
+            agent_name, namespace
+        ))
     }
 
     /// Get stats
@@ -762,6 +870,96 @@ mod tests {
         let result = registry.batch_register(request);
         assert_eq!(result.success_count, 3);
         assert_eq!(result.failed_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_receives_create_event() {
+        let registry = AgentRegistry::new();
+        let mut rx = registry.subscribe();
+
+        let request = create_test_registration();
+        registry.register(request).unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.change_type, AgentChangeType::Created);
+        assert_eq!(event.agent_name, "test-agent");
+        assert_eq!(event.namespace, "default");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_receives_update_event() {
+        let registry = AgentRegistry::new();
+        let request = create_test_registration();
+        registry.register(request.clone()).unwrap();
+
+        let mut rx = registry.subscribe();
+        registry.update("default", "test-agent", request).unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.change_type, AgentChangeType::Updated);
+        assert_eq!(event.agent_name, "test-agent");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_receives_delete_event() {
+        let registry = AgentRegistry::new();
+        let request = create_test_registration();
+        registry.register(request).unwrap();
+
+        let mut rx = registry.subscribe();
+        registry.deregister("default", "test-agent").unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.change_type, AgentChangeType::Deleted);
+        assert_eq!(event.agent_name, "test-agent");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_by_name() {
+        let registry = AgentRegistry::new();
+        let (mut rx, filter_name) = registry.subscribe_by_name("test-agent");
+
+        let request = create_test_registration();
+        registry.register(request).unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.agent_name, filter_name);
+        assert_eq!(event.change_type, AgentChangeType::Created);
+    }
+
+    #[test]
+    fn test_register_endpoint() {
+        let registry = AgentRegistry::new();
+        let request = create_test_registration();
+        registry.register(request).unwrap();
+
+        registry
+            .register_endpoint("default", "test-agent", "http://new-endpoint:9090")
+            .unwrap();
+
+        let agent = registry.get("default", "test-agent").unwrap();
+        assert_eq!(agent.card.endpoint, "http://new-endpoint:9090");
+    }
+
+    #[test]
+    fn test_deregister_endpoint() {
+        let registry = AgentRegistry::new();
+        let request = create_test_registration();
+        registry.register(request).unwrap();
+
+        registry
+            .deregister_endpoint("default", "test-agent")
+            .unwrap();
+
+        let agent = registry.get("default", "test-agent").unwrap();
+        assert!(agent.card.endpoint.is_empty());
+    }
+
+    #[test]
+    fn test_register_endpoint_not_found() {
+        let registry = AgentRegistry::new();
+        let result = registry.register_endpoint("default", "nonexistent", "http://x");
+        assert!(result.is_err());
     }
 
     #[test]

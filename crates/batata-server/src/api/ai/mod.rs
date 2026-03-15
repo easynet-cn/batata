@@ -19,8 +19,8 @@ pub mod mcp_registry {
 }
 
 // Re-export registry types
-pub use a2a::{AgentRegistry, AgentRegistryStats};
-pub use mcp::{McpRegistryStats, McpServerRegistry};
+pub use a2a::{AgentCardChangeEvent, AgentChangeType, AgentRegistry, AgentRegistryStats};
+pub use mcp::{McpChangeType, McpRegistryStats, McpServerChangeEvent, McpServerRegistry};
 
 // Re-export configure functions for route setup
 pub use batata_ai::configure_a2a;

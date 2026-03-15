@@ -14,8 +14,8 @@ pub mod registry;
 pub mod service;
 
 // Re-export key types
-pub use registry::a2a::{AgentRegistry, AgentRegistryStats};
-pub use registry::mcp::{McpRegistryStats, McpServerRegistry};
+pub use registry::a2a::{AgentCardChangeEvent, AgentChangeType, AgentRegistry, AgentRegistryStats};
+pub use registry::mcp::{McpChangeType, McpRegistryStats, McpServerChangeEvent, McpServerRegistry};
 pub use registry::mcp_registry::configure_mcp_registry;
 pub use service::a2a_service::A2aServerOperationService;
 pub use service::endpoint_service::{AiEndpointService, EndpointInfo};

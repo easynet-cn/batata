@@ -467,48 +467,48 @@ impl ConsulConnectService {
     ) -> Vec<DiscoveryRoute> {
         let mut routes = Vec::new();
 
-        if let Some(routes_val) = entry.extra.get("Routes") {
-            if let Some(routes_arr) = routes_val.as_array() {
-                for route in routes_arr {
-                    let match_def = route.get("Match").and_then(|m| {
-                        let http = m.get("HTTP").map(|http| DiscoveryHTTPRouteMatch {
-                            path_exact: http
-                                .get("PathExact")
-                                .and_then(|v| v.as_str().map(|s| s.to_string())),
-                            path_prefix: http
-                                .get("PathPrefix")
-                                .and_then(|v| v.as_str().map(|s| s.to_string())),
-                            path_regex: http
-                                .get("PathRegex")
-                                .and_then(|v| v.as_str().map(|s| s.to_string())),
-                            header: Vec::new(),
-                            query_param: Vec::new(),
-                            methods: http
-                                .get("Methods")
-                                .and_then(|v| v.as_array())
-                                .map(|arr| {
-                                    arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
-                        });
-                        Some(DiscoveryRouteMatch { http })
+        if let Some(routes_val) = entry.extra.get("Routes")
+            && let Some(routes_arr) = routes_val.as_array()
+        {
+            for route in routes_arr {
+                #[allow(clippy::bind_instead_of_map)]
+                let match_def = route.get("Match").and_then(|m| {
+                    let http = m.get("HTTP").map(|http| DiscoveryHTTPRouteMatch {
+                        path_exact: http
+                            .get("PathExact")
+                            .and_then(|v| v.as_str().map(|s| s.to_string())),
+                        path_prefix: http
+                            .get("PathPrefix")
+                            .and_then(|v| v.as_str().map(|s| s.to_string())),
+                        path_regex: http
+                            .get("PathRegex")
+                            .and_then(|v| v.as_str().map(|s| s.to_string())),
+                        header: Vec::new(),
+                        query_param: Vec::new(),
+                        methods: http
+                            .get("Methods")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
                     });
+                    Some(DiscoveryRouteMatch { http })
+                });
 
-                    let next_service = route
-                        .get("Destination")
-                        .and_then(|d| d.get("Service"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(service_name);
-                    let next_node =
-                        format!("resolver:{}.default.default.{}", next_service, datacenter);
+                let next_service = route
+                    .get("Destination")
+                    .and_then(|d| d.get("Service"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(service_name);
+                let next_node = format!("resolver:{}.default.default.{}", next_service, datacenter);
 
-                    routes.push(DiscoveryRoute {
-                        definition: match_def,
-                        next_node,
-                    });
-                }
+                routes.push(DiscoveryRoute {
+                    definition: match_def,
+                    next_node,
+                });
             }
         }
 
@@ -531,40 +531,40 @@ impl ConsulConnectService {
     ) -> Vec<DiscoverySplit> {
         let mut splits = Vec::new();
 
-        if let Some(splits_val) = entry.extra.get("Splits") {
-            if let Some(splits_arr) = splits_val.as_array() {
-                for split in splits_arr {
-                    let weight = split
-                        .get("Weight")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(100.0);
-                    let target_service = split
-                        .get("Service")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(service_name);
-                    let service_subset = split
-                        .get("ServiceSubset")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+        if let Some(splits_val) = entry.extra.get("Splits")
+            && let Some(splits_arr) = splits_val.as_array()
+        {
+            for split in splits_arr {
+                let weight = split
+                    .get("Weight")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(100.0);
+                let target_service = split
+                    .get("Service")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(service_name);
+                let service_subset = split
+                    .get("ServiceSubset")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
-                    let next_node =
-                        format!("resolver:{}.default.default.{}", target_service, datacenter);
+                let next_node =
+                    format!("resolver:{}.default.default.{}", target_service, datacenter);
 
-                    splits.push(DiscoverySplit {
-                        definition: Some(DiscoverySplitDefinition {
-                            service: Some(target_service.to_string()),
-                            service_subset,
-                            namespace: split
-                                .get("Namespace")
-                                .and_then(|v| v.as_str().map(|s| s.to_string())),
-                            partition: split
-                                .get("Partition")
-                                .and_then(|v| v.as_str().map(|s| s.to_string())),
-                        }),
-                        weight,
-                        next_node,
-                    });
-                }
+                splits.push(DiscoverySplit {
+                    definition: Some(DiscoverySplitDefinition {
+                        service: Some(target_service.to_string()),
+                        service_subset,
+                        namespace: split
+                            .get("Namespace")
+                            .and_then(|v| v.as_str().map(|s| s.to_string())),
+                        partition: split
+                            .get("Partition")
+                            .and_then(|v| v.as_str().map(|s| s.to_string())),
+                    }),
+                    weight,
+                    next_node,
+                });
             }
         }
 

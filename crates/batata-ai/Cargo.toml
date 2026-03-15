@@ -32,6 +32,9 @@ uuid = { workspace = true }
 # Caching
 dashmap = { workspace = true }
 
+# Async runtime
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
+
 # Logging
 tracing = { workspace = true }
 

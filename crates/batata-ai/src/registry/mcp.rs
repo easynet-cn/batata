@@ -9,11 +9,34 @@ use std::sync::Arc;
 use actix_web::{HttpResponse, delete, get, post, put, web};
 use chrono::Utc;
 use dashmap::DashMap;
+use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::model::*;
 use batata_server_common::model::response::RestResult;
+
+/// MCP server change event for subscriptions
+#[derive(Debug, Clone)]
+pub struct McpServerChangeEvent {
+    /// Name of the MCP server that changed
+    pub mcp_name: String,
+    /// Namespace of the MCP server
+    pub namespace: String,
+    /// Type of change that occurred
+    pub change_type: McpChangeType,
+}
+
+/// Type of change that occurred on an MCP server
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpChangeType {
+    /// A new MCP server was registered
+    Created,
+    /// An existing MCP server was updated
+    Updated,
+    /// An MCP server was deregistered
+    Deleted,
+}
 
 /// MCP Server Registry
 ///
@@ -24,15 +47,33 @@ pub struct McpServerRegistry {
     servers: DashMap<String, McpServer>,
     /// Index by namespace -> name -> ID
     name_index: DashMap<String, DashMap<String, String>>,
+    /// Broadcast channel for change notifications
+    change_sender: broadcast::Sender<McpServerChangeEvent>,
 }
 
 impl McpServerRegistry {
     /// Create a new registry
     pub fn new() -> Self {
+        let (change_sender, _) = broadcast::channel(256);
         Self {
             servers: DashMap::new(),
             name_index: DashMap::new(),
+            change_sender,
         }
+    }
+
+    /// Subscribe to MCP server change events
+    pub fn subscribe(&self) -> broadcast::Receiver<McpServerChangeEvent> {
+        self.change_sender.subscribe()
+    }
+
+    /// Subscribe to changes for a specific MCP server name.
+    /// Returns a receiver and the name to filter on.
+    pub fn subscribe_by_name(
+        &self,
+        mcp_name: &str,
+    ) -> (broadcast::Receiver<McpServerChangeEvent>, String) {
+        (self.change_sender.subscribe(), mcp_name.to_string())
     }
 
     /// Register a new server
@@ -90,6 +131,12 @@ impl McpServerRegistry {
             "MCP server registered"
         );
 
+        let _ = self.change_sender.send(McpServerChangeEvent {
+            mcp_name: server.name.clone(),
+            namespace: server.namespace.clone(),
+            change_type: McpChangeType::Created,
+        });
+
         Ok(server)
     }
 
@@ -140,6 +187,12 @@ impl McpServerRegistry {
             "MCP server updated"
         );
 
+        let _ = self.change_sender.send(McpServerChangeEvent {
+            mcp_name: name.to_string(),
+            namespace: namespace.to_string(),
+            change_type: McpChangeType::Updated,
+        });
+
         Ok(server.clone())
     }
 
@@ -164,6 +217,12 @@ impl McpServerRegistry {
             namespace = %namespace,
             "MCP server deregistered"
         );
+
+        let _ = self.change_sender.send(McpServerChangeEvent {
+            mcp_name: name.to_string(),
+            namespace: namespace.to_string(),
+            change_type: McpChangeType::Deleted,
+        });
 
         Ok(())
     }
@@ -455,6 +514,55 @@ impl McpServerRegistry {
         }
 
         Err("Either mcpName or mcpId must be provided".to_string())
+    }
+
+    /// Register an endpoint for an existing MCP server
+    pub fn register_endpoint(
+        &self,
+        namespace: &str,
+        mcp_name: &str,
+        endpoint_url: &str,
+    ) -> Result<(), String> {
+        if let Some(ns_index) = self.name_index.get(namespace)
+            && let Some(id) = ns_index.get(mcp_name).map(|v| v.clone())
+            && let Some(mut server) = self.servers.get_mut(&id)
+        {
+            server.endpoint = endpoint_url.to_string();
+            server.updated_at = Utc::now().timestamp_millis();
+
+            let _ = self.change_sender.send(McpServerChangeEvent {
+                mcp_name: mcp_name.to_string(),
+                namespace: namespace.to_string(),
+                change_type: McpChangeType::Updated,
+            });
+            return Ok(());
+        }
+        Err(format!(
+            "MCP server '{}' not found in namespace '{}'",
+            mcp_name, namespace
+        ))
+    }
+
+    /// Deregister an endpoint from an existing MCP server (sets endpoint to empty)
+    pub fn deregister_endpoint(&self, namespace: &str, mcp_name: &str) -> Result<(), String> {
+        if let Some(ns_index) = self.name_index.get(namespace)
+            && let Some(id) = ns_index.get(mcp_name).map(|v| v.clone())
+            && let Some(mut server) = self.servers.get_mut(&id)
+        {
+            server.endpoint = String::new();
+            server.updated_at = Utc::now().timestamp_millis();
+
+            let _ = self.change_sender.send(McpServerChangeEvent {
+                mcp_name: mcp_name.to_string(),
+                namespace: namespace.to_string(),
+                change_type: McpChangeType::Updated,
+            });
+            return Ok(());
+        }
+        Err(format!(
+            "MCP server '{}' not found in namespace '{}'",
+            mcp_name, namespace
+        ))
     }
 
     /// Get stats
@@ -772,6 +880,98 @@ mod tests {
         assert!(matches_pattern("test-server", "*"));
         assert!(matches_pattern("test-server", "test-server"));
         assert!(!matches_pattern("test-server", "other-*"));
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_receives_create_event() {
+        let registry = McpServerRegistry::new();
+        let mut rx = registry.subscribe();
+
+        let registration = create_test_registration();
+        registry.register(registration).unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.change_type, McpChangeType::Created);
+        assert_eq!(event.mcp_name, "test-server");
+        assert_eq!(event.namespace, "default");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_receives_update_event() {
+        let registry = McpServerRegistry::new();
+        let registration = create_test_registration();
+        registry.register(registration.clone()).unwrap();
+
+        let mut rx = registry.subscribe();
+        registry
+            .update("default", "test-server", registration)
+            .unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.change_type, McpChangeType::Updated);
+        assert_eq!(event.mcp_name, "test-server");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_receives_delete_event() {
+        let registry = McpServerRegistry::new();
+        let registration = create_test_registration();
+        registry.register(registration).unwrap();
+
+        let mut rx = registry.subscribe();
+        registry.deregister("default", "test-server").unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.change_type, McpChangeType::Deleted);
+        assert_eq!(event.mcp_name, "test-server");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_by_name() {
+        let registry = McpServerRegistry::new();
+        let (mut rx, filter_name) = registry.subscribe_by_name("test-server");
+
+        let registration = create_test_registration();
+        registry.register(registration).unwrap();
+
+        let event = rx.try_recv().unwrap();
+        assert_eq!(event.mcp_name, filter_name);
+        assert_eq!(event.change_type, McpChangeType::Created);
+    }
+
+    #[test]
+    fn test_register_endpoint() {
+        let registry = McpServerRegistry::new();
+        let registration = create_test_registration();
+        registry.register(registration).unwrap();
+
+        registry
+            .register_endpoint("default", "test-server", "http://new-endpoint:9090")
+            .unwrap();
+
+        let server = registry.get("default", "test-server").unwrap();
+        assert_eq!(server.endpoint, "http://new-endpoint:9090");
+    }
+
+    #[test]
+    fn test_deregister_endpoint() {
+        let registry = McpServerRegistry::new();
+        let registration = create_test_registration();
+        registry.register(registration).unwrap();
+
+        registry
+            .deregister_endpoint("default", "test-server")
+            .unwrap();
+
+        let server = registry.get("default", "test-server").unwrap();
+        assert!(server.endpoint.is_empty());
+    }
+
+    #[test]
+    fn test_register_endpoint_not_found() {
+        let registry = McpServerRegistry::new();
+        let result = registry.register_endpoint("default", "nonexistent", "http://x");
+        assert!(result.is_err());
     }
 
     #[test]

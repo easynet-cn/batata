@@ -84,6 +84,22 @@ async fn internal_login(
 
     // Check if LDAP authentication is enabled
     if data.configuration.is_ldap_auth_enabled() {
+        // Nacos-compatible admin bypass: admin users can authenticate
+        // with local password even when LDAP is enabled.
+        // Check if the user is a global admin in the local database first.
+        if let Ok(true) = data
+            .persistence()
+            .role_has_global_admin_by_username(&username)
+            .await
+        {
+            // Try local auth for admin users
+            let local_result = nacos_login(&data, &username, &password).await;
+            if local_result.status().is_success() {
+                return local_result;
+            }
+            // If local auth fails, fall through to LDAP
+        }
+
         return ldap_login(&data, &username, &password).await;
     }
 
@@ -116,15 +132,20 @@ async fn ldap_login(data: &web::Data<AppState>, username: &str, password: &str) 
         return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
-    // LDAP authentication successful, now check if user exists in local database
+    // LDAP authentication successful
+    // Nacos-compatible: store LDAP users with "LDAP_" prefix in database
+    // to distinguish them from native users
+    let ldap_username = format!("LDAP_{}", auth_result.username);
+
+    // Check if user exists in local database (with LDAP prefix)
     let local_user = match data
         .persistence()
-        .user_find_by_username(&auth_result.username)
+        .user_find_by_username(&ldap_username)
         .await
     {
         Ok(user) => user,
         Err(e) => {
-            tracing::error!("Failed to query user '{}': {}", auth_result.username, e);
+            tracing::error!("Failed to query user '{}': {}", ldap_username, e);
             return HttpResponse::InternalServerError().json(serde_json::json!({
                 "code": 500,
                 "message": "Failed to query user from database",
@@ -133,13 +154,12 @@ async fn ldap_login(data: &web::Data<AppState>, username: &str, password: &str) 
         }
     };
 
-    // If user doesn't exist locally, create a placeholder user
+    // If user doesn't exist locally, create a placeholder user with LDAP_ prefix
     // This allows LDAP users to be assigned roles/permissions locally
     if local_user.is_none() {
-        // Create user with LDAP prefix to indicate it's an LDAP user
-        // The password is set to a placeholder since auth is via LDAP
-        let placeholder_password = format!("LDAP_{}", uuid::Uuid::new_v4());
-        let hashed_password = match bcrypt::hash(&placeholder_password, 10u32) {
+        // Nacos uses a fixed encoded password for LDAP users
+        let ldap_default_password = "LDAP_DEFAULT_ENCODED_PASSWORD";
+        let hashed_password = match bcrypt::hash(ldap_default_password, 10u32) {
             Ok(h) => h,
             Err(e) => {
                 tracing::error!("Failed to hash placeholder password: {}", e);
@@ -153,24 +173,21 @@ async fn ldap_login(data: &web::Data<AppState>, username: &str, password: &str) 
 
         if let Err(e) = data
             .persistence()
-            .user_create(&auth_result.username, &hashed_password, true)
+            .user_create(&ldap_username, &hashed_password, true)
             .await
         {
-            tracing::error!(
-                "Failed to create LDAP user '{}': {}",
-                auth_result.username,
-                e
-            );
+            tracing::error!("Failed to create LDAP user '{}': {}", ldap_username, e);
             // Continue anyway - user can still authenticate, just won't have local record
         } else {
             tracing::info!(
-                username = %auth_result.username,
-                "Created local user mapping for LDAP user"
+                username = %ldap_username,
+                "Created local user mapping for LDAP user (Nacos-compatible LDAP_ prefix)"
             );
         }
     }
 
-    // Generate JWT token
+    // Generate JWT token using the original username (not prefixed)
+    // This keeps the token consistent with what the user expects
     generate_token_response(data, &auth_result.username).await
 }
 

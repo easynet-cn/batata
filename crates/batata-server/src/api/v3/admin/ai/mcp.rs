@@ -11,6 +11,7 @@ use crate::{
     model::response::RestResult,
 };
 use actix_web::{HttpResponse, Responder, delete, get, post, put, web};
+use serde::Deserialize;
 
 /// GET /v3/admin/ai/mcp/list
 #[get("list")]
@@ -76,9 +77,62 @@ async fn delete_mcp(
     }
 }
 
+/// Query parameters for endpoint management
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpEndpointQuery {
+    /// Namespace ID (defaults to "public")
+    pub namespace_id: Option<String>,
+    /// MCP server name
+    pub mcp_name: String,
+    /// Endpoint URL (required for register, ignored for deregister)
+    pub endpoint_url: Option<String>,
+}
+
+/// PUT /v3/admin/ai/mcp/endpoint
+/// Register an endpoint for an MCP server
+#[put("endpoint")]
+async fn register_mcp_endpoint(
+    registry: web::Data<Arc<McpServerRegistry>>,
+    query: web::Query<McpEndpointQuery>,
+) -> impl Responder {
+    let q = query.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    let endpoint_url = match q.endpoint_url {
+        Some(url) => url,
+        None => {
+            return HttpResponse::BadRequest()
+                .json(RestResult::<()>::err(400, "endpointUrl is required"));
+        }
+    };
+
+    match registry.register_endpoint(namespace, &q.mcp_name, &endpoint_url) {
+        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
+        Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+    }
+}
+
+/// DELETE /v3/admin/ai/mcp/endpoint
+/// Deregister an endpoint from an MCP server
+#[delete("endpoint")]
+async fn deregister_mcp_endpoint(
+    registry: web::Data<Arc<McpServerRegistry>>,
+    query: web::Query<McpEndpointQuery>,
+) -> impl Responder {
+    let q = query.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+
+    match registry.deregister_endpoint(namespace, &q.mcp_name) {
+        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
+        Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+    }
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/mcp")
         .service(list_mcp)
+        .service(register_mcp_endpoint)
+        .service(deregister_mcp_endpoint)
         .service(create_mcp)
         .service(update_mcp)
         .service(get_mcp)

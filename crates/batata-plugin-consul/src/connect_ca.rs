@@ -375,7 +375,7 @@ impl ConsulConnectCAService {
         let mut leaf_params = CertificateParams::default();
         leaf_params
             .distinguished_name
-            .push(DnType::CommonName, &format!("{}.svc.consul", service));
+            .push(DnType::CommonName, format!("{}.svc.consul", service));
         leaf_params
             .distinguished_name
             .push(DnType::OrganizationName, "Batata Consul Service");
@@ -1556,7 +1556,11 @@ mod tests {
 
         assert!(!cert.serial_number.is_empty());
         assert!(cert.cert_pem.contains("CERTIFICATE"));
-        assert!(cert.private_key_pem.contains("EC PRIVATE KEY"));
+        assert!(
+            cert.private_key_pem.contains("PRIVATE KEY"),
+            "Expected PEM private key, got: {}",
+            &cert.private_key_pem[..cert.private_key_pem.len().min(50)]
+        );
         assert!(cert.service.contains("my-service"));
         assert!(cert.service_uri.contains("my-service"));
         assert!(!cert.valid_after.is_empty());

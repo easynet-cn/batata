@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use actix_web::{HttpResponse, Responder, delete, get, post, put, web};
+use serde::Deserialize;
 
 use crate::{
     api::ai::{
@@ -94,10 +95,63 @@ async fn list_versions(
     HttpResponse::Ok().json(RestResult::ok(Some(versions)))
 }
 
+/// Query parameters for agent endpoint management
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentEndpointQuery {
+    /// Namespace ID (defaults to "public")
+    pub namespace_id: Option<String>,
+    /// Agent name
+    pub agent_name: String,
+    /// Endpoint URL (required for register, ignored for deregister)
+    pub endpoint_url: Option<String>,
+}
+
+/// PUT /v3/admin/ai/a2a/endpoint
+/// Register an endpoint for an agent
+#[put("endpoint")]
+async fn register_agent_endpoint(
+    registry: web::Data<Arc<AgentRegistry>>,
+    query: web::Query<AgentEndpointQuery>,
+) -> impl Responder {
+    let q = query.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    let endpoint_url = match q.endpoint_url {
+        Some(url) => url,
+        None => {
+            return HttpResponse::BadRequest()
+                .json(RestResult::<()>::err(400, "endpointUrl is required"));
+        }
+    };
+
+    match registry.register_endpoint(namespace, &q.agent_name, &endpoint_url) {
+        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
+        Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+    }
+}
+
+/// DELETE /v3/admin/ai/a2a/endpoint
+/// Deregister an endpoint from an agent
+#[delete("endpoint")]
+async fn deregister_agent_endpoint(
+    registry: web::Data<Arc<AgentRegistry>>,
+    query: web::Query<AgentEndpointQuery>,
+) -> impl Responder {
+    let q = query.into_inner();
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+
+    match registry.deregister_endpoint(namespace, &q.agent_name) {
+        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
+        Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+    }
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/a2a")
         .service(list_agents)
         .service(list_versions)
+        .service(register_agent_endpoint)
+        .service(deregister_agent_endpoint)
         .service(register_agent)
         .service(update_agent)
         .service(get_agent)
