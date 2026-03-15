@@ -1,4 +1,8 @@
-use actix_web::{HttpResponse, Responder, post, web};
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
+
+use actix_web::{HttpRequest, HttpResponse, Responder, post, web};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 use batata_auth::service::ldap::LdapAuthService;
@@ -8,6 +12,71 @@ use crate::api::auth::{
     service::auth::encode_jwt_token,
 };
 use crate::model::AppState;
+
+/// Login attempt tracker for rate limiting
+struct LoginAttempt {
+    count: u32,
+    first_attempt: Instant,
+    locked_until: Option<Instant>,
+}
+
+static LOGIN_ATTEMPTS: LazyLock<DashMap<String, LoginAttempt>> = LazyLock::new(DashMap::new);
+
+/// Maximum failed login attempts before lockout
+const MAX_LOGIN_ATTEMPTS: u32 = 5;
+/// Lockout duration in seconds
+const LOCKOUT_DURATION_SECS: u64 = 300; // 5 minutes
+/// Window for counting attempts in seconds
+const ATTEMPT_WINDOW_SECS: u64 = 600; // 10 minutes
+
+fn check_login_rate_limit(client_ip: &str) -> Result<(), String> {
+    if let Some(mut attempt) = LOGIN_ATTEMPTS.get_mut(client_ip) {
+        // Check if locked out
+        if let Some(locked_until) = attempt.locked_until {
+            if Instant::now() < locked_until {
+                let remaining = locked_until.duration_since(Instant::now()).as_secs();
+                return Err(format!(
+                    "Account locked. Try again in {} seconds.",
+                    remaining
+                ));
+            }
+            // Lockout expired, reset
+            attempt.count = 0;
+            attempt.locked_until = None;
+            attempt.first_attempt = Instant::now();
+        }
+
+        // Check if window expired, reset if so
+        if attempt.first_attempt.elapsed().as_secs() > ATTEMPT_WINDOW_SECS {
+            attempt.count = 0;
+            attempt.first_attempt = Instant::now();
+        }
+    }
+    Ok(())
+}
+
+fn record_failed_login(client_ip: &str) {
+    let mut entry = LOGIN_ATTEMPTS
+        .entry(client_ip.to_string())
+        .or_insert(LoginAttempt {
+            count: 0,
+            first_attempt: Instant::now(),
+            locked_until: None,
+        });
+    entry.count += 1;
+    if entry.count >= MAX_LOGIN_ATTEMPTS {
+        entry.locked_until = Some(Instant::now() + Duration::from_secs(LOCKOUT_DURATION_SECS));
+        tracing::warn!(
+            "IP {} locked out after {} failed login attempts",
+            client_ip,
+            entry.count
+        );
+    }
+}
+
+fn record_successful_login(client_ip: &str) {
+    LOGIN_ATTEMPTS.remove(client_ip);
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,11 +95,12 @@ struct LoginData {
 
 #[post("user/login")]
 async fn login(
+    req: HttpRequest,
     data: web::Data<AppState>,
     form: Option<web::Form<LoginData>>,
     query: Option<web::Query<LoginData>>,
 ) -> impl Responder {
-    internal_login(data, form, query).await
+    internal_login(req, data, form, query).await
 }
 
 /// V1 API endpoint for backward compatibility with Nacos SDK
@@ -38,19 +108,36 @@ async fn login(
 /// Nacos SDK sends username as query param and password as form body
 #[post("/login")]
 async fn login_v1(
+    req: HttpRequest,
     data: web::Data<AppState>,
     form: Option<web::Form<LoginData>>,
     query: Option<web::Query<LoginData>>,
 ) -> impl Responder {
-    internal_login(data, form, query).await
+    internal_login(req, data, form, query).await
 }
 
 /// Internal login handler shared by V1 and V3 APIs
 async fn internal_login(
+    req: HttpRequest,
     data: web::Data<AppState>,
     form: Option<web::Form<LoginData>>,
     query: Option<web::Query<LoginData>>,
 ) -> HttpResponse {
+    // Extract client IP for rate limiting
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Check login rate limit before processing
+    if let Err(msg) = check_login_rate_limit(&client_ip) {
+        return HttpResponse::TooManyRequests().json(serde_json::json!({
+            "code": 429,
+            "message": msg,
+        }));
+    }
+
     let mut username = String::new();
     let mut password = String::new();
 
@@ -79,14 +166,16 @@ async fn internal_login(
     }
 
     if username.is_empty() || password.is_empty() {
+        record_failed_login(&client_ip);
         return HttpResponse::Forbidden().body(USER_NOT_FOUND_MESSAGE);
     }
 
-    // Check if LDAP authentication is enabled
-    if data.configuration.is_ldap_auth_enabled() {
+    // Perform authentication and track result for rate limiting
+    let response = if data.configuration.is_ldap_auth_enabled() {
         // Nacos-compatible admin bypass: admin users can authenticate
         // with local password even when LDAP is enabled.
         // Check if the user is a global admin in the local database first.
+        let mut result = None;
         if let Ok(true) = data
             .persistence()
             .role_has_global_admin_by_username(&username)
@@ -95,16 +184,25 @@ async fn internal_login(
             // Try local auth for admin users
             let local_result = nacos_login(&data, &username, &password).await;
             if local_result.status().is_success() {
-                return local_result;
+                result = Some(local_result);
             }
             // If local auth fails, fall through to LDAP
         }
 
-        return ldap_login(&data, &username, &password).await;
+        result.unwrap_or(ldap_login(&data, &username, &password).await)
+    } else {
+        // Standard Nacos authentication
+        nacos_login(&data, &username, &password).await
+    };
+
+    // Track login result for rate limiting
+    if response.status().is_success() {
+        record_successful_login(&client_ip);
+    } else {
+        record_failed_login(&client_ip);
     }
 
-    // Standard Nacos authentication
-    nacos_login(&data, &username, &password).await
+    response
 }
 
 /// Perform LDAP authentication

@@ -18,7 +18,7 @@ use crate::model::{GLOBAL_ADMIN_ROLE, RoleInfo};
 // Cache for user roles with 5-minute TTL
 static ROLES_CACHE: LazyLock<Cache<String, Vec<RoleInfo>>> = LazyLock::new(|| {
     Cache::builder()
-        .max_capacity(10_000)
+        .max_capacity(50_000)
         .time_to_live(Duration::from_secs(300))
         .build()
 });
@@ -82,6 +82,12 @@ pub fn invalidate_roles_cache_for_role(role: &str) {
             ROLES_CACHE.invalidate(&username);
         }
     }
+}
+
+/// Prune stale entries from the role-user index.
+/// Called periodically to prevent memory leaks from deleted roles/users.
+pub fn prune_role_user_index() {
+    ROLE_USER_INDEX.retain(|_, users| !users.is_empty());
 }
 
 /// Invalidate all role cache entries

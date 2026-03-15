@@ -6,6 +6,7 @@
 pub mod ai_a2a;
 pub mod ai_mcp;
 pub mod ai_plugin;
+pub mod audit;
 pub mod cluster;
 pub mod config;
 pub mod health;
@@ -16,3 +17,5 @@ pub mod namespace;
 pub mod route;
 pub mod server_state;
 pub mod service;
+pub mod sync;
+pub mod tracing_api;

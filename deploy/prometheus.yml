@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'batata'
+    metrics_path: '/prometheus'
+    static_configs:
+      - targets: ['batata:8848']
+        labels:
+          instance: 'batata-main'

@@ -650,23 +650,23 @@ impl Configuration {
         let max_connections = self
             .config
             .get_int("batata.db.pool.max_connections")
-            .unwrap_or(100) as u32;
+            .unwrap_or(200) as u32;
         let min_connections = self
             .config
             .get_int("batata.db.pool.min_connections")
-            .unwrap_or(1) as u32;
+            .unwrap_or(5) as u32;
         let connect_timeout = self
             .config
             .get_int("batata.db.pool.connect_timeout")
-            .unwrap_or(30) as u64;
+            .unwrap_or(10) as u64;
         let acquire_timeout = self
             .config
             .get_int("batata.db.pool.acquire_timeout")
-            .unwrap_or(8) as u64;
+            .unwrap_or(10) as u64;
         let idle_timeout = self
             .config
             .get_int("batata.db.pool.idle_timeout")
-            .unwrap_or(10) as u64;
+            .unwrap_or(300) as u64;
         let max_lifetime = self
             .config
             .get_int("batata.db.pool.max_lifetime")
@@ -723,6 +723,19 @@ impl Configuration {
         self.config
             .get_bool("batata.naming.data.warmup")
             .unwrap_or(false)
+    }
+
+    // ========================================================================
+    // Shutdown Configuration
+    // ========================================================================
+
+    /// Graceful shutdown drain timeout in seconds.
+    /// During this period, the server stops accepting new connections and waits
+    /// for in-flight requests to complete before proceeding with cleanup.
+    pub fn shutdown_drain_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.server.shutdown.drain_timeout")
+            .unwrap_or(30) as u64
     }
 
     // ========================================================================
@@ -1202,6 +1215,137 @@ impl Configuration {
 
     // NOTE: logging_config() is provided as an extension in batata-server/src/startup/logging.rs
     // because LoggingConfig lives in the startup module which is server-specific.
+
+    // ========================================================================
+    // Performance tuning configuration
+    // ========================================================================
+
+    /// HTTP server worker threads (0 = auto-detect based on CPU cores)
+    pub fn http_workers(&self) -> usize {
+        let v = self
+            .config
+            .get_int("batata.server.http.workers")
+            .unwrap_or(0) as usize;
+        if v == 0 {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4)
+        } else {
+            v
+        }
+    }
+
+    /// HTTP keep-alive timeout in seconds (main server)
+    pub fn http_keep_alive_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.server.http.keep_alive")
+            .unwrap_or(75) as u64
+    }
+
+    /// Console HTTP keep-alive timeout in seconds
+    pub fn console_keep_alive_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.console.http.keep_alive")
+            .unwrap_or(30) as u64
+    }
+
+    /// Maximum request payload size in bytes (default 10MB)
+    pub fn max_payload_size(&self) -> usize {
+        self.config
+            .get_int("batata.server.http.max_payload_size")
+            .unwrap_or(10_485_760) as usize // 10MB
+    }
+
+    /// Maximum JSON body size in bytes (default 5MB)
+    pub fn max_json_size(&self) -> usize {
+        self.config
+            .get_int("batata.server.http.max_json_size")
+            .unwrap_or(5_242_880) as usize // 5MB
+    }
+
+    /// gRPC TCP keep-alive interval in seconds
+    pub fn grpc_tcp_keepalive_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.server.grpc.tcp_keepalive")
+            .unwrap_or(30) as u64
+    }
+
+    /// gRPC HTTP/2 keep-alive interval in seconds
+    pub fn grpc_http2_keepalive_interval_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.server.grpc.http2_keepalive_interval")
+            .unwrap_or(30) as u64
+    }
+
+    /// gRPC HTTP/2 keep-alive timeout in seconds
+    pub fn grpc_http2_keepalive_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.server.grpc.http2_keepalive_timeout")
+            .unwrap_or(10) as u64
+    }
+
+    /// gRPC max concurrent streams per connection
+    pub fn grpc_concurrency_limit(&self) -> usize {
+        self.config
+            .get_int("batata.server.grpc.concurrency_limit")
+            .unwrap_or(256) as usize
+    }
+
+    /// Auth token cache max capacity
+    pub fn auth_token_cache_capacity(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.cache.token_capacity")
+            .unwrap_or(50000) as u64
+    }
+
+    /// Auth roles cache max capacity
+    pub fn auth_roles_cache_capacity(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.cache.roles_capacity")
+            .unwrap_or(50000) as u64
+    }
+
+    /// Auth permissions cache max capacity
+    pub fn auth_permissions_cache_capacity(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.cache.permissions_capacity")
+            .unwrap_or(20000) as u64
+    }
+
+    /// RocksDB write buffer size in MB
+    pub fn rocksdb_write_buffer_mb(&self) -> usize {
+        self.config
+            .get_int("batata.rocksdb.write_buffer_mb")
+            .unwrap_or(128) as usize
+    }
+
+    /// RocksDB max write buffer number
+    pub fn rocksdb_max_write_buffers(&self) -> i32 {
+        self.config
+            .get_int("batata.rocksdb.max_write_buffers")
+            .unwrap_or(4) as i32
+    }
+
+    /// RocksDB max background jobs
+    pub fn rocksdb_max_background_jobs(&self) -> i32 {
+        self.config
+            .get_int("batata.rocksdb.max_background_jobs")
+            .unwrap_or(4) as i32
+    }
+
+    /// RocksDB block cache size in MB
+    pub fn rocksdb_block_cache_mb(&self) -> usize {
+        self.config
+            .get_int("batata.rocksdb.block_cache_mb")
+            .unwrap_or(256) as usize
+    }
+
+    /// Connection stale threshold in milliseconds
+    pub fn grpc_connection_stale_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.server.grpc.connection_stale_ms")
+            .unwrap_or(60000) as u64
+    }
 }
 
 /// xDS server configuration

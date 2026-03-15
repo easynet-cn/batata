@@ -98,20 +98,24 @@ impl GracefulShutdown {
         }
     }
 
-    /// Wait for shutdown and handle cleanup
+    /// Wait for shutdown signal.
+    ///
+    /// This returns as soon as the signal is received. The caller is
+    /// responsible for orchestrating the actual cleanup sequence (setting
+    /// server status to DRAINING, stopping subsystems, etc.).
     pub async fn wait_for_shutdown(&self) {
         let mut receiver = self.shutdown_signal.subscribe();
         let _ = receiver.recv().await;
 
         info!(
-            "Shutdown initiated, waiting up to {:?} for connections to close...",
+            "Shutdown signal received (drain timeout: {:?})",
             self.shutdown_timeout
         );
+    }
 
-        // Give existing requests time to complete
-        tokio::time::sleep(self.shutdown_timeout).await;
-
-        info!("Shutdown complete");
+    /// Returns the configured drain timeout.
+    pub fn drain_timeout(&self) -> Duration {
+        self.shutdown_timeout
     }
 
     /// Get a clone of the shutdown signal for passing to components

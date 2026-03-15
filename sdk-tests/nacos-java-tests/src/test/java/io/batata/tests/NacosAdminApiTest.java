@@ -372,7 +372,7 @@ public class NacosAdminApiTest {
     @Test
     @Order(13)
     void testListAuditLogs() throws Exception {
-        String response = httpGet("/nacos/v2/console/audit/list?pageNo=1&pageSize=10");
+        String response = httpGet("/v3/console/audit/logs?pageNo=1&pageSize=10");
         System.out.println("Audit logs: " + response);
         // May return logs or empty list
     }
@@ -383,7 +383,7 @@ public class NacosAdminApiTest {
     @Test
     @Order(14)
     void testGetAuditStats() throws Exception {
-        String response = httpGet("/nacos/v2/console/audit/stats");
+        String response = httpGet("/v3/console/audit/stats");
         System.out.println("Audit stats: " + response);
     }
 

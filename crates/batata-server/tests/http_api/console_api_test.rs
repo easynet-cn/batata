@@ -47,6 +47,19 @@ async fn test_console_server_state() {
     assert_eq!(response.status().as_u16(), 200);
 }
 
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_health_detailed() {
+    let client = console_client().await;
+    let response = client.raw_get("/v3/console/health/detailed").await.unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("\"status\""));
+    assert!(body.contains("\"components\""));
+    assert!(body.contains("\"version\""));
+    assert!(body.contains("\"serverState\""));
+}
+
 // ============================================================================
 // Cluster Info
 // ============================================================================
@@ -288,4 +301,183 @@ async fn test_cross_port_auth() {
         "Token should be accepted on main server, got {}",
         status
     );
+}
+
+// ============================================================================
+// Config Search & History via Console
+// ============================================================================
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_config_search() {
+    let client = console_client().await;
+    let response = client
+        .raw_get(
+            "/v3/console/cs/config/list?pageNo=1&pageSize=10&dataId=&groupName=&namespaceId=public",
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_config_history() {
+    let client = console_client().await;
+    // First publish a config
+    let data_id = format!("history-test-{}", unique_test_id());
+    let response = client
+        .raw_post_form(
+            "/v3/console/cs/config",
+            &[
+                ("dataId", data_id.as_str()),
+                ("groupName", "DEFAULT_GROUP"),
+                ("namespaceId", ""),
+                ("content", "key=value"),
+                ("type", "properties"),
+            ],
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+
+    // Query history
+    let response = client
+        .raw_get(&format!(
+            "/v3/console/cs/history/list?pageNo=1&pageSize=10&dataId={}&groupName=DEFAULT_GROUP&namespaceId=public",
+            data_id
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_config_listener() {
+    let client = console_client().await;
+    let response = client
+        .raw_get(
+            "/v3/console/cs/config/listener?dataId=test&groupName=DEFAULT_GROUP&namespaceId=public",
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+// ============================================================================
+// Auth Management via Console
+// ============================================================================
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_user_list() {
+    let client = console_client().await;
+    let response = client
+        .raw_get("/v3/auth/user/list?pageNo=1&pageSize=10")
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_role_list() {
+    let client = console_client().await;
+    let response = client
+        .raw_get("/v3/auth/role/list?pageNo=1&pageSize=10")
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_permission_list() {
+    let client = console_client().await;
+    let response = client
+        .raw_get("/v3/auth/permission/list?pageNo=1&pageSize=10&role=ROLE_ADMIN")
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+// ============================================================================
+// Service Discovery (Pagination) via Console
+// ============================================================================
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_service_list_with_pagination() {
+    let client = console_client().await;
+    let response = client
+        .raw_get(
+            "/v3/console/ns/service/list?pageNo=1&pageSize=5&namespaceId=&groupName=DEFAULT_GROUP",
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+// ============================================================================
+// AI/MCP & A2A via Console
+// ============================================================================
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_mcp_list() {
+    let client = console_client().await;
+    let response = client
+        .raw_get("/v3/console/ai/mcp/list?pageNo=1&pageSize=10&namespaceId=public")
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_a2a_list() {
+    let client = console_client().await;
+    let response = client
+        .raw_get("/v3/console/ai/a2a/list?pageNo=1&pageSize=10&namespaceId=public")
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+// ============================================================================
+// Cluster Endpoints via Console
+// ============================================================================
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_cluster_health() {
+    let client = console_client().await;
+    let response = client
+        .raw_get("/v3/console/core/cluster/health")
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_cluster_count() {
+    let client = console_client().await;
+    let response = client
+        .raw_get("/v3/console/core/cluster/count")
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+#[ignore = "requires running server"]
+async fn test_console_cluster_leader() {
+    let client = console_client().await;
+    let response = client
+        .raw_get("/v3/console/core/cluster/leader")
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
 }

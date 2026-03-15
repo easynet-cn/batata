@@ -2,7 +2,12 @@
 
 use std::sync::Arc;
 
-use actix_web::{App, HttpResponse, HttpServer, dev::Server, middleware::Logger, web};
+use actix_web::{
+    App, HttpResponse, HttpServer,
+    dev::Server,
+    middleware::{DefaultHeaders, Logger},
+    web,
+};
 
 use batata_consistency::RaftNode;
 use batata_core::service::distro::DistroProtocol;
@@ -216,12 +221,25 @@ pub fn console_server(
     port: u16,
 ) -> Result<Server, std::io::Error> {
     let rate_limit_config = app_state.configuration.rate_limit_config();
+    let workers = app_state.configuration.http_workers();
+    let keep_alive_secs = app_state.configuration.console_keep_alive_secs();
+    let max_payload_size = app_state.configuration.max_payload_size();
+    let max_json_size = app_state.configuration.max_json_size();
 
     Ok(HttpServer::new(move || {
         let mut app = App::new()
             .wrap(Logger::default())
+            .wrap(
+                DefaultHeaders::new()
+                    .add(("X-Content-Type-Options", "nosniff"))
+                    .add(("X-Frame-Options", "DENY"))
+                    .add(("X-XSS-Protection", "1; mode=block"))
+                    .add(("Cache-Control", "no-store")),
+            )
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
+            .app_data(web::PayloadConfig::new(max_payload_size))
+            .app_data(web::JsonConfig::default().limit(max_json_size))
             .app_data(web::Data::from(app_state.clone()))
             // AI services (MCP Server Registry, A2A Agent Registry)
             .app_data(web::Data::new(ai_services.mcp_registry.clone()))
@@ -256,6 +274,8 @@ pub fn console_server(
                 .configure(batata_console::configure_v2_console_routes),
         )
     })
+    .workers(workers)
+    .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
     .bind((address, port))?
     .run())
 }
@@ -274,11 +294,24 @@ pub fn consul_server(
     port: u16,
 ) -> Result<Server, std::io::Error> {
     let rate_limit_config = app_state.configuration.rate_limit_config();
+    let workers = app_state.configuration.http_workers();
+    let keep_alive_secs = app_state.configuration.http_keep_alive_secs();
+    let max_payload_size = app_state.configuration.max_payload_size();
+    let max_json_size = app_state.configuration.max_json_size();
 
     Ok(HttpServer::new(move || {
         App::new()
             .wrap(Logger::default())
+            .wrap(
+                DefaultHeaders::new()
+                    .add(("X-Content-Type-Options", "nosniff"))
+                    .add(("X-Frame-Options", "DENY"))
+                    .add(("X-XSS-Protection", "1; mode=block"))
+                    .add(("Cache-Control", "no-store")),
+            )
             .wrap(RateLimiter::new(rate_limit_config.clone()))
+            .app_data(web::PayloadConfig::new(max_payload_size))
+            .app_data(web::JsonConfig::default().limit(max_json_size))
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(naming_service.clone()))
             .app_data(web::Data::new(consul_services.agent.clone()))
@@ -315,7 +348,8 @@ pub fn consul_server(
             }))
             .service(consul_routes())
     })
-    .keep_alive(std::time::Duration::from_secs(75))
+    .workers(workers)
+    .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
     .client_request_timeout(std::time::Duration::from_secs(60))
     .bind((address, port))?
     .run())
@@ -441,6 +475,10 @@ pub fn main_server(
     // Create Cloud services
     let cloud_services = CloudServices::new();
     let rate_limit_config = app_state.configuration.rate_limit_config();
+    let workers = app_state.configuration.http_workers();
+    let keep_alive_secs = app_state.configuration.http_keep_alive_secs();
+    let max_payload_size = app_state.configuration.max_payload_size();
+    let max_json_size = app_state.configuration.max_json_size();
 
     // Initialize Prometheus metrics recorder (metrics crate integration)
     let prometheus_state = web::Data::new(PrometheusMetricsState::new());
@@ -450,9 +488,18 @@ pub fn main_server(
     Ok(HttpServer::new(move || {
         let mut app = App::new()
             .wrap(Logger::default())
+            .wrap(
+                DefaultHeaders::new()
+                    .add(("X-Content-Type-Options", "nosniff"))
+                    .add(("X-Frame-Options", "DENY"))
+                    .add(("X-XSS-Protection", "1; mode=block"))
+                    .add(("Cache-Control", "no-store")),
+            )
             .wrap(TrafficReviseFilter::new(server_status.clone()))
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
+            .app_data(web::PayloadConfig::new(max_payload_size))
+            .app_data(web::JsonConfig::default().limit(max_json_size))
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(naming_service.clone()))
             .app_data(web::Data::new(connection_manager.clone()))
@@ -520,6 +567,8 @@ pub fn main_server(
         .route("/health/liveness", web::get().to(health_liveness))
         .route("/health/readiness", web::get().to(health_readiness))
     })
+    .workers(workers)
+    .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
     .bind((address, port))?
     .run())
 }

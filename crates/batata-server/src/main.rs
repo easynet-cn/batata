@@ -318,9 +318,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Server status: STARTING (data warmup enabled, waiting for subsystems)");
     }
 
-    // Initialize graceful shutdown handler
+    // Initialize graceful shutdown handler with configurable drain timeout
+    let drain_timeout_secs = app_state.configuration.shutdown_drain_timeout_secs();
     let shutdown_signal = startup::wait_for_shutdown_signal().await;
-    let graceful_shutdown = GracefulShutdown::new(shutdown_signal.clone(), Duration::from_secs(30));
+    let graceful_shutdown = GracefulShutdown::new(
+        shutdown_signal.clone(),
+        Duration::from_secs(drain_timeout_secs),
+    );
 
     // Create shared AI services (used by both main and console servers)
     // Use config-backed persistence when available
@@ -940,23 +944,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Mark server as DOWN during shutdown
-    server_status.set_down();
+    // ====================================================================
+    // Graceful shutdown sequence
+    // ====================================================================
 
-    // Cleanup: stop xDS service if running
+    // 1. Transition to DRAINING: the TrafficReviseFilter will start
+    //    rejecting NEW requests with 503 while in-flight requests complete.
+    server_status.set_draining();
+    let drain_timeout = graceful_shutdown.drain_timeout();
+    info!(
+        "Server status: DRAINING (waiting up to {}s for in-flight requests)...",
+        drain_timeout.as_secs()
+    );
+
+    // 2. Brief pause to let in-flight requests finish.
+    //    We cap the actual sleep at the configured drain timeout.
+    let drain_sleep = drain_timeout.min(Duration::from_secs(5));
+    tokio::time::sleep(drain_sleep).await;
+
+    // 3. Mark server as DOWN — no more requests will be accepted.
+    server_status.set_down();
+    info!("Server status: DOWN");
+
+    // 4. Stop xDS service if running
     if let Some(handle) = xds_handle {
         info!("Stopping xDS service...");
         handle.shutdown().await;
         info!("xDS service stopped");
     }
 
-    // Cleanup: stop cluster manager if running
+    // 5. Stop health check manager
+    if app_state.health_check_manager.is_some() {
+        info!("Health check manager will be stopped (background tasks cancelled on drop)");
+    }
+
+    // 6. Stop cluster manager if running (deregisters from cluster)
     if let Some(ref smm) = app_state.server_member_manager
         && !app_state.configuration.is_standalone()
     {
         info!("Stopping cluster manager...");
         smm.stop().await;
         info!("Cluster manager stopped");
+    }
+
+    // 7. Shutdown Raft node (flushes logs, transfers leadership if leader)
+    if let Some(ref raft_node) = app_state.raft_node {
+        info!("Shutting down Raft node...");
+        match tokio::time::timeout(Duration::from_secs(10), raft_node.shutdown()).await {
+            Ok(Ok(())) => info!("Raft node shutdown complete"),
+            Ok(Err(e)) => error!("Raft node shutdown error: {}", e),
+            Err(_) => error!("Raft node shutdown timed out after 10s"),
+        }
+    }
+
+    // 8. Flush and close database connection
+    if let Some(db) = database_connection {
+        info!("Closing database connections...");
+        match tokio::time::timeout(Duration::from_secs(5), db.close()).await {
+            Ok(Ok(())) => info!("Database connections closed"),
+            Ok(Err(e)) => error!("Error closing database connections: {}", e),
+            Err(_) => error!("Database close timed out after 5s"),
+        }
     }
 
     info!("Batata server shutdown complete");

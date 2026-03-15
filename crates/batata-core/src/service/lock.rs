@@ -16,6 +16,7 @@ pub(crate) struct LockEntry {
     /// Monotonically increasing fencing token assigned on first acquire
     fencing_token: u64,
     acquired_at: Instant,
+    #[allow(dead_code)]
     created_at: Instant,
     ttl: Duration,
 }

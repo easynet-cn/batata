@@ -76,12 +76,22 @@ impl RocksStateMachine {
         db_opts.create_missing_column_families(true);
 
         // Performance optimizations
-        // Write buffer size: 64MB for better write throughput
-        db_opts.set_write_buffer_size(64 * 1024 * 1024);
+        // Write buffer size: 128MB for better write throughput
+        db_opts.set_write_buffer_size(128 * 1024 * 1024);
         // Max write buffer number for write stall prevention
-        db_opts.set_max_write_buffer_number(3);
+        db_opts.set_max_write_buffer_number(4);
         // Enable compression for storage efficiency
         db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+        // Optimize for multi-threaded compaction
+        db_opts.increase_parallelism(std::cmp::max(
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4) as i32
+                / 2,
+            2,
+        ));
+        // Background compaction jobs
+        db_opts.set_max_background_jobs(4);
 
         // Block-based table options with block cache for read performance
         let mut block_opts = BlockBasedOptions::default();
@@ -93,7 +103,7 @@ impl RocksStateMachine {
 
         // Column family options with same optimizations
         let mut cf_opts = Options::default();
-        cf_opts.set_write_buffer_size(64 * 1024 * 1024);
+        cf_opts.set_write_buffer_size(128 * 1024 * 1024);
         cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         cf_opts.set_block_based_table_factory(&block_opts);
 

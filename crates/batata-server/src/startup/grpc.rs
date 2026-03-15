@@ -1,6 +1,7 @@
 //! gRPC server setup and handler registration module.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use dashmap::DashMap;
 use tonic::service::InterceptorLayer;
@@ -347,6 +348,8 @@ pub fn start_grpc_servers(
 
     // Create connection manager first (needed by handlers and stream service)
     let connection_manager = Arc::new(ConnectionManager::new());
+    // Start background health checker to eject stale connections
+    connection_manager.start_health_checker(app_state.configuration.grpc_connection_stale_ms());
     // Keep a clone for the HTTP server
     let connection_manager_for_http = connection_manager.clone();
 
@@ -471,6 +474,14 @@ pub fn start_grpc_servers(
         Some(naming_service.clone() as Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>),
     );
 
+    // Capture gRPC performance tuning parameters from configuration
+    let tcp_keepalive = Duration::from_secs(app_state.configuration.grpc_tcp_keepalive_secs());
+    let http2_interval =
+        Duration::from_secs(app_state.configuration.grpc_http2_keepalive_interval_secs());
+    let http2_timeout =
+        Duration::from_secs(app_state.configuration.grpc_http2_keepalive_timeout_secs());
+    let concurrency = app_state.configuration.grpc_concurrency_limit();
+
     // Start SDK gRPC server
     let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;
     let sdk_tls_config = tls_config.clone();
@@ -490,6 +501,10 @@ pub fn start_grpc_servers(
                     let server_tls_config = sdk_tls_config.create_server_tls_config().await?;
                     tonic::transport::Server::builder()
                         .tls_config(server_tls_config)?
+                        .tcp_keepalive(Some(tcp_keepalive))
+                        .http2_keepalive_interval(Some(http2_interval))
+                        .http2_keepalive_timeout(Some(http2_timeout))
+                        .concurrency_limit_per_connection(concurrency)
                         .layer(layer)
                         .add_service(RequestServer::new(grpc_request_service))
                         .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
@@ -497,6 +512,10 @@ pub fn start_grpc_servers(
                         .await?;
                 } else {
                     tonic::transport::Server::builder()
+                        .tcp_keepalive(Some(tcp_keepalive))
+                        .http2_keepalive_interval(Some(http2_interval))
+                        .http2_keepalive_timeout(Some(http2_timeout))
+                        .concurrency_limit_per_connection(concurrency)
                         .layer(layer)
                         .add_service(RequestServer::new(grpc_request_service))
                         .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
@@ -527,6 +546,10 @@ pub fn start_grpc_servers(
                 let server_tls_config = cluster_tls_config.create_server_tls_config().await?;
                 tonic::transport::Server::builder()
                     .tls_config(server_tls_config)?
+                    .tcp_keepalive(Some(tcp_keepalive))
+                    .http2_keepalive_interval(Some(http2_interval))
+                    .http2_keepalive_timeout(Some(http2_timeout))
+                    .concurrency_limit_per_connection(concurrency)
                     .layer(layer)
                     .add_service(RequestServer::new(grpc_request_service))
                     .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
@@ -534,6 +557,10 @@ pub fn start_grpc_servers(
                     .await?;
             } else {
                 tonic::transport::Server::builder()
+                    .tcp_keepalive(Some(tcp_keepalive))
+                    .http2_keepalive_interval(Some(http2_interval))
+                    .http2_keepalive_timeout(Some(http2_timeout))
+                    .concurrency_limit_per_connection(concurrency)
                     .layer(layer)
                     .add_service(RequestServer::new(grpc_request_service))
                     .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))

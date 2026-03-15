@@ -370,6 +370,7 @@ struct BetaPublishForm {
     #[serde(default)]
     pub app_name: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub r#type: String,
     #[serde(default)]
     pub encrypted_data_key: String,
@@ -800,6 +801,7 @@ struct SearchDetailParam {
     #[serde(default)]
     pub config_detail: String,
     #[serde(default = "default_search_type")]
+    #[allow(dead_code)]
     pub search: String,
 }
 
@@ -931,8 +933,10 @@ fn default_clone_policy() -> String {
 struct CloneConfigBean {
     pub cfg_id: i64,
     #[serde(default)]
+    #[allow(dead_code)]
     pub data_id: String,
     #[serde(default)]
+    #[allow(dead_code)]
     pub group: String,
 }
 

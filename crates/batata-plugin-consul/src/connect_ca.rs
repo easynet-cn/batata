@@ -228,6 +228,7 @@ pub struct ConsulConnectCAService {
     /// Datacenter name
     datacenter: String,
     /// CA certificate PEM (for signing leaf certs)
+    #[allow(dead_code)]
     ca_cert_pem: String,
     /// CA private key PEM (for signing leaf certs)
     ca_key_pem: String,

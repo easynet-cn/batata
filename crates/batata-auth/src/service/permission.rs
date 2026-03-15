@@ -22,7 +22,7 @@ struct CachedPermissions {
 // Key is a hash of sorted roles for efficient lookup
 static PERMISSIONS_CACHE: LazyLock<Cache<u64, CachedPermissions>> = LazyLock::new(|| {
     Cache::builder()
-        .max_capacity(5_000)
+        .max_capacity(20_000)
         .time_to_live(Duration::from_secs(300))
         .build()
 });
@@ -155,6 +155,12 @@ pub fn invalidate_permissions_cache_for_role(role: &str) {
             PERMISSIONS_CACHE.invalidate(&key);
         }
     }
+}
+
+/// Prune stale entries from the permission cache index.
+/// Called periodically to prevent memory leaks from deleted roles.
+pub fn prune_permission_cache_index() {
+    ROLE_CACHE_INDEX.retain(|_, keys| !keys.is_empty());
 }
 
 /// Invalidate all permission cache entries

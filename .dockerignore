@@ -1,0 +1,8 @@
+target/
+data/
+.git/
+*.log
+docs/
+sdk-tests/
+.github/
+.claude/

@@ -42,6 +42,9 @@ pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Sta
     Ok(request)
 }
 
+/// Maximum idle time before a connection is considered stale (milliseconds).
+const STALE_CONNECTION_THRESHOLD_MS: u64 = 60_000;
+
 pub struct ConnectionManager {
     clients: Arc<DashMap<String, GrpcClient>>,
     listeners: Arc<RwLock<Vec<Arc<dyn ConnectionEventListener>>>>,
@@ -285,6 +288,12 @@ impl ConnectionManager {
         if let Some(client) = self.clients.get(connection_id) {
             client.connection.last_active.touch();
         }
+    }
+
+    /// Start a background task that periodically checks for stale connections
+    /// and ejects them using the default stale threshold.
+    pub fn start_default_health_checker(self: &Arc<Self>) {
+        self.start_health_checker(STALE_CONNECTION_THRESHOLD_MS);
     }
 
     /// Start a background task that periodically checks for stale connections

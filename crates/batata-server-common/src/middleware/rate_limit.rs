@@ -197,9 +197,17 @@ where
             .unwrap_or("unknown")
             .to_string();
 
+        let method = req.method().to_string();
+
         let (allowed, remaining) = self.state.check_rate_limit(&client_ip);
 
         if !allowed {
+            metrics::counter!("batata_http_requests_total",
+                "method" => method,
+                "status" => "429"
+            )
+            .increment(1);
+
             let response = HttpResponse::build(StatusCode::TOO_MANY_REQUESTS)
                 .insert_header((
                     "X-RateLimit-Limit",
@@ -221,9 +229,25 @@ where
 
         let fut = self.service.call(req);
         let max_requests = self.state.config.max_requests;
+        let start = Instant::now();
 
         Box::pin(async move {
             let mut res = fut.await?;
+
+            // Record request metrics
+            let status = res.status().as_u16().to_string();
+            let elapsed = start.elapsed();
+
+            metrics::counter!("batata_http_requests_total",
+                "method" => method.clone(),
+                "status" => status
+            )
+            .increment(1);
+
+            metrics::histogram!("batata_http_request_duration_seconds",
+                "method" => method
+            )
+            .record(elapsed.as_secs_f64());
 
             // Add rate limit headers to response
             res.headers_mut().insert(

@@ -77,6 +77,75 @@ async fn readiness(data: web::Data<AppState>) -> impl Responder {
     }
 }
 
+#[get("/detailed")]
+async fn health_detailed(data: web::Data<AppState>) -> HttpResponse {
+    let mut components = serde_json::Map::new();
+
+    // Database health
+    let db_status = if let Some(ref persistence) = data.persistence {
+        let start = std::time::Instant::now();
+        match persistence.health_check().await {
+            Ok(()) => {
+                let latency = start.elapsed().as_millis();
+                serde_json::json!({
+                    "status": "UP",
+                    "latencyMs": latency
+                })
+            }
+            Err(e) => serde_json::json!({
+                "status": "DOWN",
+                "error": e.to_string()
+            }),
+        }
+    } else {
+        serde_json::json!({ "status": "UP", "type": "embedded" })
+    };
+    components.insert("database".to_string(), db_status);
+
+    // Raft status
+    let raft_status = if let Some(ref raft) = data.raft_node {
+        let metrics = raft.metrics();
+        serde_json::json!({
+            "status": "UP",
+            "role": format!("{:?}", metrics.state),
+            "term": metrics.current_term,
+            "lastLogIndex": metrics.last_log_index.unwrap_or(0),
+            "lastApplied": metrics.last_applied.map(|l| l.index).unwrap_or(0),
+        })
+    } else {
+        serde_json::json!({ "status": "N/A", "mode": "standalone" })
+    };
+    components.insert("raft".to_string(), raft_status);
+
+    // Server status
+    let server_state = data.server_status.status().to_string();
+
+    // Cluster info
+    let cluster_status = if let Some(ref smm) = data.server_member_manager {
+        serde_json::json!({
+            "status": "UP",
+            "members": smm.member_count(),
+            "standalone": smm.is_standalone(),
+        })
+    } else {
+        serde_json::json!({ "status": "N/A" })
+    };
+    components.insert("cluster".to_string(), cluster_status);
+
+    let overall_status = if server_state == "UP" {
+        "UP"
+    } else {
+        &server_state
+    };
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": overall_status,
+        "serverState": server_state,
+        "components": components,
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+}
+
 #[get("")]
 async fn health_check(data: web::Data<AppState>) -> impl Responder {
     let ds = &data.console_datasource;
@@ -116,6 +185,7 @@ async fn health_check(data: web::Data<AppState>) -> impl Responder {
 pub fn routes() -> Scope {
     web::scope("/health")
         .service(health_check)
+        .service(health_detailed)
         .service(liveness)
         .service(readiness)
 }

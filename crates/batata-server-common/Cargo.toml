@@ -54,6 +54,9 @@ uuid = { workspace = true }
 # Rate limiting
 dashmap = { workspace = true }
 
+# Metrics
+metrics = { workspace = true }
+
 # Regex
 regex = { workspace = true }
 

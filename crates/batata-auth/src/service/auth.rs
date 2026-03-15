@@ -21,7 +21,7 @@ struct CachedTokenData {
 /// JWT Token cache to avoid repeated validation of the same token
 static TOKEN_CACHE: LazyLock<Cache<String, CachedTokenData>> = LazyLock::new(|| {
     Cache::builder()
-        .max_capacity(10_000)
+        .max_capacity(50_000)
         .time_to_live(Duration::from_secs(300)) // 5 minutes TTL
         .build()
 });

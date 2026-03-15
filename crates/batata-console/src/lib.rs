@@ -40,5 +40,8 @@ pub fn configure_v3_console_routes(cfg: &mut actix_web::web::ServiceConfig) {
         .service(v3::config::routes())
         .service(v3::history::routes())
         .service(v3::namespace::routes())
-        .service(v3::service::routes());
+        .service(v3::service::routes())
+        .service(v3::audit::routes())
+        .service(v3::sync::routes())
+        .service(v3::tracing_api::routes());
 }

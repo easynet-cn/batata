@@ -319,6 +319,35 @@ batata.k8s.sync.enabled: false
 #batata.k8s.sync.kubeConfig: /.kube/config
 
 # =============================================================================
+# Performance Tuning
+# =============================================================================
+
+# All values below are defaults. Uncomment and adjust to override.
+
+# --- HTTP Server ---
+#batata.server.http.workers: 0            # 0 = auto-detect CPU cores
+#batata.server.http.keep_alive: 75        # seconds (main server)
+#batata.console.http.keep_alive: 30       # seconds (console server)
+
+# --- gRPC Server ---
+#batata.server.grpc.tcp_keepalive: 30              # seconds
+#batata.server.grpc.http2_keepalive_interval: 30   # seconds
+#batata.server.grpc.http2_keepalive_timeout: 10    # seconds
+#batata.server.grpc.concurrency_limit: 256
+#batata.server.grpc.connection_stale_ms: 60000     # milliseconds
+
+# --- RocksDB ---
+#batata.rocksdb.write_buffer_mb: 128
+#batata.rocksdb.max_write_buffers: 4
+#batata.rocksdb.max_background_jobs: 4
+#batata.rocksdb.block_cache_mb: 256
+
+# --- Auth Caches ---
+#batata.core.auth.cache.token_capacity: 50000
+#batata.core.auth.cache.roles_capacity: 50000
+#batata.core.auth.cache.permissions_capacity: 20000
+
+# =============================================================================
 # Version Information
 # =============================================================================
 

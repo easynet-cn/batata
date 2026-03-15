@@ -16,6 +16,7 @@ pub enum ServerStatus {
     Starting = 0,
     Up = 1,
     Down = 2,
+    Draining = 3,
 }
 
 impl ServerStatus {
@@ -23,6 +24,7 @@ impl ServerStatus {
         match v {
             1 => Self::Up,
             2 => Self::Down,
+            3 => Self::Draining,
             _ => Self::Starting,
         }
     }
@@ -34,6 +36,7 @@ impl fmt::Display for ServerStatus {
             Self::Starting => write!(f, "STARTING"),
             Self::Up => write!(f, "UP"),
             Self::Down => write!(f, "DOWN"),
+            Self::Draining => write!(f, "DRAINING"),
         }
     }
 }
@@ -74,6 +77,11 @@ impl ServerStatusManager {
     pub fn set_down(&self) {
         self.status
             .store(ServerStatus::Down as u8, Ordering::Relaxed);
+    }
+
+    pub fn set_draining(&self) {
+        self.status
+            .store(ServerStatus::Draining as u8, Ordering::Relaxed);
     }
 
     pub fn set_starting(&self) {
@@ -152,10 +160,20 @@ mod tests {
     }
 
     #[test]
+    fn test_set_draining() {
+        let mgr = ServerStatusManager::new();
+        mgr.set_up();
+        mgr.set_draining();
+        assert_eq!(mgr.status(), ServerStatus::Draining);
+        assert!(!mgr.is_up());
+    }
+
+    #[test]
     fn test_display() {
         assert_eq!(ServerStatus::Starting.to_string(), "STARTING");
         assert_eq!(ServerStatus::Up.to_string(), "UP");
         assert_eq!(ServerStatus::Down.to_string(), "DOWN");
+        assert_eq!(ServerStatus::Draining.to_string(), "DRAINING");
     }
 
     #[test]
