@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::acl::{AclService, ResourceType};
+use crate::catalog::ConsulCatalogService;
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -829,6 +830,7 @@ pub async fn get_operator_usage(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorService>,
+    catalog_service: web::Data<ConsulCatalogService>,
     _query: web::Query<OperatorQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
@@ -837,13 +839,22 @@ pub async fn get_operator_usage(
     }
 
     let node_count = operator_service.servers.len() as i64;
+
+    // Get real service counts from catalog
+    let services = catalog_service.get_services("public");
+    let service_count = services.len() as i64;
+    let instance_count: i64 = services
+        .values()
+        .map(|tags| std::cmp::max(tags.len(), 1) as i64)
+        .sum();
+
     let mut usage = HashMap::new();
     usage.insert(
         operator_service.datacenter.clone(),
         ServiceUsage {
             nodes: node_count,
-            services: 0,
-            service_instances: 0,
+            services: service_count,
+            service_instances: instance_count,
             connect_service_instances: 0,
         },
     );
@@ -1076,6 +1087,7 @@ pub async fn get_operator_usage_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     operator_service: web::Data<ConsulOperatorServiceReal>,
+    catalog_service: web::Data<ConsulCatalogService>,
     _query: web::Query<OperatorQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
@@ -1084,13 +1096,22 @@ pub async fn get_operator_usage_real(
     }
 
     let members = operator_service.member_manager.all_members();
+
+    // Get real service counts from catalog
+    let services = catalog_service.get_services("public");
+    let service_count = services.len() as i64;
+    let instance_count: i64 = services
+        .values()
+        .map(|tags| std::cmp::max(tags.len(), 1) as i64)
+        .sum();
+
     let mut usage = HashMap::new();
     usage.insert(
         operator_service.datacenter.clone(),
         ServiceUsage {
             nodes: members.len() as i64,
-            services: 0,
-            service_instances: 0,
+            services: service_count,
+            service_instances: instance_count,
             connect_service_instances: 0,
         },
     );

@@ -110,11 +110,15 @@ fn test_build_group_key() {
 fn test_manager_register_watch() {
     let manager = ConfigFuzzyWatchManager::new();
 
-    let registered = manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
+    let registered = manager
+        .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+        .unwrap();
     assert!(registered);
 
     // Re-registering should also succeed (adds to existing)
-    let re_registered = manager.register_watch("conn-1", "public+OTHER_GROUP+*", "update");
+    let re_registered = manager
+        .register_watch("conn-1", "public+OTHER_GROUP+*", "update")
+        .unwrap();
     assert!(re_registered);
 }
 
@@ -122,7 +126,7 @@ fn test_manager_register_watch() {
 fn test_manager_register_invalid_pattern() {
     let manager = ConfigFuzzyWatchManager::new();
 
-    let registered = manager.register_watch("conn-1", "invalid", "add");
+    let registered = manager.register_watch("conn-1", "invalid", "add").unwrap();
     assert!(!registered);
 }
 
@@ -130,9 +134,15 @@ fn test_manager_register_invalid_pattern() {
 fn test_manager_get_watchers_for_config() {
     let manager = ConfigFuzzyWatchManager::new();
 
-    manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
-    manager.register_watch("conn-2", "public+*+*", "add");
-    manager.register_watch("conn-3", "private+DEFAULT_GROUP+app-*", "add");
+    manager
+        .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+        .unwrap();
+    manager
+        .register_watch("conn-2", "public+*+*", "add")
+        .unwrap();
+    manager
+        .register_watch("conn-3", "private+DEFAULT_GROUP+app-*", "add")
+        .unwrap();
 
     let watchers = manager.get_watchers_for_config("public", "DEFAULT_GROUP", "app-config");
     assert_eq!(watchers.len(), 2);
@@ -152,9 +162,15 @@ fn test_manager_get_watchers_for_config() {
 fn test_manager_unregister_connection() {
     let manager = ConfigFuzzyWatchManager::new();
 
-    manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
-    manager.register_watch("conn-1", "public+OTHER_GROUP+*", "add");
-    manager.register_watch("conn-2", "public+DEFAULT_GROUP+app-*", "add");
+    manager
+        .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+        .unwrap();
+    manager
+        .register_watch("conn-1", "public+OTHER_GROUP+*", "add")
+        .unwrap();
+    manager
+        .register_watch("conn-2", "public+DEFAULT_GROUP+app-*", "add")
+        .unwrap();
 
     manager.unregister_connection("conn-1");
 
@@ -168,7 +184,9 @@ fn test_manager_unregister_connection() {
 fn test_manager_mark_received() {
     let manager = ConfigFuzzyWatchManager::new();
 
-    manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
+    manager
+        .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+        .unwrap();
 
     let group_key =
         ConfigFuzzyWatchPattern::build_group_key("public", "DEFAULT_GROUP", "app-config");
@@ -187,7 +205,9 @@ fn test_manager_mark_received() {
 fn test_manager_mark_received_batch() {
     let manager = ConfigFuzzyWatchManager::new();
 
-    manager.register_watch("conn-1", "public+*+*", "add");
+    manager
+        .register_watch("conn-1", "public+*+*", "add")
+        .unwrap();
 
     let group_keys: std::collections::HashSet<String> = vec![
         ConfigFuzzyWatchPattern::build_group_key("public", "DEFAULT_GROUP", "app-config"),
@@ -209,8 +229,12 @@ fn test_manager_watcher_count() {
 
     assert_eq!(manager.watcher_count(), 0);
 
-    manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
-    manager.register_watch("conn-2", "public+*+*", "add");
+    manager
+        .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+        .unwrap();
+    manager
+        .register_watch("conn-2", "public+*+*", "add")
+        .unwrap();
 
     assert_eq!(manager.watcher_count(), 2);
 
@@ -225,9 +249,15 @@ fn test_manager_pattern_count() {
 
     assert_eq!(manager.pattern_count(), 0);
 
-    manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
-    manager.register_watch("conn-1", "public+OTHER_GROUP+*", "add");
-    manager.register_watch("conn-2", "public+DEFAULT_GROUP+app-*", "add"); // Same pattern
+    manager
+        .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+        .unwrap();
+    manager
+        .register_watch("conn-1", "public+OTHER_GROUP+*", "add")
+        .unwrap();
+    manager
+        .register_watch("conn-2", "public+DEFAULT_GROUP+app-*", "add")
+        .unwrap(); // Same pattern
 
     // 3 total patterns registered (even though 2 are the same pattern for different connections)
     assert_eq!(manager.pattern_count(), 3);
@@ -251,7 +281,7 @@ fn test_manager_concurrent_registration() {
             for j in 0..100 {
                 let conn_id = format!("conn-{}-{}", i, j);
                 let pattern = format!("public+GROUP_{}+data-*", i);
-                manager_clone.register_watch(&conn_id, &pattern, "add");
+                let _ = manager_clone.register_watch(&conn_id, &pattern, "add");
             }
         }));
     }
@@ -273,7 +303,9 @@ fn test_manager_concurrent_read_write() {
 
     // Pre-register some watchers
     for i in 0..5 {
-        manager.register_watch(&format!("conn-{}", i), "public+*+*", "add");
+        manager
+            .register_watch(&format!("conn-{}", i), "public+*+*", "add")
+            .unwrap();
     }
 
     let mut handles = vec![];
@@ -284,7 +316,7 @@ fn test_manager_concurrent_read_write() {
         handles.push(thread::spawn(move || {
             for j in 0..100 {
                 let conn_id = format!("writer-{}-{}", i, j);
-                manager_clone.register_watch(&conn_id, "public+DEFAULT_GROUP+app-*", "add");
+                let _ = manager_clone.register_watch(&conn_id, "public+DEFAULT_GROUP+app-*", "add");
             }
         }));
     }

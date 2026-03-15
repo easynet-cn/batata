@@ -49,3 +49,6 @@ pub mod ai;
 
 // Cloud Native Integration API (Kubernetes Sync, Prometheus SD)
 pub mod cloud;
+
+// Prometheus metrics endpoint using metrics-exporter-prometheus
+pub mod metrics;

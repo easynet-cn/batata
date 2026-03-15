@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod connection;
+pub mod health;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -76,6 +77,30 @@ pub struct GrpcClientConfig {
     pub tenant: String,
     /// Additional connection labels
     pub labels: HashMap<String, String>,
+    /// TLS CA certificate path (PEM format)
+    pub tls_ca_cert: Option<String>,
+    /// TLS client certificate path (for mTLS)
+    pub tls_client_cert: Option<String>,
+    /// TLS client key path (for mTLS)
+    pub tls_client_key: Option<String>,
+    /// Whether to enable TLS
+    pub tls_enabled: bool,
+}
+
+impl GrpcClientConfig {
+    pub fn with_tls(mut self, ca_cert: &str) -> Self {
+        self.tls_enabled = true;
+        self.tls_ca_cert = Some(ca_cert.to_string());
+        self
+    }
+
+    pub fn with_mtls(mut self, ca_cert: &str, client_cert: &str, client_key: &str) -> Self {
+        self.tls_enabled = true;
+        self.tls_ca_cert = Some(ca_cert.to_string());
+        self.tls_client_cert = Some(client_cert.to_string());
+        self.tls_client_key = Some(client_key.to_string());
+        self
+    }
 }
 
 impl Default for GrpcClientConfig {
@@ -88,6 +113,10 @@ impl Default for GrpcClientConfig {
             module: "config".to_string(),
             tenant: String::new(),
             labels: HashMap::new(),
+            tls_ca_cert: None,
+            tls_client_cert: None,
+            tls_client_key: None,
+            tls_enabled: false,
         }
     }
 }

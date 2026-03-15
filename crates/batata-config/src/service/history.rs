@@ -4,13 +4,34 @@
 //! - History search with pagination
 //! - History retrieval by ID
 //! - Config lookup by namespace
+//! - Version comparison (diff)
+//! - Rollback to historical version
 
 use sea_orm::{prelude::Expr, sea_query::Asterisk, *};
+use serde::{Deserialize, Serialize};
 
 use batata_api::Page;
 use batata_persistence::entity::{config_info, his_config_info};
 
 use crate::model::{ConfigHistoryInfo, ConfigInfoWrapper};
+
+/// Result of comparing two config history versions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigDiff {
+    /// Content of the older version
+    pub old_content: String,
+    /// Content of the newer version
+    pub new_content: String,
+    /// MD5 of the older version
+    pub old_md5: String,
+    /// MD5 of the newer version
+    pub new_md5: String,
+    /// Modified time of the older version (epoch millis)
+    pub old_modified_time: i64,
+    /// Modified time of the newer version (epoch millis)
+    pub new_modified_time: i64,
+}
 
 /// Search config history with pagination
 pub async fn search_page(
@@ -247,8 +268,135 @@ pub async fn search_with_filters(
     Ok(Page::<ConfigHistoryInfo>::default())
 }
 
+/// Compare two history versions and return a structured diff.
+///
+/// Both versions must belong to the same config (data_id, group, tenant).
+/// Returns an error if either version is not found.
+pub async fn diff_versions(
+    db: &DatabaseConnection,
+    nid1: u64,
+    nid2: u64,
+) -> anyhow::Result<ConfigDiff> {
+    let v1 = find_by_id(db, nid1)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("History version {} not found", nid1))?;
+
+    let v2 = find_by_id(db, nid2)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("History version {} not found", nid2))?;
+
+    Ok(ConfigDiff {
+        old_content: v1.content,
+        new_content: v2.content,
+        old_md5: v1.md5,
+        new_md5: v2.md5,
+        old_modified_time: v1.last_modified_time,
+        new_modified_time: v2.last_modified_time,
+    })
+}
+
+/// Rollback a config to a historical version by re-publishing the old content.
+///
+/// Retrieves the content from the specified history entry and publishes it
+/// as the current version using `config::create_or_update`.
+pub async fn rollback_to_version(
+    db: &DatabaseConnection,
+    nid: u64,
+    data_id: &str,
+    group: &str,
+    tenant: &str,
+    operator: &str,
+    client_ip: &str,
+) -> anyhow::Result<bool> {
+    let history = find_by_id(db, nid)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("History version {} not found", nid))?;
+
+    // Re-publish the historical content as current config
+    super::config::create_or_update(
+        db,
+        data_id,
+        group,
+        tenant,
+        &history.content,
+        "",       // app_name
+        operator, // src_user
+        client_ip,
+        "", // config_tags
+        "", // desc
+        "", // use
+        "", // effect
+        "", // type
+        "", // schema
+        "", // encrypted_data_key
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_diff_serialization() {
+        let diff = ConfigDiff {
+            old_content: "key=old_value".to_string(),
+            new_content: "key=new_value".to_string(),
+            old_md5: "abc123".to_string(),
+            new_md5: "def456".to_string(),
+            old_modified_time: 1700000000000,
+            new_modified_time: 1700000060000,
+        };
+
+        let json = serde_json::to_string(&diff).unwrap();
+        assert!(json.contains("oldContent"));
+        assert!(json.contains("newContent"));
+        assert!(json.contains("oldMd5"));
+        assert!(json.contains("newMd5"));
+        assert!(json.contains("oldModifiedTime"));
+        assert!(json.contains("newModifiedTime"));
+
+        let deserialized: ConfigDiff = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.old_content, "key=old_value");
+        assert_eq!(deserialized.new_content, "key=new_value");
+        assert_eq!(deserialized.old_md5, "abc123");
+        assert_eq!(deserialized.new_md5, "def456");
+        assert_eq!(deserialized.old_modified_time, 1700000000000);
+        assert_eq!(deserialized.new_modified_time, 1700000060000);
+    }
+
+    #[test]
+    fn test_config_diff_identical_content() {
+        let diff = ConfigDiff {
+            old_content: "same_content".to_string(),
+            new_content: "same_content".to_string(),
+            old_md5: "same_md5".to_string(),
+            new_md5: "same_md5".to_string(),
+            old_modified_time: 1700000000000,
+            new_modified_time: 1700000060000,
+        };
+
+        assert_eq!(diff.old_content, diff.new_content);
+        assert_eq!(diff.old_md5, diff.new_md5);
+        // Times can still differ even if content is the same (re-publish)
+        assert_ne!(diff.old_modified_time, diff.new_modified_time);
+    }
+
+    #[test]
+    fn test_config_diff_empty_content() {
+        let diff = ConfigDiff {
+            old_content: String::new(),
+            new_content: "new_content".to_string(),
+            old_md5: String::new(),
+            new_md5: "md5hash".to_string(),
+            old_modified_time: 0,
+            new_modified_time: 1700000000000,
+        };
+
+        assert!(diff.old_content.is_empty());
+        assert!(!diff.new_content.is_empty());
+    }
+
     #[test]
     fn test_page_calculation() {
         // Test page offset calculation

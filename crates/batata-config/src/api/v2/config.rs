@@ -6,6 +6,8 @@
 //! - DELETE /nacos/v2/cs/config - Delete config
 //! - GET /nacos/v2/cs/config/searchDetail - Search config detail
 
+use std::sync::Arc;
+
 use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, post, web};
 use batata_api::model::Page;
 use batata_server_common::{
@@ -16,6 +18,7 @@ use batata_server_common::{
 use tracing::{info, warn};
 
 use crate::model::config::ConfigBasicInfo;
+use crate::service::notifier::ConfigChangeNotifier;
 
 /// Maximum number of gray versions per config (consistent with Nacos default)
 const MAX_GRAY_VERSION_COUNT: usize = 10;
@@ -166,6 +169,7 @@ pub async fn get_config(
 pub async fn publish_config(
     req: HttpRequest,
     data: web::Data<AppState>,
+    notifier: web::Data<Arc<ConfigChangeNotifier>>,
     form: web::Form<ConfigPublishParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -397,6 +401,9 @@ pub async fn publish_config(
         .await
     {
         Ok(_) => {
+            // Notify long-polling HTTP listeners about config change
+            notifier.notify_change(namespace_id, &form.group, &form.data_id);
+
             info!(
                 data_id = %form.data_id,
                 group = %form.group,
@@ -426,6 +433,7 @@ pub async fn publish_config(
 pub async fn delete_config(
     req: HttpRequest,
     data: web::Data<AppState>,
+    notifier: web::Data<Arc<ConfigChangeNotifier>>,
     params: web::Query<ConfigDeleteParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -483,6 +491,9 @@ pub async fn delete_config(
         .await
     {
         Ok(_) => {
+            // Notify long-polling HTTP listeners about config deletion
+            notifier.notify_change(namespace_id, &params.group, &params.data_id);
+
             info!(
                 data_id = %params.data_id,
                 group = %params.group,

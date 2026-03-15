@@ -28,7 +28,10 @@ pub mod cluster {
 }
 
 // Re-export commonly used types
-pub use model::{Configuration, Connection, ConnectionMeta, GrpcClient, PageParam};
+pub use model::{
+    AtomicLastActive, Configuration, Connection, ConnectionMeta, GrpcClient, PageParam,
+};
+pub use service::remote::ConnectionEventListener;
 pub use service::{ConfigKey, ConfigSubscriber, ConfigSubscriberManager};
 
 // Re-export gRPC auth types

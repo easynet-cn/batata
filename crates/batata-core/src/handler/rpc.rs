@@ -504,7 +504,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                 // Move con instead of cloning - con is not used after this
                                 let client = GrpcClient::new(con, tx.clone());
 
-                                connection_manager.register(&connection_id, client);
+                                connection_manager.register(&connection_id, client).await;
                                 // ConnectionSetupRequest is fully handled here - don't route through handler registry
                                 continue;
                             }
@@ -634,7 +634,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                 cleanup.remove_subscriber(&connection_id);
             }
             config_subscriber_manager.unsubscribe_all(&connection_id);
-            connection_manager.unregister(&connection_id);
+            connection_manager.unregister(&connection_id).await;
         });
 
         let output_stream = ReceiverStream::new(rx);

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::acl::{AclService, ResourceType};
+use crate::config_entry::ConsulConfigEntryService;
 use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulError;
 
@@ -280,6 +281,8 @@ pub struct ConsulConnectService {
     exported_services: Arc<DashMap<String, ResolvedExportedService>>,
     /// Imported services configuration
     imported_services: Arc<DashMap<String, ImportedService>>,
+    /// Optional config entry service for building discovery chains from config entries
+    config_entry_service: Option<Arc<ConsulConfigEntryService>>,
     /// Datacenter name
     datacenter: String,
 }
@@ -293,34 +296,137 @@ impl ConsulConnectService {
         Self {
             exported_services: Arc::new(DashMap::new()),
             imported_services: Arc::new(DashMap::new()),
+            config_entry_service: None,
             datacenter,
         }
     }
 
+    /// Set the config entry service for building discovery chains from config entries
+    pub fn with_config_entry_service(mut self, service: Arc<ConsulConfigEntryService>) -> Self {
+        self.config_entry_service = Some(service);
+        self
+    }
+
     /// Get the compiled discovery chain for a service.
-    /// Returns a default chain with a single resolver node.
+    /// Builds the chain from config entries (service-router, service-splitter, service-resolver)
+    /// if available, otherwise returns a default chain with a single resolver node.
     pub fn get_discovery_chain(&self, service_name: &str) -> DiscoveryChainResponse {
         let target_id = format!(
             "{}.default.default.{}.internal",
             service_name, self.datacenter
         );
-        let resolver_name = format!(
+        let resolver_key = format!(
             "resolver:{}.default.default.{}",
             service_name, self.datacenter
         );
 
+        // Look up config entries if the config entry service is available
+        let router_entry = self
+            .config_entry_service
+            .as_ref()
+            .and_then(|s| s.get_entry("service-router", service_name));
+        let splitter_entry = self
+            .config_entry_service
+            .as_ref()
+            .and_then(|s| s.get_entry("service-splitter", service_name));
+        let resolver_entry = self
+            .config_entry_service
+            .as_ref()
+            .and_then(|s| s.get_entry("service-resolver", service_name));
+
+        // Determine connect timeout from resolver config entry or use default
+        let connect_timeout = resolver_entry
+            .as_ref()
+            .and_then(|e| e.extra.get("ConnectTimeout"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("5s")
+            .to_string();
+
+        // Determine protocol from service-defaults config entry or use default
+        let protocol = self
+            .config_entry_service
+            .as_ref()
+            .and_then(|s| s.get_entry("service-defaults", service_name))
+            .and_then(|e| {
+                e.extra
+                    .get("Protocol")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "tcp".to_string());
+
+        let mut nodes = HashMap::new();
+        let mut start_node = resolver_key.clone();
+
+        // If a service-router config entry exists, add a router node
+        if let Some(ref router) = router_entry {
+            let router_name = format!(
+                "router:{}.default.default.{}",
+                service_name, self.datacenter
+            );
+            let routes = Self::extract_routes_from_entry(router, service_name, &self.datacenter);
+            nodes.insert(
+                router_name.clone(),
+                DiscoveryGraphNode {
+                    node_type: DiscoveryGraphNodeType::Router,
+                    name: router_name.clone(),
+                    routes,
+                    splits: Vec::new(),
+                    resolver: None,
+                },
+            );
+            start_node = router_name;
+        }
+
+        // If a service-splitter config entry exists, add a splitter node
+        if let Some(ref splitter) = splitter_entry {
+            let splitter_name = format!(
+                "splitter:{}.default.default.{}",
+                service_name, self.datacenter
+            );
+            let splits = Self::extract_splits_from_entry(splitter, service_name, &self.datacenter);
+            nodes.insert(
+                splitter_name.clone(),
+                DiscoveryGraphNode {
+                    node_type: DiscoveryGraphNodeType::Splitter,
+                    name: splitter_name.clone(),
+                    routes: Vec::new(),
+                    splits,
+                    resolver: None,
+                },
+            );
+            if router_entry.is_none() {
+                start_node = splitter_name;
+            }
+        }
+
+        // Always add the resolver node
         let resolver_node = DiscoveryGraphNode {
             node_type: DiscoveryGraphNodeType::Resolver,
-            name: resolver_name.clone(),
+            name: resolver_key.clone(),
             routes: Vec::new(),
             splits: Vec::new(),
             resolver: Some(DiscoveryResolver {
-                default: true,
-                connect_timeout: "5s".to_string(),
+                default: resolver_entry.is_none(),
+                connect_timeout: connect_timeout.clone(),
                 target: target_id.clone(),
-                failover: None,
+                failover: resolver_entry
+                    .as_ref()
+                    .and_then(|e| e.extra.get("Failover"))
+                    .and_then(|v| v.as_object())
+                    .and_then(|obj| {
+                        obj.get("Targets")
+                            .and_then(|t| t.as_array())
+                            .map(|arr| DiscoveryFailover {
+                                targets: arr
+                                    .iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect(),
+                            })
+                    }),
             }),
         };
+        nodes.insert(resolver_key.clone(), resolver_node);
 
         let target = DiscoveryTarget {
             id: target_id.clone(),
@@ -331,13 +437,10 @@ impl ConsulConnectService {
             datacenter: self.datacenter.clone(),
             mesh_gateway: MeshGatewayConfig::default(),
             subset: DiscoveryTargetSubset::default(),
-            connect_timeout: "5s".to_string(),
+            connect_timeout,
             sni: format!("{}.default.{}.internal", service_name, self.datacenter),
             name: format!("{}.default.default.{}", service_name, self.datacenter),
         };
-
-        let mut nodes = HashMap::new();
-        nodes.insert(resolver_name.clone(), resolver_node);
 
         let mut targets = HashMap::new();
         targets.insert(target_id, target);
@@ -348,12 +451,124 @@ impl ConsulConnectService {
                 namespace: "default".to_string(),
                 datacenter: self.datacenter.clone(),
                 customization_hash: String::new(),
-                protocol: "tcp".to_string(),
-                start_node: resolver_name,
+                protocol,
+                start_node,
                 nodes,
                 targets,
             },
         }
+    }
+
+    /// Extract route definitions from a service-router config entry
+    fn extract_routes_from_entry(
+        entry: &crate::config_entry::ConfigEntry,
+        service_name: &str,
+        datacenter: &str,
+    ) -> Vec<DiscoveryRoute> {
+        let mut routes = Vec::new();
+
+        if let Some(routes_val) = entry.extra.get("Routes") {
+            if let Some(routes_arr) = routes_val.as_array() {
+                for route in routes_arr {
+                    let match_def = route.get("Match").and_then(|m| {
+                        let http = m.get("HTTP").map(|http| DiscoveryHTTPRouteMatch {
+                            path_exact: http
+                                .get("PathExact")
+                                .and_then(|v| v.as_str().map(|s| s.to_string())),
+                            path_prefix: http
+                                .get("PathPrefix")
+                                .and_then(|v| v.as_str().map(|s| s.to_string())),
+                            path_regex: http
+                                .get("PathRegex")
+                                .and_then(|v| v.as_str().map(|s| s.to_string())),
+                            header: Vec::new(),
+                            query_param: Vec::new(),
+                            methods: http
+                                .get("Methods")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                        });
+                        Some(DiscoveryRouteMatch { http })
+                    });
+
+                    let next_service = route
+                        .get("Destination")
+                        .and_then(|d| d.get("Service"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(service_name);
+                    let next_node =
+                        format!("resolver:{}.default.default.{}", next_service, datacenter);
+
+                    routes.push(DiscoveryRoute {
+                        definition: match_def,
+                        next_node,
+                    });
+                }
+            }
+        }
+
+        // Always add a default catch-all route to the resolver
+        if routes.is_empty() {
+            routes.push(DiscoveryRoute {
+                definition: None,
+                next_node: format!("resolver:{}.default.default.{}", service_name, datacenter),
+            });
+        }
+
+        routes
+    }
+
+    /// Extract split definitions from a service-splitter config entry
+    fn extract_splits_from_entry(
+        entry: &crate::config_entry::ConfigEntry,
+        service_name: &str,
+        datacenter: &str,
+    ) -> Vec<DiscoverySplit> {
+        let mut splits = Vec::new();
+
+        if let Some(splits_val) = entry.extra.get("Splits") {
+            if let Some(splits_arr) = splits_val.as_array() {
+                for split in splits_arr {
+                    let weight = split
+                        .get("Weight")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(100.0);
+                    let target_service = split
+                        .get("Service")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(service_name);
+                    let service_subset = split
+                        .get("ServiceSubset")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let next_node =
+                        format!("resolver:{}.default.default.{}", target_service, datacenter);
+
+                    splits.push(DiscoverySplit {
+                        definition: Some(DiscoverySplitDefinition {
+                            service: Some(target_service.to_string()),
+                            service_subset,
+                            namespace: split
+                                .get("Namespace")
+                                .and_then(|v| v.as_str().map(|s| s.to_string())),
+                            partition: split
+                                .get("Partition")
+                                .and_then(|v| v.as_str().map(|s| s.to_string())),
+                        }),
+                        weight,
+                        next_node,
+                    });
+                }
+            }
+        }
+
+        splits
     }
 
     /// Get the compiled discovery chain with optional overrides applied.

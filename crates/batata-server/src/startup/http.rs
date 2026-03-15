@@ -24,6 +24,7 @@ use crate::{
         agent::ConsulAgentService, catalog::ConsulCatalogService, health::ConsulHealthService,
         kv::ConsulKVService, model::ConsulDatacenterConfig, route::consul_routes,
     },
+    api::metrics::{PrometheusMetricsState, prometheus_metrics},
     api::v2::route::{cluster_routes, config_routes, naming_routes},
     api::v3::admin::route::admin_routes as v3_admin_routes,
     api::v3::client::route::client_routes as v3_client_routes,
@@ -430,6 +431,7 @@ pub fn main_server(
     app_state: Arc<AppState>,
     naming_service: Arc<NamingService>,
     connection_manager: Arc<ConnectionManager>,
+    config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
     ai_services: AIServices,
     distro_protocol: Option<Arc<DistroProtocol>>,
     context_path: String,
@@ -439,6 +441,9 @@ pub fn main_server(
     // Create Cloud services
     let cloud_services = CloudServices::new();
     let rate_limit_config = app_state.configuration.rate_limit_config();
+
+    // Initialize Prometheus metrics recorder (metrics crate integration)
+    let prometheus_state = web::Data::new(PrometheusMetricsState::new());
 
     let server_status = app_state.server_status.clone();
 
@@ -451,12 +456,16 @@ pub fn main_server(
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(naming_service.clone()))
             .app_data(web::Data::new(connection_manager.clone()))
+            // Config change notifier for long-polling listeners
+            .app_data(web::Data::new(config_change_notifier.clone()))
             // AI services (MCP Server Registry, A2A Agent Registry)
             .app_data(web::Data::new(ai_services.mcp_registry.clone()))
             .app_data(web::Data::new(ai_services.agent_registry.clone()))
             // Cloud services (Prometheus SD, Kubernetes Sync)
             .app_data(web::Data::new(cloud_services.prometheus_sd.clone()))
-            .app_data(web::Data::new(cloud_services.k8s_sync.clone()));
+            .app_data(web::Data::new(cloud_services.k8s_sync.clone()))
+            // Prometheus metrics state (metrics crate integration)
+            .app_data(prometheus_state.clone());
 
         // Inject distro protocol for cluster data synchronization (cluster mode only)
         if let Some(ref distro) = distro_protocol {
@@ -503,8 +512,10 @@ pub fn main_server(
         // Cloud Native Integration API routes (Prometheus SD, Kubernetes Sync)
         .configure(configure_prometheus)
         .configure(configure_kubernetes)
-        // Prometheus metrics endpoint at /metrics (standard path)
+        // Prometheus metrics endpoint at /metrics (standard path, hand-rolled)
         .service(batata_console::v3::metrics::routes())
+        // Prometheus metrics endpoint at /prometheus (metrics crate integration)
+        .route("/prometheus", web::get().to(prometheus_metrics))
         // Kubernetes-compatible health endpoints
         .route("/health/liveness", web::get().to(health_liveness))
         .route("/health/readiness", web::get().to(health_readiness))

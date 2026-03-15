@@ -523,6 +523,85 @@ pub async fn check_group_capacity(
     }
 }
 
+/// Check if a config can be published (both tenant and group capacity)
+///
+/// This combines tenant quota check, group quota check, and content size
+/// validation into a single convenience function.
+pub async fn check_publish_allowed(
+    db: &DatabaseConnection,
+    tenant_id: &str,
+    group_id: &str,
+    content_size: usize,
+    capacity_limit_check: bool,
+) -> anyhow::Result<CapacityCheckResult> {
+    // Check tenant capacity (quota + content size)
+    let tenant_result =
+        check_tenant_capacity(db, tenant_id, content_size, capacity_limit_check).await?;
+    if !tenant_result.allowed {
+        return Ok(tenant_result);
+    }
+
+    // Check group capacity (quota + content size)
+    let group_result =
+        check_group_capacity(db, group_id, content_size, capacity_limit_check).await?;
+    if !group_result.allowed {
+        return Ok(group_result);
+    }
+
+    Ok(CapacityCheckResult::allowed())
+}
+
+/// Periodic task to correct usage counters by reconciling with actual config counts.
+///
+/// This should be called periodically to fix any drift between the capacity
+/// usage counters and the actual number of configs in each tenant.
+pub async fn correct_tenant_usage(
+    db: &DatabaseConnection,
+    tenant_id: &str,
+    actual_count: u32,
+) -> anyhow::Result<()> {
+    let existing = tenant_capacity::Entity::find()
+        .filter(tenant_capacity::Column::TenantId.eq(tenant_id))
+        .one(db)
+        .await?;
+
+    if let Some(model) = existing
+        && model.usage != actual_count
+    {
+        let now = chrono::Utc::now().naive_utc();
+        let mut active: tenant_capacity::ActiveModel = model.into();
+        active.usage = Set(actual_count);
+        active.gmt_modified = Set(now);
+        active.update(db).await?;
+    }
+
+    Ok(())
+}
+
+/// Correct group usage counter to match the actual config count.
+pub async fn correct_group_usage(
+    db: &DatabaseConnection,
+    group_id: &str,
+    actual_count: u32,
+) -> anyhow::Result<()> {
+    let existing = group_capacity::Entity::find()
+        .filter(group_capacity::Column::GroupId.eq(group_id))
+        .one(db)
+        .await?;
+
+    if let Some(model) = existing
+        && model.usage != actual_count
+    {
+        let now = chrono::Utc::now().naive_utc();
+        let mut active: group_capacity::ActiveModel = model.into();
+        active.usage = Set(actual_count);
+        active.gmt_modified = Set(now);
+        active.update(db).await?;
+    }
+
+    Ok(())
+}
+
 /// Delete tenant capacity
 pub async fn delete_tenant_capacity(
     db: &DatabaseConnection,
@@ -582,6 +661,38 @@ mod tests {
         assert_eq!(result.message, Some("quota exceeded".to_string()));
         assert_eq!(result.usage, 150);
         assert_eq!(result.quota, 200);
+    }
+
+    #[test]
+    fn test_capacity_check_result_allowed_state() {
+        let result = CapacityCheckResult::allowed();
+        assert!(result.allowed);
+        assert!(result.message.is_none());
+    }
+
+    #[test]
+    fn test_capacity_check_result_denied_preserves_details() {
+        let result = CapacityCheckResult::denied(
+            "Tenant 'test' has reached quota limit (200/200)",
+            200,
+            200,
+        );
+        assert!(!result.allowed);
+        assert!(result.message.as_ref().unwrap().contains("quota limit"));
+        assert_eq!(result.usage, 200);
+        assert_eq!(result.quota, 200);
+    }
+
+    #[test]
+    fn test_capacity_check_result_denied_content_size() {
+        let result = CapacityCheckResult::denied(
+            "Content size 200000 exceeds maximum allowed size 102400",
+            50,
+            200,
+        );
+        assert!(!result.allowed);
+        assert!(result.message.as_ref().unwrap().contains("Content size"));
+        assert!(result.message.as_ref().unwrap().contains("200000"));
     }
 
     #[test]

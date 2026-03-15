@@ -8,11 +8,14 @@
 //! - Server push handling for config change notifications and service updates
 //! - Automatic redo on reconnect
 
+pub mod ai;
 pub mod api;
+pub mod auth;
 pub mod config;
 pub mod error;
 pub mod grpc;
 pub mod http;
+pub mod labels;
 pub mod limiter;
 pub mod local_config;
 pub mod lock;
@@ -20,6 +23,12 @@ pub mod metrics;
 pub mod model;
 pub mod naming;
 pub mod redo;
+pub mod retry;
+pub mod server_list;
+pub mod signing;
+
+// AI/MCP client re-exports
+pub use ai::{AgentCardInfo, BatataAiService, McpServerBasicInfo, McpServerDetailInfo};
 
 // HTTP console client re-exports
 pub use api::BatataApiClient;
@@ -45,6 +54,25 @@ pub use naming::fuzzy_watch::{NamingFuzzyWatchEvent, NamingFuzzyWatchService};
 
 // Instance diff
 pub use naming::instances_diff::InstancesDiff;
+
+// Client labels
+pub use labels::ClientLabelsCollector;
+
+// Request signing
+pub use signing::{sign_request, sign_resource};
+
+// Auth providers (ClientAuthService SPI)
+pub use auth::{
+    AccessKeyAuthProvider, ClientAuthService, IdentityContext, JwtAuthProvider, RequestResource,
+    SecurityProxy,
+};
+
+// Retry and server list
+pub use retry::{RetryConfig, retry_with_backoff};
+pub use server_list::ServerListManager;
+
+// Connection health
+pub use grpc::health::ConnectionHealthChecker;
 
 // Additional re-exports
 pub use limiter::{RateLimiter, SlidingWindowLimiter};

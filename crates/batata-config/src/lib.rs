@@ -16,3 +16,5 @@ pub mod service;
 
 // Re-export commonly used types
 pub use model::*;
+pub use service::cache::ConfigCacheService;
+pub use service::notifier::ConfigChangeNotifier;

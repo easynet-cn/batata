@@ -215,6 +215,93 @@ impl ConfigChangeParser for JsonChangeParser {
     }
 }
 
+/// TOML format parser
+pub struct TomlChangeParser;
+
+impl TomlChangeParser {
+    fn flatten_toml(content: &str) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        if let Ok(value) = content.parse::<toml::Value>() {
+            Self::flatten_value(&value, String::new(), &mut map);
+        }
+        map
+    }
+
+    fn flatten_value(value: &toml::Value, prefix: String, map: &mut HashMap<String, String>) {
+        match value {
+            toml::Value::Table(table) => {
+                for (key, val) in table {
+                    let new_prefix = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{}.{}", prefix, key)
+                    };
+                    Self::flatten_value(val, new_prefix, map);
+                }
+            }
+            toml::Value::Array(arr) => {
+                for (i, val) in arr.iter().enumerate() {
+                    let new_prefix = format!("{}[{}]", prefix, i);
+                    Self::flatten_value(val, new_prefix, map);
+                }
+            }
+            _ => {
+                map.insert(prefix, value.to_string());
+            }
+        }
+    }
+}
+
+impl ConfigChangeParser for TomlChangeParser {
+    fn is_responsible_for(&self, config_type: &str) -> bool {
+        config_type.eq_ignore_ascii_case("toml")
+    }
+
+    fn compare_content(
+        &self,
+        old_content: &str,
+        new_content: &str,
+    ) -> HashMap<String, ConfigChangeItem> {
+        let old_map = Self::flatten_toml(old_content);
+        let new_map = Self::flatten_toml(new_content);
+        compare_maps(&old_map, &new_map)
+    }
+}
+
+/// XML format parser — uses line-based comparison
+///
+/// Since XML has complex structure, we use a simplified approach:
+/// line-by-line comparison of non-empty trimmed lines.
+pub struct XmlChangeParser;
+
+impl ConfigChangeParser for XmlChangeParser {
+    fn is_responsible_for(&self, config_type: &str) -> bool {
+        config_type.eq_ignore_ascii_case("xml") || config_type.eq_ignore_ascii_case("html")
+    }
+
+    fn compare_content(
+        &self,
+        old_content: &str,
+        new_content: &str,
+    ) -> HashMap<String, ConfigChangeItem> {
+        let old_lines: HashMap<String, String> = old_content
+            .lines()
+            .enumerate()
+            .map(|(i, line)| (format!("line_{}", i + 1), line.trim().to_string()))
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+
+        let new_lines: HashMap<String, String> = new_content
+            .lines()
+            .enumerate()
+            .map(|(i, line)| (format!("line_{}", i + 1), line.trim().to_string()))
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+
+        compare_maps(&old_lines, &new_lines)
+    }
+}
+
 /// Compare two key-value maps and produce change items
 fn compare_maps(
     old_map: &HashMap<String, String>,
@@ -281,6 +368,8 @@ impl ConfigChangeHandler {
                 Box::new(PropertiesChangeParser),
                 Box::new(YamlChangeParser),
                 Box::new(JsonChangeParser),
+                Box::new(TomlChangeParser),
+                Box::new(XmlChangeParser),
             ],
         }
     }
@@ -399,6 +488,123 @@ mod tests {
         let changes = handler.parse_change("properties", old, new);
         assert_eq!(changes.len(), 1);
         assert_eq!(changes["key"].change_type, PropertyChangeType::Modified);
+    }
+
+    #[test]
+    fn test_toml_parser_basic() {
+        let parser = TomlChangeParser;
+        assert!(parser.is_responsible_for("toml"));
+        assert!(parser.is_responsible_for("TOML"));
+        assert!(!parser.is_responsible_for("json"));
+    }
+
+    #[test]
+    fn test_toml_parser_changes() {
+        let parser = TomlChangeParser;
+        let old = "[server]\nport = 8080\nname = \"old\"";
+        let new = "[server]\nport = 9090\nname = \"old\"\nhost = \"localhost\"";
+        let changes = parser.compare_content(old, new);
+
+        assert!(changes.contains_key("server.port"));
+        assert_eq!(
+            changes["server.port"].change_type,
+            PropertyChangeType::Modified
+        );
+        assert!(changes.contains_key("server.host"));
+        assert_eq!(
+            changes["server.host"].change_type,
+            PropertyChangeType::Added
+        );
+    }
+
+    #[test]
+    fn test_toml_parser_deleted() {
+        let parser = TomlChangeParser;
+        let old = "[server]\nport = 8080\nname = \"old\"";
+        let new = "[server]\nport = 8080";
+        let changes = parser.compare_content(old, new);
+
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            changes["server.name"].change_type,
+            PropertyChangeType::Deleted
+        );
+    }
+
+    #[test]
+    fn test_toml_parser_no_change() {
+        let parser = TomlChangeParser;
+        let content = "[server]\nport = 8080";
+        let changes = parser.compare_content(content, content);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn test_toml_parser_invalid_content() {
+        let parser = TomlChangeParser;
+        let changes = parser.compare_content("not valid toml {{{", "also invalid {{{");
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn test_toml_parser_nested_and_arrays() {
+        let parser = TomlChangeParser;
+        let old = "[database]\nports = [8000, 8001]";
+        let new = "[database]\nports = [8000, 8002]";
+        let changes = parser.compare_content(old, new);
+        assert!(changes.contains_key("database.ports[1]"));
+        assert_eq!(
+            changes["database.ports[1]"].change_type,
+            PropertyChangeType::Modified
+        );
+    }
+
+    #[test]
+    fn test_xml_parser_basic() {
+        let parser = XmlChangeParser;
+        assert!(parser.is_responsible_for("xml"));
+        assert!(parser.is_responsible_for("XML"));
+        assert!(parser.is_responsible_for("html"));
+        assert!(parser.is_responsible_for("HTML"));
+        assert!(!parser.is_responsible_for("json"));
+    }
+
+    #[test]
+    fn test_xml_parser_changes() {
+        let parser = XmlChangeParser;
+        let old = "<root>\n  <name>old</name>\n  <port>8080</port>\n</root>";
+        let new =
+            "<root>\n  <name>new</name>\n  <port>8080</port>\n  <host>localhost</host>\n</root>";
+        let changes = parser.compare_content(old, new);
+        // Line-based comparison should detect changes
+        assert!(!changes.is_empty());
+    }
+
+    #[test]
+    fn test_xml_parser_no_change() {
+        let parser = XmlChangeParser;
+        let content = "<root>\n  <name>test</name>\n</root>";
+        let changes = parser.compare_content(content, content);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn test_handler_routes_toml() {
+        let handler = ConfigChangeHandler::new();
+        let old = "key = \"old\"";
+        let new = "key = \"new\"";
+        let changes = handler.parse_change("toml", old, new);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes["key"].change_type, PropertyChangeType::Modified);
+    }
+
+    #[test]
+    fn test_handler_routes_xml() {
+        let handler = ConfigChangeHandler::new();
+        let old = "<root>\n  <key>old</key>\n</root>";
+        let new = "<root>\n  <key>new</key>\n</root>";
+        let changes = handler.parse_change("xml", old, new);
+        assert!(!changes.is_empty());
     }
 
     #[test]

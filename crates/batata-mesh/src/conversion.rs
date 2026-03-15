@@ -3,9 +3,15 @@
 //! This module provides conversion functions to transform Nacos service
 //! discovery data into xDS resources for Envoy/Istio consumption.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 
+use crate::mcp::types::{
+    ConnectionPoolSettings, Destination, DestinationRule, DestinationRuleSpec, HttpRetry,
+    HttpRoute, HttpRouteDestination, LoadBalancerSettings, OutlierDetection, PortSelector,
+    ResourceMetadata, SimpleLb, Subset, TcpSettings, TrafficPolicy, VirtualService,
+    VirtualServiceSpec,
+};
 use crate::xds::types::{
     Cluster, ClusterLoadAssignment, Endpoint, HealthCheckConfig, HealthCheckType, HealthStatus,
     LbPolicy, Locality,
@@ -260,6 +266,209 @@ pub fn services_to_endpoints(services: &[NacosService]) -> Vec<ClusterLoadAssign
         .collect()
 }
 
+/// Convert a Nacos service to an Istio VirtualService.
+///
+/// Creates default routing rules based on service metadata. The `domain_suffix`
+/// is appended to the service name to form the DNS-style host (e.g., "svc.cluster.local").
+/// Timeout and retry configuration are read from service metadata keys
+/// `istio.timeout` and `istio.retries` respectively.
+pub fn service_to_virtual_service(service: &NacosService, domain_suffix: &str) -> VirtualService {
+    let host = format!("{}.{}", service.service_name, domain_suffix);
+    let port = service
+        .instances
+        .first()
+        .map(|i| i.port as u32)
+        .unwrap_or(80);
+
+    // Check for timeout configuration
+    let timeout = service.metadata.get("istio.timeout").cloned();
+
+    // Check for retry configuration
+    let retries = service
+        .metadata
+        .get("istio.retries")
+        .and_then(|s| s.parse::<i32>().ok())
+        .map(|attempts| HttpRetry {
+            attempts,
+            per_try_timeout: service.metadata.get("istio.per_try_timeout").cloned(),
+            retry_on: Some("5xx,reset,connect-failure".to_string()),
+        });
+
+    VirtualService {
+        metadata: ResourceMetadata {
+            name: service.service_name.clone(),
+            namespace: if service.namespace_id.is_empty() || service.namespace_id == "public" {
+                "default".to_string()
+            } else {
+                service.namespace_id.clone()
+            },
+            labels: {
+                let mut labels = HashMap::new();
+                labels.insert("app".to_string(), service.service_name.clone());
+                labels.insert("source".to_string(), "batata".to_string());
+                labels
+            },
+            annotations: HashMap::new(),
+            resource_version: String::new(),
+        },
+        spec: VirtualServiceSpec {
+            hosts: vec![host.clone()],
+            http: vec![HttpRoute {
+                name: Some("default".to_string()),
+                route: vec![HttpRouteDestination {
+                    destination: Destination {
+                        host: host.clone(),
+                        port: Some(PortSelector { number: Some(port) }),
+                        subset: None,
+                    },
+                    weight: Some(100),
+                    headers: None,
+                }],
+                timeout,
+                retries,
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+    }
+}
+
+/// Convert a Nacos service to an Istio DestinationRule.
+///
+/// Creates load balancing and connection pool configuration from service metadata.
+/// The following metadata keys are recognized:
+/// - `istio.lb_policy`: Load balancing algorithm (ROUND_ROBIN, LEAST_CONN, RANDOM)
+/// - `istio.max_connections`: Maximum TCP connections
+/// - `istio.connect_timeout`: TCP connection timeout (e.g., "5s")
+/// - `istio.consecutive_errors`: Consecutive errors before outlier ejection
+///
+/// Subsets are automatically generated from non-DEFAULT Nacos cluster names.
+pub fn service_to_destination_rule(service: &NacosService, domain_suffix: &str) -> DestinationRule {
+    let host = format!("{}.{}", service.service_name, domain_suffix);
+
+    // Parse load balancer from metadata
+    let lb_policy = service
+        .metadata
+        .get("istio.lb_policy")
+        .map(|p| match p.to_uppercase().as_str() {
+            "ROUND_ROBIN" | "ROUNDROBIN" => SimpleLb::RoundRobin,
+            "LEAST_CONN" | "LEAST_REQUEST" => SimpleLb::LeastConn,
+            "RANDOM" => SimpleLb::Random,
+            "PASSTHROUGH" => SimpleLb::Passthrough,
+            _ => SimpleLb::RoundRobin,
+        })
+        .unwrap_or(SimpleLb::RoundRobin);
+
+    // Parse connection pool from metadata
+    let max_connections = service
+        .metadata
+        .get("istio.max_connections")
+        .and_then(|v| v.parse::<i32>().ok());
+
+    let connect_timeout = service.metadata.get("istio.connect_timeout").cloned();
+
+    let connection_pool = if max_connections.is_some() || connect_timeout.is_some() {
+        Some(ConnectionPoolSettings {
+            tcp: Some(TcpSettings {
+                max_connections,
+                connect_timeout,
+            }),
+            http: None,
+        })
+    } else {
+        None
+    };
+
+    // Parse outlier detection from metadata
+    let outlier_detection = service
+        .metadata
+        .get("istio.consecutive_errors")
+        .and_then(|v| v.parse::<i32>().ok())
+        .map(|errors| OutlierDetection {
+            consecutive_errors: Some(errors),
+            interval: Some("10s".to_string()),
+            base_ejection_time: Some("30s".to_string()),
+            max_ejection_percent: Some(50),
+            ..Default::default()
+        });
+
+    // Build subsets from unique cluster names (excluding DEFAULT)
+    let cluster_names: HashSet<String> = service
+        .instances
+        .iter()
+        .map(|i| i.cluster_name.clone())
+        .collect();
+
+    let subsets: Vec<Subset> = cluster_names
+        .into_iter()
+        .filter(|name| !name.is_empty() && name != "DEFAULT")
+        .map(|name| Subset {
+            name: name.clone(),
+            labels: {
+                let mut labels = HashMap::new();
+                labels.insert("cluster".to_string(), name);
+                labels
+            },
+            traffic_policy: None,
+        })
+        .collect();
+
+    DestinationRule {
+        metadata: ResourceMetadata {
+            name: service.service_name.clone(),
+            namespace: if service.namespace_id.is_empty() || service.namespace_id == "public" {
+                "default".to_string()
+            } else {
+                service.namespace_id.clone()
+            },
+            labels: {
+                let mut labels = HashMap::new();
+                labels.insert("app".to_string(), service.service_name.clone());
+                labels.insert("source".to_string(), "batata".to_string());
+                labels
+            },
+            annotations: HashMap::new(),
+            resource_version: String::new(),
+        },
+        spec: DestinationRuleSpec {
+            host,
+            traffic_policy: Some(TrafficPolicy {
+                load_balancer: Some(LoadBalancerSettings {
+                    simple: Some(lb_policy),
+                    consistent_hash: None,
+                }),
+                connection_pool,
+                outlier_detection,
+                tls: None,
+            }),
+            subsets,
+            export_to: vec![],
+        },
+    }
+}
+
+/// Convert multiple services to a collection of VirtualServices
+pub fn services_to_virtual_services(
+    services: &[NacosService],
+    domain_suffix: &str,
+) -> Vec<VirtualService> {
+    services
+        .iter()
+        .map(|s| service_to_virtual_service(s, domain_suffix))
+        .collect()
+}
+
+/// Convert multiple services to a collection of DestinationRules
+pub fn services_to_destination_rules(
+    services: &[NacosService],
+    domain_suffix: &str,
+) -> Vec<DestinationRule> {
+    services
+        .iter()
+        .map(|s| service_to_destination_rule(s, domain_suffix))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,5 +548,212 @@ mod tests {
 
         service.namespace_id = "custom-ns".to_string();
         assert_eq!(service.xds_cluster_name(), "custom-ns/test-service");
+    }
+
+    #[test]
+    fn test_virtual_service_generation() {
+        let service = create_test_service();
+        let vs = service_to_virtual_service(&service, "svc.cluster.local");
+
+        assert_eq!(vs.spec.hosts, vec!["test-service.svc.cluster.local"]);
+        assert_eq!(vs.spec.http.len(), 1);
+        assert_eq!(vs.spec.http[0].route[0].weight, Some(100));
+        assert_eq!(
+            vs.spec.http[0].route[0].destination.host,
+            "test-service.svc.cluster.local"
+        );
+        assert_eq!(
+            vs.spec.http[0].route[0]
+                .destination
+                .port
+                .as_ref()
+                .unwrap()
+                .number,
+            Some(8080)
+        );
+        assert_eq!(vs.metadata.name, "test-service");
+        assert_eq!(vs.metadata.namespace, "default");
+    }
+
+    #[test]
+    fn test_virtual_service_with_timeout() {
+        let mut service = create_test_service();
+        service
+            .metadata
+            .insert("istio.timeout".to_string(), "30s".to_string());
+
+        let vs = service_to_virtual_service(&service, "svc.cluster.local");
+        assert_eq!(vs.spec.http[0].timeout, Some("30s".to_string()));
+    }
+
+    #[test]
+    fn test_virtual_service_with_retries() {
+        let mut service = create_test_service();
+        service
+            .metadata
+            .insert("istio.retries".to_string(), "3".to_string());
+        service
+            .metadata
+            .insert("istio.per_try_timeout".to_string(), "2s".to_string());
+
+        let vs = service_to_virtual_service(&service, "svc.cluster.local");
+        let retries = vs.spec.http[0].retries.as_ref().unwrap();
+        assert_eq!(retries.attempts, 3);
+        assert_eq!(retries.per_try_timeout, Some("2s".to_string()));
+        assert_eq!(
+            retries.retry_on,
+            Some("5xx,reset,connect-failure".to_string())
+        );
+    }
+
+    #[test]
+    fn test_virtual_service_serialization() {
+        let service = create_test_service();
+        let vs = service_to_virtual_service(&service, "svc.cluster.local");
+
+        let json = serde_json::to_string(&vs).unwrap();
+        assert!(json.contains("test-service.svc.cluster.local"));
+
+        let deserialized: crate::mcp::types::VirtualService = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.spec.hosts, vs.spec.hosts);
+    }
+
+    #[test]
+    fn test_destination_rule_generation() {
+        let service = create_test_service();
+        let dr = service_to_destination_rule(&service, "svc.cluster.local");
+
+        assert_eq!(dr.spec.host, "test-service.svc.cluster.local");
+        assert_eq!(dr.metadata.name, "test-service");
+        assert!(dr.spec.traffic_policy.is_some());
+
+        let tp = dr.spec.traffic_policy.unwrap();
+        assert_eq!(
+            tp.load_balancer.unwrap().simple,
+            Some(crate::mcp::types::SimpleLb::RoundRobin)
+        );
+    }
+
+    #[test]
+    fn test_destination_rule_with_metadata() {
+        let mut service = create_test_service();
+        service
+            .metadata
+            .insert("istio.lb_policy".to_string(), "LEAST_CONN".to_string());
+        service
+            .metadata
+            .insert("istio.consecutive_errors".to_string(), "5".to_string());
+        service
+            .metadata
+            .insert("istio.max_connections".to_string(), "512".to_string());
+        service
+            .metadata
+            .insert("istio.connect_timeout".to_string(), "5s".to_string());
+
+        let dr = service_to_destination_rule(&service, "svc.cluster.local");
+        let tp = dr.spec.traffic_policy.unwrap();
+
+        assert_eq!(
+            tp.load_balancer.unwrap().simple,
+            Some(crate::mcp::types::SimpleLb::LeastConn)
+        );
+
+        let od = tp.outlier_detection.unwrap();
+        assert_eq!(od.consecutive_errors, Some(5));
+        assert_eq!(od.interval, Some("10s".to_string()));
+        assert_eq!(od.base_ejection_time, Some("30s".to_string()));
+        assert_eq!(od.max_ejection_percent, Some(50));
+
+        let cp = tp.connection_pool.unwrap();
+        assert_eq!(cp.tcp.as_ref().unwrap().max_connections, Some(512));
+        assert_eq!(
+            cp.tcp.as_ref().unwrap().connect_timeout,
+            Some("5s".to_string())
+        );
+    }
+
+    #[test]
+    fn test_destination_rule_subsets() {
+        let mut service = create_test_service();
+        service.instances.push(NacosInstance {
+            instance_id: "instance-zone-a".to_string(),
+            ip: "192.168.1.4".to_string(),
+            port: 8080,
+            weight: 100.0,
+            healthy: true,
+            enabled: true,
+            ephemeral: true,
+            cluster_name: "zone-a".to_string(),
+            service_name: "test-service".to_string(),
+            metadata: HashMap::new(),
+        });
+
+        let dr = service_to_destination_rule(&service, "svc.cluster.local");
+
+        // Should have a subset for "zone-a" but not for "DEFAULT"
+        assert!(!dr.spec.subsets.is_empty());
+        assert!(dr.spec.subsets.iter().any(|s| s.name == "zone-a"));
+        assert!(
+            dr.spec
+                .subsets
+                .iter()
+                .all(|s| s.labels.get("cluster") == Some(&s.name))
+        );
+        assert!(!dr.spec.subsets.iter().any(|s| s.name == "DEFAULT"));
+    }
+
+    #[test]
+    fn test_services_to_virtual_services_batch() {
+        let services = vec![create_test_service()];
+        let result = services_to_virtual_services(&services, "svc.cluster.local");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].spec.hosts[0], "test-service.svc.cluster.local");
+    }
+
+    #[test]
+    fn test_services_to_destination_rules_batch() {
+        let services = vec![create_test_service()];
+        let result = services_to_destination_rules(&services, "svc.cluster.local");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].spec.host, "test-service.svc.cluster.local");
+    }
+
+    #[test]
+    fn test_virtual_service_empty_instances() {
+        let mut service = create_test_service();
+        service.instances.clear();
+
+        let vs = service_to_virtual_service(&service, "svc.cluster.local");
+        // Should default to port 80 when no instances
+        assert_eq!(
+            vs.spec.http[0].route[0]
+                .destination
+                .port
+                .as_ref()
+                .unwrap()
+                .number,
+            Some(80)
+        );
+    }
+
+    #[test]
+    fn test_destination_rule_no_outlier_without_metadata() {
+        let service = create_test_service();
+        let dr = service_to_destination_rule(&service, "svc.cluster.local");
+        let tp = dr.spec.traffic_policy.unwrap();
+        assert!(tp.outlier_detection.is_none());
+        assert!(tp.connection_pool.is_none());
+    }
+
+    #[test]
+    fn test_destination_rule_custom_namespace() {
+        let mut service = create_test_service();
+        service.namespace_id = "production".to_string();
+
+        let dr = service_to_destination_rule(&service, "svc.cluster.local");
+        assert_eq!(dr.metadata.namespace, "production");
+
+        let vs = service_to_virtual_service(&service, "svc.cluster.local");
+        assert_eq!(vs.metadata.namespace, "production");
     }
 }

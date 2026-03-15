@@ -30,5 +30,5 @@ pub use grpc::{
 };
 pub use mcp::{McpServer, McpServerConfig};
 pub use server::XdsServer;
-pub use snapshot::ResourceSnapshot;
-pub use sync::{NacosSyncBridge, SyncBridgeConfig};
+pub use snapshot::{DeltaClientState, ResourceSnapshot};
+pub use sync::{Debouncer, NacosSyncBridge, SyncBridgeConfig};

@@ -61,6 +61,9 @@ hostname = { workspace = true }
 # HTTP client
 reqwest = { workspace = true }
 
+# X.509 certificate generation
+rcgen = { version = "0.13", features = ["pem"] }
+
 # Temp directory for tests
 tempfile = "3"
 

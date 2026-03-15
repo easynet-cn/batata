@@ -941,17 +941,30 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
         let group_key_pattern = format!("{}+{}+{}", namespace, group_pattern, service_pattern);
 
         // Register the fuzzy watch pattern for this connection
-        let registered = self.naming_fuzzy_watch_manager.register_watch(
+        match self.naming_fuzzy_watch_manager.register_watch(
             connection_id,
             &group_key_pattern,
             watch_type,
-        );
-
-        if !registered {
-            warn!(
-                "Failed to register fuzzy watch for connection {}: {}",
-                connection_id, group_key_pattern
-            );
+        ) {
+            Ok(true) => {
+                debug!(
+                    "Registered naming fuzzy watch for connection {}: pattern={}",
+                    connection_id, group_key_pattern
+                );
+            }
+            Ok(false) => {
+                warn!(
+                    "Failed to register fuzzy watch for connection {}: invalid pattern {}",
+                    connection_id, group_key_pattern
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Naming fuzzy watch registration rejected for connection {}: {}",
+                    connection_id, e
+                );
+                return Err(Status::resource_exhausted(e.to_string()));
+            }
         }
 
         // Return matching service keys if this is an initializing request
@@ -1045,17 +1058,19 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
         }
 
         // Register the pattern if not already registered
-        let registered = self.naming_fuzzy_watch_manager.register_watch(
+        match self.naming_fuzzy_watch_manager.register_watch(
             connection_id,
             &group_key_pattern,
             sync_type,
-        );
-
-        if !registered {
-            warn!(
-                "Failed to register fuzzy watch sync for connection {}: {}",
-                connection_id, group_key_pattern
-            );
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                warn!(
+                    "Naming fuzzy watch sync registration rejected for connection {}: {}",
+                    connection_id, e
+                );
+                return Err(Status::resource_exhausted(e.to_string()));
+            }
         }
 
         let mut response = NamingFuzzyWatchSyncResponse::new();

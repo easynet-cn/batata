@@ -75,7 +75,7 @@ impl PayloadHandler for LockOperationHandler {
 
                 let mut response = LockOperationResponse::new();
                 response.response.request_id = request_id;
-                response.result = acquired;
+                response.result = acquired.is_some();
 
                 Ok(response.build_payload())
             }
@@ -123,6 +123,7 @@ mod tests {
     fn test_lock_service() -> Arc<LockService> {
         Arc::new(LockService {
             locks: Arc::new(dashmap::DashMap::new()),
+            fencing_counter: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         })
     }
 

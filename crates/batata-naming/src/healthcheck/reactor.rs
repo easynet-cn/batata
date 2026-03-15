@@ -213,7 +213,10 @@ impl HealthCheckReactor {
                 let result = match task.get_check_type() {
                     HealthCheckType::Tcp => task.do_check(&TcpHealthCheckProcessor::new()).await,
                     HealthCheckType::Http => task.do_check(&HttpHealthCheckProcessor::new()).await,
-                    HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => {
+                    HealthCheckType::None
+                    | HealthCheckType::Ttl
+                    | HealthCheckType::Grpc
+                    | HealthCheckType::Mysql => {
                         task.do_check(&NoneHealthCheckProcessor::new()).await
                     }
                 };

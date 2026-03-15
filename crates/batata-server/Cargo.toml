@@ -80,6 +80,7 @@ thiserror = { workspace = true }
 
 # Metrics
 metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 
 # Auth
 jsonwebtoken = { workspace = true }

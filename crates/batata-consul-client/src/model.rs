@@ -260,6 +260,51 @@ pub struct AgentMember {
     pub delegate_cur: u8,
 }
 
+/// Health check registration payload
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct AgentCheckRegistration {
+    #[serde(rename = "ID", skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(rename = "Name")]
+    pub name: String,
+    #[serde(rename = "Notes", skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(rename = "ServiceID", skip_serializing_if = "Option::is_none")]
+    pub service_id: Option<String>,
+    #[serde(rename = "HTTP", skip_serializing_if = "Option::is_none")]
+    pub http: Option<String>,
+    #[serde(rename = "TCP", skip_serializing_if = "Option::is_none")]
+    pub tcp: Option<String>,
+    #[serde(rename = "GRPC", skip_serializing_if = "Option::is_none")]
+    pub grpc: Option<String>,
+    #[serde(rename = "Interval", skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
+    #[serde(rename = "Timeout", skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<String>,
+    #[serde(rename = "TTL", skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<String>,
+    #[serde(
+        rename = "DeregisterCriticalServiceAfter",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deregister_critical_service_after: Option<String>,
+    #[serde(rename = "Status", skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(rename = "TLSSkipVerify", skip_serializing_if = "Option::is_none")]
+    pub tls_skip_verify: Option<bool>,
+    #[serde(rename = "GRPCUseTLS", skip_serializing_if = "Option::is_none")]
+    pub grpc_use_tls: Option<bool>,
+}
+
+/// TTL check update payload
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct AgentCheckUpdate {
+    #[serde(rename = "Status")]
+    pub status: String,
+    #[serde(rename = "Output", skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+}
+
 // --- Health ---
 
 /// A health check entry
@@ -954,6 +999,59 @@ pub struct ACLReplicationStatus {
     pub last_error_message: String,
 }
 
+// === Peering Types ===
+
+/// A peering connection
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct Peering {
+    #[serde(default, rename = "ID")]
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub partition: String,
+    #[serde(default)]
+    pub meta: HashMap<String, String>,
+    #[serde(default)]
+    pub peer_server_addresses: Vec<String>,
+    #[serde(default)]
+    pub create_index: u64,
+    #[serde(default)]
+    pub modify_index: u64,
+}
+
+/// Response containing a peering token
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct PeeringToken {
+    pub peering_token: String,
+}
+
+/// Request to generate a peering token
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct PeeringGenerateTokenRequest {
+    pub peer_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition: Option<String>,
+    #[serde(default)]
+    pub meta: HashMap<String, String>,
+}
+
+/// Request to establish a peering connection
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct PeeringEstablishRequest {
+    pub peer_name: String,
+    pub peering_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition: Option<String>,
+    #[serde(default)]
+    pub meta: HashMap<String, String>,
+}
+
 /// ACL Token filter options for listing
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct ACLTokenFilterOptions {
@@ -973,4 +1071,343 @@ pub struct ACLTokenFilterOptions {
         skip_serializing_if = "Option::is_none"
     )]
     pub service_name: Option<String>,
+}
+
+// === Operator Types ===
+
+/// Raft configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct RaftConfiguration {
+    #[serde(default)]
+    pub servers: Vec<RaftServer>,
+    #[serde(default)]
+    pub index: u64,
+}
+
+/// A server in the Raft configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct RaftServer {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub node: String,
+    pub address: String,
+    pub leader: bool,
+    pub voter: bool,
+    #[serde(default)]
+    pub protocol_version: String,
+}
+
+/// Autopilot configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AutopilotConfiguration {
+    #[serde(default)]
+    pub cleanup_dead_servers: bool,
+    #[serde(default)]
+    pub last_contact_threshold: String,
+    #[serde(default)]
+    pub max_trailing_logs: u64,
+    #[serde(default)]
+    pub min_quorum: u64,
+    #[serde(default)]
+    pub server_stabilization_time: String,
+    #[serde(default)]
+    pub redundancy_zone_tag: String,
+    #[serde(default)]
+    pub disable_upgrade_migration: bool,
+    #[serde(default)]
+    pub upgrade_version_tag: String,
+    #[serde(default, rename = "CreateIndex")]
+    pub create_index: u64,
+    #[serde(default, rename = "ModifyIndex")]
+    pub modify_index: u64,
+}
+
+/// Autopilot health status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AutopilotHealth {
+    pub healthy: bool,
+    #[serde(default)]
+    pub failure_tolerance: i32,
+    #[serde(default)]
+    pub servers: Vec<ServerHealth>,
+}
+
+/// Health status of a single server
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ServerHealth {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub name: String,
+    pub address: String,
+    #[serde(default)]
+    pub serf_status: String,
+    pub healthy: bool,
+    #[serde(default)]
+    pub version: String,
+    pub leader: bool,
+    pub voter: bool,
+}
+
+/// Keyring response from the operator keyring API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct KeyringResponse {
+    #[serde(default)]
+    pub wan: bool,
+    pub datacenter: String,
+    #[serde(default)]
+    pub segment: String,
+    #[serde(default)]
+    pub keys: HashMap<String, i32>,
+    #[serde(default)]
+    pub primary_keys: HashMap<String, i32>,
+    #[serde(default)]
+    pub num_nodes: i32,
+}
+
+// === Connect Types ===
+
+/// Connect CA root certificates
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct CARoots {
+    #[serde(rename = "ActiveRootID")]
+    pub active_root_id: String,
+    #[serde(default)]
+    pub roots: Vec<CARoot>,
+}
+
+/// A single CA root certificate
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct CARoot {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub root_cert: String,
+    pub active: bool,
+    #[serde(default)]
+    pub create_index: u64,
+    #[serde(default)]
+    pub modify_index: u64,
+}
+
+/// Connect CA configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct CAConfig {
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub config: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub state: HashMap<String, String>,
+    #[serde(default)]
+    pub force_without_cross_signing: bool,
+    #[serde(default)]
+    pub create_index: u64,
+    #[serde(default)]
+    pub modify_index: u64,
+}
+
+/// A service mesh intention
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct Intention {
+    #[serde(default, rename = "ID")]
+    pub id: String,
+    #[serde(default)]
+    pub source_name: String,
+    #[serde(default)]
+    pub destination_name: String,
+    #[serde(default)]
+    pub source_namespace: String,
+    #[serde(default)]
+    pub destination_namespace: String,
+    #[serde(default)]
+    pub source_partition: String,
+    #[serde(default)]
+    pub destination_partition: String,
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub meta: HashMap<String, String>,
+    #[serde(default)]
+    pub precedence: i32,
+    #[serde(default)]
+    pub create_index: u64,
+    #[serde(default)]
+    pub modify_index: u64,
+}
+
+/// Result of an intention authorization check
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct IntentionCheck {
+    pub allowed: bool,
+}
+
+// === Transaction Types ===
+
+/// A single transaction operation
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TxnOp {
+    #[serde(rename = "KV", skip_serializing_if = "Option::is_none")]
+    pub kv: Option<TxnKVOp>,
+}
+
+/// A KV operation within a transaction
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TxnKVOp {
+    #[serde(rename = "Verb")]
+    pub verb: String,
+    #[serde(rename = "Key")]
+    pub key: String,
+    #[serde(rename = "Value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(rename = "Index", default)]
+    pub index: u64,
+    #[serde(rename = "Session", default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+}
+
+/// Response from a transaction execution
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct TxnResponse {
+    #[serde(rename = "Results", default)]
+    pub results: Vec<TxnResult>,
+    #[serde(rename = "Errors", default)]
+    pub errors: Vec<TxnError>,
+}
+
+/// A single result entry from a transaction
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TxnResult {
+    #[serde(rename = "KV", skip_serializing_if = "Option::is_none")]
+    pub kv: Option<KVPair>,
+}
+
+/// A single error entry from a transaction
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct TxnError {
+    #[serde(rename = "OpIndex", default)]
+    pub op_index: u64,
+    #[serde(rename = "What", default)]
+    pub what: String,
+}
+
+// === Coordinate Types ===
+
+/// WAN coordinate information for a datacenter
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DatacenterCoordinate {
+    #[serde(rename = "Datacenter")]
+    pub datacenter: String,
+    #[serde(rename = "AreaID", default)]
+    pub area_id: String,
+    #[serde(rename = "Coordinates", default)]
+    pub coordinates: Vec<NodeCoordinate>,
+}
+
+/// LAN coordinate information for a node
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct NodeCoordinate {
+    #[serde(rename = "Node")]
+    pub node: String,
+    #[serde(rename = "Segment", default)]
+    pub segment: String,
+    #[serde(rename = "Coord")]
+    pub coord: Coordinate,
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
+}
+
+/// Network coordinate vector
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct Coordinate {
+    #[serde(rename = "Vec", default)]
+    pub vec: Vec<f64>,
+    #[serde(rename = "Error", default)]
+    pub error: f64,
+    #[serde(rename = "Adjustment", default)]
+    pub adjustment: f64,
+    #[serde(rename = "Height", default)]
+    pub height: f64,
+}
+
+// === Prepared Query Types ===
+
+/// A prepared query definition
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct PreparedQuery {
+    #[serde(rename = "ID", default)]
+    pub id: String,
+    #[serde(rename = "Name", default)]
+    pub name: String,
+    #[serde(rename = "Token", default, skip_serializing_if = "String::is_empty")]
+    pub token: String,
+    #[serde(rename = "Service", default)]
+    pub service: QueryService,
+    #[serde(rename = "DNS", default)]
+    pub dns: QueryDNS,
+    #[serde(rename = "CreateIndex", default)]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex", default)]
+    pub modify_index: u64,
+}
+
+/// Service targeting configuration for a prepared query
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct QueryService {
+    #[serde(rename = "Service", default)]
+    pub service: String,
+    #[serde(rename = "Near", default)]
+    pub near: String,
+    #[serde(rename = "Tags", default)]
+    pub tags: Vec<String>,
+    #[serde(rename = "OnlyPassing", default)]
+    pub only_passing: bool,
+    #[serde(rename = "Failover", default)]
+    pub failover: QueryFailover,
+}
+
+/// Failover configuration for a prepared query
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct QueryFailover {
+    #[serde(rename = "NearestN", default)]
+    pub nearest_n: i32,
+    #[serde(rename = "Datacenters", default)]
+    pub datacenters: Vec<String>,
+}
+
+/// DNS settings for a prepared query
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct QueryDNS {
+    #[serde(rename = "TTL", default)]
+    pub ttl: String,
+}
+
+/// Response from executing a prepared query
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct PreparedQueryExecuteResponse {
+    #[serde(rename = "Service", default)]
+    pub service: String,
+    #[serde(rename = "Nodes", default)]
+    pub nodes: Vec<ServiceEntry>,
+    #[serde(rename = "DNS", default)]
+    pub dns: QueryDNS,
+    #[serde(rename = "Datacenter", default)]
+    pub datacenter: String,
+    #[serde(rename = "Failovers", default)]
+    pub failovers: i32,
 }

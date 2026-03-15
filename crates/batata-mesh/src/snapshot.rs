@@ -3,7 +3,7 @@
 //! This module provides a snapshot-based cache for xDS resources,
 //! enabling efficient resource management and versioning.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -181,6 +181,78 @@ impl Default for ResourceSnapshot {
     }
 }
 
+/// Per-client Delta xDS state for tracking acknowledged resource versions.
+///
+/// Each client maintains its own view of resource state, enabling
+/// efficient incremental updates (only send changed resources).
+#[derive(Debug, Clone, Default)]
+pub struct DeltaClientState {
+    /// Last acknowledged version per resource name: resource_name -> version
+    pub acked_versions: HashMap<String, String>,
+    /// Resources currently subscribed to (empty = wildcard/all)
+    pub subscribed_resources: HashSet<String>,
+    /// Whether this client uses wildcard subscription
+    pub wildcard: bool,
+}
+
+impl DeltaClientState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record that the client acknowledged a resource at a version
+    pub fn ack_resource(&mut self, name: &str, version: &str) {
+        self.acked_versions
+            .insert(name.to_string(), version.to_string());
+    }
+
+    /// Subscribe to specific resources
+    pub fn subscribe(&mut self, names: &[String]) {
+        if names.is_empty() {
+            self.wildcard = true;
+        } else {
+            for name in names {
+                self.subscribed_resources.insert(name.clone());
+            }
+        }
+    }
+
+    /// Unsubscribe from specific resources
+    pub fn unsubscribe(&mut self, names: &[String]) {
+        for name in names {
+            self.subscribed_resources.remove(name);
+            self.acked_versions.remove(name);
+        }
+    }
+
+    /// Check if a resource needs to be sent to this client.
+    /// Returns true if the resource is subscribed and either:
+    /// - Client hasn't acked it yet, or
+    /// - Client's acked version differs from current version
+    pub fn needs_update(&self, name: &str, current_version: &str) -> bool {
+        if !self.wildcard && !self.subscribed_resources.contains(name) {
+            return false;
+        }
+        match self.acked_versions.get(name) {
+            Some(acked) => acked != current_version,
+            None => true, // Never acked, needs sending
+        }
+    }
+
+    /// Get list of resources that were previously acked but are no longer
+    /// in the current snapshot (i.e., deleted resources)
+    pub fn detect_removals(&self, current_names: &HashSet<String>) -> Vec<String> {
+        self.acked_versions
+            .keys()
+            .filter(|name| {
+                !current_names.contains(name.as_str())
+                    && (self.wildcard || self.subscribed_resources.contains(name.as_str()))
+            })
+            .cloned()
+            .collect()
+    }
+}
+
 /// Snapshot cache for xDS resources
 ///
 /// Maintains snapshots per node/client and supports efficient lookups.
@@ -189,6 +261,8 @@ pub struct SnapshotCache {
     snapshots: DashMap<String, Arc<ResourceSnapshot>>,
     /// Default snapshot for nodes without specific configuration
     default_snapshot: parking_lot::RwLock<Option<Arc<ResourceSnapshot>>>,
+    /// Delta client states: node_id -> DeltaClientState
+    delta_states: DashMap<String, DeltaClientState>,
 }
 
 impl SnapshotCache {
@@ -197,6 +271,7 @@ impl SnapshotCache {
         Self {
             snapshots: DashMap::new(),
             default_snapshot: parking_lot::RwLock::new(None),
+            delta_states: DashMap::new(),
         }
     }
 
@@ -263,6 +338,24 @@ impl SnapshotCache {
             has_default: default.is_some(),
             default_version: default.as_ref().map(|s| s.version.clone()),
         }
+    }
+
+    /// Get or create delta state for a node
+    pub fn get_or_create_delta_state(&self, node_id: &str) -> DeltaClientState {
+        self.delta_states
+            .entry(node_id.to_string())
+            .or_default()
+            .clone()
+    }
+
+    /// Update delta state for a node
+    pub fn update_delta_state(&self, node_id: &str, state: DeltaClientState) {
+        self.delta_states.insert(node_id.to_string(), state);
+    }
+
+    /// Remove delta state for a node
+    pub fn remove_delta_state(&self, node_id: &str) {
+        self.delta_states.remove(node_id);
     }
 }
 
@@ -459,5 +552,186 @@ mod tests {
         let v1 = generate_version();
         let v2 = generate_version();
         assert_ne!(v1, v2);
+    }
+
+    #[test]
+    fn test_delta_client_state_new() {
+        let state = DeltaClientState::new();
+        assert!(state.acked_versions.is_empty());
+        assert!(state.subscribed_resources.is_empty());
+        assert!(!state.wildcard);
+    }
+
+    #[test]
+    fn test_delta_client_state_ack_resource() {
+        let mut state = DeltaClientState::new();
+        state.ack_resource("cluster-1", "v1");
+        state.ack_resource("cluster-2", "v2");
+
+        assert_eq!(
+            state.acked_versions.get("cluster-1"),
+            Some(&"v1".to_string())
+        );
+        assert_eq!(
+            state.acked_versions.get("cluster-2"),
+            Some(&"v2".to_string())
+        );
+
+        // Overwrite version
+        state.ack_resource("cluster-1", "v3");
+        assert_eq!(
+            state.acked_versions.get("cluster-1"),
+            Some(&"v3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_delta_client_state_subscribe_specific() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&["cluster-1".to_string(), "cluster-2".to_string()]);
+
+        assert!(!state.wildcard);
+        assert!(state.subscribed_resources.contains("cluster-1"));
+        assert!(state.subscribed_resources.contains("cluster-2"));
+        assert!(!state.subscribed_resources.contains("cluster-3"));
+    }
+
+    #[test]
+    fn test_delta_client_state_subscribe_wildcard() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&[]);
+
+        assert!(state.wildcard);
+    }
+
+    #[test]
+    fn test_delta_client_state_unsubscribe() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&["cluster-1".to_string(), "cluster-2".to_string()]);
+        state.ack_resource("cluster-1", "v1");
+        state.ack_resource("cluster-2", "v2");
+
+        state.unsubscribe(&["cluster-1".to_string()]);
+
+        assert!(!state.subscribed_resources.contains("cluster-1"));
+        assert!(state.subscribed_resources.contains("cluster-2"));
+        // Acked version for unsubscribed resource should also be removed
+        assert!(!state.acked_versions.contains_key("cluster-1"));
+        assert!(state.acked_versions.contains_key("cluster-2"));
+    }
+
+    #[test]
+    fn test_delta_client_state_needs_update_specific_subscription() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&["cluster-1".to_string(), "cluster-2".to_string()]);
+
+        // Never acked - needs update
+        assert!(state.needs_update("cluster-1", "v1"));
+
+        // Acked same version - no update needed
+        state.ack_resource("cluster-1", "v1");
+        assert!(!state.needs_update("cluster-1", "v1"));
+
+        // Acked different version - needs update
+        assert!(state.needs_update("cluster-1", "v2"));
+
+        // Not subscribed - no update needed
+        assert!(!state.needs_update("cluster-3", "v1"));
+    }
+
+    #[test]
+    fn test_delta_client_state_needs_update_wildcard() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&[]); // wildcard
+
+        // Wildcard should accept any resource
+        assert!(state.needs_update("cluster-1", "v1"));
+        assert!(state.needs_update("cluster-99", "v1"));
+
+        state.ack_resource("cluster-1", "v1");
+        assert!(!state.needs_update("cluster-1", "v1"));
+        assert!(state.needs_update("cluster-1", "v2"));
+    }
+
+    #[test]
+    fn test_delta_client_state_detect_removals() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&[
+            "cluster-1".to_string(),
+            "cluster-2".to_string(),
+            "cluster-3".to_string(),
+        ]);
+        state.ack_resource("cluster-1", "v1");
+        state.ack_resource("cluster-2", "v2");
+        state.ack_resource("cluster-3", "v3");
+
+        // cluster-2 was removed from the snapshot
+        let current_names: HashSet<String> = vec!["cluster-1".to_string(), "cluster-3".to_string()]
+            .into_iter()
+            .collect();
+
+        let removals = state.detect_removals(&current_names);
+        assert_eq!(removals.len(), 1);
+        assert!(removals.contains(&"cluster-2".to_string()));
+    }
+
+    #[test]
+    fn test_delta_client_state_detect_removals_wildcard() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&[]); // wildcard
+        state.ack_resource("cluster-1", "v1");
+        state.ack_resource("cluster-2", "v2");
+
+        let current_names: HashSet<String> = vec!["cluster-1".to_string()].into_iter().collect();
+
+        let removals = state.detect_removals(&current_names);
+        assert_eq!(removals.len(), 1);
+        assert!(removals.contains(&"cluster-2".to_string()));
+    }
+
+    #[test]
+    fn test_delta_client_state_detect_removals_unsubscribed_ignored() {
+        let mut state = DeltaClientState::new();
+        state.subscribe(&["cluster-1".to_string()]);
+        // Acked cluster-2 but then unsubscribed (shouldn't happen normally,
+        // but test that only subscribed resources are reported)
+        state
+            .acked_versions
+            .insert("cluster-2".to_string(), "v2".to_string());
+
+        let current_names: HashSet<String> = vec!["cluster-1".to_string()].into_iter().collect();
+
+        let removals = state.detect_removals(&current_names);
+        // cluster-2 is not in subscribed_resources and not wildcard, so should be ignored
+        assert!(removals.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_cache_delta_state() {
+        let cache = SnapshotCache::new();
+
+        // Get or create returns default
+        let state = cache.get_or_create_delta_state("node-1");
+        assert!(state.acked_versions.is_empty());
+        assert!(!state.wildcard);
+
+        // Update state
+        let mut updated = DeltaClientState::new();
+        updated.subscribe(&["cluster-1".to_string()]);
+        updated.ack_resource("cluster-1", "v1");
+        cache.update_delta_state("node-1", updated);
+
+        // Retrieve updated state
+        let state = cache.get_or_create_delta_state("node-1");
+        assert!(state.subscribed_resources.contains("cluster-1"));
+        assert_eq!(
+            state.acked_versions.get("cluster-1"),
+            Some(&"v1".to_string())
+        );
+
+        // Remove state
+        cache.remove_delta_state("node-1");
+        let state = cache.get_or_create_delta_state("node-1");
+        assert!(state.acked_versions.is_empty());
     }
 }

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use actix_multipart::Multipart;
 use actix_web::{
@@ -26,6 +27,7 @@ use crate::{
         export::{ExportRequest, ImportRequest, ImportResult},
     },
     service,
+    service::notifier::ConfigChangeNotifier,
 };
 
 #[allow(dead_code)]
@@ -179,6 +181,7 @@ async fn list_configs(
 async fn create_config(
     req: HttpRequest,
     data: web::Data<AppState>,
+    notifier: web::Data<Arc<ConfigChangeNotifier>>,
     form: web::Form<ConfigForm>,
 ) -> impl Responder {
     secured!(
@@ -266,7 +269,7 @@ async fn create_config(
         .unwrap_or_default()
         .to_owned();
 
-    let _ = data
+    let result = data
         .persistence()
         .config_create_or_update(
             &config_form.data_id,
@@ -286,6 +289,14 @@ async fn create_config(
         )
         .await;
 
+    if result.is_ok() {
+        notifier.notify_change(
+            &config_form.namespace_id,
+            &config_form.group_name,
+            &config_form.data_id,
+        );
+    }
+
     model::common::Result::<bool>::http_success(true)
 }
 
@@ -294,6 +305,7 @@ async fn create_config(
 async fn update_config(
     req: HttpRequest,
     data: web::Data<AppState>,
+    notifier: web::Data<Arc<ConfigChangeNotifier>>,
     form: web::Form<ConfigForm>,
 ) -> impl Responder {
     // Same as create - Nacos create_or_update semantics
@@ -336,7 +348,7 @@ async fn update_config(
         .unwrap_or_default()
         .to_owned();
 
-    let _ = data
+    let result = data
         .persistence()
         .config_create_or_update(
             &config_form.data_id,
@@ -356,6 +368,14 @@ async fn update_config(
         )
         .await;
 
+    if result.is_ok() {
+        notifier.notify_change(
+            &config_form.namespace_id,
+            &config_form.group_name,
+            &config_form.data_id,
+        );
+    }
+
     model::common::Result::<bool>::http_success(true)
 }
 
@@ -364,6 +384,7 @@ async fn update_config(
 async fn delete_config(
     req: HttpRequest,
     data: web::Data<AppState>,
+    notifier: web::Data<Arc<ConfigChangeNotifier>>,
     params: web::Query<ConfigForm>,
 ) -> impl Responder {
     secured!(
@@ -411,6 +432,9 @@ async fn delete_config(
             String::new(),
         );
     }
+
+    // Notify long-polling HTTP listeners about config deletion
+    notifier.notify_change(&namespace_id, &params.group_name, &params.data_id);
 
     model::common::Result::<bool>::http_success(true)
 }

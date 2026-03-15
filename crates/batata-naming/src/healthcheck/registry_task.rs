@@ -61,6 +61,13 @@ impl RegistryCheckTask {
                 // gRPC health check is a stub for now
                 (false, "gRPC health check not fully implemented".to_string())
             }
+            CheckType::Mysql => {
+                // Database health check - handled by MysqlChecker in processor
+                (
+                    false,
+                    "Database health check not available in registry task".to_string(),
+                )
+            }
             CheckType::None | CheckType::Ttl => return,
         };
 

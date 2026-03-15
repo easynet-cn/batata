@@ -71,4 +71,14 @@ impl ConsulClient {
         }
         self.get_with_extra(&path, opts, &extra).await
     }
+
+    /// Get health for ingress gateway service
+    pub async fn health_ingress(
+        &self,
+        service: &str,
+        opts: &QueryOptions,
+    ) -> Result<(Vec<ServiceEntry>, QueryMeta)> {
+        self.get(&format!("/v1/health/ingress/{}", service), opts)
+            .await
+    }
 }

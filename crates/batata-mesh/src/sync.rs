@@ -5,7 +5,8 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info};
@@ -17,6 +18,80 @@ use crate::xds::types::{
     Cluster, ClusterLoadAssignment, FilterChain, Listener, ListenerAddress, NetworkFilter, Route,
     RouteAction, RouteConfiguration, RouteDestination, RouteMatch, VirtualHost,
 };
+
+/// Event debouncer that batches rapid events into a single processing cycle.
+///
+/// Follows Nacos EventProcessor pattern:
+/// - Accumulates events for `debounce_after` duration
+/// - Forces processing after `debounce_max` duration even if events keep arriving
+pub struct Debouncer {
+    /// Minimum quiet period before processing
+    debounce_after: Duration,
+    /// Maximum wait time before forcing processing
+    debounce_max: Duration,
+    /// Pending events flag
+    has_pending: Arc<AtomicBool>,
+    /// Time of first pending event
+    first_event_time: Arc<parking_lot::RwLock<Option<Instant>>>,
+    /// Time of last event
+    last_event_time: Arc<parking_lot::RwLock<Option<Instant>>>,
+}
+
+impl Debouncer {
+    pub fn new(debounce_after: Duration, debounce_max: Duration) -> Self {
+        Self {
+            debounce_after,
+            debounce_max,
+            has_pending: Arc::new(AtomicBool::new(false)),
+            first_event_time: Arc::new(parking_lot::RwLock::new(None)),
+            last_event_time: Arc::new(parking_lot::RwLock::new(None)),
+        }
+    }
+
+    /// Record an incoming event
+    pub fn record_event(&self) {
+        let now = Instant::now();
+        if !self.has_pending.swap(true, Ordering::Relaxed) {
+            *self.first_event_time.write() = Some(now);
+        }
+        *self.last_event_time.write() = Some(now);
+    }
+
+    /// Check if it's time to process events.
+    /// Returns true if:
+    /// 1. There are pending events AND
+    /// 2. Either the quiet period has elapsed OR max wait exceeded
+    pub fn should_process(&self) -> bool {
+        if !self.has_pending.load(Ordering::Relaxed) {
+            return false;
+        }
+
+        let now = Instant::now();
+
+        // Check max wait time
+        if let Some(first) = *self.first_event_time.read()
+            && now.duration_since(first) >= self.debounce_max
+        {
+            return true;
+        }
+
+        // Check quiet period
+        if let Some(last) = *self.last_event_time.read()
+            && now.duration_since(last) >= self.debounce_after
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Reset after processing
+    pub fn reset(&self) {
+        self.has_pending.store(false, Ordering::Relaxed);
+        *self.first_event_time.write() = None;
+        *self.last_event_time.write() = None;
+    }
+}
 
 /// Configuration for the sync bridge
 #[derive(Debug, Clone)]
@@ -194,6 +269,10 @@ impl NacosSyncBridge {
         tokio::spawn(async move {
             let mut sync_interval =
                 tokio::time::interval(Duration::from_millis(config.sync_interval_ms));
+            let debouncer = Debouncer::new(
+                Duration::from_millis(100), // quiet period
+                Duration::from_secs(5),     // max wait
+            );
 
             loop {
                 tokio::select! {
@@ -214,15 +293,22 @@ impl NacosSyncBridge {
                                 services.write().await.remove(&key);
                             }
                         }
-                        // Trigger immediate sync after event
-                        if let Err(e) = sync_to_xds(&services, &xds_server, &config).await {
-                            error!(error = %e, "Failed to sync to xDS");
+                        // Record event for debouncing instead of immediate sync
+                        debouncer.record_event();
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                        if debouncer.should_process() {
+                            // Process all batched events
+                            if let Err(e) = sync_to_xds(&services, &xds_server, &config).await {
+                                error!(error = %e, "Failed to sync to xDS (debounced)");
+                            }
+                            debouncer.reset();
                         }
                     }
                     _ = sync_interval.tick() => {
-                        // Periodic sync
+                        // Periodic full sync
                         if let Err(e) = sync_to_xds(&services, &xds_server, &config).await {
-                            error!(error = %e, "Failed to sync to xDS");
+                            error!(error = %e, "Failed to sync to xDS (periodic)");
                         }
                     }
                 }
@@ -562,5 +648,76 @@ mod tests {
         // 1 ingress + 1 per-service
         assert_eq!(listeners.len(), 2);
         assert_eq!(listeners[0].name, "ingress-listener");
+    }
+
+    #[test]
+    fn test_debouncer_no_pending() {
+        let debouncer = Debouncer::new(Duration::from_millis(100), Duration::from_secs(5));
+        assert!(!debouncer.should_process());
+    }
+
+    #[test]
+    fn test_debouncer_record_and_check_before_quiet_period() {
+        let debouncer = Debouncer::new(Duration::from_millis(500), Duration::from_secs(5));
+        debouncer.record_event();
+
+        // Immediately after recording, quiet period has not elapsed
+        assert!(!debouncer.should_process());
+    }
+
+    #[test]
+    fn test_debouncer_quiet_period_elapsed() {
+        let debouncer = Debouncer::new(Duration::from_millis(10), Duration::from_secs(5));
+        debouncer.record_event();
+
+        // Wait for the quiet period to elapse
+        std::thread::sleep(Duration::from_millis(20));
+
+        assert!(debouncer.should_process());
+    }
+
+    #[test]
+    fn test_debouncer_max_wait_exceeded() {
+        let debouncer = Debouncer::new(
+            Duration::from_secs(60),   // very long quiet period
+            Duration::from_millis(10), // very short max wait
+        );
+        debouncer.record_event();
+
+        // Wait for max wait to exceed
+        std::thread::sleep(Duration::from_millis(20));
+
+        // Even though quiet period hasn't elapsed, max wait forces processing
+        assert!(debouncer.should_process());
+    }
+
+    #[test]
+    fn test_debouncer_reset() {
+        let debouncer = Debouncer::new(Duration::from_millis(10), Duration::from_secs(5));
+        debouncer.record_event();
+
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(debouncer.should_process());
+
+        debouncer.reset();
+        assert!(!debouncer.should_process());
+    }
+
+    #[test]
+    fn test_debouncer_continuous_events_reset_quiet_period() {
+        let debouncer = Debouncer::new(Duration::from_millis(50), Duration::from_secs(60));
+
+        debouncer.record_event();
+        std::thread::sleep(Duration::from_millis(20));
+        // Record another event, resetting the last_event_time
+        debouncer.record_event();
+        std::thread::sleep(Duration::from_millis(20));
+
+        // 20ms since last event, quiet period is 50ms, should not process
+        assert!(!debouncer.should_process());
+
+        // Wait for quiet period from last event
+        std::thread::sleep(Duration::from_millis(40));
+        assert!(debouncer.should_process());
     }
 }

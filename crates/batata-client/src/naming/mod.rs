@@ -43,6 +43,8 @@ pub struct BatataNamingService {
     subscriptions: DashMap<String, Vec<Arc<dyn EventListener>>>,
     /// Registered instances for redo on reconnect: key = "namespace#groupName#serviceName#instanceKey"
     registered_instances: DashMap<String, RegisteredInstance>,
+    /// Whether to protect against empty service instance lists
+    pub empty_protection: bool,
 }
 
 /// Stored info for a registered instance (for redo on reconnect).
@@ -62,6 +64,18 @@ impl BatataNamingService {
             service_info_holder: Arc::new(ServiceInfoHolder::new()),
             subscriptions: DashMap::new(),
             registered_instances: DashMap::new(),
+            empty_protection: false,
+        }
+    }
+
+    /// Create a new naming service with empty protection enabled.
+    pub fn with_empty_protection(grpc_client: Arc<GrpcClient>, empty_protection: bool) -> Self {
+        Self {
+            grpc_client,
+            service_info_holder: Arc::new(ServiceInfoHolder::new()),
+            subscriptions: DashMap::new(),
+            registered_instances: DashMap::new(),
+            empty_protection,
         }
     }
 
@@ -340,11 +354,35 @@ impl BatataNamingService {
             .collect())
     }
 
+    /// Gracefully shutdown the naming service.
+    /// Clears subscriptions, registered instances, and cached service info.
+    pub async fn shutdown(&self) {
+        info!("Shutting down naming service...");
+        // Clear subscriptions
+        self.subscriptions.clear();
+        // Clear registered instances
+        self.registered_instances.clear();
+        info!("Naming service shutdown complete");
+    }
+
     /// Handle a `NotifySubscriberRequest` from the server.
     ///
     /// Updates the local cache, computes instance diff, and notifies all listeners.
     pub fn handle_notify_subscriber(&self, req: &NotifySubscriberRequest) {
         let key = build_service_key(&req.group_name, &req.service_name);
+
+        // Empty service protection: reject updates that would set instances to empty
+        if self.empty_protection
+            && req.service_info.hosts.is_empty()
+            && self.service_info_holder.get(&key).is_some()
+        {
+            tracing::warn!(
+                "Rejected empty instance list for service {}@@{}, using cached instances",
+                req.group_name,
+                req.service_name
+            );
+            return;
+        }
 
         // Compute diff before updating cache
         let diff = if let Some(old_service) = self.service_info_holder.get(&key) {
@@ -676,6 +714,161 @@ mod tests {
         // Cache should still be updated
         let key = build_service_key("DEFAULT_GROUP", "test-service");
         assert!(naming_service.service_info_holder.get(&key).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_clears_subscriptions_and_instances() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::new(client);
+
+        // Add a subscription
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        let listener = Arc::new(listener::FnEventListener::new(
+            |_: listener::NamingEvent| {},
+        ));
+        naming_service
+            .subscriptions
+            .entry(key)
+            .or_default()
+            .push(listener);
+
+        // Add a registered instance
+        let instance = make_instance("10.0.0.1", 8080, true);
+        let redo_key =
+            build_instance_redo_key("public", "DEFAULT_GROUP", "test-service", &instance);
+        naming_service.registered_instances.insert(
+            redo_key,
+            super::RegisteredInstance {
+                namespace: "public".to_string(),
+                group_name: "DEFAULT_GROUP".to_string(),
+                service_name: "test-service".to_string(),
+                instance,
+            },
+        );
+
+        assert_eq!(naming_service.subscriptions.len(), 1);
+        assert_eq!(naming_service.registered_instances.len(), 1);
+
+        naming_service.shutdown().await;
+
+        assert_eq!(naming_service.subscriptions.len(), 0);
+        assert_eq!(naming_service.registered_instances.len(), 0);
+    }
+
+    #[test]
+    fn test_empty_protection_rejects_empty_instances() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::with_empty_protection(client, true);
+
+        // Pre-populate cache with an instance
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        let old_service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![make_instance("10.0.0.1", 8080, true)],
+            ..Default::default()
+        };
+        naming_service.service_info_holder.update(&key, old_service);
+
+        // Notify with empty instance list — should be rejected
+        let empty_service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![],
+            ..Default::default()
+        };
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            empty_service,
+        );
+
+        naming_service.handle_notify_subscriber(&req);
+
+        // Cache should still have the old instance
+        let cached = naming_service.service_info_holder.get(&key).unwrap();
+        assert_eq!(cached.hosts.len(), 1);
+        assert_eq!(cached.hosts[0].ip, "10.0.0.1");
+    }
+
+    #[test]
+    fn test_empty_protection_allows_non_empty_update() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::with_empty_protection(client, true);
+
+        // Pre-populate cache
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        let old_service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![make_instance("10.0.0.1", 8080, true)],
+            ..Default::default()
+        };
+        naming_service.service_info_holder.update(&key, old_service);
+
+        // Notify with non-empty instance list — should be accepted
+        let new_service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![make_instance("10.0.0.2", 8080, true)],
+            ..Default::default()
+        };
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            new_service,
+        );
+
+        naming_service.handle_notify_subscriber(&req);
+
+        // Cache should be updated to new instance
+        let cached = naming_service.service_info_holder.get(&key).unwrap();
+        assert_eq!(cached.hosts.len(), 1);
+        assert_eq!(cached.hosts[0].ip, "10.0.0.2");
+    }
+
+    #[test]
+    fn test_empty_protection_disabled_allows_empty() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let naming_service = BatataNamingService::new(client); // empty_protection = false
+
+        // Pre-populate cache
+        let key = build_service_key("DEFAULT_GROUP", "test-service");
+        let old_service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![make_instance("10.0.0.1", 8080, true)],
+            ..Default::default()
+        };
+        naming_service.service_info_holder.update(&key, old_service);
+
+        // Notify with empty — should be accepted since protection is off
+        let empty_service = Service {
+            name: "test-service".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            hosts: vec![],
+            ..Default::default()
+        };
+
+        let req = NotifySubscriberRequest::for_service(
+            "public",
+            "DEFAULT_GROUP",
+            "test-service",
+            empty_service,
+        );
+
+        naming_service.handle_notify_subscriber(&req);
+
+        let cached = naming_service.service_info_holder.get(&key).unwrap();
+        assert_eq!(cached.hosts.len(), 0);
     }
 
     #[test]

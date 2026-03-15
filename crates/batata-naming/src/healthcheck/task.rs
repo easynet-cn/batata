@@ -132,7 +132,10 @@ impl HealthCheckTask {
         let max = match check_type {
             HealthCheckType::Tcp => config.tcp_health_params.max,
             HealthCheckType::Http => config.http_health_params.max,
-            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => {
+            HealthCheckType::None
+            | HealthCheckType::Ttl
+            | HealthCheckType::Grpc
+            | HealthCheckType::Mysql => {
                 return Duration::from_secs(5);
             }
         };
@@ -248,7 +251,10 @@ impl HealthCheckTask {
         let factor = match self.check_type {
             HealthCheckType::Tcp => self.config.get_tcp_factor(),
             HealthCheckType::Http => self.config.get_http_factor(),
-            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => return,
+            HealthCheckType::None
+            | HealthCheckType::Ttl
+            | HealthCheckType::Grpc
+            | HealthCheckType::Mysql => return,
         };
 
         // Speed up checks when healthy (multiply by factor)
@@ -261,7 +267,10 @@ impl HealthCheckTask {
         let factor = match self.check_type {
             HealthCheckType::Tcp => self.config.get_tcp_factor(),
             HealthCheckType::Http => self.config.get_http_factor(),
-            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => return,
+            HealthCheckType::None
+            | HealthCheckType::Ttl
+            | HealthCheckType::Grpc
+            | HealthCheckType::Mysql => return,
         };
 
         // Slow down checks when failing (increase interval)
@@ -269,7 +278,10 @@ impl HealthCheckTask {
         let max = match self.check_type {
             HealthCheckType::Tcp => self.config.tcp_health_params.max as f64,
             HealthCheckType::Http => self.config.http_health_params.max as f64,
-            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => 5000.0,
+            HealthCheckType::None
+            | HealthCheckType::Ttl
+            | HealthCheckType::Grpc
+            | HealthCheckType::Mysql => 5000.0,
         };
 
         let new_interval = (current * (1.0 - factor) + factor * max) as u64;
@@ -287,7 +299,10 @@ impl HealthCheckTask {
                 self.config.http_health_params.min,
                 self.config.http_health_params.max,
             ),
-            HealthCheckType::None | HealthCheckType::Ttl | HealthCheckType::Grpc => (2000, 5000),
+            HealthCheckType::None
+            | HealthCheckType::Ttl
+            | HealthCheckType::Grpc
+            | HealthCheckType::Mysql => (2000, 5000),
         };
 
         let current = self.check_rt_normalized.as_millis() as u64;

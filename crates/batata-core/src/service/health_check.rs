@@ -4,7 +4,7 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -83,11 +83,73 @@ impl MemberHealthStatus {
     }
 }
 
+/// Lock-free per-member health state tracked with atomics.
+///
+/// This is stored alongside `MemberHealthStatus` and used by the health-check
+/// loop to implement state transitions:
+///   UP -> SUSPICIOUS  (after `suspicious_threshold` consecutive failures)
+///   SUSPICIOUS -> DOWN  (after `max_fail_count` consecutive failures)
+///   DOWN/SUSPICIOUS -> UP  (after 1 success)
+pub struct MemberHealthState {
+    /// Consecutive health check failures (reset to 0 on success)
+    pub consecutive_failures: AtomicU32,
+    /// Timestamp (millis since epoch) of the last health check attempt
+    pub last_check_time: AtomicU64,
+}
+
+impl MemberHealthState {
+    pub fn new() -> Self {
+        Self {
+            consecutive_failures: AtomicU32::new(0),
+            last_check_time: AtomicU64::new(0),
+        }
+    }
+
+    /// Record a successful health check, resetting consecutive failures
+    pub fn record_success(&self) {
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+        self.last_check_time.store(
+            chrono::Utc::now().timestamp_millis() as u64,
+            Ordering::Relaxed,
+        );
+    }
+
+    /// Record a failed health check, incrementing the consecutive failure counter.
+    /// Returns the new consecutive failure count.
+    pub fn record_failure(&self) -> u32 {
+        self.last_check_time.store(
+            chrono::Utc::now().timestamp_millis() as u64,
+            Ordering::Relaxed,
+        );
+        self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Determine the appropriate node state based on current consecutive failures
+    pub fn determine_state(&self, config: &HealthCheckConfig) -> NodeState {
+        let failures = self.consecutive_failures.load(Ordering::Relaxed);
+        if failures >= config.max_fail_count as u32 {
+            NodeState::Down
+        } else if failures >= config.suspicious_threshold as u32 {
+            NodeState::Suspicious
+        } else {
+            NodeState::Up
+        }
+    }
+}
+
+impl Default for MemberHealthState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Health check service for cluster members
 pub struct MemberHealthChecker {
     config: HealthCheckConfig,
     members: Arc<DashMap<String, Member>>,
     health_status: Arc<DashMap<String, MemberHealthStatus>>,
+    /// Lock-free per-member health state for atomic consecutive failure tracking
+    health_states: Arc<DashMap<String, Arc<MemberHealthState>>>,
     /// Circuit breakers per member address for resilient health checks
     circuit_breakers: Arc<DashMap<String, CircuitBreaker>>,
     /// Running flag using AtomicBool for lock-free access
@@ -105,6 +167,7 @@ impl MemberHealthChecker {
             config,
             members,
             health_status: Arc::new(DashMap::new()),
+            health_states: Arc::new(DashMap::new()),
             circuit_breakers: Arc::new(DashMap::new()),
             running: Arc::new(AtomicBool::new(false)),
             local_address,
@@ -126,6 +189,7 @@ impl MemberHealthChecker {
 
         let members = self.members.clone();
         let health_status = self.health_status.clone();
+        let health_states = self.health_states.clone();
         let circuit_breakers = self.circuit_breakers.clone();
         let running = self.running.clone();
         let config = self.config.clone();
@@ -135,6 +199,7 @@ impl MemberHealthChecker {
             Self::health_check_loop(
                 members,
                 health_status,
+                health_states,
                 circuit_breakers,
                 running,
                 config,
@@ -154,6 +219,7 @@ impl MemberHealthChecker {
     async fn health_check_loop(
         members: Arc<DashMap<String, Member>>,
         health_status: Arc<DashMap<String, MemberHealthStatus>>,
+        health_states: Arc<DashMap<String, Arc<MemberHealthState>>>,
         circuit_breakers: Arc<DashMap<String, CircuitBreaker>>,
         running: Arc<AtomicBool>,
         config: HealthCheckConfig,
@@ -176,6 +242,7 @@ impl MemberHealthChecker {
             let mut handles = Vec::new();
             for address in member_addresses {
                 let health_status = health_status.clone();
+                let health_states = health_states.clone();
                 let circuit_breakers = circuit_breakers.clone();
                 let members = members.clone();
                 let config = config.clone();
@@ -184,6 +251,7 @@ impl MemberHealthChecker {
                     Self::check_member(
                         &address,
                         &health_status,
+                        &health_states,
                         &circuit_breakers,
                         &members,
                         &config,
@@ -205,9 +273,15 @@ impl MemberHealthChecker {
     }
 
     /// Check a single member's health with circuit breaker protection
+    ///
+    /// State transitions based on consecutive failures:
+    ///   UP -> SUSPICIOUS  (after `suspicious_threshold` consecutive failures)
+    ///   SUSPICIOUS -> DOWN  (after `max_fail_count` consecutive failures)
+    ///   DOWN/SUSPICIOUS -> UP  (after 1 success)
     async fn check_member(
         address: &str,
         health_status: &Arc<DashMap<String, MemberHealthStatus>>,
+        health_states: &Arc<DashMap<String, Arc<MemberHealthState>>>,
         circuit_breakers: &Arc<DashMap<String, CircuitBreaker>>,
         members: &Arc<DashMap<String, Member>>,
         config: &HealthCheckConfig,
@@ -219,6 +293,12 @@ impl MemberHealthChecker {
                 MemberHealthStatus::new(address.to_string()),
             );
         }
+
+        // Get or create atomic health state for this member
+        let state = health_states
+            .entry(address.to_string())
+            .or_insert_with(|| Arc::new(MemberHealthState::new()))
+            .clone();
 
         // Get or create circuit breaker for this member
         let cb_config = CircuitBreakerConfig {
@@ -260,6 +340,15 @@ impl MemberHealthChecker {
             }
         }
 
+        // Update atomic health state and derive new node state
+        let new_state = if check_result {
+            state.record_success();
+            NodeState::Up
+        } else {
+            state.record_failure();
+            state.determine_state(config)
+        };
+
         // Update health status
         if let Some(mut status) = health_status.get_mut(address) {
             status.last_check_time = chrono::Utc::now().timestamp_millis();
@@ -275,14 +364,15 @@ impl MemberHealthChecker {
                 }
             } else {
                 status.record_failure(config);
+                let consecutive = state.consecutive_failures.load(Ordering::Relaxed);
                 warn!(
-                    "Health check failed for member: {}, fail_count: {}",
-                    address, status.fail_count
+                    "Health check failed for member: {}, fail_count: {}, consecutive: {}, state: {:?}",
+                    address, status.fail_count, consecutive, new_state
                 );
 
-                // Update member state
+                // Update member state using the atomic-derived state
                 if let Some(mut member) = members.get_mut(address) {
-                    member.state = status.state;
+                    member.state = new_state;
                     member.fail_access_cnt = status.fail_count;
                 }
             }
@@ -410,6 +500,11 @@ impl MemberHealthChecker {
             info!("Circuit breaker manually reset for member: {}", address);
         }
     }
+
+    /// Get the atomic health state for a member (consecutive failures, last check time)
+    pub fn get_health_state(&self, address: &str) -> Option<Arc<MemberHealthState>> {
+        self.health_states.get(address).map(|e| e.value().clone())
+    }
 }
 
 #[cfg(test)]
@@ -441,5 +536,70 @@ mod tests {
 
         assert_eq!(status.fail_count, 3);
         assert!(matches!(status.state, NodeState::Down));
+    }
+
+    #[test]
+    fn test_member_health_state_consecutive_failures() {
+        let state = MemberHealthState::new();
+        assert_eq!(state.consecutive_failures.load(Ordering::Relaxed), 0);
+
+        let count = state.record_failure();
+        assert_eq!(count, 1);
+        assert_eq!(state.consecutive_failures.load(Ordering::Relaxed), 1);
+
+        let count = state.record_failure();
+        assert_eq!(count, 2);
+
+        // Success resets consecutive failures
+        state.record_success();
+        assert_eq!(state.consecutive_failures.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn test_member_health_state_transitions() {
+        let config = HealthCheckConfig {
+            suspicious_threshold: 2,
+            max_fail_count: 4,
+            ..HealthCheckConfig::default()
+        };
+
+        let state = MemberHealthState::new();
+
+        // Initially UP
+        assert!(matches!(state.determine_state(&config), NodeState::Up));
+
+        // 1 failure -> still UP
+        state.record_failure();
+        assert!(matches!(state.determine_state(&config), NodeState::Up));
+
+        // 2 failures -> SUSPICIOUS
+        state.record_failure();
+        assert!(matches!(
+            state.determine_state(&config),
+            NodeState::Suspicious
+        ));
+
+        // 4 failures -> DOWN
+        state.record_failure();
+        state.record_failure();
+        assert!(matches!(state.determine_state(&config), NodeState::Down));
+
+        // 1 success -> back to UP
+        state.record_success();
+        assert!(matches!(state.determine_state(&config), NodeState::Up));
+    }
+
+    #[test]
+    fn test_member_health_state_last_check_time() {
+        let state = MemberHealthState::new();
+        assert_eq!(state.last_check_time.load(Ordering::Relaxed), 0);
+
+        state.record_failure();
+        let t1 = state.last_check_time.load(Ordering::Relaxed);
+        assert!(t1 > 0);
+
+        state.record_success();
+        let t2 = state.last_check_time.load(Ordering::Relaxed);
+        assert!(t2 >= t1);
     }
 }

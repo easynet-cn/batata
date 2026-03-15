@@ -3,7 +3,13 @@
 //! The Distro protocol is used to sync ephemeral data (like service instances) across cluster nodes.
 //! This is the AP (Availability, Partition tolerance) mode in Nacos, used for ephemeral instances.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -50,6 +56,76 @@ impl Default for DistroConfig {
             verify_timeout: Duration::from_millis(3000),
             load_retry_delay: Duration::from_millis(30000),
         }
+    }
+}
+
+/// Determines which cluster node is responsible for a given data key
+///
+/// Uses hash-based partitioning over a sorted list of healthy member addresses.
+/// This provides consistent data ownership across the cluster.
+pub struct DistroMapper {
+    /// Current healthy member addresses (sorted for consistent hashing)
+    healthy_members: Arc<std::sync::RwLock<Vec<String>>>,
+}
+
+impl DistroMapper {
+    pub fn new() -> Self {
+        Self {
+            healthy_members: Arc::new(std::sync::RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Update the list of healthy members
+    pub fn update_members(&self, members: Vec<String>) {
+        let mut sorted = members;
+        sorted.sort();
+        *self
+            .healthy_members
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = sorted;
+    }
+
+    /// Determine which member is responsible for a given key
+    pub fn responsible_node(&self, key: &str) -> Option<String> {
+        let members = self
+            .healthy_members
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        if members.is_empty() {
+            return None;
+        }
+        let hash = self.hash_key(key);
+        let index = (hash as usize) % members.len();
+        Some(members[index].clone())
+    }
+
+    /// Check if the local node is responsible for a key
+    pub fn is_responsible(&self, key: &str, local_address: &str) -> bool {
+        self.responsible_node(key)
+            .map(|node| node == local_address)
+            .unwrap_or(true) // If no members, always responsible (standalone)
+    }
+
+    /// Get the current list of healthy members
+    pub fn get_members(&self) -> Vec<String> {
+        self.healthy_members
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn hash_key(&self, key: &str) -> u32 {
+        let mut hash: u32 = 0;
+        for byte in key.bytes() {
+            hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
+        }
+        hash
+    }
+}
+
+impl Default for DistroMapper {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -141,6 +217,10 @@ pub struct DistroProtocol {
     members: Arc<DashMap<String, Member>>,
     /// Optional datacenter manager for locality-aware sync
     datacenter_manager: Option<Arc<DatacenterManager>>,
+    /// Hash-based data partitioning mapper
+    mapper: Arc<DistroMapper>,
+    /// Whether the protocol has completed initial data loading
+    initialized: Arc<AtomicBool>,
 }
 
 impl DistroProtocol {
@@ -159,6 +239,8 @@ impl DistroProtocol {
             client_manager,
             members,
             datacenter_manager: None,
+            mapper: Arc::new(DistroMapper::new()),
+            initialized: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -179,12 +261,24 @@ impl DistroProtocol {
             client_manager,
             members,
             datacenter_manager: Some(datacenter_manager),
+            mapper: Arc::new(DistroMapper::new()),
+            initialized: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Set the datacenter manager
     pub fn set_datacenter_manager(&mut self, manager: Arc<DatacenterManager>) {
         self.datacenter_manager = Some(manager);
+    }
+
+    /// Get the data partitioning mapper
+    pub fn mapper(&self) -> &Arc<DistroMapper> {
+        &self.mapper
+    }
+
+    /// Check whether the protocol has completed initial data loading
+    pub fn is_initialized(&self) -> bool {
+        self.initialized.load(Ordering::Relaxed)
     }
 
     /// Register a data handler
@@ -205,14 +299,32 @@ impl DistroProtocol {
 
         info!("Starting Distro protocol");
 
+        // Update the mapper with current healthy members
+        self.refresh_mapper();
+
         // Load initial data from peers (for new nodes joining the cluster)
         self.load_initial_data().await;
+
+        // Mark as initialized after initial data load
+        self.initialized.store(true, Ordering::Relaxed);
+        info!("Distro protocol initialized");
 
         // Start sync task processor
         self.start_sync_task_processor().await;
 
         // Start data verification
         self.start_verify_task().await;
+    }
+
+    /// Refresh the mapper with current healthy members from the server list
+    pub fn refresh_mapper(&self) {
+        let healthy: Vec<String> = self
+            .members
+            .iter()
+            .filter(|e| matches!(e.value().state, batata_api::model::NodeState::Up))
+            .map(|e| e.key().clone())
+            .collect();
+        self.mapper.update_members(healthy);
     }
 
     /// Stop the distro protocol
@@ -875,5 +987,122 @@ mod tests {
         set.insert(DistroDataType::NamingInstance);
 
         assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn test_distro_mapper_empty() {
+        let mapper = DistroMapper::new();
+        assert!(mapper.responsible_node("any-key").is_none());
+        // With no members, is_responsible defaults to true (standalone)
+        assert!(mapper.is_responsible("any-key", "localhost:8848"));
+    }
+
+    #[test]
+    fn test_distro_mapper_single_member() {
+        let mapper = DistroMapper::new();
+        mapper.update_members(vec!["10.0.0.1:8848".to_string()]);
+
+        // With only one member, all keys map to that member
+        assert_eq!(
+            mapper.responsible_node("key-a"),
+            Some("10.0.0.1:8848".to_string())
+        );
+        assert_eq!(
+            mapper.responsible_node("key-b"),
+            Some("10.0.0.1:8848".to_string())
+        );
+        assert!(mapper.is_responsible("key-a", "10.0.0.1:8848"));
+        assert!(!mapper.is_responsible("key-a", "10.0.0.2:8848"));
+    }
+
+    #[test]
+    fn test_distro_mapper_multiple_members() {
+        let mapper = DistroMapper::new();
+        let members = vec![
+            "10.0.0.1:8848".to_string(),
+            "10.0.0.2:8848".to_string(),
+            "10.0.0.3:8848".to_string(),
+        ];
+        mapper.update_members(members.clone());
+
+        // All keys should map to one of the members
+        for i in 0..100 {
+            let key = format!("service-{}", i);
+            let node = mapper.responsible_node(&key).unwrap();
+            assert!(members.contains(&node));
+        }
+    }
+
+    #[test]
+    fn test_distro_mapper_consistent_hashing() {
+        let mapper = DistroMapper::new();
+        mapper.update_members(vec![
+            "10.0.0.1:8848".to_string(),
+            "10.0.0.2:8848".to_string(),
+            "10.0.0.3:8848".to_string(),
+        ]);
+
+        // Same key should always map to the same node
+        let node1 = mapper.responsible_node("test-key").unwrap();
+        let node2 = mapper.responsible_node("test-key").unwrap();
+        assert_eq!(node1, node2);
+    }
+
+    #[test]
+    fn test_distro_mapper_sorted_members() {
+        let mapper = DistroMapper::new();
+        // Insert in unsorted order
+        mapper.update_members(vec![
+            "10.0.0.3:8848".to_string(),
+            "10.0.0.1:8848".to_string(),
+            "10.0.0.2:8848".to_string(),
+        ]);
+
+        let members = mapper.get_members();
+        assert_eq!(members[0], "10.0.0.1:8848");
+        assert_eq!(members[1], "10.0.0.2:8848");
+        assert_eq!(members[2], "10.0.0.3:8848");
+    }
+
+    #[test]
+    fn test_distro_mapper_update_members() {
+        let mapper = DistroMapper::new();
+        mapper.update_members(vec![
+            "10.0.0.1:8848".to_string(),
+            "10.0.0.2:8848".to_string(),
+        ]);
+        assert_eq!(mapper.get_members().len(), 2);
+
+        // Update with new member list
+        mapper.update_members(vec![
+            "10.0.0.1:8848".to_string(),
+            "10.0.0.2:8848".to_string(),
+            "10.0.0.3:8848".to_string(),
+        ]);
+        assert_eq!(mapper.get_members().len(), 3);
+    }
+
+    #[test]
+    fn test_distro_mapper_distribution() {
+        let mapper = DistroMapper::new();
+        mapper.update_members(vec![
+            "10.0.0.1:8848".to_string(),
+            "10.0.0.2:8848".to_string(),
+            "10.0.0.3:8848".to_string(),
+        ]);
+
+        // Check that keys are distributed across members (not all to one)
+        let mut counts = std::collections::HashMap::new();
+        for i in 0..300 {
+            let key = format!("key-{}", i);
+            let node = mapper.responsible_node(&key).unwrap();
+            *counts.entry(node).or_insert(0u32) += 1;
+        }
+
+        // Each member should have at least some keys (not perfectly even, but distributed)
+        assert_eq!(counts.len(), 3, "All 3 members should have keys assigned");
+        for (_, count) in &counts {
+            assert!(*count > 0, "Each member should have at least one key");
+        }
     }
 }

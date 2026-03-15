@@ -142,6 +142,54 @@ impl HttpHealthCheckerConfig {
     }
 }
 
+/// MySQL health checker configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MysqlHealthCheckerConfig {
+    /// Database URL (e.g., "mysql://user:pass@host:3306/db")
+    pub url: String,
+
+    /// SQL command to execute for health check (default: "SELECT 1")
+    /// Compatible with Nacos which uses: "SHOW GLOBAL VARIABLES WHERE Variable_name='read_only'"
+    pub command: String,
+
+    /// Check port (0 means use instance port)
+    pub check_port: i32,
+
+    /// Use instance port for health check
+    pub use_instance_port: bool,
+}
+
+impl Default for MysqlHealthCheckerConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            command: "SELECT 1".to_string(),
+            check_port: 0,
+            use_instance_port: true,
+        }
+    }
+}
+
+impl MysqlHealthCheckerConfig {
+    /// Parse from HealthCheckerConfig extend_data
+    pub fn from_checker_config(config: &HealthCheckerConfig) -> Self {
+        Self {
+            url: config
+                .get_string("url")
+                .or_else(|| config.get_string("db_url"))
+                .cloned()
+                .unwrap_or_default(),
+            command: config
+                .get_string("command")
+                .or_else(|| config.get_string("cmd"))
+                .cloned()
+                .unwrap_or_else(|| "SELECT 1".to_string()),
+            check_port: config.get_i32("checkPort").unwrap_or_default(),
+            use_instance_port: config.get_bool("useInstancePort4Check").unwrap_or(true),
+        }
+    }
+}
+
 /// Parse expected status codes from string
 /// Supports: "200-399" (range), "200,201,204" (list), "200" (single)
 pub fn parse_expected_code(s: &str) -> Vec<u16> {
@@ -266,5 +314,76 @@ mod tests {
             Some(&"Bearer xyz".to_string())
         );
         assert_eq!(headers.get("User-Agent"), Some(&"Test".to_string()));
+    }
+
+    #[test]
+    fn test_mysql_config_default() {
+        let config = MysqlHealthCheckerConfig::default();
+        assert!(config.url.is_empty());
+        assert_eq!(config.command, "SELECT 1");
+        assert_eq!(config.check_port, 0);
+        assert!(config.use_instance_port);
+    }
+
+    #[test]
+    fn test_mysql_config_from_checker() {
+        let mut data = HashMap::new();
+        data.insert(
+            "url".to_string(),
+            "mysql://user:pass@localhost:3306/db".to_string(),
+        );
+        data.insert(
+            "command".to_string(),
+            "SHOW GLOBAL VARIABLES WHERE Variable_name='read_only'".to_string(),
+        );
+        data.insert("checkPort".to_string(), "3307".to_string());
+        data.insert("useInstancePort4Check".to_string(), "false".to_string());
+
+        let checker_config = HealthCheckerConfig::new("MYSQL").with_extend_data(data);
+        let mysql_config = MysqlHealthCheckerConfig::from_checker_config(&checker_config);
+
+        assert_eq!(mysql_config.url, "mysql://user:pass@localhost:3306/db");
+        assert_eq!(
+            mysql_config.command,
+            "SHOW GLOBAL VARIABLES WHERE Variable_name='read_only'"
+        );
+        assert_eq!(mysql_config.check_port, 3307);
+        assert!(!mysql_config.use_instance_port);
+    }
+
+    #[test]
+    fn test_mysql_config_from_checker_with_db_url_key() {
+        let mut data = HashMap::new();
+        data.insert(
+            "db_url".to_string(),
+            "mysql://user:pass@localhost:3306/db".to_string(),
+        );
+
+        let checker_config = HealthCheckerConfig::new("MYSQL").with_extend_data(data);
+        let mysql_config = MysqlHealthCheckerConfig::from_checker_config(&checker_config);
+
+        assert_eq!(mysql_config.url, "mysql://user:pass@localhost:3306/db");
+    }
+
+    #[test]
+    fn test_mysql_config_from_checker_with_cmd_key() {
+        let mut data = HashMap::new();
+        data.insert("cmd".to_string(), "SELECT 1 FROM dual".to_string());
+
+        let checker_config = HealthCheckerConfig::new("MYSQL").with_extend_data(data);
+        let mysql_config = MysqlHealthCheckerConfig::from_checker_config(&checker_config);
+
+        assert_eq!(mysql_config.command, "SELECT 1 FROM dual");
+    }
+
+    #[test]
+    fn test_mysql_config_from_checker_defaults() {
+        let checker_config = HealthCheckerConfig::new("MYSQL");
+        let mysql_config = MysqlHealthCheckerConfig::from_checker_config(&checker_config);
+
+        assert!(mysql_config.url.is_empty());
+        assert_eq!(mysql_config.command, "SELECT 1");
+        assert_eq!(mysql_config.check_port, 0);
+        assert!(mysql_config.use_instance_port);
     }
 }

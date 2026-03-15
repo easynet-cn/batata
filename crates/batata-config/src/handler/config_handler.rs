@@ -292,6 +292,8 @@ pub struct ConfigPublishHandler {
     pub connection_manager: Arc<ConnectionManager>,
     /// Cluster client manager for broadcasting config changes to other nodes
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
+    /// Notifier for waking up long-polling HTTP listeners on config changes
+    pub config_change_notifier: Arc<crate::service::notifier::ConfigChangeNotifier>,
 }
 
 #[tonic::async_trait]
@@ -527,6 +529,10 @@ impl PayloadHandler for ConfigPublishHandler {
             .await
         {
             Ok(_) => {
+                // Notify long-polling HTTP listeners about config change
+                self.config_change_notifier
+                    .notify_change(tenant, group, data_id);
+
                 // Notify fuzzy watchers about config change
                 if let Err(e) = self
                     .notify_fuzzy_watchers(data_id, group, tenant, src_ip)
@@ -725,6 +731,8 @@ pub struct ConfigRemoveHandler {
     pub connection_manager: Arc<ConnectionManager>,
     /// Cluster client manager for broadcasting config removals to other nodes
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
+    /// Notifier for waking up long-polling HTTP listeners on config changes
+    pub config_change_notifier: Arc<crate::service::notifier::ConfigChangeNotifier>,
 }
 
 #[tonic::async_trait]
@@ -757,6 +765,10 @@ impl PayloadHandler for ConfigRemoveHandler {
             .await
         {
             Ok(_) => {
+                // Notify long-polling HTTP listeners about config removal
+                self.config_change_notifier
+                    .notify_change(tenant, group, data_id);
+
                 // Notify fuzzy watchers about config removal
                 if let Err(e) = self
                     .notify_fuzzy_watchers(data_id, group, tenant, src_ip)
@@ -1088,6 +1100,8 @@ pub struct ConfigChangeClusterSyncHandler {
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
     /// Connection manager for pushing notifications to local clients
     pub connection_manager: Arc<ConnectionManager>,
+    /// Notifier for waking up long-polling HTTP listeners on config changes
+    pub config_change_notifier: Arc<crate::service::notifier::ConfigChangeNotifier>,
 }
 
 #[tonic::async_trait]
@@ -1114,6 +1128,10 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
         // 1. Local cache invalidation (if caching is implemented)
         // 2. Notification to local listeners via config subscriber manager
         // 3. Metrics/audit logging
+
+        // Notify long-polling HTTP listeners about config change from cluster
+        self.config_change_notifier
+            .notify_change(tenant, group, data_id);
 
         // Notify config subscribers about change
         if let Err(e) = self
@@ -1264,15 +1282,26 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
         let watch_type = &request.watch_type;
 
         // Register the fuzzy watch pattern for this connection
-        let registered =
-            self.fuzzy_watch_manager
-                .register_watch(connection_id, group_key_pattern, watch_type);
-
-        if registered {
-            debug!(
-                "Registered config fuzzy watch for connection {}: pattern={}, type={}",
-                connection_id, group_key_pattern, watch_type
-            );
+        match self
+            .fuzzy_watch_manager
+            .register_watch(connection_id, group_key_pattern, watch_type)
+        {
+            Ok(true) => {
+                debug!(
+                    "Registered config fuzzy watch for connection {}: pattern={}, type={}",
+                    connection_id, group_key_pattern, watch_type
+                );
+            }
+            Ok(false) => {
+                // Invalid pattern, ignored
+            }
+            Err(e) => {
+                warn!(
+                    "Config fuzzy watch registration rejected for connection {}: {}",
+                    connection_id, e
+                );
+                return Err(Status::resource_exhausted(e.to_string()));
+            }
         }
 
         // Mark received group keys as already sent to client
@@ -1347,8 +1376,19 @@ impl PayloadHandler for ConfigFuzzyWatchSyncHandler {
         let sync_type = &request.sync_type;
 
         // Register the pattern if not already registered
-        self.fuzzy_watch_manager
-            .register_watch(connection_id, group_key_pattern, sync_type);
+        match self
+            .fuzzy_watch_manager
+            .register_watch(connection_id, group_key_pattern, sync_type)
+        {
+            Ok(_) => {}
+            Err(e) => {
+                warn!(
+                    "Config fuzzy watch sync registration rejected for connection {}: {}",
+                    connection_id, e
+                );
+                return Err(Status::resource_exhausted(e.to_string()));
+            }
+        }
 
         debug!(
             "Config fuzzy watch sync for connection {}: pattern={}, sync_type={}, batch={}/{}",

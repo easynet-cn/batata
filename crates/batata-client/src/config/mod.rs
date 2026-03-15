@@ -473,6 +473,15 @@ impl BatataConfigService {
         Ok(())
     }
 
+    /// Gracefully shutdown the config service.
+    /// Removes all listeners and clears cached config data.
+    pub async fn shutdown(&self) {
+        info!("Shutting down config service...");
+        // Clear all cached config data (including listeners within each CacheData)
+        self.cache_map.clear();
+        info!("Config service shutdown complete");
+    }
+
     /// Send a ConfigBatchListenRequest.
     async fn send_listen_request(
         &self,
@@ -544,6 +553,8 @@ impl ServerPushHandler for ConfigChangeNotifyHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::cache::*;
 
     #[test]
@@ -554,5 +565,26 @@ mod tests {
     #[test]
     fn test_build_cache_key_with_tenant() {
         assert_eq!(build_cache_key("id", "group", "tenant"), "id+group+tenant");
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_clears_cache() {
+        let config = crate::grpc::GrpcClientConfig::default();
+        let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
+        let service = super::BatataConfigService::new(client);
+
+        // Populate cache
+        service.cache_map.insert(
+            build_cache_key("id1", "group1", ""),
+            CacheData::new("id1", "group1", ""),
+        );
+        service.cache_map.insert(
+            build_cache_key("id2", "group2", "tenant"),
+            CacheData::new("id2", "group2", "tenant"),
+        );
+        assert_eq!(service.cache_map.len(), 2);
+
+        service.shutdown().await;
+        assert_eq!(service.cache_map.len(), 0);
     }
 }

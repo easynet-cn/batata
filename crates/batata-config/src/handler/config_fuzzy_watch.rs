@@ -10,6 +10,24 @@ use dashmap::DashMap;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
+/// Configuration for fuzzy watch limits
+#[derive(Clone)]
+pub struct FuzzyWatchLimits {
+    /// Maximum number of patterns per client connection
+    pub max_patterns_per_client: usize,
+    /// Maximum number of matched configs per pattern
+    pub max_matched_per_pattern: usize,
+}
+
+impl Default for FuzzyWatchLimits {
+    fn default() -> Self {
+        Self {
+            max_patterns_per_client: 50,
+            max_matched_per_pattern: 1000,
+        }
+    }
+}
+
 /// Config fuzzy watch pattern
 #[derive(Clone, Debug)]
 pub struct ConfigFuzzyWatchPattern {
@@ -165,6 +183,21 @@ pub struct ConfigWatchNotification {
     pub event: ConfigChangeEvent,
 }
 
+/// Error type for fuzzy watch limit violations
+#[derive(Debug, Clone)]
+pub struct FuzzyWatchLimitError {
+    pub code: i32,
+    pub message: String,
+}
+
+impl std::fmt::Display for FuzzyWatchLimitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for FuzzyWatchLimitError {}
+
 /// Manager for config fuzzy watch patterns
 #[derive(Clone)]
 pub struct ConfigFuzzyWatchManager {
@@ -174,6 +207,8 @@ pub struct ConfigFuzzyWatchManager {
     received_keys: Arc<DashMap<String, HashSet<String>>>,
     /// Broadcast channel for config change events
     event_sender: broadcast::Sender<ConfigChangeEvent>,
+    /// Load protection limits
+    limits: FuzzyWatchLimits,
 }
 
 impl Default for ConfigFuzzyWatchManager {
@@ -197,28 +232,68 @@ impl ConfigFuzzyWatchManager {
             watchers: Arc::new(DashMap::new()),
             received_keys: Arc::new(DashMap::new()),
             event_sender,
+            limits: FuzzyWatchLimits::default(),
         }
     }
 
-    /// Register a fuzzy watch pattern for a connection
+    /// Create a new manager with custom limits
+    pub fn with_limits(capacity: usize, limits: FuzzyWatchLimits) -> Self {
+        let (event_sender, _) = broadcast::channel(capacity);
+        Self {
+            watchers: Arc::new(DashMap::new()),
+            received_keys: Arc::new(DashMap::new()),
+            event_sender,
+            limits,
+        }
+    }
+
+    /// Register a fuzzy watch pattern for a connection.
+    ///
+    /// Returns `Ok(true)` if the pattern was registered successfully,
+    /// `Ok(false)` if the pattern string was invalid,
+    /// or `Err` if the per-client pattern limit is exceeded.
     pub fn register_watch(
         &self,
         connection_id: &str,
         group_key_pattern: &str,
         watch_type: &str,
-    ) -> bool {
+    ) -> Result<bool, FuzzyWatchLimitError> {
         if let Some(mut pattern) =
             ConfigFuzzyWatchPattern::from_group_key_pattern(group_key_pattern)
         {
             pattern.watch_type = watch_type.to_string();
 
+            // Check per-client pattern limit
+            let current_count = self
+                .watchers
+                .get(connection_id)
+                .map(|entry| entry.value().len())
+                .unwrap_or(0);
+
+            if current_count >= self.limits.max_patterns_per_client {
+                warn!(
+                    "Connection {} exceeded max patterns per client limit ({})",
+                    connection_id, self.limits.max_patterns_per_client
+                );
+                return Err(FuzzyWatchLimitError {
+                    code: batata_common::error::FUZZY_WATCH_PATTERN_OVER_LIMIT.code,
+                    message: format!(
+                        "{}: connection {} has {} patterns, limit is {}",
+                        batata_common::error::FUZZY_WATCH_PATTERN_OVER_LIMIT.message,
+                        connection_id,
+                        current_count,
+                        self.limits.max_patterns_per_client
+                    ),
+                });
+            }
+
             self.watchers
                 .entry(connection_id.to_string())
                 .or_default()
                 .push(pattern);
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
@@ -271,6 +346,37 @@ impl ConfigFuzzyWatchManager {
             })
             .map(|entry| entry.key().clone())
             .collect()
+    }
+
+    /// Get the configured limits
+    pub fn limits(&self) -> &FuzzyWatchLimits {
+        &self.limits
+    }
+
+    /// Count the number of configs matching a specific pattern for a connection.
+    /// Returns an error if the match count exceeds the per-pattern limit.
+    pub fn check_match_count(
+        &self,
+        match_count: usize,
+        pattern_desc: &str,
+    ) -> Result<(), FuzzyWatchLimitError> {
+        if match_count > self.limits.max_matched_per_pattern {
+            warn!(
+                "Pattern '{}' matched {} configs, exceeding limit of {}",
+                pattern_desc, match_count, self.limits.max_matched_per_pattern
+            );
+            return Err(FuzzyWatchLimitError {
+                code: batata_common::error::FUZZY_WATCH_PATTERN_MATCH_COUNT_OVER_LIMIT.code,
+                message: format!(
+                    "{}: pattern '{}' matched {} configs, limit is {}",
+                    batata_common::error::FUZZY_WATCH_PATTERN_MATCH_COUNT_OVER_LIMIT.message,
+                    pattern_desc,
+                    match_count,
+                    self.limits.max_matched_per_pattern
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// Get all patterns for a connection
@@ -406,8 +512,12 @@ mod tests {
     fn test_manager_register_and_get_watchers() {
         let manager = ConfigFuzzyWatchManager::new();
 
-        manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
-        manager.register_watch("conn-2", "public+*+*", "add");
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-2", "public+*+*", "add")
+            .unwrap();
 
         let watchers = manager.get_watchers_for_config("public", "DEFAULT_GROUP", "app-config");
         assert_eq!(watchers.len(), 2);
@@ -421,7 +531,9 @@ mod tests {
     fn test_manager_unregister() {
         let manager = ConfigFuzzyWatchManager::new();
 
-        manager.register_watch("conn-1", "public+DEFAULT_GROUP+*", "add");
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+*", "add")
+            .unwrap();
         assert_eq!(manager.watcher_count(), 1);
 
         manager.unregister_connection("conn-1");
@@ -462,9 +574,15 @@ mod tests {
     fn test_notify_change_returns_watchers() {
         let manager = ConfigFuzzyWatchManager::new();
 
-        manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
-        manager.register_watch("conn-2", "public+*+*", "add");
-        manager.register_watch("conn-3", "private+*+*", "add");
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-2", "public+*+*", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-3", "private+*+*", "add")
+            .unwrap();
 
         let watchers = manager.notify_add("public", "DEFAULT_GROUP", "app-config");
         assert_eq!(watchers.len(), 2);
@@ -476,8 +594,12 @@ mod tests {
     fn test_get_notifications() {
         let manager = ConfigFuzzyWatchManager::new();
 
-        manager.register_watch("conn-1", "public+DEFAULT_GROUP+*", "add");
-        manager.register_watch("conn-2", "public+*+*", "add");
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+*", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-2", "public+*+*", "add")
+            .unwrap();
 
         let event = ConfigChangeEvent::modify("public", "DEFAULT_GROUP", "app.yaml");
         let notifications = manager.get_notifications(&event);
@@ -493,7 +615,9 @@ mod tests {
     fn test_should_notify() {
         let manager = ConfigFuzzyWatchManager::new();
 
-        manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add");
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+            .unwrap();
 
         let matching_event = ConfigChangeEvent::add("public", "DEFAULT_GROUP", "app-config");
         let non_matching_event = ConfigChangeEvent::add("public", "DEFAULT_GROUP", "other-config");
@@ -508,7 +632,9 @@ mod tests {
         let manager = ConfigFuzzyWatchManager::new();
         let mut receiver = manager.subscribe();
 
-        manager.register_watch("conn-1", "public+*+*", "add");
+        manager
+            .register_watch("conn-1", "public+*+*", "add")
+            .unwrap();
 
         // Notify about a change
         manager.notify_add("public", "DEFAULT_GROUP", "app.yaml");
@@ -528,5 +654,104 @@ mod tests {
         assert_eq!(ConfigChangeType::Modify.as_str(), "modify");
         assert_eq!(ConfigChangeType::Delete.as_str(), "delete");
         assert_eq!(format!("{}", ConfigChangeType::Add), "add");
+    }
+
+    // Load protection tests
+
+    #[test]
+    fn test_pattern_over_limit() {
+        let limits = FuzzyWatchLimits {
+            max_patterns_per_client: 3,
+            max_matched_per_pattern: 1000,
+        };
+        let manager = ConfigFuzzyWatchManager::with_limits(1024, limits);
+
+        // Register up to the limit
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+app-1", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+app-2", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+app-3", "add")
+            .unwrap();
+
+        // Fourth registration should fail
+        let result = manager.register_watch("conn-1", "public+DEFAULT_GROUP+app-4", "add");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.code,
+            batata_common::error::FUZZY_WATCH_PATTERN_OVER_LIMIT.code
+        );
+
+        // Different connection should still work
+        let result = manager.register_watch("conn-2", "public+DEFAULT_GROUP+app-1", "add");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_match_count_over_limit() {
+        let limits = FuzzyWatchLimits {
+            max_patterns_per_client: 50,
+            max_matched_per_pattern: 5,
+        };
+        let manager = ConfigFuzzyWatchManager::with_limits(1024, limits);
+
+        // Within limit
+        let result = manager.check_match_count(3, "public+*+*");
+        assert!(result.is_ok());
+
+        // At limit
+        let result = manager.check_match_count(5, "public+*+*");
+        assert!(result.is_ok());
+
+        // Over limit
+        let result = manager.check_match_count(6, "public+*+*");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.code,
+            batata_common::error::FUZZY_WATCH_PATTERN_MATCH_COUNT_OVER_LIMIT.code
+        );
+    }
+
+    #[test]
+    fn test_default_limits() {
+        let limits = FuzzyWatchLimits::default();
+        assert_eq!(limits.max_patterns_per_client, 50);
+        assert_eq!(limits.max_matched_per_pattern, 1000);
+    }
+
+    #[test]
+    fn test_pattern_limit_after_unregister() {
+        let limits = FuzzyWatchLimits {
+            max_patterns_per_client: 2,
+            max_matched_per_pattern: 1000,
+        };
+        let manager = ConfigFuzzyWatchManager::with_limits(1024, limits);
+
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+app-1", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+app-2", "add")
+            .unwrap();
+
+        // At limit, should fail
+        assert!(
+            manager
+                .register_watch("conn-1", "public+DEFAULT_GROUP+app-3", "add")
+                .is_err()
+        );
+
+        // Unregister and re-register
+        manager.unregister_connection("conn-1");
+        assert!(
+            manager
+                .register_watch("conn-1", "public+DEFAULT_GROUP+app-1", "add")
+                .is_ok()
+        );
     }
 }

@@ -76,6 +76,8 @@ pub struct GrpcServers {
     pub distro_protocol: Arc<DistroProtocol>,
     /// The cluster client manager for inter-node communication.
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
+    /// Config change notifier for long-polling HTTP listeners.
+    pub config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
 }
 
 /// Registers all internal handlers (health check, connection setup, etc.).
@@ -107,6 +109,7 @@ fn register_config_handlers(
     fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
     connection_manager: Arc<ConnectionManager>,
     cluster_client_manager: Option<Arc<ClusterClientManager>>,
+    config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
 ) {
     registry.register_handler(Arc::new(ConfigQueryHandler {
         app_state: app_state.clone(),
@@ -116,12 +119,14 @@ fn register_config_handlers(
         fuzzy_watch_manager: fuzzy_watch_manager.clone(),
         connection_manager: connection_manager.clone(),
         cluster_client_manager: cluster_client_manager.clone(),
+        config_change_notifier: config_change_notifier.clone(),
     }));
     registry.register_handler(Arc::new(ConfigRemoveHandler {
         app_state: app_state.clone(),
         fuzzy_watch_manager: fuzzy_watch_manager.clone(),
         connection_manager: connection_manager.clone(),
         cluster_client_manager,
+        config_change_notifier: config_change_notifier.clone(),
     }));
     registry.register_handler(Arc::new(ConfigBatchListenHandler {
         app_state: app_state.clone(),
@@ -133,6 +138,7 @@ fn register_config_handlers(
         app_state: app_state.clone(),
         fuzzy_watch_manager: fuzzy_watch_manager.clone(),
         connection_manager: connection_manager.clone(),
+        config_change_notifier: config_change_notifier.clone(),
     }));
     registry.register_handler(Arc::new(ConfigFuzzyWatchHandler {
         app_state: app_state.clone(),
@@ -396,12 +402,15 @@ pub fn start_grpc_servers(
         (Arc::new(DashMap::new()), None)
     };
 
+    let config_change_notifier = Arc::new(batata_config::ConfigChangeNotifier::new());
+
     register_config_handlers(
         &mut handler_registry,
         app_state.clone(),
         config_fuzzy_watch_manager.clone(),
         connection_manager.clone(),
         cluster_client_manager.clone(),
+        config_change_notifier.clone(),
     );
 
     let naming_service = naming_service.unwrap_or_else(|| Arc::new(NamingService::new()));
@@ -598,5 +607,6 @@ pub fn start_grpc_servers(
         connection_manager: connection_manager_for_http,
         distro_protocol,
         cluster_client_manager,
+        config_change_notifier,
     })
 }

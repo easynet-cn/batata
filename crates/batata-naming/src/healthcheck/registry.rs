@@ -66,6 +66,8 @@ pub enum CheckType {
     Ttl,
     /// gRPC health protocol
     Grpc,
+    /// MySQL/Database health check
+    Mysql,
 }
 
 impl CheckType {
@@ -75,6 +77,7 @@ impl CheckType {
             "http" => Self::Http,
             "ttl" => Self::Ttl,
             "grpc" => Self::Grpc,
+            "mysql" => Self::Mysql,
             "none" | "" => Self::None,
             _ => Self::None,
         }
@@ -87,12 +90,13 @@ impl CheckType {
             Self::Http => "http",
             Self::Ttl => "ttl",
             Self::Grpc => "grpc",
+            Self::Mysql => "mysql",
         }
     }
 
     /// Whether this check type requires active (outbound) checking
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Tcp | Self::Http | Self::Grpc)
+        matches!(self, Self::Tcp | Self::Http | Self::Grpc | Self::Mysql)
     }
 }
 

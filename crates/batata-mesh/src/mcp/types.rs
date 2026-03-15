@@ -118,7 +118,7 @@ pub struct ServiceEntrySpec {
     /// Hosts associated with the service
     pub hosts: Vec<String>,
     /// Addresses (virtual IPs) for the service
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub addresses: Vec<String>,
     /// Ports exposed by the service
     pub ports: Vec<Port>,
@@ -127,13 +127,13 @@ pub struct ServiceEntrySpec {
     /// Service location (internal or external to mesh)
     pub location: Location,
     /// Endpoints for the service (when resolution is STATIC)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub endpoints: Vec<WorkloadEntry>,
     /// Export configuration
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub export_to: Vec<String>,
     /// Subject alternate names for TLS
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subject_alt_names: Vec<String>,
 }
 
@@ -250,19 +250,19 @@ pub struct VirtualServiceSpec {
     /// Hosts this virtual service applies to
     pub hosts: Vec<String>,
     /// Gateways this virtual service is attached to
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gateways: Vec<String>,
     /// HTTP routes
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub http: Vec<HttpRoute>,
     /// TCP routes
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tcp: Vec<TcpRoute>,
     /// TLS routes
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tls: Vec<TlsRoute>,
     /// Export configuration
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub export_to: Vec<String>,
 }
 
@@ -274,10 +274,10 @@ pub struct HttpRoute {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Match conditions
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub r#match: Vec<HttpMatchRequest>,
     /// Route destinations
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub route: Vec<HttpRouteDestination>,
     /// Redirect configuration
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -401,7 +401,7 @@ pub struct HeaderOperations {
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub add: HashMap<String, String>,
     /// Headers to remove
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove: Vec<String>,
 }
 
@@ -483,7 +483,7 @@ pub struct Percent {
 #[serde(rename_all = "camelCase")]
 pub struct TcpRoute {
     /// Match conditions
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub r#match: Vec<L4MatchAttributes>,
     /// Route destinations
     pub route: Vec<RouteDestination>,
@@ -494,7 +494,7 @@ pub struct TcpRoute {
 #[serde(rename_all = "camelCase")]
 pub struct L4MatchAttributes {
     /// Destination subnets
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub destination_subnets: Vec<String>,
     /// Port number
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -523,7 +523,7 @@ pub struct RouteDestination {
 #[serde(rename_all = "camelCase")]
 pub struct TlsRoute {
     /// Match conditions
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub r#match: Vec<TlsMatchAttributes>,
     /// Route destinations
     pub route: Vec<RouteDestination>,
@@ -536,7 +536,7 @@ pub struct TlsMatchAttributes {
     /// SNI hosts
     pub sni_hosts: Vec<String>,
     /// Destination subnets
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub destination_subnets: Vec<String>,
     /// Port number
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -565,10 +565,10 @@ pub struct DestinationRuleSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub traffic_policy: Option<TrafficPolicy>,
     /// Subsets
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subsets: Vec<Subset>,
     /// Export configuration
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub export_to: Vec<String>,
 }
 
@@ -742,7 +742,7 @@ pub struct ClientTlsSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sni: Option<String>,
     /// Subject alt names
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subject_alt_names: Vec<String>,
 }
 

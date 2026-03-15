@@ -9,6 +9,7 @@
 //! - Export/Import functionality
 //! - Capacity quota management
 
+pub mod cache;
 pub mod capacity;
 pub mod config;
 pub mod encryption;
@@ -16,6 +17,7 @@ pub mod export;
 pub mod history;
 pub mod import;
 pub mod namespace;
+pub mod notifier;
 
 pub use capacity::*;
 pub use config::*;

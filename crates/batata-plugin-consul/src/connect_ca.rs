@@ -227,16 +227,23 @@ pub struct ConsulConnectCAService {
     trust_domain: String,
     /// Datacenter name
     datacenter: String,
+    /// CA certificate PEM (for signing leaf certs)
+    ca_cert_pem: String,
+    /// CA private key PEM (for signing leaf certs)
+    ca_key_pem: String,
 }
 
 impl ConsulConnectCAService {
     pub fn new() -> Self {
         let root_id = uuid::Uuid::new_v4().to_string();
 
+        // Generate a real self-signed CA root certificate
+        let (ca_cert_pem, ca_key_pem) = Self::generate_ca_root_cert();
+
         let root = CARoot {
             id: root_id.clone(),
             name: "Consul CA Root Cert".to_string(),
-            root_cert: Self::placeholder_root_cert(),
+            root_cert: ca_cert_pem.clone(),
             active: true,
             create_index: 1,
             modify_index: 1,
@@ -273,6 +280,8 @@ impl ConsulConnectCAService {
             index: std::sync::atomic::AtomicU64::new(2),
             trust_domain: "consul".to_string(),
             datacenter: "dc1".to_string(),
+            ca_cert_pem,
+            ca_key_pem,
         }
     }
 
@@ -281,9 +290,25 @@ impl ConsulConnectCAService {
         self
     }
 
-    fn placeholder_root_cert() -> String {
-        // Placeholder - in production this would be a real self-signed CA certificate
-        "-----BEGIN CERTIFICATE-----\nPlaceholder Consul CA Root Certificate\n-----END CERTIFICATE-----".to_string()
+    /// Generate a self-signed CA root certificate using rcgen
+    fn generate_ca_root_cert() -> (String, String) {
+        use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair};
+
+        let mut params = CertificateParams::default();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params
+            .distinguished_name
+            .push(DnType::CommonName, "Consul CA Root");
+        params
+            .distinguished_name
+            .push(DnType::OrganizationName, "Batata Consul");
+
+        let key_pair = KeyPair::generate().expect("Failed to generate CA key pair");
+        let cert = params
+            .self_signed(&key_pair)
+            .expect("Failed to generate CA certificate");
+
+        (cert.pem(), key_pair.serialize_pem())
     }
 
     pub async fn get_roots(&self) -> CARootList {
@@ -315,6 +340,8 @@ impl ConsulConnectCAService {
         let valid_before = now + chrono::Duration::hours(72);
         let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
+        let (cert_pem, private_key_pem) = self.generate_leaf_cert(service);
+
         LeafCert {
             serial_number: format!(
                 "{:02x}:{:02x}:{:02x}:{:02x}",
@@ -323,11 +350,8 @@ impl ConsulConnectCAService {
                 rand_byte(),
                 rand_byte()
             ),
-            cert_pem: format!(
-                "-----BEGIN CERTIFICATE-----\nPlaceholder leaf cert for {}\n-----END CERTIFICATE-----",
-                service
-            ),
-            private_key_pem: "-----BEGIN EC PRIVATE KEY-----\nPlaceholder private key\n-----END EC PRIVATE KEY-----".to_string(),
+            cert_pem,
+            private_key_pem,
             service: service.to_string(),
             service_uri: format!(
                 "spiffe://{}/ns/default/dc/{}/svc/{}",
@@ -338,6 +362,44 @@ impl ConsulConnectCAService {
             create_index: index,
             modify_index: index,
         }
+    }
+
+    /// Generate a leaf certificate signed by the CA for a given service
+    fn generate_leaf_cert(&self, service: &str) -> (String, String) {
+        use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair};
+
+        // Generate leaf key pair
+        let leaf_key_pair = KeyPair::generate().expect("Failed to generate leaf key pair");
+
+        // Create leaf certificate params
+        let mut leaf_params = CertificateParams::default();
+        leaf_params
+            .distinguished_name
+            .push(DnType::CommonName, &format!("{}.svc.consul", service));
+        leaf_params
+            .distinguished_name
+            .push(DnType::OrganizationName, "Batata Consul Service");
+
+        // Reconstruct CA cert from stored key for signing
+        let ca_key = KeyPair::from_pem(&self.ca_key_pem).expect("Failed to parse CA key");
+        let mut ca_params = CertificateParams::default();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params
+            .distinguished_name
+            .push(DnType::CommonName, "Consul CA Root");
+        ca_params
+            .distinguished_name
+            .push(DnType::OrganizationName, "Batata Consul");
+        let ca_cert = ca_params
+            .self_signed(&ca_key)
+            .expect("Failed to reconstruct CA cert");
+
+        // Sign leaf cert with CA
+        let leaf_cert = leaf_params
+            .signed_by(&leaf_key_pair, &ca_cert, &ca_key)
+            .expect("Failed to sign leaf certificate");
+
+        (leaf_cert.pem(), leaf_key_pair.serialize_pem())
     }
 
     pub fn create_intention(&self, req: IntentionRequest) -> Intention {

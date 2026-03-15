@@ -28,6 +28,10 @@ impl HealthCheckerFactory {
         // Register built-in checkers
         factory.register("TCP", Arc::new(super::checker::TcpHealthChecker));
         factory.register("HTTP", Arc::new(super::checker::HttpHealthChecker));
+        factory.register(
+            "MYSQL",
+            Arc::new(super::checker::MysqlHealthChecker::default()),
+        );
         factory.register("NONE", Arc::new(super::checker::NoneHealthChecker));
 
         factory
@@ -121,8 +125,9 @@ mod tests {
 
         assert!(factory.has_checker("TCP"));
         assert!(factory.has_checker("HTTP"));
+        assert!(factory.has_checker("MYSQL"));
         assert!(factory.has_checker("NONE"));
-        assert_eq!(factory.checker_count(), 3);
+        assert_eq!(factory.checker_count(), 4);
     }
 
     #[tokio::test]
@@ -151,7 +156,7 @@ mod tests {
 
         factory.register("CUSTOM", Arc::new(CustomChecker));
         assert!(factory.has_checker("CUSTOM"));
-        assert_eq!(factory.checker_count(), 4);
+        assert_eq!(factory.checker_count(), 5);
 
         // Test custom checker
         let instance = Instance::default();
@@ -189,9 +194,10 @@ mod tests {
         let factory = HealthCheckerFactory::new();
         let types = factory.get_checker_types();
 
-        assert_eq!(types.len(), 3);
+        assert_eq!(types.len(), 4);
         assert!(types.contains(&"TCP".to_string()));
         assert!(types.contains(&"HTTP".to_string()));
+        assert!(types.contains(&"MYSQL".to_string()));
         assert!(types.contains(&"NONE".to_string()));
     }
 }

@@ -23,12 +23,14 @@ use std::sync::Arc;
 // Re-export common types
 pub use checker::{HealthCheckResult, HealthChecker};
 pub use config::{HealthCheckConfig, HttpHealthParams, TcpHealthParams};
-pub use configurer::{HealthCheckerConfig, HttpHealthCheckerConfig, TcpHealthCheckerConfig};
+pub use configurer::{
+    HealthCheckerConfig, HttpHealthCheckerConfig, MysqlHealthCheckerConfig, TcpHealthCheckerConfig,
+};
 pub use factory::HealthCheckerFactory;
 pub use heartbeat::{ExpiredInstanceChecker, UnhealthyInstanceChecker};
 pub use processor::{
-    HealthCheckProcessor, HealthCheckType, HttpHealthCheckProcessor, NoneHealthCheckProcessor,
-    TcpHealthCheckProcessor,
+    HealthCheckProcessor, HealthCheckType, HttpHealthCheckProcessor, MysqlHealthCheckProcessor,
+    NoneHealthCheckProcessor, TcpHealthCheckProcessor,
 };
 pub use reactor::HealthCheckReactor;
 pub use registry::{

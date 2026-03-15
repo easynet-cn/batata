@@ -84,4 +84,24 @@ impl ConsulClient {
         let path = format!("/v1/catalog/node-services/{}", node);
         self.get_optional(&path, opts).await
     }
+
+    /// Get Connect-capable service nodes
+    pub async fn catalog_connect(
+        &self,
+        service: &str,
+        opts: &QueryOptions,
+    ) -> Result<(Vec<CatalogService>, QueryMeta)> {
+        self.get(&format!("/v1/catalog/connect/{}", service), opts)
+            .await
+    }
+
+    /// Get gateway services
+    pub async fn catalog_gateway_services(
+        &self,
+        gateway: &str,
+        opts: &QueryOptions,
+    ) -> Result<(Vec<serde_json::Value>, QueryMeta)> {
+        self.get(&format!("/v1/catalog/gateway-services/{}", gateway), opts)
+            .await
+    }
 }

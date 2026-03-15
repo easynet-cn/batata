@@ -11,6 +11,7 @@ use async_trait::async_trait;
 
 pub mod cmdb;
 pub mod control;
+pub mod spi;
 pub mod webhook;
 
 pub use control::{

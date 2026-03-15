@@ -2,6 +2,9 @@
 // This file defines fundamental data structures used throughout the application
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -133,6 +136,90 @@ impl ConnectionMeta {
     pub fn push_queue_block_times_last_over(&self, time_mills_seconds: i64) -> bool {
         self.last_push_queue_block_time - self.first_push_queue_block_time > time_mills_seconds
     }
+
+    /// Update the last active time to the current timestamp in milliseconds.
+    pub fn update_last_active(&mut self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        self.last_active_time = now;
+    }
+
+    /// Get the last active time in milliseconds since epoch.
+    pub fn get_last_active(&self) -> i64 {
+        self.last_active_time
+    }
+
+    /// Get the number of milliseconds this connection has been idle.
+    pub fn idle_millis(&self) -> u64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        now.saturating_sub(self.last_active_time) as u64
+    }
+
+    /// Initialize the create time and last active time to now (millis since epoch).
+    pub fn initialize_timestamps(&mut self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        self.create_time = now;
+        self.last_active_time = now;
+    }
+}
+
+/// Thread-safe atomic tracker for last active time, used by ConnectionManager
+/// to update timestamps without requiring exclusive access to Connection.
+#[derive(Debug, Clone)]
+pub struct AtomicLastActive {
+    inner: Arc<AtomicI64>,
+}
+
+impl Default for AtomicLastActive {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(AtomicI64::new(0)),
+        }
+    }
+}
+
+impl AtomicLastActive {
+    /// Create a new tracker initialized to the current time.
+    pub fn now() -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        Self {
+            inner: Arc::new(AtomicI64::new(now)),
+        }
+    }
+
+    /// Update the tracked time to the current timestamp.
+    pub fn touch(&self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        self.inner.store(now, Ordering::Relaxed);
+    }
+
+    /// Get the last active timestamp in milliseconds since epoch.
+    pub fn get(&self) -> i64 {
+        self.inner.load(Ordering::Relaxed)
+    }
+
+    /// Get the idle duration in milliseconds.
+    pub fn idle_millis(&self) -> u64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        now.saturating_sub(self.get()) as u64
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -144,9 +231,25 @@ pub struct Connection {
 
     #[serde(flatten)]
     pub meta_info: ConnectionMeta,
+
+    /// Atomic last-active tracker for thread-safe idle time checks.
+    /// This is updated atomically without needing mutable access to Connection.
+    #[serde(skip)]
+    pub last_active: AtomicLastActive,
 }
 
-impl Connection {}
+impl Connection {
+    /// Update the last active time on both the atomic tracker and the meta_info field.
+    pub fn touch(&mut self) {
+        self.last_active.touch();
+        self.meta_info.update_last_active();
+    }
+
+    /// Get idle time in milliseconds using the atomic tracker.
+    pub fn idle_millis(&self) -> u64 {
+        self.last_active.idle_millis()
+    }
+}
 
 #[derive(Clone)]
 pub struct GrpcClient {

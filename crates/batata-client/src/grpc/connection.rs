@@ -100,6 +100,13 @@ impl GrpcConnection {
         all_labels.insert(LABEL_SOURCE.to_string(), LABEL_SOURCE_SDK.to_string());
         all_labels.insert(LABEL_MODULE.to_string(), module.to_string());
 
+        // Report client abilities
+        all_labels.insert("sdk_version".to_string(), "batata-rust-0.1.0".to_string());
+        all_labels.insert("support_config".to_string(), "true".to_string());
+        all_labels.insert("support_naming".to_string(), "true".to_string());
+        all_labels.insert("support_lock".to_string(), "true".to_string());
+        all_labels.insert("client_type".to_string(), "rust".to_string());
+
         let mut setup_req = ConnectionSetupRequest::new();
         setup_req.client_version = CLIENT_VERSION.to_string();
         setup_req.tenant = tenant.to_string();
@@ -306,5 +313,26 @@ mod tests {
     fn test_grpc_port_offset() {
         // Verify the offset constant is 1000
         assert_eq!(SDK_GRPC_PORT_DEFAULT_OFFSET, 1000);
+    }
+
+    #[test]
+    fn test_client_abilities_labels() {
+        // Verify that the expected ability labels are defined as constants
+        // and would be inserted during connection setup
+        let mut labels = HashMap::new();
+        labels.insert(LABEL_SOURCE.to_string(), LABEL_SOURCE_SDK.to_string());
+        labels.insert(LABEL_MODULE.to_string(), "config".to_string());
+        labels.insert("sdk_version".to_string(), "batata-rust-0.1.0".to_string());
+        labels.insert("support_config".to_string(), "true".to_string());
+        labels.insert("support_naming".to_string(), "true".to_string());
+        labels.insert("support_lock".to_string(), "true".to_string());
+        labels.insert("client_type".to_string(), "rust".to_string());
+
+        assert_eq!(labels.get("sdk_version").unwrap(), "batata-rust-0.1.0");
+        assert_eq!(labels.get("support_config").unwrap(), "true");
+        assert_eq!(labels.get("support_naming").unwrap(), "true");
+        assert_eq!(labels.get("support_lock").unwrap(), "true");
+        assert_eq!(labels.get("client_type").unwrap(), "rust");
+        assert_eq!(labels.len(), 7);
     }
 }

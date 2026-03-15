@@ -6,6 +6,40 @@
 use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
+use tracing::warn;
+
+/// Configuration for naming fuzzy watch limits
+#[derive(Clone)]
+pub struct NamingFuzzyWatchLimits {
+    /// Maximum number of patterns per client connection
+    pub max_patterns_per_client: usize,
+    /// Maximum number of matched services per pattern
+    pub max_matched_per_pattern: usize,
+}
+
+impl Default for NamingFuzzyWatchLimits {
+    fn default() -> Self {
+        Self {
+            max_patterns_per_client: 50,
+            max_matched_per_pattern: 1000,
+        }
+    }
+}
+
+/// Error type for naming fuzzy watch limit violations
+#[derive(Debug, Clone)]
+pub struct NamingFuzzyWatchLimitError {
+    pub code: i32,
+    pub message: String,
+}
+
+impl std::fmt::Display for NamingFuzzyWatchLimitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}] {}", self.code, self.message)
+    }
+}
+
+impl std::error::Error for NamingFuzzyWatchLimitError {}
 
 /// Naming fuzzy watch pattern
 #[derive(Clone, Debug)]
@@ -76,6 +110,8 @@ pub struct NamingFuzzyWatchManager {
     watchers: Arc<DashMap<String, Vec<NamingFuzzyWatchPattern>>>,
     /// Key: connection_id, Value: set of received group keys (for deduplication)
     received_keys: Arc<DashMap<String, HashSet<String>>>,
+    /// Load protection limits
+    limits: NamingFuzzyWatchLimits,
 }
 
 impl Default for NamingFuzzyWatchManager {
@@ -89,28 +125,66 @@ impl NamingFuzzyWatchManager {
         Self {
             watchers: Arc::new(DashMap::new()),
             received_keys: Arc::new(DashMap::new()),
+            limits: NamingFuzzyWatchLimits::default(),
         }
     }
 
-    /// Register a fuzzy watch pattern for a connection
+    /// Create a new manager with custom limits
+    pub fn with_limits(limits: NamingFuzzyWatchLimits) -> Self {
+        Self {
+            watchers: Arc::new(DashMap::new()),
+            received_keys: Arc::new(DashMap::new()),
+            limits,
+        }
+    }
+
+    /// Register a fuzzy watch pattern for a connection.
+    ///
+    /// Returns `Ok(true)` if the pattern was registered successfully,
+    /// `Ok(false)` if the pattern string was invalid,
+    /// or `Err` if the per-client pattern limit is exceeded.
     pub fn register_watch(
         &self,
         connection_id: &str,
         group_key_pattern: &str,
         watch_type: &str,
-    ) -> bool {
+    ) -> Result<bool, NamingFuzzyWatchLimitError> {
         if let Some(mut pattern) =
             NamingFuzzyWatchPattern::from_group_key_pattern(group_key_pattern)
         {
             pattern.watch_type = watch_type.to_string();
 
+            // Check per-client pattern limit
+            let current_count = self
+                .watchers
+                .get(connection_id)
+                .map(|entry| entry.value().len())
+                .unwrap_or(0);
+
+            if current_count >= self.limits.max_patterns_per_client {
+                warn!(
+                    "Connection {} exceeded max patterns per client limit ({})",
+                    connection_id, self.limits.max_patterns_per_client
+                );
+                return Err(NamingFuzzyWatchLimitError {
+                    code: batata_common::error::FUZZY_WATCH_PATTERN_OVER_LIMIT.code,
+                    message: format!(
+                        "{}: connection {} has {} patterns, limit is {}",
+                        batata_common::error::FUZZY_WATCH_PATTERN_OVER_LIMIT.message,
+                        connection_id,
+                        current_count,
+                        self.limits.max_patterns_per_client
+                    ),
+                });
+            }
+
             self.watchers
                 .entry(connection_id.to_string())
                 .or_default()
                 .push(pattern);
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 
@@ -182,6 +256,37 @@ impl NamingFuzzyWatchManager {
     pub fn pattern_count(&self) -> usize {
         self.watchers.iter().map(|entry| entry.value().len()).sum()
     }
+
+    /// Get the configured limits
+    pub fn limits(&self) -> &NamingFuzzyWatchLimits {
+        &self.limits
+    }
+
+    /// Count the number of services matching a specific pattern.
+    /// Returns an error if the match count exceeds the per-pattern limit.
+    pub fn check_match_count(
+        &self,
+        match_count: usize,
+        pattern_desc: &str,
+    ) -> Result<(), NamingFuzzyWatchLimitError> {
+        if match_count > self.limits.max_matched_per_pattern {
+            warn!(
+                "Pattern '{}' matched {} services, exceeding limit of {}",
+                pattern_desc, match_count, self.limits.max_matched_per_pattern
+            );
+            return Err(NamingFuzzyWatchLimitError {
+                code: batata_common::error::FUZZY_WATCH_PATTERN_MATCH_COUNT_OVER_LIMIT.code,
+                message: format!(
+                    "{}: pattern '{}' matched {} services, limit is {}",
+                    batata_common::error::FUZZY_WATCH_PATTERN_MATCH_COUNT_OVER_LIMIT.message,
+                    pattern_desc,
+                    match_count,
+                    self.limits.max_matched_per_pattern
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -234,8 +339,16 @@ mod tests {
     #[test]
     fn test_manager_register_and_get() {
         let manager = NamingFuzzyWatchManager::new();
-        assert!(manager.register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1"));
-        assert!(manager.register_watch("conn1", "public+*+my-service", "watch2"));
+        assert!(
+            manager
+                .register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1")
+                .unwrap()
+        );
+        assert!(
+            manager
+                .register_watch("conn1", "public+*+my-service", "watch2")
+                .unwrap()
+        );
 
         let patterns = manager.get_patterns("conn1");
         assert_eq!(patterns.len(), 2);
@@ -244,8 +357,12 @@ mod tests {
     #[test]
     fn test_manager_get_watchers() {
         let manager = NamingFuzzyWatchManager::new();
-        manager.register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1");
-        manager.register_watch("conn2", "public+TEST_GROUP+*", "watch1");
+        manager
+            .register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1")
+            .unwrap();
+        manager
+            .register_watch("conn2", "public+TEST_GROUP+*", "watch1")
+            .unwrap();
 
         let watchers = manager.get_watchers_for_service("public", "DEFAULT_GROUP", "my-service");
         assert_eq!(watchers.len(), 1);
@@ -259,8 +376,12 @@ mod tests {
     #[test]
     fn test_manager_unregister() {
         let manager = NamingFuzzyWatchManager::new();
-        manager.register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1");
-        manager.register_watch("conn2", "public+*+my-service", "watch2");
+        manager
+            .register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1")
+            .unwrap();
+        manager
+            .register_watch("conn2", "public+*+my-service", "watch2")
+            .unwrap();
 
         manager.unregister_connection("conn1");
 
@@ -269,5 +390,104 @@ mod tests {
 
         let patterns = manager.get_patterns("conn2");
         assert_eq!(patterns.len(), 1);
+    }
+
+    // Load protection tests
+
+    #[test]
+    fn test_naming_pattern_over_limit() {
+        let limits = NamingFuzzyWatchLimits {
+            max_patterns_per_client: 3,
+            max_matched_per_pattern: 1000,
+        };
+        let manager = NamingFuzzyWatchManager::with_limits(limits);
+
+        // Register up to the limit
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-1", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-2", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-3", "add")
+            .unwrap();
+
+        // Fourth registration should fail
+        let result = manager.register_watch("conn-1", "public+DEFAULT_GROUP+svc-4", "add");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.code,
+            batata_common::error::FUZZY_WATCH_PATTERN_OVER_LIMIT.code
+        );
+
+        // Different connection should still work
+        let result = manager.register_watch("conn-2", "public+DEFAULT_GROUP+svc-1", "add");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_naming_match_count_over_limit() {
+        let limits = NamingFuzzyWatchLimits {
+            max_patterns_per_client: 50,
+            max_matched_per_pattern: 5,
+        };
+        let manager = NamingFuzzyWatchManager::with_limits(limits);
+
+        // Within limit
+        let result = manager.check_match_count(3, "public+*+*");
+        assert!(result.is_ok());
+
+        // At limit
+        let result = manager.check_match_count(5, "public+*+*");
+        assert!(result.is_ok());
+
+        // Over limit
+        let result = manager.check_match_count(6, "public+*+*");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.code,
+            batata_common::error::FUZZY_WATCH_PATTERN_MATCH_COUNT_OVER_LIMIT.code
+        );
+    }
+
+    #[test]
+    fn test_naming_default_limits() {
+        let limits = NamingFuzzyWatchLimits::default();
+        assert_eq!(limits.max_patterns_per_client, 50);
+        assert_eq!(limits.max_matched_per_pattern, 1000);
+    }
+
+    #[test]
+    fn test_naming_pattern_limit_after_unregister() {
+        let limits = NamingFuzzyWatchLimits {
+            max_patterns_per_client: 2,
+            max_matched_per_pattern: 1000,
+        };
+        let manager = NamingFuzzyWatchManager::with_limits(limits);
+
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-1", "add")
+            .unwrap();
+        manager
+            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-2", "add")
+            .unwrap();
+
+        // At limit, should fail
+        assert!(
+            manager
+                .register_watch("conn-1", "public+DEFAULT_GROUP+svc-3", "add")
+                .is_err()
+        );
+
+        // Unregister and re-register
+        manager.unregister_connection("conn-1");
+        assert!(
+            manager
+                .register_watch("conn-1", "public+DEFAULT_GROUP+svc-1", "add")
+                .is_ok()
+        );
     }
 }

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::client::ConsulClient;
 use crate::error::Result;
 use crate::model::{
-    AgentCheck, AgentMember, AgentService, AgentServiceRegistration, QueryMeta, QueryOptions,
-    WriteMeta, WriteOptions,
+    AgentCheck, AgentCheckRegistration, AgentCheckUpdate, AgentMember, AgentService,
+    AgentServiceRegistration, QueryMeta, QueryOptions, WriteMeta, WriteOptions,
 };
 
 /// Agent API operations
@@ -134,6 +134,215 @@ impl ConsulClient {
     pub async fn agent_update_token(&self, token: &str, opts: &WriteOptions) -> Result<WriteMeta> {
         let body = serde_json::json!({ "Token": token });
         self.put_no_response_with_body("/v1/agent/token/default", &body, opts)
+            .await
+    }
+
+    /// Register a health check
+    pub async fn agent_check_register(
+        &self,
+        check: &AgentCheckRegistration,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        self.put_no_response_with_body("/v1/agent/check/register", check, opts)
+            .await
+    }
+
+    /// Deregister a health check
+    pub async fn agent_check_deregister(
+        &self,
+        check_id: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        self.put_no_response(
+            &format!("/v1/agent/check/deregister/{}", check_id),
+            opts,
+            &[],
+        )
+        .await
+    }
+
+    /// Mark a TTL check as passing
+    pub async fn agent_check_pass(
+        &self,
+        check_id: &str,
+        note: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let extra = if note.is_empty() {
+            vec![]
+        } else {
+            vec![("note".to_string(), note.to_string())]
+        };
+        self.put_no_response(&format!("/v1/agent/check/pass/{}", check_id), opts, &extra)
+            .await
+    }
+
+    /// Mark a TTL check as warning
+    pub async fn agent_check_warn(
+        &self,
+        check_id: &str,
+        note: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let extra = if note.is_empty() {
+            vec![]
+        } else {
+            vec![("note".to_string(), note.to_string())]
+        };
+        self.put_no_response(&format!("/v1/agent/check/warn/{}", check_id), opts, &extra)
+            .await
+    }
+
+    /// Mark a TTL check as critical
+    pub async fn agent_check_fail(
+        &self,
+        check_id: &str,
+        note: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let extra = if note.is_empty() {
+            vec![]
+        } else {
+            vec![("note".to_string(), note.to_string())]
+        };
+        self.put_no_response(&format!("/v1/agent/check/fail/{}", check_id), opts, &extra)
+            .await
+    }
+
+    /// Update a TTL check with custom status and output
+    pub async fn agent_check_update(
+        &self,
+        check_id: &str,
+        update: &AgentCheckUpdate,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        self.put_no_response_with_body(
+            &format!("/v1/agent/check/update/{}", check_id),
+            update,
+            opts,
+        )
+        .await
+    }
+
+    /// Enable node maintenance mode
+    pub async fn agent_enable_node_maintenance(
+        &self,
+        reason: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let extra = vec![
+            ("enable".to_string(), "true".to_string()),
+            ("reason".to_string(), reason.to_string()),
+        ];
+        self.put_no_response("/v1/agent/maintenance", opts, &extra)
+            .await
+    }
+
+    /// Disable node maintenance mode
+    pub async fn agent_disable_node_maintenance(&self, opts: &WriteOptions) -> Result<WriteMeta> {
+        let extra = vec![("enable".to_string(), "false".to_string())];
+        self.put_no_response("/v1/agent/maintenance", opts, &extra)
+            .await
+    }
+
+    /// Enable service maintenance mode
+    pub async fn agent_enable_service_maintenance(
+        &self,
+        service_id: &str,
+        reason: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let extra = vec![
+            ("enable".to_string(), "true".to_string()),
+            ("reason".to_string(), reason.to_string()),
+        ];
+        self.put_no_response(
+            &format!("/v1/agent/service/maintenance/{}", service_id),
+            opts,
+            &extra,
+        )
+        .await
+    }
+
+    /// Disable service maintenance mode
+    pub async fn agent_disable_service_maintenance(
+        &self,
+        service_id: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let extra = vec![("enable".to_string(), "false".to_string())];
+        self.put_no_response(
+            &format!("/v1/agent/service/maintenance/{}", service_id),
+            opts,
+            &extra,
+        )
+        .await
+    }
+
+    /// Get agent host information
+    pub async fn agent_host(&self, opts: &QueryOptions) -> Result<(serde_json::Value, QueryMeta)> {
+        self.get("/v1/agent/host", opts).await
+    }
+
+    /// Get agent version
+    pub async fn agent_version(
+        &self,
+        opts: &QueryOptions,
+    ) -> Result<(serde_json::Value, QueryMeta)> {
+        self.get("/v1/agent/version", opts).await
+    }
+
+    /// Get agent metrics
+    pub async fn agent_metrics(
+        &self,
+        opts: &QueryOptions,
+    ) -> Result<(serde_json::Value, QueryMeta)> {
+        self.get("/v1/agent/metrics", opts).await
+    }
+
+    /// Reload agent configuration
+    pub async fn agent_reload(&self, opts: &WriteOptions) -> Result<WriteMeta> {
+        self.put_no_response("/v1/agent/reload", opts, &[]).await
+    }
+
+    /// Get service health by ID
+    pub async fn agent_health_service_by_id(
+        &self,
+        service_id: &str,
+        opts: &QueryOptions,
+    ) -> Result<(serde_json::Value, QueryMeta)> {
+        self.get(&format!("/v1/agent/health/service/id/{}", service_id), opts)
+            .await
+    }
+
+    /// Get service health by name
+    pub async fn agent_health_service_by_name(
+        &self,
+        service_name: &str,
+        opts: &QueryOptions,
+    ) -> Result<(serde_json::Value, QueryMeta)> {
+        self.get(
+            &format!("/v1/agent/health/service/name/{}", service_name),
+            opts,
+        )
+        .await
+    }
+
+    /// Get Connect CA roots via agent
+    pub async fn agent_connect_ca_roots(
+        &self,
+        opts: &QueryOptions,
+    ) -> Result<(serde_json::Value, QueryMeta)> {
+        self.get("/v1/agent/connect/ca/roots", opts).await
+    }
+
+    /// Get Connect leaf certificate for a service
+    pub async fn agent_connect_ca_leaf(
+        &self,
+        service: &str,
+        opts: &QueryOptions,
+    ) -> Result<(serde_json::Value, QueryMeta)> {
+        self.get(&format!("/v1/agent/connect/ca/leaf/{}", service), opts)
             .await
     }
 }

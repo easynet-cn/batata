@@ -23,6 +23,7 @@ bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_urlencoded = { workspace = true }
+toml = { workspace = true }
 
 # Async
 async-trait = { workspace = true }
@@ -30,6 +31,7 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros", "net"] }
 
 # Concurrency
 dashmap = { workspace = true }
+parking_lot = { workspace = true }
 
 # Streaming
 tokio-stream = { workspace = true }
@@ -52,6 +54,14 @@ tempfile = { workspace = true }
 
 # Random
 rand = { workspace = true }
+
+# Crypto / signing
+hmac = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }
+
+# Time
+chrono = { workspace = true }
 
 # Metrics
 prometheus = { workspace = true }

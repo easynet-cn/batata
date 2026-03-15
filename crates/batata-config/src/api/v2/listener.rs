@@ -11,8 +11,11 @@ use batata_server_common::{
     secured,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
+
+use crate::service::notifier::ConfigChangeNotifier;
 
 /// Parse listener configs from the "Listening-Configs" form parameter
 ///
@@ -94,10 +97,16 @@ async fn check_config_changes(
 /// Listens for configuration changes using long-polling mechanism.
 /// Clients provide a list of configs with their current MD5 hashes,
 /// and the server responds when any of the configs change.
+///
+/// When no changes are detected on the initial check, the server waits
+/// for a notification from `ConfigChangeNotifier` (triggered on config
+/// publish/update/delete) or until the client-specified timeout expires.
+/// This avoids wasteful adaptive polling and delivers changes immediately.
 #[post("listener")]
 pub async fn config_listener(
     req: HttpRequest,
     data: web::Data<AppState>,
+    notifier: web::Data<Arc<ConfigChangeNotifier>>,
     form: web::Form<HashMap<String, String>>,
 ) -> impl Responder {
     // Parse the "Listening-Configs" parameter
@@ -150,45 +159,57 @@ pub async fn config_listener(
         return Result::<HashMap<String, String>>::http_success(changed_configs);
     }
 
-    // No changes yet - implement long polling
-    // For simplicity, we check once more after a short delay
-    // A full implementation would use a notification system
+    // No changes yet - wait for notifications using ConfigChangeNotifier.
+    // Collect Notify handles for all listened configs so we wake up on any change.
     let max_timeout = configs
         .iter()
         .map(|(_, _, _, timeout)| *timeout)
         .max()
         .unwrap_or(30000);
 
-    // Poll with increasing intervals (adaptive polling)
-    let intervals = vec![1000u64, 2000, 5000, 10000];
-    let mut elapsed = 0u64;
+    // Build notify futures for each config key
+    let notify_handles: Vec<_> = configs
+        .iter()
+        .map(|(data_id, group, _, _)| {
+            let key = ConfigChangeNotifier::build_key(&namespace_id, group, data_id);
+            notifier.get_or_create(&key)
+        })
+        .collect();
 
-    for interval in intervals {
-        if elapsed + interval > max_timeout {
-            tokio::time::sleep(Duration::from_millis(max_timeout - elapsed)).await;
-            elapsed = max_timeout;
-        } else {
-            tokio::time::sleep(Duration::from_millis(interval)).await;
-            elapsed += interval;
-        }
+    // Wait for any config change notification or timeout
+    let timeout_duration = Duration::from_millis(max_timeout);
 
-        // Check for changes again
-        let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
-        if !changed_configs.is_empty() {
-            info!(
-                count = changed_configs.len(),
-                elapsed_ms = elapsed,
-                "Config changes detected after polling"
-            );
-            return Result::<HashMap<String, String>>::http_success(changed_configs);
-        }
+    let notified_futures = notify_handles
+        .iter()
+        .map(|n| n.notified())
+        .collect::<Vec<_>>();
 
-        if elapsed >= max_timeout {
-            break;
-        }
+    // Use tokio::select! with a timeout: wake on the first notification or timeout
+    let _was_notified = tokio::time::timeout(timeout_duration, async {
+        // Wait for ANY of the notified futures to complete
+        // We use a select-like approach: spawn a future that completes when any notify fires
+        futures::future::select_all(notified_futures.into_iter().map(|f| {
+            Box::pin(f) as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+        }))
+        .await;
+    })
+    .await;
+
+    // Re-check for changes after being notified (or after timeout)
+    let changed_configs = check_config_changes(persistence, &configs, &namespace_id).await;
+
+    if !changed_configs.is_empty() {
+        info!(
+            count = changed_configs.len(),
+            "Config changes detected after notification"
+        );
+        return Result::<HashMap<String, String>>::http_success(changed_configs);
     }
 
     // Timeout - return empty result
-    info!(elapsed_ms = elapsed, "Config listener timeout, no changes");
+    info!(
+        timeout_ms = max_timeout,
+        "Config listener timeout, no changes"
+    );
     Result::<HashMap<String, String>>::http_success(HashMap::<String, String>::new())
 }
