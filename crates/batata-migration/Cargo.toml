@@ -1,0 +1,12 @@
+[package]
+name = "batata-migration"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Database migration for Batata using SeaORM"
+
+[dependencies]
+sea-orm-migration = { workspace = true }
+async-trait = { workspace = true }

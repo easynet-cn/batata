@@ -14,7 +14,6 @@ pub const NACOS_CORE_AUTH_ENABLED: &str = "batata.core.auth.enabled";
 pub const NACOS_CORE_AUTH_CONSOLE_ENABLED: &str = "batata.core.auth.console.enabled";
 pub const NACOS_CORE_AUTH_ADMIN_ENABLED: &str = "batata.core.auth.admin.enabled";
 pub const NACOS_CORE_AUTH_SYSTEM_TYPE: &str = "batata.core.auth.system.type";
-pub const NACOS_CORE_AUTH_CACHING_ENABLED: &str = "batata.core.auth.caching.enabled";
 pub const NACOS_CORE_AUTH_SERVER_IDENTITY_KEY: &str = "batata.core.auth.server.identity.key";
 pub const NACOS_CORE_AUTH_SERVER_IDENTITY_VALUE: &str = "batata.core.auth.server.identity.value";
 

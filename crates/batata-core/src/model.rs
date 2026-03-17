@@ -370,35 +370,35 @@ impl Configuration {
     /// Get cluster client connect timeout in milliseconds (default: 5000ms)
     pub fn cluster_connect_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("batata.remote.server.grpc.cluster.connect-timeout")
+            .get_int("batata.remote.server.grpc.cluster.connect_timeout")
             .unwrap_or(5000) as u64
     }
 
     /// Get cluster client request timeout in milliseconds (default: 5000ms)
     pub fn cluster_request_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("batata.remote.server.grpc.cluster.request-timeout")
+            .get_int("batata.remote.server.grpc.cluster.request_timeout")
             .unwrap_or(5000) as u64
     }
 
     /// Get cluster client max retry count (default: 3)
     pub fn cluster_max_retries(&self) -> u32 {
         self.config
-            .get_int("batata.remote.server.grpc.cluster.max-retries")
+            .get_int("batata.remote.server.grpc.cluster.max_retries")
             .unwrap_or(3) as u32
     }
 
     /// Get cluster client retry delay in milliseconds (default: 500ms)
     pub fn cluster_retry_delay_ms(&self) -> u64 {
         self.config
-            .get_int("batata.remote.server.grpc.cluster.retry-delay")
+            .get_int("batata.remote.server.grpc.cluster.retry_delay")
             .unwrap_or(500) as u64
     }
 
     /// Get cluster client idle connection timeout in milliseconds (default: 300000ms = 5 minutes)
     pub fn cluster_idle_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("batata.remote.server.grpc.cluster.idle-timeout")
+            .get_int("batata.remote.server.grpc.cluster.idle_timeout")
             .unwrap_or(300000) as u64
     }
 
@@ -407,21 +407,21 @@ impl Configuration {
     /// Get SDK gRPC max inbound message size in bytes (default: 10MB)
     pub fn sdk_grpc_max_inbound_message_size(&self) -> usize {
         self.config
-            .get_int("batata.remote.server.grpc.sdk.max-inbound-message-size")
+            .get_int("batata.remote.server.grpc.sdk.max_inbound_message_size")
             .unwrap_or(10485760) as usize
     }
 
     /// Get SDK gRPC keep-alive time in milliseconds (default: 7200000ms = 2 hours)
     pub fn sdk_grpc_keep_alive_time_ms(&self) -> u64 {
         self.config
-            .get_int("batata.remote.server.grpc.sdk.keep-alive-time")
+            .get_int("batata.remote.server.grpc.sdk.keep_alive_time")
             .unwrap_or(7200000) as u64
     }
 
     /// Get SDK gRPC keep-alive timeout in milliseconds (default: 20000ms = 20 seconds)
     pub fn sdk_grpc_keep_alive_timeout_ms(&self) -> u64 {
         self.config
-            .get_int("batata.remote.server.grpc.sdk.keep-alive-timeout")
+            .get_int("batata.remote.server.grpc.sdk.keep_alive_timeout")
             .unwrap_or(20000) as u64
     }
 

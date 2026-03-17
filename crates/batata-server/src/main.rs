@@ -13,6 +13,7 @@ use batata_core::cluster::ServerMemberManager;
 use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
+use batata_migration::{Migrator, MigratorTrait};
 use batata_persistence::{PersistenceService, StorageMode};
 use batata_server::{
     middleware::rate_limit,
@@ -141,6 +142,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match storage_mode {
             StorageMode::ExternalDb => {
                 let db = configuration.database_connection().await?;
+
+                // Run database migrations if enabled
+                if configuration.db_migration_enabled() {
+                    info!("Running database migrations...");
+                    Migrator::up(&db, None).await?;
+                    info!("Database migrations completed successfully");
+                }
+
                 let core_config = configuration.to_core_config();
                 let smm = Arc::new(ServerMemberManager::new(&core_config));
                 let persist: Arc<dyn PersistenceService> = Arc::new(

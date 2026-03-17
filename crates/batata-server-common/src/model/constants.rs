@@ -125,7 +125,7 @@ pub const SYS_MODULE: &str = "sys";
 pub const STANDALONE_SPRING_PROFILE: &str = "standalone";
 pub const STANDALONE_MODE_PROPERTY_NAME: &str = "batata.standalone";
 pub const STARTUP_MODE_STATE: &str = "startup_mode";
-pub const FUNCTION_MODE_PROPERTY_NAME: &str = "batata.functionMode";
+pub const FUNCTION_MODE_PROPERTY_NAME: &str = "batata.function_mode";
 pub const FUNCTION_MODE_STATE: &str = "function_mode";
 pub const PREFER_HOSTNAME_OVER_IP_PROPERTY_NAME: &str = "batata.preferHostnameOverIp";
 

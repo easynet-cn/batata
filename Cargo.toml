@@ -19,6 +19,7 @@ members = [
     "crates/batata-maintainer-client",
     "crates/batata-ai",
     "crates/batata-consul-client",
+    "crates/batata-migration",
     "crates/batata-server",
 ]
 
@@ -49,6 +50,7 @@ batata-maintainer-client = { path = "crates/batata-maintainer-client" }
 batata-mesh = { path = "crates/batata-mesh" }
 batata-ai = { path = "crates/batata-ai" }
 batata-consul-client = { path = "crates/batata-consul-client" }
+batata-migration = { path = "crates/batata-migration" }
 batata-server = { path = "crates/batata-server" }
 
 # Async runtime
@@ -73,6 +75,7 @@ http = "1.3"
 
 # Database (supports both MySQL and PostgreSQL)
 sea-orm = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
+sea-orm-migration = { version = "1.1", features = ["sqlx-mysql", "sqlx-postgres", "runtime-tokio"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

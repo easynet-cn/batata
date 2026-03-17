@@ -15,7 +15,7 @@
 batata.server.main.port: 8848
 
 # Server web context path (used for HTTP API prefix, e.g., /nacos/v2/cs/*)
-batata.server.contextPath: /nacos
+batata.server.context_path: /nacos
 
 # Standalone mode: true = single node, false = cluster mode
 batata.standalone: true
@@ -28,16 +28,6 @@ batata.standalone: true
 #batata.deployment.type: merged
 
 # =============================================================================
-# Network
-# =============================================================================
-
-# Specify local server's IP (auto-detected if not set)
-#batata.inetutils.ip-address:
-
-# Prefer hostname over IP for cluster.conf addresses
-#batata.inetutils.prefer-hostname-over-ip: false
-
-# =============================================================================
 # Console
 # =============================================================================
 
@@ -45,15 +35,12 @@ batata.standalone: true
 batata.console.port: 8081
 
 # Console web context path (empty = root)
-batata.console.contextPath:
+batata.console.context_path:
 
 # Enable/disable console UI
 #batata.console.ui.enabled: true
 
 # --- Console Remote Mode (used when deployment type is `console`) ---
-
-# Server context path for remote server communication
-batata.console.remote.server.context-path: /nacos
 
 # Remote server address (fallback if batata.member.list and cluster.conf are not configured)
 #batata.console.remote.server_addr: http://127.0.0.1:8848
@@ -87,6 +74,9 @@ batata.db.pool.idle_timeout: 600
 batata.db.pool.max_lifetime: 1800
 batata.db.pool.sqlx_logging: false
 
+# Auto-run database migrations on startup (only for external DB mode)
+batata.db.migration.enabled: false
+
 # RocksDB data directory (for embedded modes only)
 #batata.persistence.embedded.data_dir: data/rocksdb
 
@@ -102,26 +92,22 @@ batata.core.auth.enabled: true
 batata.core.auth.admin.enabled: true
 batata.core.auth.console.enabled: true
 
-# Cache auth information (15s delay for auth updates when enabled)
-batata.core.auth.caching.enabled: true
-
 # Server identity for trusted server-to-server communication
 # Used by InnerApi auth bypass and Console remote mode
 batata.core.auth.server.identity.key: nacos-server-key
 batata.core.auth.server.identity.value: nacos-server-value
 
 # JWT token configuration
-batata.core.auth.plugin.nacos.token.cache.enable: false
 batata.core.auth.plugin.nacos.token.expire.seconds: 18000
 # Secret key (Base64-encoded). Generate with: openssl rand -base64 32
 batata.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUtMjYxYTdhMzA1Y2Jm
 
 # --- LDAP Configuration (when batata.core.auth.system.type=ldap) ---
 #batata.core.auth.ldap.url: ldap://localhost:389
-#batata.core.auth.ldap.basedc: dc=example,dc=org
-#batata.core.auth.ldap.userDn: cn=admin,${batata.core.auth.ldap.basedc}
+#batata.core.auth.ldap.base_dc: dc=example,dc=org
+#batata.core.auth.ldap.bind_dn: cn=admin,${batata.core.auth.ldap.base_dc}
 #batata.core.auth.ldap.password: admin
-#batata.core.auth.ldap.userdn: cn={0},dc=example,dc=org
+#batata.core.auth.ldap.user_dn_pattern: cn={0},dc=example,dc=org
 #batata.core.auth.ldap.filter.prefix: uid
 #batata.core.auth.ldap.case.sensitive: true
 #batata.core.auth.ldap.ignore.partial.result.exception: false
@@ -130,9 +116,6 @@ batata.core.auth.plugin.nacos.token.secret.key: NzViOWFlNjYtMWM3MC00ZDYwLTg4OWUt
 #batata.core.auth.oauth.enabled: false
 #batata.core.auth.oauth.user.creation: auto
 #batata.core.auth.oauth.role.sync: on_login
-
-# Auth URL ignore list
-batata.security.ignore.urls: /,/error,/**/*.css,/**/*.js,/**/*.html,/**/*.map,/**/*.svg,/**/*.png,/**/*.ico,/console-ui/public/**,/v1/auth/**,/v1/console/health/**,/actuator/**,/v1/console/server/**
 
 # =============================================================================
 # Rate Limiting
@@ -153,9 +136,6 @@ batata.ratelimit.auth.lockout_seconds: 300
 # Config Module
 # =============================================================================
 
-# Maximum retry times for config push
-batata.config.push.maxRetryTime: 50
-
 # Config retention days
 #batata.config.retention.days: 30
 
@@ -164,10 +144,6 @@ batata.config.encryption.enabled: false
 batata.config.encryption.plugin.type: aes-gcm
 # Encryption key (32-byte Base64-encoded). Generate with: openssl rand -base64 32
 #batata.config.encryption.key: YOUR_BASE64_ENCODED_32_BYTE_KEY
-# Encryption patterns (data_ids matching these patterns will be encrypted)
-batata.config.encryption.patterns:
-  - type: prefix
-    value: "cipher-"
 # Hot reload interval in ms (0 = disabled)
 batata.config.encryption.reload.interval.ms: 0
 
@@ -176,14 +152,10 @@ batata.config.encryption.reload.interval.ms: 0
 # =============================================================================
 
 # Enable instance auto-expiration (health check based)
-#batata.naming.expireInstance: true
+#batata.naming.expire_instance: true
 
 # Enable data warmup (server waits for data sync before accepting requests)
 #batata.naming.data.warmup: false
-
-batata.naming.empty-service.auto-clean: true
-batata.naming.empty-service.clean.initial-delay-ms: 50000
-batata.naming.empty-service.clean.period-time-ms: 30000
 
 # =============================================================================
 # Cluster
@@ -196,32 +168,21 @@ batata.naming.empty-service.clean.period-time-ms: 30000
 # Member lookup type: file (default) or address-server
 #batata.core.member.lookup.type: file
 
-# --- Raft Configuration ---
-#batata.core.protocol.raft.data.election_timeout_ms: 5000
-#batata.core.protocol.raft.data.snapshot_interval_secs: 30
-#batata.core.protocol.raft.data.core_thread_num: 8
-#batata.core.protocol.raft.data.rpc_request_timeout_ms: 5000
-
 # =============================================================================
 # gRPC
 # =============================================================================
 
 # --- SDK gRPC Server (client connections, port = main port + 1000) ---
-#batata.remote.server.grpc.sdk.max-inbound-message-size: 10485760
-#batata.remote.server.grpc.sdk.keep-alive-time: 7200000
-#batata.remote.server.grpc.sdk.keep-alive-timeout: 20000
-#batata.remote.server.grpc.sdk.permit-keep-alive-time: 300000
+#batata.remote.server.grpc.sdk.max_inbound_message_size: 10485760
+#batata.remote.server.grpc.sdk.keep_alive_time: 7200000
+#batata.remote.server.grpc.sdk.keep_alive_timeout: 20000
 
 # --- Cluster gRPC Server (inter-node, port = main port + 1001) ---
-#batata.remote.server.grpc.cluster.max-inbound-message-size: 10485760
-#batata.remote.server.grpc.cluster.keep-alive-time: 7200000
-#batata.remote.server.grpc.cluster.keep-alive-timeout: 20000
-#batata.remote.server.grpc.cluster.permit-keep-alive-time: 300000
-#batata.remote.server.grpc.cluster.connect-timeout: 5000
-#batata.remote.server.grpc.cluster.request-timeout: 5000
-#batata.remote.server.grpc.cluster.max-retries: 3
-#batata.remote.server.grpc.cluster.retry-delay: 500
-#batata.remote.server.grpc.cluster.idle-timeout: 300000
+#batata.remote.server.grpc.cluster.connect_timeout: 5000
+#batata.remote.server.grpc.cluster.request_timeout: 5000
+#batata.remote.server.grpc.cluster.max_retries: 3
+#batata.remote.server.grpc.cluster.retry_delay: 500
+#batata.remote.server.grpc.cluster.idle_timeout: 300000
 
 # --- gRPC Server TLS ---
 #batata.remote.server.grpc.sdk.tls.enabled: false
@@ -263,7 +224,6 @@ batata.logs.level: info
 # =============================================================================
 
 batata.otel.enabled: false
-#batata.otel.exporter: otlp
 #batata.otel.endpoint: http://localhost:4317
 batata.otel.service_name: batata
 batata.otel.sampling_ratio: 0.1
@@ -294,7 +254,7 @@ batata.ai.mcp.registry.enabled: false
 batata.ai.mcp.registry.port: 9080
 
 # =============================================================================
-# Service Mesh (xDS / Istio)
+# Service Mesh (xDS)
 # =============================================================================
 
 batata.mesh.xds.enabled: false
@@ -307,16 +267,6 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.mesh.xds.tls.enabled: false
 #batata.mesh.xds.tls.cert.path: /path/to/xds-server.crt
 #batata.mesh.xds.tls.key.path: /path/to/xds-server.key
-
-batata.istio.mcp.server.enabled: false
-
-# =============================================================================
-# Kubernetes Sync (Experimental)
-# =============================================================================
-
-batata.k8s.sync.enabled: false
-#batata.k8s.sync.outsideCluster: false
-#batata.k8s.sync.kubeConfig: /.kube/config
 
 # =============================================================================
 # Performance Tuning

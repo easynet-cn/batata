@@ -239,7 +239,7 @@ impl Configuration {
 
     pub fn server_context_path(&self) -> String {
         self.config
-            .get_string("batata.server.contextPath")
+            .get_string("batata.server.context_path")
             .unwrap_or("nacos".to_string())
     }
 
@@ -298,7 +298,7 @@ impl Configuration {
 
     pub fn console_server_context_path(&self) -> String {
         self.config
-            .get_string("batata.console.contextPath")
+            .get_string("batata.console.context_path")
             .unwrap_or_default()
     }
 
@@ -476,14 +476,14 @@ impl Configuration {
     /// Get LDAP base DN
     pub fn ldap_base_dn(&self) -> String {
         self.config
-            .get_string("batata.core.auth.ldap.basedc")
+            .get_string("batata.core.auth.ldap.base_dc")
             .unwrap_or_default()
     }
 
     /// Get LDAP bind DN (admin user)
     pub fn ldap_bind_dn(&self) -> String {
         self.config
-            .get_string("batata.core.auth.ldap.userDn")
+            .get_string("batata.core.auth.ldap.bind_dn")
             .unwrap_or_default()
     }
 
@@ -497,7 +497,7 @@ impl Configuration {
     /// Get LDAP user DN pattern
     pub fn ldap_user_dn_pattern(&self) -> String {
         self.config
-            .get_string("batata.core.auth.ldap.userdn")
+            .get_string("batata.core.auth.ldap.user_dn_pattern")
             .unwrap_or_default()
     }
 
@@ -704,6 +704,14 @@ impl Configuration {
         Ok(database_connection)
     }
 
+    /// Check if database migration is enabled on startup.
+    /// When true, pending SeaORM migrations will be applied automatically.
+    pub fn db_migration_enabled(&self) -> bool {
+        self.config
+            .get_bool("batata.db.migration.enabled")
+            .unwrap_or(false)
+    }
+
     // ========================================================================
     // Naming Module Configuration
     // ========================================================================
@@ -712,7 +720,7 @@ impl Configuration {
     /// When true, instances will be automatically deleted after ip_delete_timeout
     pub fn expire_instance_enabled(&self) -> bool {
         self.config
-            .get_bool("batata.naming.expireInstance")
+            .get_bool("batata.naming.expire_instance")
             .unwrap_or(true)
     }
 
