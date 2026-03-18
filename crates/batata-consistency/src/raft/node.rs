@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use openraft::{BasicNode, Raft};
+use rocksdb::Options;
 use tracing::{debug, info};
 
 use super::config::RaftConfig;
@@ -51,6 +52,20 @@ impl RaftNode {
         addr: String,
         config: RaftConfig,
     ) -> Result<(Self, Arc<rocksdb::DB>), Box<dyn std::error::Error + Send + Sync>> {
+        Self::new_with_db_and_options(node_id, addr, config, None, None).await
+    }
+
+    /// Create a new Raft node with custom RocksDB options.
+    ///
+    /// Pass `None` for db_opts/cf_opts to use defaults. This allows the server
+    /// to inject tuning parameters from the application configuration.
+    pub async fn new_with_db_and_options(
+        node_id: NodeId,
+        addr: String,
+        config: RaftConfig,
+        db_opts: Option<Options>,
+        cf_opts: Option<Options>,
+    ) -> Result<(Self, Arc<rocksdb::DB>), Box<dyn std::error::Error + Send + Sync>> {
         info!(
             "Creating Raft node: id={}, addr={}, data_dir={:?}",
             node_id, addr, config.data_dir
@@ -59,11 +74,13 @@ impl RaftNode {
         // Ensure data directories exist
         config.ensure_dirs().await?;
 
-        // Create log store
-        let log_store = RocksLogStore::new(config.log_dir()).await?;
+        // Create log store with custom options
+        let log_store =
+            RocksLogStore::with_options(config.log_dir(), db_opts.clone(), cf_opts.clone()).await?;
 
-        // Create state machine and capture the DB handle before SM is consumed by Raft
-        let state_machine = RocksStateMachine::new(config.state_machine_dir()).await?;
+        // Create state machine with custom options and capture the DB handle
+        let state_machine =
+            RocksStateMachine::with_options(config.state_machine_dir(), db_opts, cf_opts).await?;
         let db = state_machine.db();
 
         // Create network factory

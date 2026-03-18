@@ -278,24 +278,52 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.server.http.workers: 0            # 0 = auto-detect CPU cores
 #batata.server.http.keep_alive: 75        # seconds (main server)
 #batata.console.http.keep_alive: 30       # seconds (console server)
+#batata.server.http.max_payload_size: 10485760   # 10MB max request payload
+#batata.server.http.max_json_size: 5242880       # 5MB max JSON body
+#batata.server.http.client_request_timeout: 60   # seconds
+
+# --- HTTP Response Compression ---
+# Compress responses (gzip, deflate, br) to reduce bandwidth usage.
+# Particularly effective for large config payloads and service lists.
+#batata.server.http.compression.enabled: true
+#batata.server.http.compression.min_size: 256    # bytes; responses smaller than this are not compressed
 
 # --- gRPC Server ---
 #batata.server.grpc.tcp_keepalive: 30              # seconds
+#batata.server.grpc.tcp_nodelay: true              # disable Nagle's algorithm for lower latency
 #batata.server.grpc.http2_keepalive_interval: 30   # seconds
 #batata.server.grpc.http2_keepalive_timeout: 10    # seconds
 #batata.server.grpc.concurrency_limit: 256
 #batata.server.grpc.connection_stale_ms: 60000     # milliseconds
+#batata.server.grpc.initial_connection_window_size: 1048576  # 1MB HTTP/2 connection-level flow control
+#batata.server.grpc.initial_stream_window_size: 524288       # 512KB HTTP/2 stream-level flow control
+#batata.server.grpc.max_frame_size: 16384                    # bytes; HTTP/2 max frame size
 
 # --- RocksDB ---
+# These settings apply to all RocksDB instances (state machine, log store, Consul).
 #batata.rocksdb.write_buffer_mb: 128
 #batata.rocksdb.max_write_buffers: 4
 #batata.rocksdb.max_background_jobs: 4
 #batata.rocksdb.block_cache_mb: 256
+#batata.rocksdb.bloom_filter_bits: 10            # bits per key for bloom filter (0 = disabled)
+#batata.rocksdb.enable_statistics: false          # enable RocksDB internal statistics
+#batata.rocksdb.level_compaction_dynamic: true    # dynamic level sizes for better space amplification
+#batata.rocksdb.bottommost_compression: zstd      # zstd for bottommost level (better ratio), lz4 for speed
+#batata.rocksdb.compression: lz4                  # default compression for non-bottommost levels
+
+# --- Rate Limiting ---
+# Maximum tracked IPs to prevent unbounded memory growth under DoS
+#batata.ratelimit.max_tracked_ips: 100000
+# Cleanup interval in seconds for expired rate limiter entries
+#batata.ratelimit.cleanup_interval_secs: 300
 
 # --- Auth Caches ---
 #batata.core.auth.cache.token_capacity: 50000
+#batata.core.auth.cache.token_ttl_secs: 300          # token cache TTL (5 minutes)
 #batata.core.auth.cache.roles_capacity: 50000
 #batata.core.auth.cache.permissions_capacity: 20000
+#batata.core.auth.cache.blacklist_capacity: 100000    # token blacklist capacity
+#batata.core.auth.cache.blacklist_ttl_secs: 86400     # token blacklist TTL (24 hours)
 
 # =============================================================================
 # Version Information

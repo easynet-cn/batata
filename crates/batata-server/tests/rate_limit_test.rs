@@ -27,6 +27,7 @@ fn test_rate_limit_config_custom() {
         max_requests: 50,
         window_duration: Duration::from_secs(30),
         enabled: false,
+        max_tracked_ips: 100_000,
     };
 
     assert_eq!(config.max_requests, 50);

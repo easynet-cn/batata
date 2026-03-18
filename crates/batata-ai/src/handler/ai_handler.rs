@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tonic::Status;
 use tracing::{debug, warn};
 
-use batata_core::{GrpcAuthService, GrpcResource, PermissionAction, model::Connection};
+use batata_core::{GrpcResource, PermissionAction, ResourceType, model::Connection};
 
 use batata_api::{
     grpc::Payload,
@@ -20,9 +20,7 @@ use batata_api::{
     },
 };
 
-use batata_core::handler::rpc::{
-    AuthRequirement, PayloadHandler, check_authority, extract_auth_context_from_payload,
-};
+use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
 
 use crate::{
     model::{AgentCard, AgentRegistrationRequest, McpServerRegistration},
@@ -41,7 +39,6 @@ pub struct McpServerEndpointHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
     pub mcp_service: Option<Arc<McpServerOperationService>>,
     pub endpoint_service: Option<Arc<AiEndpointService>>,
-    pub auth_service: Arc<GrpcAuthService>,
 }
 
 #[tonic::async_trait]
@@ -54,17 +51,6 @@ impl PayloadHandler for McpServerEndpointHandler {
         let request = McpServerEndpointRequest::from(payload);
         let request_id = request.request_id();
         let operation = &request.operation_type;
-
-        // Check permission for AI resource (write)
-        let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
-        let resource = GrpcResource::ai(&request.namespace_id, &request.mcp_name);
-        check_authority(
-            &self.auth_service,
-            &auth_context,
-            &resource,
-            PermissionAction::Write,
-            &[],
-        )?;
 
         debug!(
             operation = %operation,
@@ -143,6 +129,22 @@ impl PayloadHandler for McpServerEndpointHandler {
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Write
     }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = McpServerEndpointRequest::from(payload);
+        Some((
+            GrpcResource::ai(&request.namespace_id, &request.mcp_name),
+            PermissionAction::Write,
+        ))
+    }
 }
 
 /// Handler for QueryMcpServerRequest - query MCP server details
@@ -150,7 +152,6 @@ impl PayloadHandler for McpServerEndpointHandler {
 pub struct QueryMcpServerHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
     pub mcp_service: Option<Arc<McpServerOperationService>>,
-    pub auth_service: Arc<GrpcAuthService>,
 }
 
 #[tonic::async_trait]
@@ -162,17 +163,6 @@ impl PayloadHandler for QueryMcpServerHandler {
     ) -> Result<Payload, Status> {
         let request = QueryMcpServerRequest::from(payload);
         let request_id = request.request_id();
-
-        // Check permission for AI resource (read)
-        let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
-        let resource = GrpcResource::ai(&request.namespace_id, &request.mcp_name);
-        check_authority(
-            &self.auth_service,
-            &auth_context,
-            &resource,
-            PermissionAction::Read,
-            &[],
-        )?;
 
         debug!(
             namespace = %request.namespace_id,
@@ -231,6 +221,22 @@ impl PayloadHandler for QueryMcpServerHandler {
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Read
     }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = QueryMcpServerRequest::from(payload);
+        Some((
+            GrpcResource::ai(&request.namespace_id, &request.mcp_name),
+            PermissionAction::Read,
+        ))
+    }
 }
 
 /// Handler for ReleaseMcpServerRequest - publish/release an MCP server
@@ -238,7 +244,6 @@ impl PayloadHandler for QueryMcpServerHandler {
 pub struct ReleaseMcpServerHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
     pub mcp_service: Option<Arc<McpServerOperationService>>,
-    pub auth_service: Arc<GrpcAuthService>,
 }
 
 #[tonic::async_trait]
@@ -250,17 +255,6 @@ impl PayloadHandler for ReleaseMcpServerHandler {
     ) -> Result<Payload, Status> {
         let request = ReleaseMcpServerRequest::from(payload);
         let request_id = request.request_id();
-
-        // Check permission for AI resource (write)
-        let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
-        let resource = GrpcResource::ai(&request.namespace_id, &request.mcp_name);
-        check_authority(
-            &self.auth_service,
-            &auth_context,
-            &resource,
-            PermissionAction::Write,
-            &[],
-        )?;
 
         debug!(
             namespace = %request.namespace_id,
@@ -364,6 +358,22 @@ impl PayloadHandler for ReleaseMcpServerHandler {
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Write
     }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = ReleaseMcpServerRequest::from(payload);
+        Some((
+            GrpcResource::ai(&request.namespace_id, &request.mcp_name),
+            PermissionAction::Write,
+        ))
+    }
 }
 
 // =============================================================================
@@ -376,7 +386,6 @@ pub struct AgentEndpointHandler {
     pub agent_registry: Arc<AgentRegistry>,
     pub a2a_service: Option<Arc<A2aServerOperationService>>,
     pub endpoint_service: Option<Arc<AiEndpointService>>,
-    pub auth_service: Arc<GrpcAuthService>,
 }
 
 #[tonic::async_trait]
@@ -389,17 +398,6 @@ impl PayloadHandler for AgentEndpointHandler {
         let request = AgentEndpointRequest::from(payload);
         let request_id = request.request_id();
         let operation = &request.operation_type;
-
-        // Check permission for AI resource (write)
-        let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
-        let resource = GrpcResource::ai(&request.namespace_id, &request.agent_name);
-        check_authority(
-            &self.auth_service,
-            &auth_context,
-            &resource,
-            PermissionAction::Write,
-            &[],
-        )?;
 
         debug!(
             operation = %operation,
@@ -496,6 +494,22 @@ impl PayloadHandler for AgentEndpointHandler {
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Write
     }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = AgentEndpointRequest::from(payload);
+        Some((
+            GrpcResource::ai(&request.namespace_id, &request.agent_name),
+            PermissionAction::Write,
+        ))
+    }
 }
 
 /// Handler for QueryAgentCardRequest - query agent card details
@@ -503,7 +517,6 @@ impl PayloadHandler for AgentEndpointHandler {
 pub struct QueryAgentCardHandler {
     pub agent_registry: Arc<AgentRegistry>,
     pub a2a_service: Option<Arc<A2aServerOperationService>>,
-    pub auth_service: Arc<GrpcAuthService>,
 }
 
 #[tonic::async_trait]
@@ -515,17 +528,6 @@ impl PayloadHandler for QueryAgentCardHandler {
     ) -> Result<Payload, Status> {
         let request = QueryAgentCardRequest::from(payload);
         let request_id = request.request_id();
-
-        // Check permission for AI resource (read)
-        let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
-        let resource = GrpcResource::ai(&request.namespace_id, &request.agent_name);
-        check_authority(
-            &self.auth_service,
-            &auth_context,
-            &resource,
-            PermissionAction::Read,
-            &[],
-        )?;
 
         debug!(
             namespace = %request.namespace_id,
@@ -584,6 +586,22 @@ impl PayloadHandler for QueryAgentCardHandler {
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Read
     }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = QueryAgentCardRequest::from(payload);
+        Some((
+            GrpcResource::ai(&request.namespace_id, &request.agent_name),
+            PermissionAction::Read,
+        ))
+    }
 }
 
 /// Handler for ReleaseAgentCardRequest - publish/release an agent card
@@ -591,7 +609,6 @@ impl PayloadHandler for QueryAgentCardHandler {
 pub struct ReleaseAgentCardHandler {
     pub agent_registry: Arc<AgentRegistry>,
     pub a2a_service: Option<Arc<A2aServerOperationService>>,
-    pub auth_service: Arc<GrpcAuthService>,
 }
 
 #[tonic::async_trait]
@@ -603,17 +620,6 @@ impl PayloadHandler for ReleaseAgentCardHandler {
     ) -> Result<Payload, Status> {
         let request = ReleaseAgentCardRequest::from(payload);
         let request_id = request.request_id();
-
-        // Check permission for AI resource (write)
-        let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
-        let resource = GrpcResource::ai(&request.namespace_id, &request.agent_name);
-        check_authority(
-            &self.auth_service,
-            &auth_context,
-            &resource,
-            PermissionAction::Write,
-            &[],
-        )?;
 
         debug!(
             namespace = %request.namespace_id,
@@ -721,6 +727,22 @@ impl PayloadHandler for ReleaseAgentCardHandler {
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Write
     }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
+        let request = ReleaseAgentCardRequest::from(payload);
+        Some((
+            GrpcResource::ai(&request.namespace_id, &request.agent_name),
+            PermissionAction::Write,
+        ))
+    }
 }
 
 // =============================================================================
@@ -779,17 +801,12 @@ mod tests {
         Arc::new(AgentRegistry::new())
     }
 
-    fn test_auth_service() -> Arc<GrpcAuthService> {
-        Arc::new(GrpcAuthService::default())
-    }
-
     #[test]
     fn test_mcp_server_endpoint_handler_can_handle() {
         let handler = McpServerEndpointHandler {
             mcp_registry: test_mcp_registry(),
             mcp_service: None,
             endpoint_service: None,
-            auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "McpServerEndpointRequest");
         assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
@@ -800,7 +817,6 @@ mod tests {
         let handler = QueryMcpServerHandler {
             mcp_registry: test_mcp_registry(),
             mcp_service: None,
-            auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "QueryMcpServerRequest");
         assert_eq!(handler.auth_requirement(), AuthRequirement::Read);
@@ -811,7 +827,6 @@ mod tests {
         let handler = ReleaseMcpServerHandler {
             mcp_registry: test_mcp_registry(),
             mcp_service: None,
-            auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "ReleaseMcpServerRequest");
         assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
@@ -823,7 +838,6 @@ mod tests {
             agent_registry: test_agent_registry(),
             a2a_service: None,
             endpoint_service: None,
-            auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "AgentEndpointRequest");
         assert_eq!(handler.auth_requirement(), AuthRequirement::Write);
@@ -834,7 +848,6 @@ mod tests {
         let handler = QueryAgentCardHandler {
             agent_registry: test_agent_registry(),
             a2a_service: None,
-            auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "QueryAgentCardRequest");
         assert_eq!(handler.auth_requirement(), AuthRequirement::Read);
@@ -845,7 +858,6 @@ mod tests {
         let handler = ReleaseAgentCardHandler {
             agent_registry: test_agent_registry(),
             a2a_service: None,
-            auth_service: test_auth_service(),
         };
         assert_eq!(handler.can_handle(), "ReleaseAgentCardRequest");
         assert_eq!(handler.auth_requirement(), AuthRequirement::Write);

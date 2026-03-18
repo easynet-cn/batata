@@ -3,14 +3,17 @@
 # ==============================================================================
 
 # Stage 1: Build
-FROM rust:1.86-bookworm AS builder
+FROM rust:1.87-bookworm AS builder
 
 WORKDIR /build
 
-# Install system dependencies
+# Install system dependencies for RocksDB, gRPC, and TLS
 RUN apt-get update && apt-get install -y \
     libclang-dev \
     protobuf-compiler \
+    pkg-config \
+    libssl-dev \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Cache dependency build
@@ -18,19 +21,21 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY proto/ proto/
 
-# Build release binary
-RUN cargo build --release -p batata-server
+# Build release binary with LTO (configured in Cargo.toml profile.release)
+RUN cargo build --release -p batata-server \
+    && strip target/release/batata-server
 
-# Stage 2: Runtime
+# Stage 2: Runtime (minimal image)
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    libssl3 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN groupadd -r batata && useradd -r -g batata -m batata
+RUN groupadd -r batata && useradd -r -g batata -d /app batata
 
 WORKDIR /app
 
@@ -47,9 +52,9 @@ USER batata
 # Ports: Main HTTP, Console HTTP, SDK gRPC, Cluster gRPC, Consul, MCP Registry
 EXPOSE 8848 8081 9848 9849 8500 9080
 
-# Health check
+# Health check (matches Nacos v3 admin API)
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -sf http://localhost:8081/v3/console/health/liveness || exit 1
+    CMD curl -sf http://localhost:8848/nacos/v3/admin/core/state/liveness || exit 1
 
 # Default: embedded mode (no external database required)
 ENTRYPOINT ["/app/batata-server"]

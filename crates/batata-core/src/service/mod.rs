@@ -18,6 +18,6 @@ pub use cluster::ServerMemberManager;
 pub use config_subscriber::{ConfigKey, ConfigSubscriber, ConfigSubscriberManager};
 pub use datacenter::{DatacenterConfig, DatacenterManager, DatacenterStatistics};
 pub use grpc_auth::{
-    GrpcAuthContext, GrpcAuthService, GrpcPermissionInfo, GrpcResource, PermissionAction,
-    PermissionCheckResult, ResourceType, extract_auth_context,
+    GrpcAuthContext, GrpcAuthRoleProvider, GrpcAuthService, GrpcPermissionInfo, GrpcResource,
+    GrpcRoleInfo, PermissionAction, PermissionCheckResult, ResourceType, extract_auth_context,
 };

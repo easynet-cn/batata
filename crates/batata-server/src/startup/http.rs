@@ -5,7 +5,7 @@ use std::sync::Arc;
 use actix_web::{
     App, HttpResponse, HttpServer,
     dev::Server,
-    middleware::{DefaultHeaders, Logger},
+    middleware::{Compress, Condition, DefaultHeaders, Logger},
     web,
 };
 
@@ -225,6 +225,7 @@ pub fn console_server(
     let keep_alive_secs = app_state.configuration.console_keep_alive_secs();
     let max_payload_size = app_state.configuration.max_payload_size();
     let max_json_size = app_state.configuration.max_json_size();
+    let compression_enabled = app_state.configuration.http_compression_enabled();
 
     Ok(HttpServer::new(move || {
         let mut app = App::new()
@@ -236,6 +237,8 @@ pub fn console_server(
                     .add(("X-XSS-Protection", "1; mode=block"))
                     .add(("Cache-Control", "no-store")),
             )
+            // HTTP response compression (gzip, brotli, zstd)
+            .wrap(Condition::new(compression_enabled, Compress::default()))
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
             .app_data(web::PayloadConfig::new(max_payload_size))
@@ -298,6 +301,8 @@ pub fn consul_server(
     let keep_alive_secs = app_state.configuration.http_keep_alive_secs();
     let max_payload_size = app_state.configuration.max_payload_size();
     let max_json_size = app_state.configuration.max_json_size();
+    let compression_enabled = app_state.configuration.http_compression_enabled();
+    let client_request_timeout_secs = app_state.configuration.http_client_request_timeout_secs();
 
     Ok(HttpServer::new(move || {
         App::new()
@@ -309,6 +314,8 @@ pub fn consul_server(
                     .add(("X-XSS-Protection", "1; mode=block"))
                     .add(("Cache-Control", "no-store")),
             )
+            // HTTP response compression (gzip, brotli, zstd)
+            .wrap(Condition::new(compression_enabled, Compress::default()))
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .app_data(web::PayloadConfig::new(max_payload_size))
             .app_data(web::JsonConfig::default().limit(max_json_size))
@@ -350,7 +357,7 @@ pub fn consul_server(
     })
     .workers(workers)
     .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
-    .client_request_timeout(std::time::Duration::from_secs(60))
+    .client_request_timeout(std::time::Duration::from_secs(client_request_timeout_secs))
     .bind((address, port))?
     .run())
 }
@@ -479,6 +486,7 @@ pub fn main_server(
     let keep_alive_secs = app_state.configuration.http_keep_alive_secs();
     let max_payload_size = app_state.configuration.max_payload_size();
     let max_json_size = app_state.configuration.max_json_size();
+    let compression_enabled = app_state.configuration.http_compression_enabled();
 
     // Initialize Prometheus metrics recorder (metrics crate integration)
     let prometheus_state = web::Data::new(PrometheusMetricsState::new());
@@ -495,6 +503,8 @@ pub fn main_server(
                     .add(("X-XSS-Protection", "1; mode=block"))
                     .add(("Cache-Control", "no-store")),
             )
+            // HTTP response compression (gzip, brotli, zstd)
+            .wrap(Condition::new(compression_enabled, Compress::default()))
             .wrap(TrafficReviseFilter::new(server_status.clone()))
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)

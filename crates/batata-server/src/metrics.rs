@@ -102,6 +102,60 @@ pub fn init_metrics() {
         "gRPC request duration in seconds"
     );
 
+    // gRPC handler dispatch metrics
+    describe_histogram!(
+        "grpc_handler_duration_seconds",
+        "gRPC handler execution time per message type"
+    );
+    describe_counter!(
+        "grpc_handler_calls_total",
+        "Total gRPC handler invocations by message type"
+    );
+    describe_counter!(
+        "grpc_handler_errors_total",
+        "Total gRPC handler errors by message type"
+    );
+
+    // Connection lifecycle metrics
+    describe_counter!(
+        "grpc_connections_established_total",
+        "Total gRPC connections established"
+    );
+    describe_counter!(
+        "grpc_connections_closed_total",
+        "Total gRPC connections closed"
+    );
+
+    // Config change notification metrics
+    describe_histogram!(
+        "config_change_notify_duration_seconds",
+        "Config change notification fan-out latency"
+    );
+    describe_counter!(
+        "config_change_notify_total",
+        "Total config change notifications sent"
+    );
+
+    // Naming subscription fan-out metrics
+    describe_histogram!(
+        "naming_subscription_fanout_duration_seconds",
+        "Naming service subscription fan-out time"
+    );
+    describe_counter!(
+        "naming_subscription_fanout_total",
+        "Total naming subscription fan-out events"
+    );
+
+    // Rate limiter metrics
+    describe_gauge!(
+        "ratelimit_tracked_ips",
+        "Number of IPs currently tracked by rate limiter"
+    );
+    describe_counter!(
+        "ratelimit_rejected_total",
+        "Total requests rejected by rate limiter"
+    );
+
     tracing::info!("Metrics initialized");
 }
 
@@ -212,6 +266,47 @@ pub fn set_config_items_total(count: f64) {
 pub fn record_grpc_request(method: &str, duration_secs: f64) {
     histogram!("grpc_request_duration_seconds", "method" => method.to_string())
         .record(duration_secs);
+}
+
+/// Record a gRPC handler invocation with timing
+pub fn record_grpc_handler(message_type: &str, duration_secs: f64, success: bool) {
+    counter!("grpc_handler_calls_total", "type" => message_type.to_string()).increment(1);
+    histogram!("grpc_handler_duration_seconds", "type" => message_type.to_string())
+        .record(duration_secs);
+    if !success {
+        counter!("grpc_handler_errors_total", "type" => message_type.to_string()).increment(1);
+    }
+}
+
+/// Record a gRPC connection lifecycle event
+pub fn record_grpc_connection_event(event: &str) {
+    match event {
+        "established" => counter!("grpc_connections_established_total").increment(1),
+        "closed" => counter!("grpc_connections_closed_total").increment(1),
+        _ => {}
+    }
+}
+
+/// Record a config change notification fan-out
+pub fn record_config_notify(duration_secs: f64, count: u64) {
+    counter!("config_change_notify_total").increment(count);
+    histogram!("config_change_notify_duration_seconds").record(duration_secs);
+}
+
+/// Record a naming subscription fan-out event
+pub fn record_naming_fanout(duration_secs: f64, count: u64) {
+    counter!("naming_subscription_fanout_total").increment(count);
+    histogram!("naming_subscription_fanout_duration_seconds").record(duration_secs);
+}
+
+/// Update rate limiter tracked IPs count
+pub fn set_ratelimit_tracked_ips(count: f64) {
+    gauge!("ratelimit_tracked_ips").set(count);
+}
+
+/// Record a rate limit rejection
+pub fn record_ratelimit_rejection() {
+    counter!("ratelimit_rejected_total").increment(1);
 }
 
 /// Timer helper for measuring operation duration

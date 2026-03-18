@@ -66,5 +66,8 @@ htmlescape = { workspace = true }
 # gRPC (for TLS config)
 tonic = { workspace = true, features = ["transport", "tls-native-roots"] }
 
+# RocksDB (for RocksDbConfig helper methods)
+rocksdb = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }

@@ -60,7 +60,7 @@ futures = "0.3"
 
 # Web frameworks
 actix = "0.13"
-actix-web = "4"
+actix-web = { version = "4", features = ["compress-gzip", "compress-brotli", "compress-zstd"] }
 actix-rt = "2"
 actix-http = "3"
 actix-multipart = "0.7"

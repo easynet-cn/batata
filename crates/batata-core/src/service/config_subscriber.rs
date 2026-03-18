@@ -30,6 +30,20 @@ impl ConfigKey {
     pub fn to_key_string(&self) -> String {
         format!("{}@@{}@@{}", self.tenant, self.group, self.data_id)
     }
+
+    /// Parse a key string back into a ConfigKey
+    pub fn from_key_string(key: &str) -> Option<Self> {
+        let parts: Vec<&str> = key.splitn(3, "@@").collect();
+        if parts.len() == 3 {
+            Some(Self {
+                tenant: parts[0].to_string(),
+                group: parts[1].to_string(),
+                data_id: parts[2].to_string(),
+            })
+        } else {
+            None
+        }
+    }
 }
 
 /// Information about a config listener/subscriber
@@ -41,6 +55,11 @@ pub struct ConfigSubscriber {
     pub client_ip: String,
     /// MD5 checksum the client has
     pub md5: String,
+    /// Original tenant/namespace value from the client (may be empty string).
+    /// Used in push notifications so the SDK can match its local cache key.
+    /// Server internally normalizes empty to "public" for storage/lookup,
+    /// but the client expects the original value back.
+    pub client_tenant: String,
 }
 
 /// Manages config subscriptions across all connections
@@ -76,6 +95,7 @@ impl ConfigSubscriberManager {
         client_ip: &str,
         config_key: &ConfigKey,
         md5: &str,
+        client_tenant: &str,
     ) {
         let key_string = config_key.to_key_string();
 
@@ -89,6 +109,7 @@ impl ConfigSubscriberManager {
                     connection_id: connection_id.to_string(),
                     client_ip: client_ip.to_string(),
                     md5: md5.to_string(),
+                    client_tenant: client_tenant.to_string(),
                 },
             );
 
@@ -231,12 +252,21 @@ mod tests {
     }
 
     #[test]
+    fn test_config_key_empty_tenant() {
+        // Empty tenant normalized to "public" should produce the same key
+        let key_public = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public");
+        let key_empty = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "");
+        // These are intentionally different keys - normalization happens at handler level
+        assert_ne!(key_public.to_key_string(), key_empty.to_key_string());
+    }
+
+    #[test]
     fn test_subscribe_and_get() {
         let manager = ConfigSubscriberManager::new();
         let config_key = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public");
 
-        manager.subscribe("conn1", "192.168.1.1", &config_key, "md5-abc");
-        manager.subscribe("conn2", "192.168.1.2", &config_key, "md5-def");
+        manager.subscribe("conn1", "192.168.1.1", &config_key, "md5-abc", "");
+        manager.subscribe("conn2", "192.168.1.2", &config_key, "md5-def", "public");
 
         let subscribers = manager.get_subscribers(&config_key);
         assert_eq!(subscribers.len(), 2);
@@ -247,8 +277,8 @@ mod tests {
         let manager = ConfigSubscriberManager::new();
         let config_key = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public");
 
-        manager.subscribe("conn1", "192.168.1.1", &config_key, "md5-abc");
-        manager.subscribe("conn2", "192.168.1.2", &config_key, "md5-def");
+        manager.subscribe("conn1", "192.168.1.1", &config_key, "md5-abc", "");
+        manager.subscribe("conn2", "192.168.1.2", &config_key, "md5-def", "");
 
         manager.unsubscribe("conn1", &config_key);
 
@@ -263,9 +293,9 @@ mod tests {
         let key1 = ConfigKey::new("app1.yaml", "DEFAULT_GROUP", "public");
         let key2 = ConfigKey::new("app2.yaml", "DEFAULT_GROUP", "public");
 
-        manager.subscribe("conn1", "192.168.1.1", &key1, "md5-1");
-        manager.subscribe("conn1", "192.168.1.1", &key2, "md5-2");
-        manager.subscribe("conn2", "192.168.1.2", &key1, "md5-3");
+        manager.subscribe("conn1", "192.168.1.1", &key1, "md5-1", "");
+        manager.subscribe("conn1", "192.168.1.1", &key2, "md5-2", "");
+        manager.subscribe("conn2", "192.168.1.2", &key1, "md5-3", "");
 
         manager.unsubscribe_all("conn1");
 
@@ -280,9 +310,9 @@ mod tests {
         let key1 = ConfigKey::new("app1.yaml", "DEFAULT_GROUP", "public");
         let key2 = ConfigKey::new("app2.yaml", "DEFAULT_GROUP", "public");
 
-        manager.subscribe("conn1", "192.168.1.1", &key1, "md5-1");
-        manager.subscribe("conn2", "192.168.1.1", &key2, "md5-2");
-        manager.subscribe("conn3", "192.168.1.2", &key1, "md5-3");
+        manager.subscribe("conn1", "192.168.1.1", &key1, "md5-1", "");
+        manager.subscribe("conn2", "192.168.1.1", &key2, "md5-2", "");
+        manager.subscribe("conn3", "192.168.1.2", &key1, "md5-3", "");
 
         let by_ip = manager.get_subscribers_by_ip("192.168.1.1");
         assert_eq!(by_ip.len(), 2);
@@ -293,7 +323,7 @@ mod tests {
         let manager = ConfigSubscriberManager::new();
         let config_key = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public");
 
-        manager.subscribe("conn1", "192.168.1.1", &config_key, "old-md5");
+        manager.subscribe("conn1", "192.168.1.1", &config_key, "old-md5", "");
         manager.update_md5("conn1", &config_key, "new-md5");
 
         let subscribers = manager.get_subscribers(&config_key);
@@ -306,12 +336,146 @@ mod tests {
         let key1 = ConfigKey::new("app1.yaml", "DEFAULT_GROUP", "public");
         let key2 = ConfigKey::new("app2.yaml", "DEFAULT_GROUP", "public");
 
-        manager.subscribe("conn1", "192.168.1.1", &key1, "md5-1");
-        manager.subscribe("conn1", "192.168.1.1", &key2, "md5-2");
-        manager.subscribe("conn2", "192.168.1.2", &key1, "md5-3");
+        manager.subscribe("conn1", "192.168.1.1", &key1, "md5-1", "");
+        manager.subscribe("conn1", "192.168.1.1", &key2, "md5-2", "");
+        manager.subscribe("conn2", "192.168.1.2", &key1, "md5-3", "");
 
         assert_eq!(manager.config_count(), 2);
         assert_eq!(manager.connection_count(), 2);
         assert_eq!(manager.subscription_count(), 3);
+    }
+
+    // =========================================================================
+    // Namespace/tenant handling tests
+    // Matches Nacos behavior: empty tenant normalized to "public" for storage,
+    // but original tenant preserved in client_tenant for response/notification.
+    // See: Nacos ConfigChangeBatchListenRequestHandler + RpcConfigChangeNotifier
+    // =========================================================================
+
+    #[test]
+    fn test_client_tenant_preserved_empty() {
+        // Simulates SDK sending empty namespace (Go SDK: WithNamespaceId(""))
+        // Handler normalizes to "public" for the config_key, but stores original "" as client_tenant
+        let manager = ConfigSubscriberManager::new();
+        let config_key = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public"); // normalized key
+
+        manager.subscribe("conn1", "192.168.1.1", &config_key, "md5-abc", ""); // original tenant = ""
+
+        let subscribers = manager.get_subscribers(&config_key);
+        assert_eq!(subscribers.len(), 1);
+        assert_eq!(subscribers[0].client_tenant, ""); // original empty tenant preserved
+    }
+
+    #[test]
+    fn test_client_tenant_preserved_explicit() {
+        // SDK sends explicit namespace
+        let manager = ConfigSubscriberManager::new();
+        let config_key = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "dev-ns");
+
+        manager.subscribe("conn1", "192.168.1.1", &config_key, "md5-abc", "dev-ns");
+
+        let subscribers = manager.get_subscribers(&config_key);
+        assert_eq!(subscribers.len(), 1);
+        assert_eq!(subscribers[0].client_tenant, "dev-ns");
+    }
+
+    #[test]
+    fn test_namespace_transfer_pattern() {
+        // Nacos pattern: two clients subscribe to the same config, one with empty tenant, one with explicit.
+        // Both resolve to the same internal config_key (normalized to "public"),
+        // but each preserves its original tenant for notifications.
+        // See: Nacos ConfigChangeListenContext.isNamespaceTransfer
+        let manager = ConfigSubscriberManager::new();
+        let config_key = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public");
+
+        // Client A: SDK with empty namespace (common for Go SDK)
+        manager.subscribe("conn1", "192.168.1.1", &config_key, "md5-abc", "");
+        // Client B: SDK with explicit "public" namespace
+        manager.subscribe("conn2", "192.168.1.2", &config_key, "md5-def", "public");
+
+        let subscribers = manager.get_subscribers(&config_key);
+        assert_eq!(subscribers.len(), 2);
+
+        // Each subscriber preserves its original tenant
+        let sub1 = subscribers
+            .iter()
+            .find(|s| s.connection_id == "conn1")
+            .unwrap();
+        let sub2 = subscribers
+            .iter()
+            .find(|s| s.connection_id == "conn2")
+            .unwrap();
+        assert_eq!(sub1.client_tenant, ""); // namespace transfer: will use null/empty in push
+        assert_eq!(sub2.client_tenant, "public"); // no transfer: will use "public" in push
+    }
+
+    #[test]
+    fn test_subscribe_updates_existing() {
+        // Re-subscribing with a new MD5 should update the subscriber (not create duplicate)
+        let manager = ConfigSubscriberManager::new();
+        let config_key = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public");
+
+        manager.subscribe("conn1", "192.168.1.1", &config_key, "old-md5", "");
+        manager.subscribe("conn1", "192.168.1.1", &config_key, "new-md5", "");
+
+        let subscribers = manager.get_subscribers(&config_key);
+        assert_eq!(subscribers.len(), 1); // not duplicated
+        assert_eq!(subscribers[0].md5, "new-md5"); // updated
+        assert_eq!(subscribers[0].client_tenant, ""); // tenant preserved
+    }
+
+    #[test]
+    fn test_subscribe_multiple_configs_same_connection() {
+        // One connection subscribing to multiple configs (common pattern)
+        let manager = ConfigSubscriberManager::new();
+        let key1 = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public");
+        let key2 = ConfigKey::new("db.yaml", "DEFAULT_GROUP", "public");
+
+        manager.subscribe("conn1", "192.168.1.1", &key1, "md5-1", "");
+        manager.subscribe("conn1", "192.168.1.1", &key2, "md5-2", "");
+
+        assert_eq!(manager.get_subscribers(&key1).len(), 1);
+        assert_eq!(manager.get_subscribers(&key2).len(), 1);
+        assert_eq!(manager.connection_count(), 1);
+        assert_eq!(manager.subscription_count(), 2);
+
+        // Disconnect should clean up both subscriptions
+        manager.unsubscribe_all("conn1");
+        assert_eq!(manager.get_subscribers(&key1).len(), 0);
+        assert_eq!(manager.get_subscribers(&key2).len(), 0);
+        assert_eq!(manager.subscription_count(), 0);
+    }
+
+    #[test]
+    fn test_get_subscribers_nonexistent_key() {
+        let manager = ConfigSubscriberManager::new();
+        let config_key = ConfigKey::new("nonexistent.yaml", "DEFAULT_GROUP", "public");
+        let subscribers = manager.get_subscribers(&config_key);
+        assert!(subscribers.is_empty());
+    }
+
+    #[test]
+    fn test_unsubscribe_nonexistent() {
+        // Unsubscribing from a non-existent key should not panic
+        let manager = ConfigSubscriberManager::new();
+        let config_key = ConfigKey::new("app.yaml", "DEFAULT_GROUP", "public");
+        manager.unsubscribe("conn1", &config_key); // no-op, should not panic
+        manager.unsubscribe_all("conn999"); // no-op
+    }
+
+    #[test]
+    fn test_config_key_from_key_string() {
+        let key = ConfigKey::from_key_string("public@@DEFAULT_GROUP@@app.yaml");
+        assert!(key.is_some());
+        let key = key.unwrap();
+        assert_eq!(key.tenant, "public");
+        assert_eq!(key.group, "DEFAULT_GROUP");
+        assert_eq!(key.data_id, "app.yaml");
+    }
+
+    #[test]
+    fn test_config_key_from_key_string_invalid() {
+        assert!(ConfigKey::from_key_string("invalid").is_none());
+        assert!(ConfigKey::from_key_string("a@@b").is_none());
     }
 }

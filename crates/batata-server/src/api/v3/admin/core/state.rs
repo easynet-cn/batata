@@ -2,27 +2,16 @@
 
 use std::collections::HashMap;
 
-use actix_web::{HttpRequest, Responder, get, web};
+use actix_web::{Responder, get, web};
 
-use crate::{
-    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
-    model::response::Result, secured,
-};
+use crate::{error, model::common::AppState, model::response::Result};
 
 /// GET /v3/admin/core/state
 ///
 /// Returns server state information as a key-value map.
+/// No authentication required - matches Nacos ServerStateController (no @Secured).
 #[get("")]
-async fn get_state(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
-    let resource = "*:*:*";
-    secured!(
-        Secured::builder(&req, &data, resource)
-            .action(ActionTypes::Read)
-            .sign_type(SignType::Config)
-            .api_type(ApiType::AdminApi)
-            .build()
-    );
-
+async fn get_state(data: web::Data<AppState>) -> impl Responder {
     let mut state = HashMap::new();
     state.extend(data.env_state());
     state.extend(data.config_state());

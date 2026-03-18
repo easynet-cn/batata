@@ -10,10 +10,10 @@ use batata_consistency::raft::state_machine::{
     CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
 };
 use batata_core::cluster::ServerMemberManager;
+use batata_migration::{Migrator, MigratorTrait};
 use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
-use batata_migration::{Migrator, MigratorTrait};
 use batata_persistence::{PersistenceService, StorageMode};
 use batata_server::{
     middleware::rate_limit,
@@ -24,7 +24,7 @@ use batata_server::{
     },
 };
 use batata_server_common::ServerStatusManager;
-use rocksdb::{BlockBasedOptions, ColumnFamilyDescriptor, Options};
+use rocksdb::ColumnFamilyDescriptor;
 use tracing::{error, info};
 
 #[allow(clippy::type_complexity)]
@@ -160,9 +160,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             StorageMode::StandaloneEmbedded => {
                 let data_dir = configuration.embedded_data_dir();
                 info!("Initializing standalone embedded storage at: {}", data_dir);
-                let sm = batata_consistency::RocksStateMachine::new(&data_dir)
-                    .await
-                    .map_err(|e| format!("Failed to initialize RocksDB state machine: {}", e))?;
+                let rocks_config = configuration.rocksdb_config();
+                let sm = batata_consistency::RocksStateMachine::with_options(
+                    &data_dir,
+                    Some(rocks_config.to_db_options()),
+                    Some(rocks_config.to_cf_options()),
+                )
+                .await
+                .map_err(|e| format!("Failed to initialize RocksDB state machine: {}", e))?;
                 let rdb = sm.db();
                 let persist: Arc<dyn PersistenceService> =
                     Arc::new(batata_persistence::EmbeddedPersistService::from_state_machine(&sm));
@@ -207,11 +212,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..Default::default()
                 };
 
-                // Create Raft node and get the underlying DB handle for reads
-                let (raft_node, rdb) = batata_consistency::RaftNode::new_with_db(
+                // Create Raft node with configurable RocksDB options
+                let rocks_config = configuration.rocksdb_config();
+                let (raft_node, rdb) = batata_consistency::RaftNode::new_with_db_and_options(
                     node_id,
                     node_addr.clone(),
                     raft_config,
+                    Some(rocks_config.to_db_options()),
+                    Some(rocks_config.to_cf_options()),
                 )
                 .await
                 .map_err(|e| format!("Failed to initialize Raft node: {}", e))?;
@@ -646,7 +654,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // Fall back to independent RocksDB for now. A dedicated Consul Raft node
                 // can be added later for ExternalDb cluster replication.
                 info!("Consul services using standalone RocksDB persistence (ExternalDb cluster)");
-                let consul_rocks_db = open_consul_rocks_db(&consul_data_dir_for_init);
+                let consul_rocks_db = open_consul_rocks_db(
+                    &consul_data_dir_for_init,
+                    &app_state.configuration.rocksdb_config(),
+                );
                 if let Some(db) = consul_rocks_db {
                     ConsulServices::with_persistence(
                         grpc_servers.naming_service.clone(),
@@ -666,7 +677,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         } else if !is_console_remote {
             // Standalone mode: use independent RocksDB for Consul persistence
-            let consul_rocks_db = open_consul_rocks_db(&consul_data_dir_for_init);
+            let consul_rocks_db = open_consul_rocks_db(
+                &consul_data_dir_for_init,
+                &app_state.configuration.rocksdb_config(),
+            );
             if let Some(db) = consul_rocks_db {
                 info!("Consul services using RocksDB persistence");
                 ConsulServices::with_persistence(
@@ -1021,25 +1035,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Open an independent RocksDB for Consul KV/Session/ACL storage (standalone mode).
-fn open_consul_rocks_db(data_dir: &str) -> Option<Arc<rocksdb::DB>> {
+///
+/// Uses the RocksDbConfig from application configuration for consistent tuning
+/// across all RocksDB instances. Falls back to in-memory on failure.
+fn open_consul_rocks_db(
+    data_dir: &str,
+    rocks_config: &batata_server_common::model::config::RocksDbConfig,
+) -> Option<Arc<rocksdb::DB>> {
     info!("Initializing Consul RocksDB persistence at: {}", data_dir);
 
-    let mut db_opts = Options::default();
-    db_opts.create_if_missing(true);
-    db_opts.create_missing_column_families(true);
-    db_opts.set_write_buffer_size(64 * 1024 * 1024);
-    db_opts.set_max_write_buffer_number(3);
-    db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-
-    let mut block_opts = BlockBasedOptions::default();
-    let cache = rocksdb::Cache::new_lru_cache(256 * 1024 * 1024);
-    block_opts.set_block_cache(&cache);
-    block_opts.set_bloom_filter(10.0, false);
-
-    let mut cf_opts = Options::default();
-    cf_opts.set_write_buffer_size(64 * 1024 * 1024);
-    cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-    cf_opts.set_block_based_table_factory(&block_opts);
+    let db_opts = rocks_config.to_db_options();
+    let cf_opts = rocks_config.to_cf_options();
 
     let consul_cfs = vec![
         ColumnFamilyDescriptor::new(CF_CONSUL_KV, cf_opts.clone()),

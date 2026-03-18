@@ -24,6 +24,8 @@ pub struct RateLimitConfig {
     pub window_duration: Duration,
     /// Whether rate limiting is enabled
     pub enabled: bool,
+    /// Maximum number of tracked IPs to prevent unbounded memory growth
+    pub max_tracked_ips: usize,
 }
 
 impl Default for RateLimitConfig {
@@ -32,6 +34,7 @@ impl Default for RateLimitConfig {
             max_requests: 100,
             window_duration: Duration::from_secs(60),
             enabled: true,
+            max_tracked_ips: 100_000,
         }
     }
 }
@@ -78,9 +81,6 @@ impl TokenBucket {
     }
 }
 
-/// Maximum number of tracked IPs to prevent unbounded memory growth under DoS
-const MAX_RATE_LIMIT_ENTRIES: usize = 100_000;
-
 /// Rate limiter state shared across requests
 pub struct RateLimiterState {
     buckets: DashMap<String, TokenBucket>,
@@ -101,7 +101,7 @@ impl RateLimiterState {
         }
 
         // Prevent unbounded memory growth: reject new IPs when at capacity
-        if self.buckets.len() >= MAX_RATE_LIMIT_ENTRIES && !self.buckets.contains_key(key) {
+        if self.buckets.len() >= self.config.max_tracked_ips && !self.buckets.contains_key(key) {
             return (false, 0);
         }
 
@@ -502,6 +502,7 @@ mod tests {
             max_requests: 3,
             window_duration: Duration::from_secs(60),
             enabled: true,
+            max_tracked_ips: 100_000,
         };
         let state = RateLimiterState::new(config);
 
@@ -522,6 +523,7 @@ mod tests {
             max_requests: 1,
             window_duration: Duration::from_secs(60),
             enabled: false,
+            max_tracked_ips: 100_000,
         };
         let state = RateLimiterState::new(config);
 

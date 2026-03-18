@@ -897,6 +897,7 @@ impl Configuration {
             max_requests: self.ratelimit_max_requests(),
             window_duration: std::time::Duration::from_secs(self.ratelimit_window_seconds()),
             enabled: self.ratelimit_enabled(),
+            max_tracked_ips: self.rate_limit_max_tracked_ips(),
         }
     }
 
@@ -1353,6 +1354,248 @@ impl Configuration {
         self.config
             .get_int("batata.server.grpc.connection_stale_ms")
             .unwrap_or(60000) as u64
+    }
+
+    // ========================================================================
+    // HTTP Compression
+    // ========================================================================
+
+    /// Whether HTTP response compression is enabled
+    pub fn http_compression_enabled(&self) -> bool {
+        self.config
+            .get_bool("batata.server.http.compression.enabled")
+            .unwrap_or(true)
+    }
+
+    /// Minimum response size in bytes to trigger compression (default 256)
+    pub fn http_compression_min_size(&self) -> usize {
+        self.config
+            .get_int("batata.server.http.compression.min_size")
+            .unwrap_or(256) as usize
+    }
+
+    /// HTTP client request timeout in seconds
+    pub fn http_client_request_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.server.http.client_request_timeout")
+            .unwrap_or(60) as u64
+    }
+
+    // ========================================================================
+    // gRPC Advanced Tuning
+    // ========================================================================
+
+    /// Enable TCP_NODELAY for gRPC (disable Nagle's algorithm)
+    pub fn grpc_tcp_nodelay(&self) -> bool {
+        self.config
+            .get_bool("batata.server.grpc.tcp_nodelay")
+            .unwrap_or(true)
+    }
+
+    /// gRPC HTTP/2 initial connection window size in bytes (default 1MB)
+    pub fn grpc_initial_connection_window_size(&self) -> u32 {
+        self.config
+            .get_int("batata.server.grpc.initial_connection_window_size")
+            .unwrap_or(1_048_576) as u32
+    }
+
+    /// gRPC HTTP/2 initial stream window size in bytes (default 512KB)
+    pub fn grpc_initial_stream_window_size(&self) -> u32 {
+        self.config
+            .get_int("batata.server.grpc.initial_stream_window_size")
+            .unwrap_or(524_288) as u32
+    }
+
+    /// gRPC HTTP/2 max frame size in bytes (default 16KB)
+    pub fn grpc_max_frame_size(&self) -> u32 {
+        self.config
+            .get_int("batata.server.grpc.max_frame_size")
+            .unwrap_or(16_384) as u32
+    }
+
+    // ========================================================================
+    // RocksDB Advanced Tuning
+    // ========================================================================
+
+    /// RocksDB bloom filter bits per key (0 = disabled)
+    pub fn rocksdb_bloom_filter_bits(&self) -> f64 {
+        self.config
+            .get_float("batata.rocksdb.bloom_filter_bits")
+            .unwrap_or(10.0)
+    }
+
+    /// Whether to enable dynamic level compaction
+    pub fn rocksdb_level_compaction_dynamic(&self) -> bool {
+        self.config
+            .get_bool("batata.rocksdb.level_compaction_dynamic")
+            .unwrap_or(true)
+    }
+
+    /// RocksDB bottommost level compression type (zstd or lz4)
+    pub fn rocksdb_bottommost_compression(&self) -> String {
+        self.config
+            .get_string("batata.rocksdb.bottommost_compression")
+            .unwrap_or_else(|_| "zstd".to_string())
+    }
+
+    /// RocksDB default compression type (lz4, zstd, snappy, none)
+    pub fn rocksdb_compression(&self) -> String {
+        self.config
+            .get_string("batata.rocksdb.compression")
+            .unwrap_or_else(|_| "lz4".to_string())
+    }
+
+    /// Whether RocksDB internal statistics are enabled
+    pub fn rocksdb_enable_statistics(&self) -> bool {
+        self.config
+            .get_bool("batata.rocksdb.enable_statistics")
+            .unwrap_or(false)
+    }
+
+    // ========================================================================
+    // Rate Limiting Advanced
+    // ========================================================================
+
+    /// Maximum number of tracked IPs for rate limiting (prevents memory exhaustion)
+    pub fn rate_limit_max_tracked_ips(&self) -> usize {
+        self.config
+            .get_int("batata.ratelimit.max_tracked_ips")
+            .unwrap_or(100_000) as usize
+    }
+
+    /// Cleanup interval for rate limiter entries in seconds
+    pub fn rate_limit_cleanup_interval_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.ratelimit.cleanup_interval_secs")
+            .unwrap_or(300) as u64
+    }
+
+    // ========================================================================
+    // Auth Cache Advanced
+    // ========================================================================
+
+    /// Token cache TTL in seconds
+    pub fn auth_token_cache_ttl_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.cache.token_ttl_secs")
+            .unwrap_or(300) as u64
+    }
+
+    /// Token blacklist max capacity
+    pub fn auth_blacklist_capacity(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.cache.blacklist_capacity")
+            .unwrap_or(100_000) as u64
+    }
+
+    /// Token blacklist TTL in seconds
+    pub fn auth_blacklist_ttl_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.cache.blacklist_ttl_secs")
+            .unwrap_or(86400) as u64
+    }
+
+    /// Build a RocksDB configuration struct from the current config values
+    pub fn rocksdb_config(&self) -> RocksDbConfig {
+        RocksDbConfig {
+            write_buffer_mb: self.rocksdb_write_buffer_mb(),
+            max_write_buffers: self.rocksdb_max_write_buffers(),
+            max_background_jobs: self.rocksdb_max_background_jobs(),
+            block_cache_mb: self.rocksdb_block_cache_mb(),
+            bloom_filter_bits: self.rocksdb_bloom_filter_bits(),
+            level_compaction_dynamic: self.rocksdb_level_compaction_dynamic(),
+            bottommost_compression: self.rocksdb_bottommost_compression(),
+            compression: self.rocksdb_compression(),
+            enable_statistics: self.rocksdb_enable_statistics(),
+        }
+    }
+}
+
+/// RocksDB tuning configuration bundle
+#[derive(Debug, Clone)]
+pub struct RocksDbConfig {
+    pub write_buffer_mb: usize,
+    pub max_write_buffers: i32,
+    pub max_background_jobs: i32,
+    pub block_cache_mb: usize,
+    pub bloom_filter_bits: f64,
+    pub level_compaction_dynamic: bool,
+    pub bottommost_compression: String,
+    pub compression: String,
+    pub enable_statistics: bool,
+}
+
+impl Default for RocksDbConfig {
+    fn default() -> Self {
+        Self {
+            write_buffer_mb: 128,
+            max_write_buffers: 4,
+            max_background_jobs: 4,
+            block_cache_mb: 256,
+            bloom_filter_bits: 10.0,
+            level_compaction_dynamic: true,
+            bottommost_compression: "zstd".to_string(),
+            compression: "lz4".to_string(),
+            enable_statistics: false,
+        }
+    }
+}
+
+impl RocksDbConfig {
+    /// Parse compression type string to RocksDB DBCompressionType
+    pub fn parse_compression(name: &str) -> rocksdb::DBCompressionType {
+        match name.to_lowercase().as_str() {
+            "zstd" => rocksdb::DBCompressionType::Zstd,
+            "lz4" => rocksdb::DBCompressionType::Lz4,
+            "snappy" => rocksdb::DBCompressionType::Snappy,
+            "none" => rocksdb::DBCompressionType::None,
+            _ => rocksdb::DBCompressionType::Lz4,
+        }
+    }
+
+    /// Create RocksDB Options configured with these settings
+    pub fn to_db_options(&self) -> rocksdb::Options {
+        let mut db_opts = rocksdb::Options::default();
+        db_opts.create_if_missing(true);
+        db_opts.create_missing_column_families(true);
+        db_opts.set_write_buffer_size(self.write_buffer_mb * 1024 * 1024);
+        db_opts.set_max_write_buffer_number(self.max_write_buffers);
+        db_opts.set_compression_type(Self::parse_compression(&self.compression));
+        db_opts
+            .set_bottommost_compression_type(Self::parse_compression(&self.bottommost_compression));
+        db_opts.set_max_background_jobs(self.max_background_jobs);
+        if self.level_compaction_dynamic {
+            db_opts.set_level_compaction_dynamic_level_bytes(true);
+        }
+        db_opts.increase_parallelism(std::cmp::max(
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4) as i32
+                / 2,
+            2,
+        ));
+        if self.enable_statistics {
+            db_opts.enable_statistics();
+        }
+        db_opts
+    }
+
+    /// Create column family Options with block cache and bloom filter
+    pub fn to_cf_options(&self) -> rocksdb::Options {
+        let mut cf_opts = rocksdb::Options::default();
+        cf_opts.set_write_buffer_size(self.write_buffer_mb * 1024 * 1024);
+        cf_opts.set_compression_type(Self::parse_compression(&self.compression));
+        cf_opts
+            .set_bottommost_compression_type(Self::parse_compression(&self.bottommost_compression));
+
+        let mut block_opts = rocksdb::BlockBasedOptions::default();
+        let cache = rocksdb::Cache::new_lru_cache(self.block_cache_mb * 1024 * 1024);
+        block_opts.set_block_cache(&cache);
+        if self.bloom_filter_bits > 0.0 {
+            block_opts.set_bloom_filter(self.bloom_filter_bits, false);
+        }
+        cf_opts.set_block_based_table_factory(&block_opts);
+        cf_opts
     }
 }
 

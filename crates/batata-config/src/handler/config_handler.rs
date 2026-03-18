@@ -693,12 +693,17 @@ impl ConfigPublishHandler {
                 data_id
             );
 
-            // Push notification to each subscriber in parallel
+            // Push notification to each subscriber in parallel.
+            // Use subscriber's client_tenant (original value from SDK) so the SDK
+            // can match the notification against its local cache key.
             let futs: Vec<_> = subscribers
                 .iter()
                 .map(|subscriber| {
                     let cm = &self.connection_manager;
-                    let p = payload.clone();
+                    let sub_tenant = &subscriber.client_tenant;
+                    let notification =
+                        ConfigChangeNotifyRequest::for_config(data_id, group, sub_tenant);
+                    let p = notification.build_server_push_payload();
                     let cid = subscriber.connection_id.clone();
                     async move {
                         if !cm.push_message(&cid, p).await {
@@ -929,12 +934,16 @@ impl ConfigRemoveHandler {
                 data_id
             );
 
-            // Push notification to each subscriber in parallel
+            // Push notification to each subscriber in parallel.
+            // Use subscriber's client_tenant so the SDK can match against its local cache.
             let futs: Vec<_> = subscribers
                 .iter()
                 .map(|subscriber| {
                     let cm = &self.connection_manager;
-                    let p = payload.clone();
+                    let sub_tenant = &subscriber.client_tenant;
+                    let notification =
+                        ConfigChangeNotifyRequest::for_config(data_id, group, sub_tenant);
+                    let p = notification.build_server_push_payload();
                     let cid = subscriber.connection_id.clone();
                     async move {
                         if !cm.push_message(&cid, p).await {
@@ -976,6 +985,14 @@ impl PayloadHandler for ConfigBatchListenHandler {
         let connection_id = &_connection.meta_info.connection_id;
         let client_ip = &_connection.meta_info.remote_ip;
 
+        info!(
+            "ConfigBatchListen: listen={}, contexts={}, connection_id={}, client_ip={}",
+            request.listen,
+            request.config_listen_contexts.len(),
+            connection_id,
+            client_ip
+        );
+
         // Build client labels once for gray matching
         let labels = build_client_labels(_connection);
 
@@ -985,21 +1002,40 @@ impl PayloadHandler for ConfigBatchListenHandler {
         for ctx in &request.config_listen_contexts {
             let data_id = &ctx.data_id;
             let group = &ctx.group;
+            // Normalize empty tenant to "public" for server-side operations (DB lookup, subscription)
             let tenant = if ctx.tenant.is_empty() {
                 "public"
             } else {
                 &ctx.tenant
             };
+            // Keep the original tenant from the client for the response.
+            // The SDK uses the original namespace (e.g. "") to build cache keys,
+            // so returning "public" would cause a cache key mismatch.
+            let response_tenant = &ctx.tenant;
             let client_md5 = &ctx.md5;
 
             let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
 
             if request.listen {
-                // Register subscription
-                subscriber_manager.subscribe(connection_id, client_ip, &config_key, client_md5);
+                // Register subscription (pass original tenant for response matching)
+                subscriber_manager.subscribe(
+                    connection_id,
+                    client_ip,
+                    &config_key,
+                    client_md5,
+                    response_tenant,
+                );
+                debug!(
+                    "ConfigBatchListen: subscribed data_id={}, group={}, tenant={}, client_md5={}",
+                    data_id, group, tenant, client_md5
+                );
             } else {
                 // Unregister subscription
                 subscriber_manager.unsubscribe(connection_id, &config_key);
+                debug!(
+                    "ConfigBatchListen: unsubscribed data_id={}, group={}, tenant={}",
+                    data_id, group, tenant
+                );
             }
 
             // First check for matching gray config
@@ -1010,7 +1046,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
                     changed_configs.push(ConfigContext {
                         data_id: data_id.clone(),
                         group: group.clone(),
-                        tenant: tenant.to_string(),
+                        tenant: response_tenant.clone(),
                     });
                 }
                 continue;
@@ -1022,21 +1058,34 @@ impl PayloadHandler for ConfigBatchListenHandler {
 
                 // If MD5 differs, config has changed
                 if client_md5 != server_md5 {
+                    info!(
+                        "ConfigBatchListen: MD5 changed for data_id={}, group={}, tenant={}, client_md5={}, server_md5={}",
+                        data_id, group, tenant, client_md5, server_md5
+                    );
                     changed_configs.push(ConfigContext {
                         data_id: data_id.clone(),
                         group: group.clone(),
-                        tenant: tenant.to_string(),
+                        tenant: response_tenant.clone(),
                     });
                 }
             } else if request.listen {
                 // Config doesn't exist but client is listening - report as changed
+                info!(
+                    "ConfigBatchListen: config not found (new listen) data_id={}, group={}, tenant={}",
+                    data_id, group, tenant
+                );
                 changed_configs.push(ConfigContext {
                     data_id: data_id.clone(),
                     group: group.clone(),
-                    tenant: tenant.to_string(),
+                    tenant: response_tenant.clone(),
                 });
             }
         }
+
+        info!(
+            "ConfigBatchListen: returning {} changed configs",
+            changed_configs.len()
+        );
 
         let mut response = ConfigChangeBatchListenResponse::new();
         response.response.request_id = request_id;

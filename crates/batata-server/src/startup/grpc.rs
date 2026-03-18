@@ -11,7 +11,7 @@ use tracing::info;
 use batata_api::model::Member;
 use batata_consistency::RaftNode;
 use batata_core::{
-    GrpcAuthService,
+    GrpcAuthRoleProvider, GrpcAuthService, GrpcPermissionInfo, GrpcRoleInfo,
     service::{
         cluster_client::{ClusterClientConfig, ClusterClientManager},
         distro::{DistroConfig, DistroProtocol},
@@ -19,6 +19,7 @@ use batata_core::{
     },
 };
 use batata_naming::handler::distro::NamingInstanceDistroHandler;
+use batata_persistence::PersistenceService;
 
 use crate::model::tls::validate_tls_config;
 use crate::startup::AIServices;
@@ -240,42 +241,32 @@ fn register_lock_handlers(
 }
 
 /// Registers all AI handlers (MCP + A2A).
-fn register_ai_handlers(
-    registry: &mut HandlerRegistry,
-    ai_services: &AIServices,
-    auth_service: Arc<GrpcAuthService>,
-) {
+fn register_ai_handlers(registry: &mut HandlerRegistry, ai_services: &AIServices) {
     registry.register_handler(Arc::new(McpServerEndpointHandler {
         mcp_registry: ai_services.mcp_registry.clone(),
         mcp_service: ai_services.mcp_service.clone(),
         endpoint_service: ai_services.endpoint_service.clone(),
-        auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(QueryMcpServerHandler {
         mcp_registry: ai_services.mcp_registry.clone(),
         mcp_service: ai_services.mcp_service.clone(),
-        auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(ReleaseMcpServerHandler {
         mcp_registry: ai_services.mcp_registry.clone(),
         mcp_service: ai_services.mcp_service.clone(),
-        auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(AgentEndpointHandler {
         agent_registry: ai_services.agent_registry.clone(),
         a2a_service: ai_services.a2a_service.clone(),
         endpoint_service: ai_services.endpoint_service.clone(),
-        auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(QueryAgentCardHandler {
         agent_registry: ai_services.agent_registry.clone(),
         a2a_service: ai_services.a2a_service.clone(),
-        auth_service: auth_service.clone(),
     }));
     registry.register_handler(Arc::new(ReleaseAgentCardHandler {
         agent_registry: ai_services.agent_registry.clone(),
         a2a_service: ai_services.a2a_service.clone(),
-        auth_service,
     }));
 }
 
@@ -301,6 +292,42 @@ fn create_distro_protocol(
     distro_protocol.register_handler(Arc::new(naming_handler));
 
     Arc::new(distro_protocol)
+}
+
+/// Adapter that implements GrpcAuthRoleProvider using PersistenceService.
+/// Bridges the gRPC auth layer with the database persistence layer.
+struct PersistenceRoleProvider {
+    persistence: Arc<dyn PersistenceService>,
+}
+
+#[async_trait::async_trait]
+impl GrpcAuthRoleProvider for PersistenceRoleProvider {
+    async fn find_roles_by_username(&self, username: &str) -> Vec<GrpcRoleInfo> {
+        self.persistence
+            .role_find_by_username(username)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| GrpcRoleInfo {
+                username: r.username,
+                role: r.role,
+            })
+            .collect()
+    }
+
+    async fn find_permissions_by_roles(&self, roles: Vec<String>) -> Vec<GrpcPermissionInfo> {
+        self.persistence
+            .permission_find_by_roles(roles)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| GrpcPermissionInfo {
+                role: p.role,
+                resource: p.resource,
+                action: p.action,
+            })
+            .collect()
+    }
 }
 
 /// Creates and starts gRPC servers for SDK and cluster communication.
@@ -359,12 +386,23 @@ pub fn start_grpc_servers(
     let server_identity_key = app_state.configuration.server_identity_key();
     let server_identity_value = app_state.configuration.server_identity_value();
 
-    let grpc_auth_service = GrpcAuthService::new(
-        auth_enabled,
-        token_secret_key,
-        server_identity_key,
-        server_identity_value,
-    );
+    let grpc_auth_service = if let Some(persistence) = app_state.persistence.clone() {
+        let role_provider = Arc::new(PersistenceRoleProvider { persistence });
+        GrpcAuthService::with_role_provider(
+            auth_enabled,
+            token_secret_key,
+            server_identity_key,
+            server_identity_value,
+            role_provider,
+        )
+    } else {
+        GrpcAuthService::new(
+            auth_enabled,
+            token_secret_key,
+            server_identity_key,
+            server_identity_value,
+        )
+    };
     let grpc_auth_service_arc = Arc::new(grpc_auth_service.clone());
 
     if auth_enabled {
@@ -461,7 +499,7 @@ pub fn start_grpc_servers(
     );
 
     // Register AI handlers (MCP + A2A)
-    register_ai_handlers(&mut handler_registry, ai_services, grpc_auth_service_arc);
+    register_ai_handlers(&mut handler_registry, ai_services);
 
     let handler_registry_arc = Arc::new(handler_registry);
 
@@ -476,11 +514,17 @@ pub fn start_grpc_servers(
 
     // Capture gRPC performance tuning parameters from configuration
     let tcp_keepalive = Duration::from_secs(app_state.configuration.grpc_tcp_keepalive_secs());
+    let tcp_nodelay = app_state.configuration.grpc_tcp_nodelay();
     let http2_interval =
         Duration::from_secs(app_state.configuration.grpc_http2_keepalive_interval_secs());
     let http2_timeout =
         Duration::from_secs(app_state.configuration.grpc_http2_keepalive_timeout_secs());
     let concurrency = app_state.configuration.grpc_concurrency_limit();
+    let initial_connection_window = app_state
+        .configuration
+        .grpc_initial_connection_window_size();
+    let initial_stream_window = app_state.configuration.grpc_initial_stream_window_size();
+    let max_frame_size = app_state.configuration.grpc_max_frame_size();
 
     // Start SDK gRPC server
     let grpc_sdk_addr = format!("0.0.0.0:{}", sdk_server_port).parse()?;
@@ -502,8 +546,12 @@ pub fn start_grpc_servers(
                     tonic::transport::Server::builder()
                         .tls_config(server_tls_config)?
                         .tcp_keepalive(Some(tcp_keepalive))
+                        .tcp_nodelay(tcp_nodelay)
                         .http2_keepalive_interval(Some(http2_interval))
                         .http2_keepalive_timeout(Some(http2_timeout))
+                        .initial_connection_window_size(initial_connection_window)
+                        .initial_stream_window_size(initial_stream_window)
+                        .max_frame_size(max_frame_size)
                         .concurrency_limit_per_connection(concurrency)
                         .layer(layer)
                         .add_service(RequestServer::new(grpc_request_service))
@@ -513,8 +561,12 @@ pub fn start_grpc_servers(
                 } else {
                     tonic::transport::Server::builder()
                         .tcp_keepalive(Some(tcp_keepalive))
+                        .tcp_nodelay(tcp_nodelay)
                         .http2_keepalive_interval(Some(http2_interval))
                         .http2_keepalive_timeout(Some(http2_timeout))
+                        .initial_connection_window_size(initial_connection_window)
+                        .initial_stream_window_size(initial_stream_window)
+                        .max_frame_size(max_frame_size)
                         .concurrency_limit_per_connection(concurrency)
                         .layer(layer)
                         .add_service(RequestServer::new(grpc_request_service))

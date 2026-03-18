@@ -95,7 +95,7 @@ pub trait ConnectionCleanupHandler: Send + Sync {
     fn remove_subscriber(&self, connection_id: &str);
 }
 
-/// Helper functions for extracting auth context from payload
+/// Helper functions for extracting auth context from payload (sync, no role lookup)
 pub fn extract_auth_context_from_payload(
     auth_service: &GrpcAuthService,
     payload: &Payload,
@@ -107,6 +107,20 @@ pub fn extract_auth_context_from_payload(
         .unwrap_or_default();
 
     auth_service.parse_identity(&headers)
+}
+
+/// Resolve full auth context from payload (async, with role lookup from database)
+pub async fn resolve_auth_context_from_payload(
+    auth_service: &GrpcAuthService,
+    payload: &Payload,
+) -> GrpcAuthContext {
+    let headers = payload
+        .metadata
+        .as_ref()
+        .map(|m| m.headers.clone())
+        .unwrap_or_default();
+
+    auth_service.resolve_auth_context(&headers).await
 }
 
 /// Check if authentication should be enabled for this request
@@ -382,21 +396,28 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                         if !enable_auth(auth_service, sign_type) {
                             // Auth not enabled for this type - skip validation
                         } else {
-                            // Validate identity
+                            // Validate identity and load roles from database
                             let auth_context =
-                                extract_auth_context_from_payload(auth_service, payload);
+                                resolve_auth_context_from_payload(auth_service, payload).await;
                             check_authentication(&auth_context)?;
 
                             // Validate authority (permission)
                             if let Some((resource, action)) = handler.resource_from_payload(payload)
                             {
-                                check_authority(
-                                    auth_service,
-                                    &auth_context,
-                                    &resource,
-                                    action,
-                                    &[],
-                                )?;
+                                // Global admin bypasses permission checks
+                                if !auth_context.has_admin_role() {
+                                    // Load permissions from database for non-admin users
+                                    let permissions = auth_service
+                                        .load_permissions_for_roles(auth_context.roles.clone())
+                                        .await;
+                                    check_authority(
+                                        auth_service,
+                                        &auth_context,
+                                        &resource,
+                                        action,
+                                        &permissions,
+                                    )?;
+                                }
                             }
                         }
                     }
@@ -500,6 +521,10 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                 con.meta_info.namespace_id = request.tenant;
 
                                 let connection_id = con.meta_info.connection_id.clone();
+                                info!(
+                                    "ConnectionSetupRequest: connection_id={}, client_ip={}, version={}",
+                                    connection_id, con.meta_info.client_ip, con.meta_info.version
+                                );
 
                                 // Move con instead of cloning - con is not used after this
                                 let client = GrpcClient::new(con, tx.clone());
@@ -550,24 +575,36 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                             // Auth not enabled for this type - skip validation
                                             Ok(())
                                         } else {
-                                            // Validate identity
-                                            let auth_context = extract_auth_context_from_payload(
+                                            // Validate identity and load roles from database
+                                            let auth_context = resolve_auth_context_from_payload(
                                                 auth_service,
                                                 &payload,
-                                            );
+                                            )
+                                            .await;
                                             let auth_check = check_authentication(&auth_context);
                                             if auth_check.is_err() {
                                                 auth_check
                                             } else if let Some((resource, action)) =
                                                 handler.resource_from_payload(&payload)
                                             {
-                                                check_authority(
-                                                    auth_service,
-                                                    &auth_context,
-                                                    &resource,
-                                                    action,
-                                                    &[],
-                                                )
+                                                // Global admin bypasses permission checks
+                                                if auth_context.has_admin_role() {
+                                                    Ok(())
+                                                } else {
+                                                    // Load permissions from database
+                                                    let permissions = auth_service
+                                                        .load_permissions_for_roles(
+                                                            auth_context.roles.clone(),
+                                                        )
+                                                        .await;
+                                                    check_authority(
+                                                        auth_service,
+                                                        &auth_context,
+                                                        &resource,
+                                                        action,
+                                                        &permissions,
+                                                    )
+                                                }
                                             } else {
                                                 Ok(())
                                             }
@@ -614,7 +651,9 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                         }
                     }
                     Err(e) => {
-                        tracing::error!("Error receiving message: {}", e);
+                        // Client disconnection (broken pipe, stream reset) is normal -
+                        // log at debug level to avoid noisy ERROR logs
+                        tracing::debug!("Bi-stream closed: {}", e);
 
                         break;
                     }

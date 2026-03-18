@@ -28,15 +28,11 @@ const CF_STATE: &str = "state";
 const KEY_VOTE: &[u8] = b"vote";
 const KEY_LAST_PURGED: &[u8] = b"last_purged";
 
-// RocksDB performance tuning constants
-/// Write buffer size: 64MB for better write throughput
-const WRITE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
-/// Maximum number of write buffers for write stall prevention
-const MAX_WRITE_BUFFER_NUMBER: i32 = 3;
-/// Block cache size: 256MB for read optimization
-const BLOCK_CACHE_SIZE: usize = 256 * 1024 * 1024;
-/// Bloom filter bits per key for faster lookups
-const BLOOM_FILTER_BITS_PER_KEY: f64 = 10.0;
+// Default RocksDB performance tuning constants (used when no custom options provided)
+const DEFAULT_WRITE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
+const DEFAULT_MAX_WRITE_BUFFER_NUMBER: i32 = 3;
+const DEFAULT_BLOCK_CACHE_SIZE: usize = 256 * 1024 * 1024;
+const DEFAULT_BLOOM_FILTER_BITS_PER_KEY: f64 = 10.0;
 
 /// Helper to create StorageError for vote operations
 fn vote_error(
@@ -74,28 +70,42 @@ pub struct RocksLogStore {
 }
 
 impl RocksLogStore {
-    /// Create a new RocksDB log store
+    /// Create a new RocksDB log store with default configuration
     pub async fn new<P: AsRef<Path>>(path: P) -> Result<Self, StorageError<NodeId>> {
-        let mut db_opts = Options::default();
-        db_opts.create_if_missing(true);
-        db_opts.create_missing_column_families(true);
+        Self::with_options(path, None, None).await
+    }
 
-        // Performance optimizations using named constants
-        db_opts.set_write_buffer_size(WRITE_BUFFER_SIZE);
-        db_opts.set_max_write_buffer_number(MAX_WRITE_BUFFER_NUMBER);
-        db_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+    /// Create a new RocksDB log store with pre-configured RocksDB options.
+    ///
+    /// Pass `None` for either parameter to use sensible defaults.
+    pub async fn with_options<P: AsRef<Path>>(
+        path: P,
+        custom_db_opts: Option<Options>,
+        custom_cf_opts: Option<Options>,
+    ) -> Result<Self, StorageError<NodeId>> {
+        let db_opts = custom_db_opts.unwrap_or_else(|| {
+            let mut opts = Options::default();
+            opts.create_if_missing(true);
+            opts.create_missing_column_families(true);
+            opts.set_write_buffer_size(DEFAULT_WRITE_BUFFER_SIZE);
+            opts.set_max_write_buffer_number(DEFAULT_MAX_WRITE_BUFFER_NUMBER);
+            opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
+            opts
+        });
 
-        // Block-based table options with block cache for read performance
-        let mut block_opts = BlockBasedOptions::default();
-        let cache = rocksdb::Cache::new_lru_cache(BLOCK_CACHE_SIZE);
-        block_opts.set_block_cache(&cache);
-        block_opts.set_bloom_filter(BLOOM_FILTER_BITS_PER_KEY, false);
-
-        // Column family options with same optimizations
-        let mut cf_opts = Options::default();
-        cf_opts.set_write_buffer_size(WRITE_BUFFER_SIZE);
-        cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-        cf_opts.set_block_based_table_factory(&block_opts);
+        let cf_opts = custom_cf_opts.unwrap_or_else(|| {
+            let mut opts = Options::default();
+            opts.set_write_buffer_size(DEFAULT_WRITE_BUFFER_SIZE);
+            opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
+            opts.set_bottommost_compression_type(rocksdb::DBCompressionType::Zstd);
+            let mut block_opts = BlockBasedOptions::default();
+            let cache = rocksdb::Cache::new_lru_cache(DEFAULT_BLOCK_CACHE_SIZE);
+            block_opts.set_block_cache(&cache);
+            block_opts.set_bloom_filter(DEFAULT_BLOOM_FILTER_BITS_PER_KEY, false);
+            opts.set_block_based_table_factory(&block_opts);
+            opts
+        });
 
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_LOGS, cf_opts.clone()),

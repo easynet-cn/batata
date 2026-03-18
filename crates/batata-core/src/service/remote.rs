@@ -96,10 +96,17 @@ impl ConnectionManager {
 
     pub async fn register(&self, connection_id: &str, client: GrpcClient) -> bool {
         if self.clients.contains_key(connection_id) {
+            tracing::debug!(connection_id, "Connection already registered, skipping");
             return true;
         }
 
         let meta = client.connection.meta_info.clone();
+        tracing::info!(
+            connection_id,
+            client_ip = %meta.client_ip,
+            app_name = %meta.app_name,
+            "Registered new gRPC client connection"
+        );
         self.clients.insert(connection_id.to_string(), client);
         self.fire_connected(connection_id, &meta).await;
 
