@@ -22,7 +22,9 @@ pub mod mcp_registry {
 pub use a2a::{AgentCardChangeEvent, AgentChangeType, AgentRegistry, AgentRegistryStats};
 pub use mcp::{McpChangeType, McpRegistryStats, McpServerChangeEvent, McpServerRegistry};
 
+// Re-export config-backed service types
+pub use batata_ai::service::A2aServerOperationService;
+pub use batata_ai::service::McpServerOperationService;
+
 // Re-export configure functions for route setup
-pub use batata_ai::configure_a2a;
-pub use batata_ai::configure_mcp;
 pub use batata_ai::configure_mcp_registry;

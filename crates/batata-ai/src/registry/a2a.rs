@@ -607,7 +607,7 @@ pub struct AgentRegistryStats {
 // =============================================================================
 
 /// Register a new agent
-#[post("/v1/ai/a2a/agents")]
+#[post("/v3/ai/a2a/agents")]
 pub async fn register_agent(
     registry: web::Data<Arc<AgentRegistry>>,
     body: web::Json<AgentRegistrationRequest>,
@@ -624,7 +624,7 @@ pub async fn register_agent(
 }
 
 /// Update an existing agent
-#[put("/v1/ai/a2a/agents/{namespace}/{name}")]
+#[put("/v3/ai/a2a/agents/{namespace}/{name}")]
 pub async fn update_agent(
     registry: web::Data<Arc<AgentRegistry>>,
     path: web::Path<(String, String)>,
@@ -643,7 +643,7 @@ pub async fn update_agent(
 }
 
 /// Deregister an agent
-#[delete("/v1/ai/a2a/agents/{namespace}/{name}")]
+#[delete("/v3/ai/a2a/agents/{namespace}/{name}")]
 pub async fn deregister_agent(
     registry: web::Data<Arc<AgentRegistry>>,
     path: web::Path<(String, String)>,
@@ -661,7 +661,7 @@ pub async fn deregister_agent(
 }
 
 /// Get an agent by namespace and name
-#[get("/v1/ai/a2a/agents/{namespace}/{name}")]
+#[get("/v3/ai/a2a/agents/{namespace}/{name}")]
 pub async fn get_agent(
     registry: web::Data<Arc<AgentRegistry>>,
     path: web::Path<(String, String)>,
@@ -678,7 +678,7 @@ pub async fn get_agent(
 }
 
 /// List agents
-#[get("/v1/ai/a2a/agents")]
+#[get("/v3/ai/a2a/agents")]
 pub async fn list_agents(
     registry: web::Data<Arc<AgentRegistry>>,
     query: web::Query<AgentQuery>,
@@ -688,7 +688,7 @@ pub async fn list_agents(
 }
 
 /// Find agents by skill
-#[get("/v1/ai/a2a/agents/by-skill/{skill}")]
+#[get("/v3/ai/a2a/agents/by-skill/{skill}")]
 pub async fn find_agents_by_skill(
     registry: web::Data<Arc<AgentRegistry>>,
     path: web::Path<String>,
@@ -699,7 +699,7 @@ pub async fn find_agents_by_skill(
 }
 
 /// Batch register agents
-#[post("/v1/ai/a2a/agents/batch")]
+#[post("/v3/ai/a2a/agents/batch")]
 pub async fn batch_register_agents(
     registry: web::Data<Arc<AgentRegistry>>,
     body: web::Json<BatchAgentRegistrationRequest>,
@@ -711,7 +711,7 @@ pub async fn batch_register_agents(
 }
 
 /// Get agent registry statistics
-#[get("/v1/ai/a2a/stats")]
+#[get("/v3/ai/a2a/stats")]
 pub async fn get_stats(registry: web::Data<Arc<AgentRegistry>>) -> HttpResponse {
     let stats = registry.stats();
     HttpResponse::Ok().json(RestResult::ok(Some(stats)))

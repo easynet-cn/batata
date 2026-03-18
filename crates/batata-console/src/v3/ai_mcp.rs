@@ -295,25 +295,55 @@ async fn delete_server(
     }
 }
 
-/// Import tools from a running MCP server
+/// Import tools from a running MCP server via SSE transport.
+/// Connects to the remote MCP server, performs initialize handshake,
+/// and calls tools/list to discover available tools.
+/// Matches Nacos ConsoleMcpController.importToolsFromMcp behavior.
+///
 /// GET /v3/console/ai/mcp/importToolsFromMcp
 #[get("/importToolsFromMcp")]
 async fn import_tools_from_mcp(
     req: HttpRequest,
     data: web::Data<AppState>,
-    _query: web::Query<batata_ai::model::ImportToolsQuery>,
+    query: web::Query<batata_ai::model::ImportToolsQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/mcp")
-            .action(ActionTypes::Read)
-            .sign_type(SignType::Console)
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Ai)
             .api_type(ApiType::ConsoleApi)
             .build()
     );
 
-    // Stub: returns empty tools list
-    let tools: Vec<batata_ai::model::McpTool> = vec![];
-    common_response::Result::<Vec<batata_ai::model::McpTool>>::http_success(tools)
+    let q = query.into_inner();
+
+    // Only mcp-sse transport is supported (matching Nacos behavior)
+    if q.transport_type != "mcp-sse" {
+        return common_response::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            format!("Unsupported transport type: {}", q.transport_type),
+            String::new(),
+        );
+    }
+
+    let timeout = std::time::Duration::from_secs(10);
+    match batata_ai::service::mcp_client::import_tools_from_mcp_sse(
+        &q.base_url,
+        &q.endpoint,
+        q.auth_token.as_deref(),
+        timeout,
+    )
+    .await
+    {
+        Ok(tools) => common_response::Result::<Vec<batata_ai::model::McpTool>>::http_success(tools),
+        Err(e) => common_response::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            format!("Failed to import tools from MCP server: {}", e),
+            String::new(),
+        ),
+    }
 }
 
 /// Validate MCP import content

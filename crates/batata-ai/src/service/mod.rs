@@ -3,6 +3,7 @@
 pub mod a2a_service;
 pub mod constants;
 pub mod endpoint_service;
+pub mod mcp_client;
 pub mod mcp_index;
 pub mod mcp_service;
 

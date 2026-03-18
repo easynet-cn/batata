@@ -644,7 +644,7 @@ pub struct McpRegistryStats {
 // =============================================================================
 
 /// Register a new MCP server
-#[post("/v1/ai/mcp/servers")]
+#[post("/v3/ai/mcp/servers")]
 pub async fn register_server(
     registry: web::Data<Arc<McpServerRegistry>>,
     body: web::Json<McpServerRegistration>,
@@ -661,7 +661,7 @@ pub async fn register_server(
 }
 
 /// Update an existing MCP server
-#[put("/v1/ai/mcp/servers/{namespace}/{name}")]
+#[put("/v3/ai/mcp/servers/{namespace}/{name}")]
 pub async fn update_server(
     registry: web::Data<Arc<McpServerRegistry>>,
     path: web::Path<(String, String)>,
@@ -680,7 +680,7 @@ pub async fn update_server(
 }
 
 /// Deregister an MCP server
-#[delete("/v1/ai/mcp/servers/{namespace}/{name}")]
+#[delete("/v3/ai/mcp/servers/{namespace}/{name}")]
 pub async fn deregister_server(
     registry: web::Data<Arc<McpServerRegistry>>,
     path: web::Path<(String, String)>,
@@ -698,7 +698,7 @@ pub async fn deregister_server(
 }
 
 /// Get an MCP server by namespace and name
-#[get("/v1/ai/mcp/servers/{namespace}/{name}")]
+#[get("/v3/ai/mcp/servers/{namespace}/{name}")]
 pub async fn get_server(
     registry: web::Data<Arc<McpServerRegistry>>,
     path: web::Path<(String, String)>,
@@ -715,7 +715,7 @@ pub async fn get_server(
 }
 
 /// List MCP servers
-#[get("/v1/ai/mcp/servers")]
+#[get("/v3/ai/mcp/servers")]
 pub async fn list_servers(
     registry: web::Data<Arc<McpServerRegistry>>,
     query: web::Query<McpServerQuery>,
@@ -725,7 +725,7 @@ pub async fn list_servers(
 }
 
 /// Import MCP servers from JSON config
-#[post("/v1/ai/mcp/servers/import")]
+#[post("/v3/ai/mcp/servers/import")]
 pub async fn import_servers(
     registry: web::Data<Arc<McpServerRegistry>>,
     body: web::Json<McpServerImportRequest>,
@@ -737,7 +737,7 @@ pub async fn import_servers(
 }
 
 /// Get MCP registry statistics
-#[get("/v1/ai/mcp/stats")]
+#[get("/v3/ai/mcp/stats")]
 pub async fn get_stats(registry: web::Data<Arc<McpServerRegistry>>) -> HttpResponse {
     let stats = registry.stats();
     HttpResponse::Ok().json(RestResult::ok(Some(stats)))

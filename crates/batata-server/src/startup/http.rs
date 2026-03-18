@@ -17,9 +17,7 @@ use rocksdb::DB;
 use batata_naming::InstanceCheckRegistry;
 
 use crate::{
-    api::ai::{
-        AgentRegistry, McpServerRegistry, configure_a2a, configure_mcp, configure_mcp_registry,
-    },
+    api::ai::{AgentRegistry, McpServerRegistry, configure_mcp_registry},
     api::cloud::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
     },
@@ -563,9 +561,6 @@ pub fn main_server(
                 // V3 Client API routes
                 .service(v3_client_routes()),
         )
-        // AI Capabilities API routes (MCP, A2A)
-        .configure(configure_mcp)
-        .configure(configure_a2a)
         // Cloud Native Integration API routes (Prometheus SD, Kubernetes Sync)
         .configure(configure_prometheus)
         .configure(configure_kubernetes)
