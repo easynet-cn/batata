@@ -298,14 +298,13 @@ impl InstanceRequestHandler {
             return Ok(());
         }
 
-        // Build group key
-        let group_key = NamingFuzzyWatchPattern::build_group_key(namespace, group, service_name);
+        // Build service key in Nacos format: namespace@@group@@serviceName
+        let service_key = format!("{}@@{}@@{}", namespace, group, service_name);
 
         // Build notification payload using NamingFuzzyWatchChangeNotifyRequest
-        // (not NotifySubscriberRequest — SDK expects the specific fuzzy watch type)
         let mut notification =
             batata_api::naming::model::NamingFuzzyWatchChangeNotifyRequest::new();
-        notification.service_key = group_key.clone();
+        notification.service_key = service_key.clone();
         notification.changed_type = change_type.to_string();
         let payload = notification.build_server_push_payload();
 
@@ -313,13 +312,13 @@ impl InstanceRequestHandler {
             "Notifying {} fuzzy watchers for service {} change: {}",
             watchers.len(),
             change_type,
-            group_key
+            service_key
         );
 
         // Mark all watchers as received before sending
         for connection_id in &watchers {
             self.naming_fuzzy_watch_manager
-                .mark_received(connection_id, &group_key);
+                .mark_received(connection_id, &service_key);
         }
 
         // Use push_message_to_many to avoid cloning payload for each watcher
@@ -331,7 +330,7 @@ impl InstanceRequestHandler {
             "Notified {} fuzzy watchers for service {} change: {}",
             watchers.len(),
             change_type,
-            group_key
+            service_key
         );
 
         Ok(())
@@ -945,13 +944,14 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
         let request_id = request.request_id();
 
         let connection_id = &_connection.meta_info.connection_id;
-        let namespace = &request.namespace;
-        let group_pattern = &request.group_name_pattern;
-        let service_pattern = &request.service_name_pattern;
         let watch_type = &request.watch_type;
 
-        // Build group key pattern
-        let group_key_pattern = format!("{}+{}+{}", namespace, group_pattern, service_pattern);
+        // Use groupKeyPattern from request (already in ">>" format from SDK)
+        let group_key_pattern = if !request.group_key_pattern.is_empty() {
+            request.group_key_pattern.clone()
+        } else {
+            format!("{}>>{}>>{}",request.namespace, request.group_name_pattern, request.service_name_pattern)
+        };
 
         // Register the fuzzy watch pattern for this connection
         match self.naming_fuzzy_watch_manager.register_watch(
@@ -1055,8 +1055,8 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
         let service_pattern = &request.pattern_service_name;
         let sync_type = &request.sync_type;
 
-        // Build group key pattern
-        let group_key_pattern = format!("{}+{}+{}", namespace, group_pattern, service_pattern);
+        // Build group key pattern in >> format
+        let group_key_pattern = format!("{}>>{}>>{}",namespace, group_pattern, service_pattern);
 
         // For initial sync, get all matching services
         if sync_type == "all" || request.current_batch == 0 {

@@ -38,19 +38,18 @@ pub struct ConfigFuzzyWatchPattern {
 }
 
 impl ConfigFuzzyWatchPattern {
-    /// Parse a groupKeyPattern in format: namespace+group+dataId
-    /// The pattern can contain * as wildcard
+    /// Parse a groupKeyPattern in format: namespace>>group>>dataIdPattern
+    /// Nacos uses ">>" as FUZZY_WATCH_PATTERN_SPLITTER
     pub fn from_group_key_pattern(group_key_pattern: &str) -> Option<Self> {
-        let parts: Vec<&str> = group_key_pattern.split('+').collect();
+        let parts: Vec<&str> = group_key_pattern.split(">>").collect();
         if parts.len() >= 3 {
             Some(Self {
                 namespace: parts[0].to_string(),
                 group_pattern: parts[1].to_string(),
-                data_id_pattern: parts[2..].join("+"), // Handle dataId with + in it
+                data_id_pattern: parts[2..].join(">>"),
                 watch_type: String::new(),
             })
         } else if parts.len() == 2 {
-            // namespace+group (dataId pattern is *)
             Some(Self {
                 namespace: parts[0].to_string(),
                 group_pattern: parts[1].to_string(),
@@ -84,9 +83,9 @@ impl ConfigFuzzyWatchPattern {
         batata_common::glob_matches(pattern, text)
     }
 
-    /// Build group key from config identifiers
+    /// Build group key from config identifiers (using Nacos ">>" separator)
     pub fn build_group_key(namespace: &str, group: &str, data_id: &str) -> String {
-        format!("{}+{}+{}", namespace, group, data_id)
+        format!("{}>>{}>>{}",namespace, group, data_id)
     }
 }
 
@@ -485,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_pattern_from_group_key_pattern() {
-        let pattern = ConfigFuzzyWatchPattern::from_group_key_pattern("public+DEFAULT_GROUP+*");
+        let pattern = ConfigFuzzyWatchPattern::from_group_key_pattern("public>>DEFAULT_GROUP>>*");
         assert!(pattern.is_some());
         let p = pattern.unwrap();
         assert_eq!(p.namespace, "public");
@@ -513,10 +512,10 @@ mod tests {
         let manager = ConfigFuzzyWatchManager::new();
 
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>app-*", "add")
             .unwrap();
         manager
-            .register_watch("conn-2", "public+*+*", "add")
+            .register_watch("conn-2", "public>>*>>*", "add")
             .unwrap();
 
         let watchers = manager.get_watchers_for_config("public", "DEFAULT_GROUP", "app-config");
@@ -532,7 +531,7 @@ mod tests {
         let manager = ConfigFuzzyWatchManager::new();
 
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+*", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>*", "add")
             .unwrap();
         assert_eq!(manager.watcher_count(), 1);
 
@@ -544,7 +543,7 @@ mod tests {
     fn test_received_keys_tracking() {
         let manager = ConfigFuzzyWatchManager::new();
 
-        let group_key = "public+DEFAULT_GROUP+app.yaml";
+        let group_key = "public>>DEFAULT_GROUP>>app.yaml";
         assert!(!manager.is_received("conn-1", group_key));
 
         manager.mark_received("conn-1", group_key);
@@ -560,7 +559,7 @@ mod tests {
         assert_eq!(event.group, "DEFAULT_GROUP");
         assert_eq!(event.data_id, "app.yaml");
         assert_eq!(event.change_type, ConfigChangeType::Add);
-        assert_eq!(event.group_key(), "public+DEFAULT_GROUP+app.yaml");
+        assert_eq!(event.group_key(), "public>>DEFAULT_GROUP>>app.yaml");
     }
 
     #[test]
@@ -575,13 +574,13 @@ mod tests {
         let manager = ConfigFuzzyWatchManager::new();
 
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>app-*", "add")
             .unwrap();
         manager
-            .register_watch("conn-2", "public+*+*", "add")
+            .register_watch("conn-2", "public>>*>>*", "add")
             .unwrap();
         manager
-            .register_watch("conn-3", "private+*+*", "add")
+            .register_watch("conn-3", "private>>*>>*", "add")
             .unwrap();
 
         let watchers = manager.notify_add("public", "DEFAULT_GROUP", "app-config");
@@ -595,10 +594,10 @@ mod tests {
         let manager = ConfigFuzzyWatchManager::new();
 
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+*", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>*", "add")
             .unwrap();
         manager
-            .register_watch("conn-2", "public+*+*", "add")
+            .register_watch("conn-2", "public>>*>>*", "add")
             .unwrap();
 
         let event = ConfigChangeEvent::modify("public", "DEFAULT_GROUP", "app.yaml");
@@ -616,7 +615,7 @@ mod tests {
         let manager = ConfigFuzzyWatchManager::new();
 
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+app-*", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>app-*", "add")
             .unwrap();
 
         let matching_event = ConfigChangeEvent::add("public", "DEFAULT_GROUP", "app-config");
@@ -633,7 +632,7 @@ mod tests {
         let mut receiver = manager.subscribe();
 
         manager
-            .register_watch("conn-1", "public+*+*", "add")
+            .register_watch("conn-1", "public>>*>>*", "add")
             .unwrap();
 
         // Notify about a change
@@ -700,15 +699,15 @@ mod tests {
         let manager = ConfigFuzzyWatchManager::with_limits(1024, limits);
 
         // Within limit
-        let result = manager.check_match_count(3, "public+*+*");
+        let result = manager.check_match_count(3, "public>>*>>*");
         assert!(result.is_ok());
 
         // At limit
-        let result = manager.check_match_count(5, "public+*+*");
+        let result = manager.check_match_count(5, "public>>*>>*");
         assert!(result.is_ok());
 
         // Over limit
-        let result = manager.check_match_count(6, "public+*+*");
+        let result = manager.check_match_count(6, "public>>*>>*");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(

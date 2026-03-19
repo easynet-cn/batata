@@ -138,6 +138,7 @@ pub trait RequestTrait {
 #[serde(rename_all = "camelCase", default)]
 pub struct Request {
     pub headers: HashMap<String, String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub request_id: String,
 }
 
@@ -303,7 +304,9 @@ pub struct Response {
     pub result_code: i32,
     pub error_code: i32,
     pub success: bool,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub message: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub request_id: String,
 }
 
@@ -517,7 +520,7 @@ pub struct ServerRequest {
     #[serde(flatten)]
     pub request: Request,
     #[serde(
-        serialize_with = "serialize_internal_module",
+        skip_serializing,
         deserialize_with = "deserialize_internal_module"
     )]
     module: String,
@@ -565,6 +568,14 @@ pub struct SetupAckRequest {
     /// Server ability table sent to client during connection setup
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ability_table: Option<std::collections::HashMap<String, bool>>,
+    /// Module field — SetupAckRequest needs its own "module":"internal" since
+    /// ServerRequest.module is skip_serializing to avoid duplicate keys in other types.
+    #[serde(
+        rename = "module",
+        serialize_with = "serialize_internal_module",
+        deserialize_with = "deserialize_internal_module"
+    )]
+    pub ack_module: String,
 }
 
 impl_request_trait!(SetupAckRequest, server_requst);

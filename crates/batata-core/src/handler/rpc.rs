@@ -405,16 +405,42 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             let message_type = &metadata.r#type;
             let payload = request.get_ref();
 
+            // Log all unary gRPC requests for debugging
+            tracing::info!("[GRPC-UNARY] type={}, conn={}", message_type, connection.meta_info.connection_id);
+
+            // Log FuzzyWatch requests at INFO level for debugging
+            if message_type.contains("FuzzyWatch") || message_type.contains("FuzzySubscribe") {
+                let body = payload
+                    .body
+                    .as_ref()
+                    .map(|b| String::from_utf8_lossy(&b.value).to_string())
+                    .unwrap_or_default();
+                tracing::info!(
+                    "[FUZZY-DIAG] Received unary request: type={}, connection={}, body={}",
+                    message_type,
+                    connection.meta_info.connection_id,
+                    &body[..body.len().min(200)]
+                );
+            }
+
             let handler = self.handler_registry.get_handler(message_type);
 
             // Check TPS limits before processing
             let client_ip = &connection.meta_info.remote_ip;
-            self.handler_registry
-                .check_tps(message_type, client_ip)
-                .await?;
+            if let Err(e) = self.handler_registry.check_tps(message_type, client_ip).await {
+                if message_type.contains("FuzzyWatch") {
+                    tracing::error!("[FUZZY-DIAG] TPS check failed for {}: {}", message_type, e);
+                }
+                return Err(e);
+            }
 
             // Validate request parameters
-            crate::handler::param_check::check_request_params(message_type, payload)?;
+            if let Err(e) = crate::handler::param_check::check_request_params(message_type, payload) {
+                if message_type.contains("FuzzyWatch") {
+                    tracing::error!("[FUZZY-DIAG] Param check failed for {}: {}", message_type, e);
+                }
+                return Err(e);
+            }
 
             // Check authentication based on handler's auth requirement
             // Following Nacos RemoteRequestAuthFilter logic:
@@ -453,7 +479,15 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                             // Validate identity and load roles from database
                             let auth_context =
                                 resolve_auth_context_from_payload(auth_service, payload).await;
-                            check_authentication(&auth_context)?;
+                            if let Err(e) = check_authentication(&auth_context) {
+                                if message_type.contains("FuzzyWatch") {
+                                    tracing::error!(
+                                        "[FUZZY-DIAG] Auth failed for {}: {}, user={:?}",
+                                        message_type, e, auth_context.username
+                                    );
+                                }
+                                return Err(e);
+                            }
 
                             // Validate authority (permission)
                             if let Some((resource, action)) = handler.resource_from_payload(payload)
@@ -479,8 +513,18 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             }
 
             return match handler.handle(&connection, payload).await {
-                Ok(reponse_payload) => Ok(Response::new(reponse_payload)),
-                Err(err) => Err(err),
+                Ok(reponse_payload) => {
+                    if message_type.contains("FuzzyWatch") {
+                        tracing::info!("[FUZZY-DIAG] Handler succeeded for {}", message_type);
+                    }
+                    Ok(Response::new(reponse_payload))
+                }
+                Err(err) => {
+                    if message_type.contains("FuzzyWatch") {
+                        tracing::error!("[FUZZY-DIAG] Handler FAILED for {}: {}", message_type, err);
+                    }
+                    Err(err)
+                }
             };
         }
 
@@ -602,13 +646,26 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     );
 
                                     let ack = batata_api::remote::model::SetupAckRequest {
-                                        server_requst: Default::default(),
                                         ability_table: Some(abilities),
+                                        ..Default::default()
                                     };
-                                    if let Err(e) =
-                                        tx.send(Ok(ack.build_server_push_payload())).await
-                                    {
+                                    let ack_payload = ack.build_server_push_payload();
+                                    info!(
+                                        "Sending SetupAckRequest to {}, type={}",
+                                        connection_id,
+                                        ack_payload
+                                            .metadata
+                                            .as_ref()
+                                            .map(|m| m.r#type.as_str())
+                                            .unwrap_or("?")
+                                    );
+                                    if let Err(e) = tx.send(Ok(ack_payload)).await {
                                         tracing::warn!("Failed to send SetupAckRequest: {}", e);
+                                    } else {
+                                        info!(
+                                            "SetupAckRequest sent successfully to {}",
+                                            connection_id
+                                        );
                                     }
                                 }
 

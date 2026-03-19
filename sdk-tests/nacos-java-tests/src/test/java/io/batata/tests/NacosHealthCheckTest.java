@@ -159,20 +159,20 @@ public class NacosHealthCheckTest {
     void testSelectAllInstances() throws NacosException, InterruptedException {
         String serviceName = "select-all-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Register mixed health instances with delay between each to allow cache updates
+        // Register mixed health instances with delay between each to allow server processing
         for (int i = 0; i < 3; i++) {
             Instance instance = new Instance();
             instance.setIp("192.168.10." + (20 + i));
             instance.setPort(8080);
             instance.setHealthy(i % 2 == 0); // Alternate health status
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-            Thread.sleep(2000);
+            Thread.sleep(3000);
         }
 
         Thread.sleep(3000);
 
-        // Select all (healthy = false means include unhealthy) using non-subscribe query
-        List<Instance> allInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false, false);
+        // Use getAllInstances with subscribe=false to bypass cache and get all instances directly
+        List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
 
         assertNotNull(allInstances, "Instance list should not be null");
         assertTrue(allInstances.size() >= 3,

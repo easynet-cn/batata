@@ -654,9 +654,14 @@ impl ConfigPublishHandler {
             .fuzzy_watch_manager
             .get_watchers_for_config(tenant, group, data_id);
 
+        info!(
+            "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
+            tenant, group, data_id, fuzzy_watchers.len(), self.fuzzy_watch_manager.watcher_count()
+        );
+
         if !fuzzy_watchers.is_empty() {
-            // Build group key
-            let group_key = ConfigFuzzyWatchPattern::build_group_key(tenant, group, data_id);
+            // Build group key in Nacos GroupKey format: dataId+group+tenant
+            let group_key = format!("{}+{}+{}", data_id, group, tenant);
 
             // Use ConfigFuzzyWatchChangeNotifyRequest (not ConfigChangeNotifyRequest)
             // — the SDK expects this specific type for fuzzy watch notifications
@@ -898,9 +903,14 @@ impl ConfigRemoveHandler {
             .fuzzy_watch_manager
             .get_watchers_for_config(tenant, group, data_id);
 
+        info!(
+            "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
+            tenant, group, data_id, fuzzy_watchers.len(), self.fuzzy_watch_manager.watcher_count()
+        );
+
         if !fuzzy_watchers.is_empty() {
-            // Build group key
-            let group_key = ConfigFuzzyWatchPattern::build_group_key(tenant, group, data_id);
+            // Build group key in Nacos GroupKey format: dataId+group+tenant
+            let group_key = format!("{}+{}+{}", data_id, group, tenant);
 
             // Use ConfigFuzzyWatchChangeNotifyRequest (not ConfigChangeNotifyRequest)
             // — the SDK expects this specific type for fuzzy watch notifications
@@ -1268,6 +1278,11 @@ impl ConfigChangeClusterSyncHandler {
         let fuzzy_watchers = self
             .fuzzy_watch_manager
             .get_watchers_for_config(tenant, group, data_id);
+
+        info!(
+            "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
+            tenant, group, data_id, fuzzy_watchers.len(), self.fuzzy_watch_manager.watcher_count()
+        );
 
         if !fuzzy_watchers.is_empty() {
             let group_key = ConfigFuzzyWatchPattern::build_group_key(tenant, group, data_id);

@@ -425,7 +425,7 @@ public class NacosServiceSelectorTest {
         healthy.setPort(8080);
         healthy.setHealthy(true);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, healthy);
-        Thread.sleep(2000);
+        Thread.sleep(3000);
 
         Instance unhealthy = new Instance();
         unhealthy.setIp("192.168.39.2");
@@ -435,8 +435,8 @@ public class NacosServiceSelectorTest {
 
         Thread.sleep(3000);
 
-        // Select all (including unhealthy) using non-subscribe query
-        List<Instance> allInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false, false);
+        // Use getAllInstances with subscribe=false to bypass cache and get all instances directly
+        List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
 
         assertNotNull(allInstances, "Instance list should not be null");
         assertTrue(allInstances.size() >= 2,

@@ -51,19 +51,18 @@ pub struct NamingFuzzyWatchPattern {
 }
 
 impl NamingFuzzyWatchPattern {
-    /// Parse a groupKeyPattern in format: namespace+group+serviceName
-    /// The pattern can contain * as wildcard
+    /// Parse a groupKeyPattern in format: namespace>>group>>serviceNamePattern
+    /// Nacos uses ">>" as FUZZY_WATCH_PATTERN_SPLITTER
     pub fn from_group_key_pattern(group_key_pattern: &str) -> Option<Self> {
-        let parts: Vec<&str> = group_key_pattern.split('+').collect();
+        let parts: Vec<&str> = group_key_pattern.split(">>").collect();
         if parts.len() >= 3 {
             Some(Self {
                 namespace: parts[0].to_string(),
                 group_pattern: parts[1].to_string(),
-                service_name_pattern: parts[2..].join("+"), // Handle serviceName with + in it
+                service_name_pattern: parts[2..].join(">>"),
                 watch_type: String::new(),
             })
         } else if parts.len() == 2 {
-            // namespace+group (serviceName pattern is *)
             Some(Self {
                 namespace: parts[0].to_string(),
                 group_pattern: parts[1].to_string(),
@@ -99,7 +98,7 @@ impl NamingFuzzyWatchPattern {
 
     /// Build group key from service identifiers
     pub fn build_group_key(namespace: &str, group: &str, service_name: &str) -> String {
-        format!("{}+{}+{}", namespace, group, service_name)
+        format!("{}>>{}>>{}",namespace, group, service_name)
     }
 }
 
@@ -296,7 +295,7 @@ mod tests {
     #[test]
     fn test_pattern_from_group_key() {
         let pattern =
-            NamingFuzzyWatchPattern::from_group_key_pattern("public+DEFAULT_GROUP+test-service");
+            NamingFuzzyWatchPattern::from_group_key_pattern("public>>DEFAULT_GROUP>>test-service");
         assert!(pattern.is_some());
         let p = pattern.unwrap();
         assert_eq!(p.namespace, "public");
@@ -306,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_pattern_from_group_key_with_wildcard() {
-        let pattern = NamingFuzzyWatchPattern::from_group_key_pattern("public+DEFAULT_GROUP+*");
+        let pattern = NamingFuzzyWatchPattern::from_group_key_pattern("public>>DEFAULT_GROUP>>*");
         assert!(pattern.is_some());
         let p = pattern.unwrap();
         assert_eq!(p.namespace, "public");
@@ -317,7 +316,7 @@ mod tests {
     #[test]
     fn test_pattern_matches() {
         let pattern =
-            NamingFuzzyWatchPattern::from_group_key_pattern("public+DEFAULT_GROUP+*").unwrap();
+            NamingFuzzyWatchPattern::from_group_key_pattern("public>>DEFAULT_GROUP>>*").unwrap();
         assert!(pattern.matches("public", "DEFAULT_GROUP", "service1"));
         assert!(pattern.matches("public", "DEFAULT_GROUP", "service2"));
         assert!(!pattern.matches("dev", "DEFAULT_GROUP", "service1"));
@@ -325,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_pattern_wildcard_namespace() {
-        let pattern = NamingFuzzyWatchPattern::from_group_key_pattern("*+*+*").unwrap();
+        let pattern = NamingFuzzyWatchPattern::from_group_key_pattern("*>>*>>*").unwrap();
         assert!(pattern.matches("public", "DEFAULT_GROUP", "service1"));
         assert!(pattern.matches("dev", "TEST_GROUP", "service2"));
     }
@@ -333,7 +332,7 @@ mod tests {
     #[test]
     fn test_build_group_key() {
         let key = NamingFuzzyWatchPattern::build_group_key("public", "DEFAULT_GROUP", "my-service");
-        assert_eq!(key, "public+DEFAULT_GROUP+my-service");
+        assert_eq!(key, "public>>DEFAULT_GROUP>>my-service");
     }
 
     #[test]
@@ -341,12 +340,12 @@ mod tests {
         let manager = NamingFuzzyWatchManager::new();
         assert!(
             manager
-                .register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1")
+                .register_watch("conn1", "public>>DEFAULT_GROUP>>*", "watch1")
                 .unwrap()
         );
         assert!(
             manager
-                .register_watch("conn1", "public+*+my-service", "watch2")
+                .register_watch("conn1", "public>>*>>my-service", "watch2")
                 .unwrap()
         );
 
@@ -358,10 +357,10 @@ mod tests {
     fn test_manager_get_watchers() {
         let manager = NamingFuzzyWatchManager::new();
         manager
-            .register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1")
+            .register_watch("conn1", "public>>DEFAULT_GROUP>>*", "watch1")
             .unwrap();
         manager
-            .register_watch("conn2", "public+TEST_GROUP+*", "watch1")
+            .register_watch("conn2", "public>>TEST_GROUP>>*", "watch1")
             .unwrap();
 
         let watchers = manager.get_watchers_for_service("public", "DEFAULT_GROUP", "my-service");
@@ -377,10 +376,10 @@ mod tests {
     fn test_manager_unregister() {
         let manager = NamingFuzzyWatchManager::new();
         manager
-            .register_watch("conn1", "public+DEFAULT_GROUP+*", "watch1")
+            .register_watch("conn1", "public>>DEFAULT_GROUP>>*", "watch1")
             .unwrap();
         manager
-            .register_watch("conn2", "public+*+my-service", "watch2")
+            .register_watch("conn2", "public>>*>>my-service", "watch2")
             .unwrap();
 
         manager.unregister_connection("conn1");

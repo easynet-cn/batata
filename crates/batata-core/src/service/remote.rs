@@ -31,6 +31,8 @@ pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Sta
     // In gRPC over HTTP/2, both unary RPCs and bidirectional streams share
     // the same TCP connection (same remote IP:port), so this ensures
     // consistent connection_id across all request types from the same client.
+    // Note: Nacos uses timestamp prefix but generates it once per connection,
+    // not per RPC call. We use ip_port for simplicity and determinism.
     connection.meta_info.connection_id = format!("{}_{}", remote_ip, remote_port);
 
     let local_port = request.local_addr().map(|a| a.port()).unwrap_or(0);

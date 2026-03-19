@@ -71,11 +71,51 @@ public class GrpcPayloadDiagnosticTest {
     }
 
     /**
-     * DIAG-002: Verify SetupAckRequest from Batata is parseable by SDK
-     * This is the key handshake that enables FuzzyWatch capability.
+     * DIAG-002: Test FuzzyWatch via full SDK path
+     * Creates ConfigService via NacosFactory (full init) and checks FuzzyWatch ability
      */
     @Test
     @Order(2)
+    void testFuzzyWatchAbilityViaSDK() throws Exception {
+        String host = System.getProperty("nacos.server", "127.0.0.1:8848");
+        Properties props = new Properties();
+        props.setProperty("serverAddr", host);
+        props.setProperty("username", System.getProperty("nacos.username", "nacos"));
+        props.setProperty("password", System.getProperty("nacos.password", "nacos"));
+
+        com.alibaba.nacos.api.config.ConfigService configService = null;
+        try {
+            configService = com.alibaba.nacos.api.NacosFactory.createConfigService(props);
+            Thread.sleep(3000); // Wait for connection + ability negotiation
+
+            // Try fuzzyWatch - if server ability is set, this should not throw
+            String testPattern = "diag-test-" + System.currentTimeMillis() + "*";
+            System.out.println("=== Testing fuzzyWatch with pattern: " + testPattern);
+            try {
+                configService.fuzzyWatch(testPattern, "DEFAULT_GROUP",
+                    new com.alibaba.nacos.api.config.listener.FuzzyWatchEventWatcher() {
+                        @Override
+                        public void onEvent(com.alibaba.nacos.api.config.listener.ConfigFuzzyWatchChangeEvent event) {
+                            System.out.println("FuzzyWatch event: " + event);
+                        }
+                        @Override
+                        public java.util.concurrent.Executor getExecutor() { return null; }
+                    });
+                System.out.println("=== fuzzyWatch() succeeded - server supports FuzzyWatch");
+            } catch (Exception e) {
+                System.out.println("=== fuzzyWatch() FAILED: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                fail("FuzzyWatch should be supported but got: " + e.getMessage());
+            }
+        } finally {
+            if (configService != null) configService.shutDown();
+        }
+    }
+
+    /**
+     * DIAG-003: Verify SetupAckRequest from server is parseable by SDK
+     */
+    @Test
+    @Order(3)
     void testSetupAckResponse() throws Exception {
         BiRequestStreamGrpc.BiRequestStreamStub biStub = BiRequestStreamGrpc.newStub(channel);
 
