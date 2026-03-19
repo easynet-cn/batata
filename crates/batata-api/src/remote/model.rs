@@ -519,10 +519,7 @@ impl From<&Payload> for ServerReloadRequest {
 pub struct ServerRequest {
     #[serde(flatten)]
     pub request: Request,
-    #[serde(
-        skip_serializing,
-        deserialize_with = "deserialize_internal_module"
-    )]
+    #[serde(skip_serializing, deserialize_with = "deserialize_internal_module")]
     module: String,
 }
 

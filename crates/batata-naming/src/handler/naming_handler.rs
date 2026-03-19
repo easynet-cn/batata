@@ -137,13 +137,18 @@ impl PayloadHandler for InstanceRequestHandler {
             self.notify_subscribers(namespace, group_name, service_name)
                 .await;
 
-            // Notify fuzzy watchers
+            // Notify fuzzy watchers with Nacos-compatible change types
+            let fuzzy_change_type = if req_type == REGISTER_INSTANCE {
+                "ADD_SERVICE"
+            } else {
+                "DELETE_SERVICE"
+            };
             if let Err(e) = self
                 .notify_fuzzy_watchers(
                     namespace,
                     group_name,
                     service_name,
-                    req_type.as_str(),
+                    fuzzy_change_type,
                     src_ip,
                 )
                 .await
@@ -950,7 +955,10 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
         let group_key_pattern = if !request.group_key_pattern.is_empty() {
             request.group_key_pattern.clone()
         } else {
-            format!("{}>>{}>>{}",request.namespace, request.group_name_pattern, request.service_name_pattern)
+            format!(
+                "{}>>{}>>{}",
+                request.namespace, request.group_name_pattern, request.service_name_pattern
+            )
         };
 
         // Register the fuzzy watch pattern for this connection
@@ -1056,7 +1064,7 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
         let sync_type = &request.sync_type;
 
         // Build group key pattern in >> format
-        let group_key_pattern = format!("{}>>{}>>{}",namespace, group_pattern, service_pattern);
+        let group_key_pattern = format!("{}>>{}>>{}", namespace, group_pattern, service_pattern);
 
         // For initial sync, get all matching services
         if sync_type == "all" || request.current_batch == 0 {

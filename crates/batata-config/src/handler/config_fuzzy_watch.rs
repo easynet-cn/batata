@@ -75,7 +75,8 @@ impl ConfigFuzzyWatchPattern {
 
     /// Simple glob pattern matching (* matches any sequence)
     fn glob_match(pattern: &str, text: &str) -> bool {
-        if pattern.is_empty() || pattern == "*" {
+        // ".*" is Nacos's ANY_PATTERN constant
+        if pattern.is_empty() || pattern == "*" || pattern == ".*" {
             return true;
         }
 
@@ -85,7 +86,7 @@ impl ConfigFuzzyWatchPattern {
 
     /// Build group key from config identifiers (using Nacos ">>" separator)
     pub fn build_group_key(namespace: &str, group: &str, data_id: &str) -> String {
-        format!("{}>>{}>>{}",namespace, group, data_id)
+        format!("{}>>{}>>{}", namespace, group, data_id)
     }
 }
 

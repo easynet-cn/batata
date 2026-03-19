@@ -406,7 +406,11 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             let payload = request.get_ref();
 
             // Log all unary gRPC requests for debugging
-            tracing::info!("[GRPC-UNARY] type={}, conn={}", message_type, connection.meta_info.connection_id);
+            tracing::info!(
+                "[GRPC-UNARY] type={}, conn={}",
+                message_type,
+                connection.meta_info.connection_id
+            );
 
             // Log FuzzyWatch requests at INFO level for debugging
             if message_type.contains("FuzzyWatch") || message_type.contains("FuzzySubscribe") {
@@ -427,7 +431,11 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 
             // Check TPS limits before processing
             let client_ip = &connection.meta_info.remote_ip;
-            if let Err(e) = self.handler_registry.check_tps(message_type, client_ip).await {
+            if let Err(e) = self
+                .handler_registry
+                .check_tps(message_type, client_ip)
+                .await
+            {
                 if message_type.contains("FuzzyWatch") {
                     tracing::error!("[FUZZY-DIAG] TPS check failed for {}: {}", message_type, e);
                 }
@@ -435,9 +443,14 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             }
 
             // Validate request parameters
-            if let Err(e) = crate::handler::param_check::check_request_params(message_type, payload) {
+            if let Err(e) = crate::handler::param_check::check_request_params(message_type, payload)
+            {
                 if message_type.contains("FuzzyWatch") {
-                    tracing::error!("[FUZZY-DIAG] Param check failed for {}: {}", message_type, e);
+                    tracing::error!(
+                        "[FUZZY-DIAG] Param check failed for {}: {}",
+                        message_type,
+                        e
+                    );
                 }
                 return Err(e);
             }
@@ -483,7 +496,9 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                                 if message_type.contains("FuzzyWatch") {
                                     tracing::error!(
                                         "[FUZZY-DIAG] Auth failed for {}: {}, user={:?}",
-                                        message_type, e, auth_context.username
+                                        message_type,
+                                        e,
+                                        auth_context.username
                                     );
                                 }
                                 return Err(e);
@@ -521,7 +536,11 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                 }
                 Err(err) => {
                     if message_type.contains("FuzzyWatch") {
-                        tracing::error!("[FUZZY-DIAG] Handler FAILED for {}: {}", message_type, err);
+                        tracing::error!(
+                            "[FUZZY-DIAG] Handler FAILED for {}: {}",
+                            message_type,
+                            err
+                        );
                     }
                     Err(err)
                 }

@@ -65,7 +65,6 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(1)
-    @Disabled("Naming FuzzyWatch push notifications not yet fully implemented")
     void testFuzzyWatchWithServicePattern() throws NacosException, InterruptedException {
         String uniquePrefix = "nfs001-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";
@@ -119,10 +118,12 @@ public class NacosNamingFuzzySubscribeTest {
      *
      * Uses fuzzyWatch(groupNamePattern, watcher) with a group pattern.
      * Registering a service in a matching group should trigger the watcher.
+     * NOTE: fuzzyWatch(groupName, watcher) treats first arg as FIXED group name, not pattern.
+     * This test also fails on original Nacos server.
      */
     @Test
+    @Disabled("fuzzyWatch(groupName, watcher) uses fixed group name, not a pattern - fails on Nacos too")
     @Order(2)
-    @Disabled("Naming FuzzyWatch push notifications not yet fully implemented")
     void testFuzzyWatchWithGroupPattern() throws NacosException, InterruptedException {
         String uniqueSuffix = UUID.randomUUID().toString().substring(0, 8);
         String groupPattern = "NFSGROUP-" + uniqueSuffix + "*";
@@ -175,7 +176,6 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(3)
-    @Disabled("Naming FuzzyWatch push notifications not yet fully implemented")
     void testFuzzyWatchCancel() throws NacosException, InterruptedException {
         String uniquePrefix = "nfs003-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";
@@ -238,7 +238,6 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(4)
-    @Disabled("Naming FuzzyWatch push notifications not yet fully implemented")
     void testFuzzyWatchNonMatchingService() throws NacosException, InterruptedException {
         String uniqueId = UUID.randomUUID().toString().substring(0, 8);
         String watchPattern = "nfs004-match-" + uniqueId + "*";
@@ -283,7 +282,7 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(5)
-    @Disabled("Naming FuzzyWatch push notifications not yet fully implemented")
+    @Disabled("FuzzyWatch initial sync (ADD_SERVICE for existing services) not yet implemented")
     void testFuzzyWatchDeleteServiceEvent() throws NacosException, InterruptedException {
         String uniquePrefix = "nfs005-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";
@@ -341,7 +340,6 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(6)
-    @Disabled("Naming FuzzyWatch push notifications not yet fully implemented")
     void testFuzzyWatchMultiplePatterns() throws NacosException, InterruptedException {
         String uniqueId = UUID.randomUUID().toString().substring(0, 8);
         String patternA = "nfs006a-" + uniqueId + "*";
@@ -418,7 +416,7 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(7)
-    @Disabled("Naming FuzzyWatch push notifications not yet fully implemented")
+    @Disabled("FuzzyWatch initial sync (returning existing service keys) not yet implemented")
     void testFuzzyWatchWithServiceKeys() throws NacosException, InterruptedException, ExecutionException, TimeoutException {
         String uniquePrefix = "nfs007-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";

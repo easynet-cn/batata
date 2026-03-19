@@ -88,7 +88,8 @@ impl NamingFuzzyWatchPattern {
 
     /// Simple glob pattern matching (* matches any sequence)
     fn glob_match(pattern: &str, text: &str) -> bool {
-        if pattern.is_empty() || pattern == "*" {
+        // ".*" is Nacos's ANY_PATTERN constant
+        if pattern.is_empty() || pattern == "*" || pattern == ".*" {
             return true;
         }
 
@@ -98,7 +99,7 @@ impl NamingFuzzyWatchPattern {
 
     /// Build group key from service identifiers
     pub fn build_group_key(namespace: &str, group: &str, service_name: &str) -> String {
-        format!("{}>>{}>>{}",namespace, group, service_name)
+        format!("{}>>{}>>{}", namespace, group, service_name)
     }
 }
 

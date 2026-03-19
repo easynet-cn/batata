@@ -656,7 +656,11 @@ impl ConfigPublishHandler {
 
         info!(
             "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
-            tenant, group, data_id, fuzzy_watchers.len(), self.fuzzy_watch_manager.watcher_count()
+            tenant,
+            group,
+            data_id,
+            fuzzy_watchers.len(),
+            self.fuzzy_watch_manager.watcher_count()
         );
 
         if !fuzzy_watchers.is_empty() {
@@ -905,18 +909,21 @@ impl ConfigRemoveHandler {
 
         info!(
             "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
-            tenant, group, data_id, fuzzy_watchers.len(), self.fuzzy_watch_manager.watcher_count()
+            tenant,
+            group,
+            data_id,
+            fuzzy_watchers.len(),
+            self.fuzzy_watch_manager.watcher_count()
         );
 
         if !fuzzy_watchers.is_empty() {
             // Build group key in Nacos GroupKey format: dataId+group+tenant
             let group_key = format!("{}+{}+{}", data_id, group, tenant);
 
-            // Use ConfigFuzzyWatchChangeNotifyRequest (not ConfigChangeNotifyRequest)
-            // — the SDK expects this specific type for fuzzy watch notifications
+            // Use DELETE_CONFIG for removal notifications
             let mut notification = ConfigFuzzyWatchChangeNotifyRequest::new();
             notification.group_key = group_key.clone();
-            notification.change_type = "CONFIG_CHANGED".to_string();
+            notification.change_type = "DELETE_CONFIG".to_string();
             let payload = notification.build_server_push_payload();
 
             info!(
@@ -1281,7 +1288,11 @@ impl ConfigChangeClusterSyncHandler {
 
         info!(
             "[FUZZY-DIAG] get_watchers_for_config(tenant={}, group={}, dataId={}) → {} matches (total={})",
-            tenant, group, data_id, fuzzy_watchers.len(), self.fuzzy_watch_manager.watcher_count()
+            tenant,
+            group,
+            data_id,
+            fuzzy_watchers.len(),
+            self.fuzzy_watch_manager.watcher_count()
         );
 
         if !fuzzy_watchers.is_empty() {
@@ -1359,6 +1370,7 @@ impl ConfigChangeClusterSyncHandler {
 pub struct ConfigFuzzyWatchHandler {
     pub app_state: Arc<AppState>,
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
+    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -1397,6 +1409,40 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
         // Mark received group keys as already sent to client
         self.fuzzy_watch_manager
             .mark_received_batch(connection_id, &request.received_group_keys);
+
+        // Initial sync: send existing matching configs to client via push
+        if request.initializing && request.watch_type == "WATCH" {
+            let pattern = ConfigFuzzyWatchPattern::from_group_key_pattern(group_key_pattern);
+            if let Some(pat) = pattern {
+                let persistence = self.app_state.persistence();
+                // Find all configs matching the pattern's namespace
+                if let Ok(configs) = persistence.config_find_by_namespace(&pat.namespace).await {
+                    let conn_id = connection_id.to_string();
+                    let cm = self.connection_manager.clone();
+                    // Send matching configs as ADD_CONFIG notifications
+                    for config in &configs {
+                        if pat.matches(&pat.namespace, &config.group, &config.data_id) {
+                            let group_key =
+                                format!("{}+{}+{}", config.data_id, config.group, pat.namespace);
+                            let mut notification = ConfigFuzzyWatchChangeNotifyRequest::new();
+                            notification.group_key = group_key;
+                            notification.change_type = "ADD_CONFIG".to_string();
+                            let payload = notification.build_server_push_payload();
+                            cm.push_message(&conn_id, payload).await;
+                        }
+                    }
+                }
+            }
+
+            // Send init finish notification so SDK's Future completes
+            let mut finish_req = ConfigFuzzyWatchSyncRequest::new();
+            finish_req.group_key_pattern = group_key_pattern.to_string();
+            finish_req.sync_type = "FINISH_FUZZY_WATCH_INIT_NOTIFY".to_string();
+            let finish_payload = finish_req.build_server_push_payload();
+            self.connection_manager
+                .push_message(connection_id, finish_payload)
+                .await;
+        }
 
         let mut response = ConfigFuzzyWatchResponse::new();
         response.response.request_id = request_id;

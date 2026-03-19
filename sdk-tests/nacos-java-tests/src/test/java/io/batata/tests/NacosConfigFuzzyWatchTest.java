@@ -313,7 +313,6 @@ public class NacosConfigFuzzyWatchTest {
      */
     @Test
     @Order(5)
-    @Disabled("Initial FuzzyWatch sync for existing configs not yet implemented")
     void testFuzzyWatchDeleteEvent() throws NacosException, InterruptedException {
         String uniquePrefix = "cfw005-" + UUID.randomUUID().toString().substring(0, 8);
         String dataIdPattern = uniquePrefix + "*";
@@ -372,7 +371,6 @@ public class NacosConfigFuzzyWatchTest {
      */
     @Test
     @Order(6)
-    @Disabled("FuzzyWatchWithGroupKeys initial sync for existing configs not yet implemented")
     void testFuzzyWatchWithGroupKeys() throws NacosException, InterruptedException, ExecutionException, TimeoutException {
         String uniquePrefix = "cfw006-" + UUID.randomUUID().toString().substring(0, 8);
         String dataIdPattern = uniquePrefix + "*";

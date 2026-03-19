@@ -145,6 +145,7 @@ fn register_config_handlers(
     registry.register_handler(Arc::new(ConfigFuzzyWatchHandler {
         app_state: app_state.clone(),
         fuzzy_watch_manager: fuzzy_watch_manager.clone(),
+        connection_manager: connection_manager.clone(),
     }));
     registry.register_handler(Arc::new(ConfigFuzzyWatchChangeNotifyHandler {
         app_state: app_state.clone(),
