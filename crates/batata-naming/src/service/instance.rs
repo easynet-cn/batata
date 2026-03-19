@@ -466,13 +466,10 @@ impl NamingService {
             .unwrap_or(0)
     }
 
-    /// Check if a service exists (has metadata or instances)
+    /// Check if a service exists (has metadata or is registered, even with 0 instances)
     pub fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool {
         let service_key = build_service_key(namespace, group_name, service_name);
         self.service_metadata.contains_key(&service_key)
-            || self
-                .services
-                .get(&service_key)
-                .is_some_and(|s| !s.is_empty())
+            || self.services.contains_key(&service_key)
     }
 }

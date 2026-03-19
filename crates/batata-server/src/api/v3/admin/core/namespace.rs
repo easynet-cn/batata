@@ -53,8 +53,30 @@ async fn list_namespaces(req: HttpRequest, data: web::Data<AppState>) -> impl Re
             .build()
     );
 
-    let namespaces: Vec<Namespace> = match data.persistence().namespace_find_all().await {
-        Ok(ns_list) => ns_list.into_iter().map(Namespace::from).collect(),
+    let mut namespaces: Vec<Namespace> = Vec::new();
+
+    // Always include the default (public) namespace first, matching Nacos behavior
+    namespaces.push(Namespace {
+        namespace: String::new(),
+        namespace_show_name: "public".to_string(),
+        namespace_desc: "Public Namespace".to_string(),
+        quota: 200,
+        config_count: 0,
+        type_: 0, // GLOBAL type
+    });
+
+    // Append custom namespaces from persistence
+    match data.persistence().namespace_find_all().await {
+        Ok(ns_list) => {
+            for ns in ns_list {
+                let ns = Namespace::from(ns);
+                // Skip if it's the default namespace (already added)
+                if ns.namespace.is_empty() || ns.namespace == "public" {
+                    continue;
+                }
+                namespaces.push(ns);
+            }
+        }
         Err(e) => {
             tracing::error!(error = %e, "Failed to list namespaces");
             return common::Result::<String>::http_internal_error(e);

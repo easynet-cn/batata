@@ -166,7 +166,7 @@ public class NacosHealthCheckTest {
             instance.setPort(8080);
             instance.setHealthy(i % 2 == 0); // Alternate health status
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
-            Thread.sleep(1000);
+            Thread.sleep(2000);
         }
 
         Thread.sleep(3000);

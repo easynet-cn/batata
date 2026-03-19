@@ -30,10 +30,11 @@ where
     serializer.serialize_str(INTERNAL_MODULE)
 }
 
-fn deserialize_internal_module<'de, D>(_: D) -> Result<String, D::Error>
+fn deserialize_internal_module<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
+    let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
     Ok(INTERNAL_MODULE.to_string())
 }
 
@@ -136,7 +137,6 @@ pub trait RequestTrait {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Request {
-    #[serde(skip)]
     pub headers: HashMap<String, String>,
     pub request_id: String,
 }
@@ -516,10 +516,8 @@ impl From<&Payload> for ServerReloadRequest {
 pub struct ServerRequest {
     #[serde(flatten)]
     pub request: Request,
-    /// Module field — skipped during serialization to prevent duplicate "module"
-    /// keys when concrete request types (e.g. NotifySubscriberRequest) define their own.
     #[serde(
-        skip_serializing,
+        serialize_with = "serialize_internal_module",
         deserialize_with = "deserialize_internal_module"
     )]
     module: String,
@@ -527,8 +525,14 @@ pub struct ServerRequest {
 
 impl ServerRequest {
     pub fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+        let id = REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         Self {
-            request: Request::new(),
+            request: Request {
+                request_id: id.to_string(),
+                headers: HashMap::new(),
+            },
             ..Default::default()
         }
     }

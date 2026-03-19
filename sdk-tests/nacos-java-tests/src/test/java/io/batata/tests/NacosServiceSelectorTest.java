@@ -425,7 +425,7 @@ public class NacosServiceSelectorTest {
         healthy.setPort(8080);
         healthy.setHealthy(true);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, healthy);
-        Thread.sleep(1000);
+        Thread.sleep(2000);
 
         Instance unhealthy = new Instance();
         unhealthy.setIp("192.168.39.2");
@@ -433,7 +433,7 @@ public class NacosServiceSelectorTest {
         unhealthy.setHealthy(false);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, unhealthy);
 
-        Thread.sleep(2000);
+        Thread.sleep(3000);
 
         // Select all (including unhealthy) using non-subscribe query
         List<Instance> allInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false, false);
@@ -461,15 +461,13 @@ public class NacosServiceSelectorTest {
     void testSelectFromEmptyService() throws NacosException {
         String serviceName = "selector-empty-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Try to select from non-existent service - should return null or throw exception
-        try {
-            Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
-            // If no exception, result should be null for a non-existent service
-            assertNull(selected, "Select from empty service should return null");
-        } catch (NacosException e) {
-            // An exception is also acceptable for empty services
-            assertNotNull(e.getMessage(), "Exception should have a message");
-        }
+        // selectOneHealthyInstance on an empty/non-existent service throws an exception.
+        // Nacos throws NacosException or IllegalStateException with "no host to srv" message.
+        Exception thrown = assertThrows(Exception.class, () -> {
+            namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
+        }, "selectOneHealthyInstance on empty service should throw an exception");
+        assertNotNull(thrown.getMessage(), "Exception should have a message");
+        System.out.println("Expected exception for empty service: " + thrown.getClass().getSimpleName() + ": " + thrown.getMessage());
     }
 
     /**

@@ -123,11 +123,14 @@ impl ConnectionManager {
         }
     }
 
-    pub async fn register(&self, connection_id: &str, client: GrpcClient) -> bool {
+    pub async fn register(&self, connection_id: &str, mut client: GrpcClient) -> bool {
         if self.clients.contains_key(connection_id) {
             tracing::debug!(connection_id, "Connection already registered, skipping");
             return true;
         }
+
+        // Initialize last_active to current time to prevent premature stale ejection
+        client.connection.last_active.touch();
 
         // Check connection limit before registering
         let meta = client.connection.meta_info.clone();
@@ -186,7 +189,7 @@ impl ConnectionManager {
         if let Some(client) = self.clients.get(connection_id) {
             match client.tx.send(Ok(payload)).await {
                 Ok(_) => {
-                    tracing::debug!(connection_id, "Message pushed successfully");
+                    tracing::info!(connection_id, "Message pushed successfully");
                     true
                 }
                 Err(e) => {
@@ -195,7 +198,7 @@ impl ConnectionManager {
                 }
             }
         } else {
-            tracing::debug!(connection_id, "Connection not found for push");
+            tracing::warn!(connection_id, "Connection not found for push");
             false
         }
     }

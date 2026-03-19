@@ -274,7 +274,7 @@ impl NamingFuzzyWatchService {
             WATCH_TYPE_UNWATCH.to_string()
         };
         req.received_service_keys = received_keys;
-        req.is_initializing = is_initializing;
+        req.initializing = is_initializing;
 
         let _resp: NamingFuzzyWatchResponse = self.grpc_client.request_typed(&req).await?;
         Ok(())
@@ -346,7 +346,7 @@ impl ServerPushHandler for NamingFuzzyWatchChangeNotifyHandler {
     fn handle(&self, payload: &Payload) -> Option<Payload> {
         let req: NamingFuzzyWatchChangeNotifyRequest = crate::grpc::deserialize_payload(payload);
         self.fuzzy_watch_service
-            .handle_change_notify(&req.service_key, &req.change_type);
+            .handle_change_notify(&req.service_key, &req.changed_type);
 
         let resp = NamingFuzzyWatchChangeNotifyResponse::new();
         Some(resp.build_payload())

@@ -301,14 +301,12 @@ impl InstanceRequestHandler {
         // Build group key
         let group_key = NamingFuzzyWatchPattern::build_group_key(namespace, group, service_name);
 
-        // Get current service info for the notification
-        let service_info =
-            self.naming_service
-                .get_service(namespace, group, service_name, "", false);
-
-        // Build notification payload
-        let notification =
-            NotifySubscriberRequest::for_service(namespace, group, service_name, service_info);
+        // Build notification payload using NamingFuzzyWatchChangeNotifyRequest
+        // (not NotifySubscriberRequest — SDK expects the specific fuzzy watch type)
+        let mut notification =
+            batata_api::naming::model::NamingFuzzyWatchChangeNotifyRequest::new();
+        notification.service_key = group_key.clone();
+        notification.changed_type = change_type.to_string();
         let payload = notification.build_server_push_payload();
 
         info!(

@@ -190,7 +190,7 @@ async fn do_get_metrics(
 /// GET /nacos/v2/ns/operator/switches
 ///
 /// Returns the current system configuration switches.
-#[get("")]
+#[get("switches")]
 pub async fn get_switches(data: web::Data<AppState>) -> impl Responder {
     let response = build_switches_response(&data.configuration);
     Result::<SwitchesResponse>::http_success(response)
@@ -201,7 +201,7 @@ pub async fn get_switches(data: web::Data<AppState>) -> impl Responder {
 /// PUT /nacos/v2/ns/operator/switches
 ///
 /// Updates a specific system configuration switch.
-#[put("")]
+#[put("switches")]
 pub async fn update_switches(
     req: HttpRequest,
     data: web::Data<AppState>,

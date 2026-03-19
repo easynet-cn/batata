@@ -19,10 +19,11 @@ where
     serializer.serialize_str(NAMING_MODULE)
 }
 
-fn deserialize_naming_module<'de, D>(_: D) -> Result<String, D::Error>
+fn deserialize_naming_module<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
+    let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
     Ok(NAMING_MODULE.to_string())
 }
 
@@ -426,6 +427,7 @@ impl From<&Payload> for NotifySubscriberRequest {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FuzzyWatchNotifyRequest {
+    #[serde(flatten)]
     pub server_request: ServerRequest,
     #[serde(
         serialize_with = "serialize_naming_module",
@@ -459,7 +461,9 @@ pub struct NamingFuzzyWatchRequest {
     #[serde(default, alias = "receivedGroupKeys")]
     pub received_service_keys: HashSet<String>,
     pub watch_type: String,
-    pub is_initializing: bool,
+    /// Jackson serializes Java `boolean isInitializing` as `initializing` (strips `is` prefix)
+    #[serde(alias = "isInitializing")]
+    pub initializing: bool,
     #[serde(
         serialize_with = "serialize_naming_module",
         deserialize_with = "deserialize_naming_module"
@@ -499,8 +503,8 @@ pub struct NamingFuzzyWatchChangeNotifyRequest {
     #[serde(flatten)]
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
     pub service_key: String,
-    #[serde(alias = "changedType")]
-    pub change_type: String,
+    #[serde(rename = "changedType")]
+    pub changed_type: String,
 }
 
 impl NamingFuzzyWatchChangeNotifyRequest {

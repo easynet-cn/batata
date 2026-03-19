@@ -649,10 +649,6 @@ impl ConfigPublishHandler {
         tenant: &str,
         _source_ip: &str,
     ) -> anyhow::Result<()> {
-        // Build the notification payload once for reuse
-        let notification = ConfigChangeNotifyRequest::for_config(data_id, group, tenant);
-        let payload = notification.build_server_push_payload();
-
         // Notify fuzzy watchers
         let fuzzy_watchers = self
             .fuzzy_watch_manager
@@ -661,6 +657,13 @@ impl ConfigPublishHandler {
         if !fuzzy_watchers.is_empty() {
             // Build group key
             let group_key = ConfigFuzzyWatchPattern::build_group_key(tenant, group, data_id);
+
+            // Use ConfigFuzzyWatchChangeNotifyRequest (not ConfigChangeNotifyRequest)
+            // — the SDK expects this specific type for fuzzy watch notifications
+            let mut notification = ConfigFuzzyWatchChangeNotifyRequest::new();
+            notification.group_key = group_key.clone();
+            notification.change_type = "CONFIG_CHANGED".to_string();
+            let payload = notification.build_server_push_payload();
 
             info!(
                 "Notifying {} fuzzy watchers for config change: {}",
@@ -890,10 +893,6 @@ impl ConfigRemoveHandler {
         tenant: &str,
         _source_ip: &str,
     ) -> anyhow::Result<()> {
-        // Build the notification payload once for reuse
-        let notification = ConfigChangeNotifyRequest::for_config(data_id, group, tenant);
-        let payload = notification.build_server_push_payload();
-
         // Notify fuzzy watchers
         let fuzzy_watchers = self
             .fuzzy_watch_manager
@@ -902,6 +901,13 @@ impl ConfigRemoveHandler {
         if !fuzzy_watchers.is_empty() {
             // Build group key
             let group_key = ConfigFuzzyWatchPattern::build_group_key(tenant, group, data_id);
+
+            // Use ConfigFuzzyWatchChangeNotifyRequest (not ConfigChangeNotifyRequest)
+            // — the SDK expects this specific type for fuzzy watch notifications
+            let mut notification = ConfigFuzzyWatchChangeNotifyRequest::new();
+            notification.group_key = group_key.clone();
+            notification.change_type = "CONFIG_CHANGED".to_string();
+            let payload = notification.build_server_push_payload();
 
             info!(
                 "Notifying {} fuzzy watchers for config removal: {}",

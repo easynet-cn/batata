@@ -136,6 +136,7 @@ async fn search(
         namespace_id = params
             .namespace_id
             .clone()
+            .filter(|s| !s.is_empty())
             .unwrap_or(DEFAULT_NAMESPACE_ID.to_string());
     }
 
@@ -179,9 +180,15 @@ async fn find_configs_by_namespace_id(
             .build()
     );
 
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
     match data
         .console_datasource
-        .history_find_configs_by_namespace_id(&params.namespace_id)
+        .history_find_configs_by_namespace_id(&namespace_id)
         .await
     {
         Ok(config_infos) => {

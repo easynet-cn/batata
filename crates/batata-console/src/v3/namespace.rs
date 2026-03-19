@@ -100,7 +100,18 @@ async fn find_all(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
             .build()
     );
 
-    let namespaces: Vec<Namespace> = data.console_datasource.namespace_find_all().await;
+    let mut namespaces: Vec<Namespace> = Vec::new();
+
+    // Always include default (public) namespace first, matching Nacos behavior
+    namespaces.push(Namespace::default());
+
+    // Append custom namespaces
+    for ns in data.console_datasource.namespace_find_all().await {
+        if ns.namespace.is_empty() || ns.namespace == "public" {
+            continue;
+        }
+        namespaces.push(ns);
+    }
 
     common::Result::<Vec<Namespace>>::http_success(namespaces)
 }

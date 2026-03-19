@@ -208,7 +208,7 @@ impl ConfigFuzzyWatchService {
             WATCH_TYPE_UNWATCH.to_string()
         };
         req.received_group_keys = received_keys;
-        req.is_initializing = is_initializing;
+        req.initializing = is_initializing;
 
         let _resp: ConfigFuzzyWatchResponse = self.grpc_client.request_typed(&req).await?;
         Ok(())

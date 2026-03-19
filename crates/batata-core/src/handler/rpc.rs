@@ -556,6 +556,9 @@ impl BiRequestStream for GrpcBiRequestStreamService {
             while let Some(message) = inbound_stream.next().await {
                 match message {
                     Ok(payload) => {
+                        // Update last active time on every message
+                        connection_manager.touch_connection(&connection_id);
+
                         if let Some(metadata) = &payload.metadata {
                             let message_type = &metadata.r#type;
 
@@ -585,9 +588,9 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
                                 connection_manager.register(&connection_id, client).await;
 
-                                // Send SetupAckRequest with server abilities to client
-                                // This enables FuzzyWatch, LockService, etc.
-                                if request.ability_table.is_some() {
+                                // Always send SetupAckRequest with server abilities to client.
+                                // Nacos 3.x SDK requires this to enable FuzzyWatch, LockService, etc.
+                                {
                                     let mut abilities = std::collections::HashMap::new();
                                     abilities.insert("fuzzyWatch".to_string(), true);
                                     abilities.insert("lock".to_string(), true);

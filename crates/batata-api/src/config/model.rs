@@ -21,10 +21,12 @@ where
     serializer.serialize_str(CONFIG_MODULE)
 }
 
-fn deserialize_config_module<'de, D>(_: D) -> Result<String, D::Error>
+fn deserialize_config_module<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
+    // Must consume the token from the deserializer to advance the parser position
+    let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
     Ok(CONFIG_MODULE.to_string())
 }
 
@@ -424,9 +426,12 @@ impl From<&Payload> for ConfigChangeNotifyRequest {
 pub struct ConfigFuzzyWatchRequest {
     pub request: Request,
     pub group_key_pattern: String,
+    #[serde(default)]
     pub received_group_keys: HashSet<String>,
     pub watch_type: String,
-    pub is_initializing: bool,
+    /// Jackson serializes Java `boolean isInitializing` as `initializing` (strips `is` prefix)
+    #[serde(default, alias = "isInitializing")]
+    pub initializing: bool,
     #[serde(
         serialize_with = "serialize_config_module",
         deserialize_with = "deserialize_config_module"
