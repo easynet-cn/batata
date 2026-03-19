@@ -74,9 +74,15 @@ async fn get_config(
             .build()
     );
 
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
     let result = match data
         .persistence()
-        .config_find_one(&params.data_id, &params.group_name, &params.namespace_id)
+        .config_find_one(&params.data_id, &params.group_name, &namespace_id)
         .await
     {
         Ok(config) => config.map(ConfigDetailInfo::from),
@@ -113,6 +119,11 @@ async fn list_configs(
         namespace_id = DEFAULT_NAMESPACE_ID.to_string();
     }
 
+    // Strip wildcard '*' characters used by blur search mode
+    // (nacos maintainer-client wraps patterns with * for blur search, e.g. "*pattern*")
+    let data_id = params.config_form.data_id.replace('*', "");
+    let group_name = params.config_form.group_name.replace('*', "");
+
     let tags: Vec<String> = if !params.config_form.config_tags.is_empty() {
         params
             .config_form
@@ -143,8 +154,8 @@ async fn list_configs(
             params.page_no,
             params.page_size,
             &namespace_id,
-            &params.config_form.data_id,
-            &params.config_form.group_name,
+            &data_id,
+            &group_name,
             &params.config_form.app_name,
             tags,
             types,
@@ -177,6 +188,9 @@ async fn list_configs(
 }
 
 /// POST /v3/admin/cs/config
+///
+/// Also handles beta/gray publishing when `betaIps` HTTP header is present
+/// (nacos maintainer-client sends betaIps as a header on this same endpoint).
 #[post("")]
 async fn create_config(
     req: HttpRequest,
@@ -268,6 +282,59 @@ async fn create_config(
         .realip_remote_addr()
         .unwrap_or_default()
         .to_owned();
+
+    // Check for betaIps header — if present, publish as gray/beta config
+    // (Nacos maintainer-client sends betaIps as an HTTP header on the same endpoint)
+    let beta_ips = req
+        .headers()
+        .get("betaIps")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    if !beta_ips.is_empty() {
+        let gray_rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_beta(
+            &beta_ips,
+            crate::model::gray_rule::BetaGrayRule::PRIORITY,
+        );
+        let gray_rule = match gray_rule_info.to_json() {
+            Ok(json) => json,
+            Err(e) => {
+                return model::common::Result::<String>::http_response(
+                    StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    error::SERVER_ERROR.code,
+                    error::SERVER_ERROR.message.to_string(),
+                    format!("Failed to serialize gray rule: {}", e),
+                );
+            }
+        };
+
+        if let Err(e) = data
+            .persistence()
+            .config_create_or_update_gray(
+                &config_form.data_id,
+                &config_form.group_name,
+                &config_form.namespace_id,
+                &config_form.content,
+                "beta",
+                &gray_rule,
+                &src_user,
+                &src_ip,
+                &config_form.app_name,
+                &config_form.encrypted_data_key.unwrap_or_default(),
+            )
+            .await
+        {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
+
+        return model::common::Result::<bool>::http_success(true);
+    }
 
     let result = data
         .persistence()

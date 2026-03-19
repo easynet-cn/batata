@@ -664,10 +664,9 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                         true,
                                     );
 
-                                    let ack = batata_api::remote::model::SetupAckRequest {
-                                        ability_table: Some(abilities),
-                                        ..Default::default()
-                                    };
+                                    let mut ack =
+                                        batata_api::remote::model::SetupAckRequest::default();
+                                    ack.ability_table = Some(abilities);
                                     let ack_payload = ack.build_server_push_payload();
                                     info!(
                                         "Sending SetupAckRequest to {}, type={}",

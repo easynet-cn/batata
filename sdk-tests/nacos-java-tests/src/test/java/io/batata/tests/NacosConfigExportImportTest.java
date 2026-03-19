@@ -1,5 +1,9 @@
 package io.batata.tests;
 
+import com.alibaba.nacos.api.config.model.ConfigDetailInfo;
+import com.alibaba.nacos.api.exception.NacosException;
+import com.alibaba.nacos.maintainer.client.NacosMaintainerFactory;
+import com.alibaba.nacos.maintainer.client.config.ConfigMaintainerService;
 import org.junit.jupiter.api.*;
 
 import java.io.*;
@@ -7,6 +11,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Properties;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -15,14 +20,17 @@ import static org.junit.jupiter.api.Assertions.*;
  * Nacos Config Export/Import Tests
  *
  * Tests for config export/import functionality via V3 console API.
+ * Uses ConfigMaintainerService for publish/get/delete operations,
+ * and HTTP calls for export/import (not available in maintainer client).
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class NacosConfigExportImportTest {
 
     private static String serverAddr;
     private static String accessToken;
+    private static ConfigMaintainerService maintainerService;
     private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
-    private static final String DEFAULT_NAMESPACE = "public";
+    private static final String DEFAULT_NAMESPACE = "";
 
     @BeforeAll
     static void setup() throws Exception {
@@ -30,6 +38,12 @@ public class NacosConfigExportImportTest {
         String username = System.getProperty("nacos.username", "nacos");
         String password = System.getProperty("nacos.password", "nacos");
 
+        Properties properties = new Properties();
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
+
+        maintainerService = NacosMaintainerFactory.createConfigMaintainerService(properties);
         accessToken = loginV3(username, password);
     }
 
@@ -45,13 +59,14 @@ public class NacosConfigExportImportTest {
         String content = "export.group.test=value";
 
         // Create a config in the group
-        publishConfig(dataId, DEFAULT_GROUP, content);
+        boolean published = maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, content);
+        assertTrue(published, "Publish config should succeed");
         Thread.sleep(1000);
 
-        // Export by group
+        // Export by group (HTTP - not available in maintainer client)
         HttpURLConnection conn = createGetConnection(
                 "/nacos/v3/console/cs/config/export2?group=" + DEFAULT_GROUP
-                        + "&namespaceId=" + DEFAULT_NAMESPACE);
+                        + "&namespaceId=public");
         int responseCode = conn.getResponseCode();
         assertEquals(200, responseCode, "Export by group should return HTTP 200");
 
@@ -68,7 +83,7 @@ public class NacosConfigExportImportTest {
                 "Exported ZIP should contain the published config dataId: " + dataId);
 
         // Cleanup
-        deleteConfig(dataId, DEFAULT_GROUP);
+        maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
     }
 
     /**
@@ -80,11 +95,11 @@ public class NacosConfigExportImportTest {
         String dataId = "export-all-" + UUID.randomUUID().toString().substring(0, 8);
         String content = "export.all.test=uniqueMarker123";
 
-        publishConfig(dataId, DEFAULT_GROUP, content);
+        maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, content);
         Thread.sleep(1000);
 
         HttpURLConnection conn = createGetConnection(
-                "/nacos/v3/console/cs/config/export2?namespaceId=" + DEFAULT_NAMESPACE);
+                "/nacos/v3/console/cs/config/export2?namespaceId=public");
         int responseCode = conn.getResponseCode();
         assertEquals(200, responseCode, "Export all should return HTTP 200");
 
@@ -100,7 +115,7 @@ public class NacosConfigExportImportTest {
         assertTrue(dataAsString.contains(dataId),
                 "Exported ZIP should contain the config dataId: " + dataId);
 
-        deleteConfig(dataId, DEFAULT_GROUP);
+        maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
     }
 
     /**
@@ -113,39 +128,44 @@ public class NacosConfigExportImportTest {
         String originalContent = "import.test=original";
 
         // Publish and export
-        publishConfig(dataId, DEFAULT_GROUP, originalContent);
+        maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, originalContent);
         Thread.sleep(1000);
 
         HttpURLConnection exportConn = createGetConnection(
-                "/nacos/v3/console/cs/config/export2?namespaceId=" + DEFAULT_NAMESPACE);
+                "/nacos/v3/console/cs/config/export2?namespaceId=public");
         assertEquals(200, exportConn.getResponseCode(), "Export should succeed");
         byte[] exportedData = exportConn.getInputStream().readAllBytes();
         assertNotNull(exportedData, "Exported data should not be null");
         assertTrue(exportedData.length > 0, "Exported data should not be empty");
 
         // Delete the config
-        deleteConfig(dataId, DEFAULT_GROUP);
+        maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
         Thread.sleep(500);
 
         // Verify config is gone
-        String afterDelete = getConfig(dataId, DEFAULT_GROUP);
-        assertFalse(afterDelete.contains(originalContent),
-                "Config should be deleted before import test");
+        try {
+            ConfigDetailInfo afterDelete = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+            assertTrue(afterDelete == null || afterDelete.getContent() == null,
+                    "Config should be deleted before import test");
+        } catch (NacosException e) {
+            // Expected - config is deleted
+        }
 
-        // Import the exported data
+        // Import the exported data (HTTP - not available in maintainer client)
         String response = uploadMultipart(
-                "/nacos/v3/console/cs/config/import?namespaceId=" + DEFAULT_NAMESPACE + "&policy=OVERWRITE",
+                "/nacos/v3/console/cs/config/import?namespaceId=public&policy=OVERWRITE",
                 "file", "config-export.zip", exportedData);
         assertNotNull(response, "Import response should not be null");
 
         // Verify the imported config can be retrieved with correct content
         Thread.sleep(1000);
-        String afterImport = getConfig(dataId, DEFAULT_GROUP);
-        assertTrue(afterImport.contains(originalContent),
-                "After import, config should be retrievable with original content: " + originalContent);
+        ConfigDetailInfo afterImport = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        assertNotNull(afterImport, "After import, config should be retrievable");
+        assertEquals(originalContent, afterImport.getContent(),
+                "After import, config should have original content: " + originalContent);
 
         // Cleanup
-        deleteConfig(dataId, DEFAULT_GROUP);
+        maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
     }
 
     /**
@@ -159,40 +179,40 @@ public class NacosConfigExportImportTest {
         String modifiedContent = "import.overwrite=modified";
 
         // Publish original
-        publishConfig(dataId, DEFAULT_GROUP, originalContent);
+        maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, originalContent);
         Thread.sleep(1000);
 
         // Export (captures original)
         HttpURLConnection exportConn = createGetConnection(
-                "/nacos/v3/console/cs/config/export2?namespaceId=" + DEFAULT_NAMESPACE);
+                "/nacos/v3/console/cs/config/export2?namespaceId=public");
         assertEquals(200, exportConn.getResponseCode(), "Export should succeed");
         byte[] exportedData = exportConn.getInputStream().readAllBytes();
         assertTrue(exportedData.length > 0, "Exported data should not be empty");
 
         // Modify the config
-        publishConfig(dataId, DEFAULT_GROUP, modifiedContent);
+        maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, modifiedContent);
         Thread.sleep(500);
 
         // Verify config is modified
-        String afterModify = getConfig(dataId, DEFAULT_GROUP);
-        assertTrue(afterModify.contains(modifiedContent),
+        ConfigDetailInfo afterModify = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        assertEquals(modifiedContent, afterModify.getContent(),
                 "Config should contain modified content before import");
 
         // Import with OVERWRITE should restore original
         String response = uploadMultipart(
-                "/nacos/v3/console/cs/config/import?namespaceId=" + DEFAULT_NAMESPACE + "&policy=OVERWRITE",
+                "/nacos/v3/console/cs/config/import?namespaceId=public&policy=OVERWRITE",
                 "file", "config-export.zip", exportedData);
         assertNotNull(response, "Import response should not be null");
 
         Thread.sleep(1000);
-        String afterImport = getConfig(dataId, DEFAULT_GROUP);
-        assertTrue(afterImport.contains(originalContent),
+        ConfigDetailInfo afterImport = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        assertEquals(originalContent, afterImport.getContent(),
                 "After OVERWRITE import, config should be restored to original content");
-        assertFalse(afterImport.contains(modifiedContent),
+        assertNotEquals(modifiedContent, afterImport.getContent(),
                 "After OVERWRITE import, modified content should be gone");
 
         // Cleanup
-        deleteConfig(dataId, DEFAULT_GROUP);
+        maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
     }
 
     /**
@@ -205,34 +225,34 @@ public class NacosConfigExportImportTest {
         String originalContent = "import.skip=original";
         String modifiedContent = "import.skip=modified";
 
-        publishConfig(dataId, DEFAULT_GROUP, originalContent);
+        maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, originalContent);
         Thread.sleep(1000);
 
         HttpURLConnection exportConn = createGetConnection(
-                "/nacos/v3/console/cs/config/export2?namespaceId=" + DEFAULT_NAMESPACE);
+                "/nacos/v3/console/cs/config/export2?namespaceId=public");
         assertEquals(200, exportConn.getResponseCode(), "Export should succeed");
         byte[] exportedData = exportConn.getInputStream().readAllBytes();
         assertTrue(exportedData.length > 0, "Exported data should not be empty");
 
         // Modify
-        publishConfig(dataId, DEFAULT_GROUP, modifiedContent);
+        maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, modifiedContent);
         Thread.sleep(500);
 
         // Import with SKIP should keep modified version (skip existing)
         String response = uploadMultipart(
-                "/nacos/v3/console/cs/config/import?namespaceId=" + DEFAULT_NAMESPACE + "&policy=SKIP",
+                "/nacos/v3/console/cs/config/import?namespaceId=public&policy=SKIP",
                 "file", "config-export.zip", exportedData);
         assertNotNull(response, "Import response should not be null");
 
         Thread.sleep(1000);
-        String afterImport = getConfig(dataId, DEFAULT_GROUP);
-        assertTrue(afterImport.contains(modifiedContent),
+        ConfigDetailInfo afterImport = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        assertEquals(modifiedContent, afterImport.getContent(),
                 "After SKIP import, config should still contain the modified content");
-        assertFalse(afterImport.contains(originalContent),
+        assertNotEquals(originalContent, afterImport.getContent(),
                 "After SKIP import, original content should NOT have overwritten the modified content");
 
         // Cleanup
-        deleteConfig(dataId, DEFAULT_GROUP);
+        maintainerService.deleteConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
     }
 
     /**
@@ -247,13 +267,13 @@ public class NacosConfigExportImportTest {
         String content2 = "roundtrip.key2=value2";
 
         // Publish two configs
-        publishConfig(dataId1, DEFAULT_GROUP, content1);
-        publishConfig(dataId2, DEFAULT_GROUP, content2);
+        maintainerService.publishConfig(dataId1, DEFAULT_GROUP, DEFAULT_NAMESPACE, content1);
+        maintainerService.publishConfig(dataId2, DEFAULT_GROUP, DEFAULT_NAMESPACE, content2);
         Thread.sleep(1000);
 
         // Export
         HttpURLConnection exportConn = createGetConnection(
-                "/nacos/v3/console/cs/config/export2?namespaceId=" + DEFAULT_NAMESPACE);
+                "/nacos/v3/console/cs/config/export2?namespaceId=public");
         assertEquals(200, exportConn.getResponseCode(), "Export should succeed");
         byte[] exportedData = exportConn.getInputStream().readAllBytes();
         assertTrue(exportedData.length > 0, "Exported data should not be empty");
@@ -266,35 +286,35 @@ public class NacosConfigExportImportTest {
                 "Exported ZIP should contain second config dataId: " + dataId2);
 
         // Delete both configs
-        deleteConfig(dataId1, DEFAULT_GROUP);
-        deleteConfig(dataId2, DEFAULT_GROUP);
+        maintainerService.deleteConfig(dataId1, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        maintainerService.deleteConfig(dataId2, DEFAULT_GROUP, DEFAULT_NAMESPACE);
         Thread.sleep(500);
 
         // Verify both are gone
-        String check1 = getConfig(dataId1, DEFAULT_GROUP);
-        String check2 = getConfig(dataId2, DEFAULT_GROUP);
-        assertFalse(check1.contains(content1), "Config 1 should be deleted");
-        assertFalse(check2.contains(content2), "Config 2 should be deleted");
+        assertConfigDeleted(dataId1, content1, "Config 1 should be deleted");
+        assertConfigDeleted(dataId2, content2, "Config 2 should be deleted");
 
         // Import should restore both
         String response = uploadMultipart(
-                "/nacos/v3/console/cs/config/import?namespaceId=" + DEFAULT_NAMESPACE + "&policy=OVERWRITE",
+                "/nacos/v3/console/cs/config/import?namespaceId=public&policy=OVERWRITE",
                 "file", "config-export.zip", exportedData);
         assertNotNull(response, "Import response should not be null");
 
         Thread.sleep(1000);
 
         // Verify both configs are restored
-        String restored1 = getConfig(dataId1, DEFAULT_GROUP);
-        String restored2 = getConfig(dataId2, DEFAULT_GROUP);
-        assertTrue(restored1.contains(content1),
+        ConfigDetailInfo restored1 = maintainerService.getConfig(dataId1, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        ConfigDetailInfo restored2 = maintainerService.getConfig(dataId2, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        assertNotNull(restored1, "Config 1 should be restored after import");
+        assertNotNull(restored2, "Config 2 should be restored after import");
+        assertEquals(content1, restored1.getContent(),
                 "After round-trip import, config 1 should be restored with content: " + content1);
-        assertTrue(restored2.contains(content2),
+        assertEquals(content2, restored2.getContent(),
                 "After round-trip import, config 2 should be restored with content: " + content2);
 
         // Cleanup
-        deleteConfig(dataId1, DEFAULT_GROUP);
-        deleteConfig(dataId2, DEFAULT_GROUP);
+        maintainerService.deleteConfig(dataId1, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        maintainerService.deleteConfig(dataId2, DEFAULT_GROUP, DEFAULT_NAMESPACE);
     }
 
     /**
@@ -307,7 +327,7 @@ public class NacosConfigExportImportTest {
 
         HttpURLConnection conn = createGetConnection(
                 "/nacos/v3/console/cs/config/export2?group=" + nonExistentGroup
-                        + "&namespaceId=" + DEFAULT_NAMESPACE);
+                        + "&namespaceId=public");
         int responseCode = conn.getResponseCode();
 
         // Either returns 200 with empty/minimal ZIP or returns an error code
@@ -331,7 +351,7 @@ public class NacosConfigExportImportTest {
         byte[] invalidData = "this is not a zip file".getBytes(StandardCharsets.UTF_8);
 
         String response = uploadMultipart(
-                "/nacos/v3/console/cs/config/import?namespaceId=" + DEFAULT_NAMESPACE + "&policy=OVERWRITE",
+                "/nacos/v3/console/cs/config/import?namespaceId=public&policy=OVERWRITE",
                 "file", "invalid.zip", invalidData);
 
         assertNotNull(response, "Import of invalid data should return a response");
@@ -343,29 +363,13 @@ public class NacosConfigExportImportTest {
 
     // ==================== Helper Methods ====================
 
-    private void publishConfig(String dataId, String group, String content) throws Exception {
-        String body = String.format(
-                "dataId=%s&groupName=%s&namespaceId=%s&content=%s",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(group, "UTF-8"),
-                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8"),
-                URLEncoder.encode(content, "UTF-8"));
-        String response = httpPost("/nacos/v3/console/cs/config", body);
-        assertNotNull(response, "Publish config response should not be null for dataId: " + dataId);
-    }
-
-    private String getConfig(String dataId, String group) throws Exception {
-        return httpGet(String.format("/nacos/v3/console/cs/config?dataId=%s&groupName=%s&namespaceId=%s",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(group, "UTF-8"),
-                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
-    }
-
-    private void deleteConfig(String dataId, String group) throws Exception {
-        httpDelete(String.format("/nacos/v3/console/cs/config?dataId=%s&groupName=%s&namespaceId=%s",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(group, "UTF-8"),
-                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
+    private void assertConfigDeleted(String dataId, String content, String message) {
+        try {
+            ConfigDetailInfo config = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+            assertTrue(config == null || config.getContent() == null || !config.getContent().contains(content), message);
+        } catch (NacosException e) {
+            // Expected - config is deleted
+        }
     }
 
     private HttpURLConnection createGetConnection(String path) throws Exception {
@@ -431,46 +435,6 @@ public class NacosConfigExportImportTest {
             }
         }
         return "";
-    }
-
-    private String httpGet(String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("GET");
-        return readResponse(conn);
-    }
-
-    private static String httpPost(String path, String body) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-        if (body != null && !body.isEmpty()) {
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(body.getBytes(StandardCharsets.UTF_8));
-            }
-        }
-        return readResponse(conn);
-    }
-
-    private static String httpDelete(String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("DELETE");
-        return readResponse(conn);
     }
 
     private static String readResponse(HttpURLConnection conn) throws Exception {

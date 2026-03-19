@@ -75,7 +75,10 @@ async fn list_history(
         namespace_id = params
             .namespace_id
             .clone()
-            .unwrap_or(DEFAULT_NAMESPACE_ID.to_string());
+            .unwrap_or_default();
+    }
+    if namespace_id.is_empty() {
+        namespace_id = DEFAULT_NAMESPACE_ID.to_string();
     }
 
     match data
@@ -114,8 +117,8 @@ async fn list_history(
     }
 }
 
-/// GET /v3/admin/cs/history/detail
-#[get("detail")]
+/// GET /v3/admin/cs/history
+#[get("")]
 async fn get_detail(
     req: HttpRequest,
     data: web::Data<AppState>,

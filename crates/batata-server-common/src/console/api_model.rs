@@ -78,6 +78,7 @@ impl From<batata_persistence::ConfigStorageData> for ConfigDetailInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGrayInfo {
+    #[serde(flatten)]
     pub config_detail_info: ConfigDetailInfo,
     pub gray_name: String,
     pub gray_rule: String,

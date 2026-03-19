@@ -513,14 +513,14 @@ impl From<&Payload> for ServerReloadRequest {
     }
 }
 
-/// Generic server request with module information
+/// Generic server request base — module field is NOT included here.
+/// Each concrete type (NotifySubscriberRequest, ConfigChangeNotifyRequest, etc.)
+/// defines its own `module` field with the appropriate value.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ServerRequest {
     #[serde(flatten)]
     pub request: Request,
-    #[serde(skip_serializing, deserialize_with = "deserialize_internal_module")]
-    module: String,
 }
 
 impl ServerRequest {
@@ -546,6 +546,11 @@ impl_request_trait!(base ServerRequest, request);
 pub struct ClientDetectionRequest {
     #[serde(flatten)]
     pub server_requst: ServerRequest,
+    #[serde(
+        serialize_with = "serialize_internal_module",
+        deserialize_with = "deserialize_internal_module"
+    )]
+    module: String,
 }
 
 impl_request_trait!(ClientDetectionRequest, server_requst);
@@ -565,14 +570,11 @@ pub struct SetupAckRequest {
     /// Server ability table sent to client during connection setup
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ability_table: Option<std::collections::HashMap<String, bool>>,
-    /// Module field — SetupAckRequest needs its own "module":"internal" since
-    /// ServerRequest.module is skip_serializing to avoid duplicate keys in other types.
     #[serde(
-        rename = "module",
         serialize_with = "serialize_internal_module",
         deserialize_with = "deserialize_internal_module"
     )]
-    pub ack_module: String,
+    module: String,
 }
 
 impl_request_trait!(SetupAckRequest, server_requst);

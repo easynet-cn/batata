@@ -6,6 +6,7 @@ This document provides the complete HTTP API routing tables for the two original
 
 | Date | Description |
 |------|-------------|
+| 2026-03-20 | Fixed V3 Admin CS routes verified against nacos-maintainer-client. History detail path corrected: `GET /v3/admin/cs/history` (base) not `/history/detail`. Config publish also handles beta via `betaIps` header. Blur search wildcard stripping (`*pattern*`) added. Namespace normalization (empty→"public") fixed for get_config, list_history. ConfigGrayInfo response flattened (was nested under `configDetailInfo`). Added Batata implementation status comparison section at end. |
 | 2026-03-01 | Re-verified all V3 Admin routes against Nacos source (`~/work/github/easynet-cn/nacos`). Major corrections: Config Controller (removed separate PUT, fixed `/search`→`/list`, added `/metadata`, `/batch`, `/beta`, `/config/listener`, Config Ops section); removed Config Gray Rules section (Nacos uses `/beta` not `/gray/{dataId}`); Listener Controller corrected to single base endpoint (IP query); History Controller added `/previous` and `/configs`, fixed `/detail/{nid}`→base GET with query param; Capacity added POST; Metrics fixed to `/cluster` and `/ip` sub-paths. Naming Admin: Health fixed (removed base GET, added `/checkers`); Client expanded to 7 endpoints; Operator fixed to sub-paths only (`/switches`, `/metrics`, `/log`); Instance added `DELETE /metadata/batch` and `PUT /partial`, fixed POST→PUT for metadata; Cluster removed non-existent GET; Service added `PUT /service/cluster`. Comparison section: ~20 items previously marked EXTRA corrected to OK (they exist in Nacos). |
 | 2026-02-28 | Added V3 Admin Listener `/ip` endpoint. Added route completeness integration tests. Fixed comparison section for items that don't exist in Nacos (marked N/A). |
 | 2026-02-28 | Initial document created with full route tables for Nacos V2/V3 and Consul APIs. Comparison section added. |
@@ -235,7 +236,7 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/nacos/v3/admin/cs/config` | Get configuration detail |
-| POST | `/nacos/v3/admin/cs/config` | Publish configuration (create or update) |
+| POST | `/nacos/v3/admin/cs/config` | Publish configuration (create or update); with `betaIps` header: publish beta/gray config |
 | DELETE | `/nacos/v3/admin/cs/config` | Delete configuration |
 | PUT | `/nacos/v3/admin/cs/config/metadata` | Update config metadata only |
 | DELETE | `/nacos/v3/admin/cs/config/batch` | Batch delete configurations by IDs |
@@ -1020,3 +1021,129 @@ All Consul API routes are prefixed with `/v1`. Routes are registered in `agent/h
 | **Nacos** | V3 Console | Console (8081) | 49 |
 | **Nacos** | V3 Auth | Console (8081) | 16 |
 | **Consul** | All API Routes | - | 138 |
+
+---
+
+## Batata Implementation Status
+
+> **Last verified**: 2026-03-20. Checked against nacos-maintainer-client SDK tests.
+
+### V3 Admin Config (`/nacos/v3/admin/cs`)
+
+| Nacos Route | Batata Status | Notes |
+|------------|--------------|-------|
+| `GET /config` | OK | Fixed: namespace normalization (empty→"public") |
+| `POST /config` | OK | Fixed: also handles beta via `betaIps` header |
+| `DELETE /config` | OK | |
+| `PUT /config/metadata` | OK | |
+| `DELETE /config/batch` | OK | |
+| `GET /config/list` | OK | Fixed: wildcard `*` stripping for blur search |
+| `GET /config/listener` | OK | |
+| `GET /config/beta` | OK | Fixed: response flattened (was nested `configDetailInfo`) |
+| `POST /config/beta` | OK | Also available via `POST /config` + `betaIps` header |
+| `DELETE /config/beta` | OK | |
+| `POST /config/import` | OK | |
+| `GET /config/export` | OK | |
+| `POST /config/clone` | OK | |
+| `GET /listener` | OK | Listener by client IP |
+| `GET /history` | OK | Fixed: was `/history/detail`, now base path with `nid` param |
+| `GET /history/list` | OK | Fixed: namespace normalization |
+| `GET /history/previous` | OK | |
+| `GET /history/configs` | OK | |
+| `GET /capacity` | OK | |
+| `POST /capacity` | OK | |
+| `GET /metrics/cluster` | OK | |
+| `GET /metrics/ip` | OK | |
+| `POST /ops/localCache` | OK | |
+| `PUT /ops/log` | OK | |
+| `GET /ops/derby` | OK | (stub - not applicable for embedded/MySQL/PostgreSQL) |
+| `POST /ops/derby/import` | OK | (stub) |
+
+### V3 Admin Naming (`/nacos/v3/admin/ns`)
+
+| Nacos Route | Batata Status | Notes |
+|------------|--------------|-------|
+| `POST /service` | OK | |
+| `GET /service` | OK | |
+| `PUT /service` | OK | |
+| `DELETE /service` | OK | |
+| `GET /service/list` | OK | |
+| `GET /service/subscribers` | OK | |
+| `GET /service/selector/types` | OK | |
+| `PUT /service/cluster` | OK | |
+| `POST /instance` | OK | |
+| `DELETE /instance` | OK | |
+| `PUT /instance` | OK | |
+| `GET /instance` | OK | |
+| `GET /instance/list` | OK | |
+| `PUT /instance/metadata/batch` | OK | |
+| `DELETE /instance/metadata/batch` | OK | |
+| `PUT /instance/partial` | OK | |
+| `PUT /cluster` | OK | |
+| `PUT /health/instance` | OK | |
+| `GET /health/checkers` | OK | |
+| `GET /client` | OK | |
+| `GET /client/list` | OK | |
+| `GET /client/publish/list` | OK | |
+| `GET /client/subscribe/list` | OK | |
+| `GET /client/service/publisher/list` | OK | |
+| `GET /client/service/subscriber/list` | OK | |
+| `GET /client/distro` | OK | |
+| `GET /ops/switches` | OK | |
+| `PUT /ops/switches` | OK | |
+| `GET /ops/metrics` | OK | |
+| `PUT /ops/log` | OK | |
+
+### V3 Admin Core (`/nacos/v3/admin/core`)
+
+| Nacos Route | Batata Status | Notes |
+|------------|--------------|-------|
+| `GET /cluster/node/self` | OK | |
+| `GET /cluster/node/list` | OK | |
+| `GET /cluster/node/self/health` | OK | |
+| `PUT /cluster/node/list` | OK | |
+| `PUT /cluster/lookup` | OK | |
+| `GET /namespace/list` | OK | |
+| `GET /namespace` | OK | |
+| `POST /namespace` | OK | |
+| `PUT /namespace` | OK | |
+| `DELETE /namespace` | OK | |
+| `GET /namespace/check` | OK | |
+| `GET /state` | OK | |
+| `GET /state/liveness` | OK | |
+| `GET /state/readiness` | OK | |
+| `POST /ops/raft` | OK | |
+| `GET /ops/ids` | OK | |
+| `PUT /ops/log` | OK | |
+| `GET /loader/current` | OK | |
+| `POST /loader/reloadCurrent` | OK | |
+| `POST /loader/smartReloadCluster` | OK | |
+| `POST /loader/reloadClient` | OK | |
+| `GET /loader/cluster` | OK | |
+
+### V3 Admin AI (`/nacos/v3/admin/ai`)
+
+| Nacos Route | Batata Status | Notes |
+|------------|--------------|-------|
+| `GET /mcp/list` | OK | |
+| `GET /mcp` | OK | |
+| `POST /mcp` | OK | |
+| `PUT /mcp` | OK | |
+| `DELETE /mcp` | OK | |
+| `PUT /mcp/endpoint` | OK | |
+| `DELETE /mcp/endpoint` | OK | |
+| `POST /a2a` | OK | |
+| `GET /a2a` | OK | |
+| `PUT /a2a` | OK | |
+| `DELETE /a2a` | OK | |
+| `GET /a2a/list` | OK | |
+| `GET /a2a/version/list` | OK | |
+| `PUT /a2a/endpoint` | OK | |
+| `DELETE /a2a/endpoint` | OK | |
+
+### Key Implementation Notes
+
+- **Maintainer-client compatibility**: All V3 Admin CS endpoints are compatible with the `nacos-maintainer-client` SDK (verified via integration tests).
+- **Namespace handling**: Empty `namespaceId` parameter is normalized to `"public"` across all V3 admin endpoints.
+- **Beta config**: Both `POST /config` (with `betaIps` header) and `POST /config/beta` (with form body) are supported for publishing beta configs.
+- **Blur search**: `GET /config/list` supports wildcard patterns (`*pattern*`) wrapped by the maintainer-client for blur search mode.

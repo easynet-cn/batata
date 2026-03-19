@@ -2,16 +2,16 @@ package io.batata.tests;
 
 import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.config.ConfigService;
+import com.alibaba.nacos.api.config.model.ConfigBasicInfo;
+import com.alibaba.nacos.api.config.model.ConfigHistoryBasicInfo;
+import com.alibaba.nacos.api.config.model.ConfigHistoryDetailInfo;
 import com.alibaba.nacos.api.exception.NacosException;
+import com.alibaba.nacos.api.model.Page;
+import com.alibaba.nacos.maintainer.client.NacosMaintainerFactory;
+import com.alibaba.nacos.maintainer.client.config.ConfigMaintainerService;
 import org.junit.jupiter.api.*;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -21,18 +21,19 @@ import static org.junit.jupiter.api.Assertions.*;
  * Nacos Config History API Tests
  *
  * Tests for configuration history tracking and retrieval.
+ * Uses ConfigMaintainerService for history operations.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class NacosConfigHistoryTest {
 
     private static ConfigService configService;
-    private static String serverAddr;
-    private static String accessToken;
+    private static ConfigMaintainerService maintainerService;
     private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
+    private static final String DEFAULT_NAMESPACE = "";
 
     @BeforeAll
     static void setup() throws Exception {
-        serverAddr = System.getProperty("nacos.server", "127.0.0.1:8848");
+        String serverAddr = System.getProperty("nacos.server", "127.0.0.1:8848");
         String username = System.getProperty("nacos.username", "nacos");
         String password = System.getProperty("nacos.password", "nacos");
 
@@ -42,112 +43,13 @@ public class NacosConfigHistoryTest {
         properties.setProperty("password", password);
 
         configService = NacosFactory.createConfigService(properties);
-
-        // Get access token for HTTP API calls (use V3 login)
-        accessToken = getAccessToken(username, password);
+        maintainerService = NacosMaintainerFactory.createConfigMaintainerService(properties);
     }
 
     @AfterAll
     static void teardown() throws NacosException {
         if (configService != null) {
             configService.shutDown();
-        }
-    }
-
-    private static String getAccessToken(String username, String password) throws Exception {
-        String loginUrl = String.format("http://%s/nacos/v3/auth/user/login", serverAddr);
-        URL url = new URL(loginUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-        String body = "username=" + URLEncoder.encode(username, "UTF-8") +
-                "&password=" + URLEncoder.encode(password, "UTF-8");
-        conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
-
-        if (conn.getResponseCode() == 200) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            // Parse token from response
-            String resp = response.toString();
-            if (resp.contains("accessToken")) {
-                int start = resp.indexOf("accessToken") + 14;
-                int end = resp.indexOf("\"", start);
-                return resp.substring(start, end);
-            }
-        }
-        return "";
-    }
-
-    private String httpGet(String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("GET");
-
-        int responseCode = conn.getResponseCode();
-        InputStream stream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
-        StringBuilder response = new StringBuilder();
-        if (stream != null) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-        }
-        return response.toString();
-    }
-
-    /**
-     * Extract the "totalCount" value from a history list JSON response.
-     * Returns -1 if not found.
-     */
-    private int extractTotalCount(String response) {
-        // Look for "totalCount":N pattern
-        String marker = "\"totalCount\":";
-        int idx = response.indexOf(marker);
-        if (idx < 0) return -1;
-        int start = idx + marker.length();
-        int end = start;
-        while (end < response.length() && Character.isDigit(response.charAt(end))) {
-            end++;
-        }
-        if (end == start) return -1;
-        return Integer.parseInt(response.substring(start, end));
-    }
-
-    /**
-     * Extract the first "id" value from a history list JSON response.
-     * Returns null if not found.
-     */
-    private String extractFirstId(String response) {
-        // Look for "id": pattern (could be number or quoted string)
-        String marker = "\"id\":";
-        int idx = response.indexOf(marker);
-        if (idx < 0) return null;
-        int start = idx + marker.length();
-        // Skip whitespace
-        while (start < response.length() && response.charAt(start) == ' ') start++;
-        if (start >= response.length()) return null;
-        // Could be quoted or unquoted
-        if (response.charAt(start) == '"') {
-            int end = response.indexOf('"', start + 1);
-            return end > start ? response.substring(start + 1, end) : null;
-        } else {
-            int end = start;
-            while (end < response.length() && (Character.isDigit(response.charAt(end)) || response.charAt(end) == '-')) {
-                end++;
-            }
-            return end > start ? response.substring(start, end) : null;
         }
     }
 
@@ -169,21 +71,19 @@ public class NacosConfigHistoryTest {
             Thread.sleep(500);
         }
 
-        // List history
-        String response = httpGet(String.format(
-                "/nacos/v2/cs/history/list?dataId=%s&group=%s&pageNo=1&pageSize=10",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
+        // List history via maintainer client
+        Page<ConfigHistoryBasicInfo> historyPage = maintainerService.listConfigHistory(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, 1, 10);
 
-        assertNotNull(response, "History list response should not be null");
+        assertNotNull(historyPage, "History list page should not be null");
+        assertTrue(historyPage.getTotalCount() >= versionCount,
+                "History should contain at least " + versionCount + " entries, got totalCount: " + historyPage.getTotalCount());
 
-        int totalCount = extractTotalCount(response);
-        assertTrue(totalCount >= versionCount,
-                "History should contain at least " + versionCount + " entries, got totalCount: " + totalCount);
-
-        // Verify the response contains history record identifiers
-        assertTrue(response.contains("\"id\""),
-                "History list response should contain record IDs");
+        // Verify history records have IDs
+        assertNotNull(historyPage.getPageItems(), "History page items should not be null");
+        assertFalse(historyPage.getPageItems().isEmpty(), "History page items should not be empty");
+        assertNotNull(historyPage.getPageItems().get(0).getId(),
+                "History records should have IDs");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -204,29 +104,24 @@ public class NacosConfigHistoryTest {
         Thread.sleep(500);
 
         // Get history list first to get nid
-        String listResponse = httpGet(String.format(
-                "/nacos/v2/cs/history/list?dataId=%s&group=%s&pageNo=1&pageSize=10",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
+        Page<ConfigHistoryBasicInfo> historyPage = maintainerService.listConfigHistory(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, 1, 10);
 
-        assertNotNull(listResponse, "History list response should not be null");
+        assertNotNull(historyPage, "History list page should not be null");
+        assertFalse(historyPage.getPageItems().isEmpty(), "History should have at least one entry");
 
-        String nid = extractFirstId(listResponse);
-        assertNotNull(nid, "Should be able to extract a history record ID from the list response");
-        assertFalse(nid.isEmpty(), "History record ID should not be empty");
+        Long nid = historyPage.getPageItems().get(0).getId();
+        assertNotNull(nid, "Should be able to extract a history record ID");
 
         // Get specific history version
-        String versionResponse = httpGet(String.format(
-                "/nacos/v2/cs/history?dataId=%s&group=%s&nid=%s",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
-                nid));
+        ConfigHistoryDetailInfo historyDetail = maintainerService.getConfigHistoryInfo(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, nid);
 
-        assertNotNull(versionResponse, "History version response should not be null");
-        assertTrue(versionResponse.contains(content),
-                "History version response should contain the original content: " + content);
-        assertTrue(versionResponse.contains(dataId),
-                "History version response should reference the correct dataId: " + dataId);
+        assertNotNull(historyDetail, "History version detail should not be null");
+        assertEquals(content, historyDetail.getContent(),
+                "History version should contain the original content");
+        assertEquals(dataId, historyDetail.getDataId(),
+                "History version should reference the correct dataId");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -246,11 +141,9 @@ public class NacosConfigHistoryTest {
         Thread.sleep(500);
 
         // Get initial history count
-        String response1 = httpGet(String.format(
-                "/nacos/v2/cs/history/list?dataId=%s&group=%s&pageNo=1&pageSize=100",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
-        int initialCount = extractTotalCount(response1);
+        Page<ConfigHistoryBasicInfo> page1 = maintainerService.listConfigHistory(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, 1, 100);
+        int initialCount = page1.getTotalCount();
         assertTrue(initialCount >= 1,
                 "After first publish, history should have at least 1 entry, got: " + initialCount);
 
@@ -261,11 +154,9 @@ public class NacosConfigHistoryTest {
         }
 
         // Get updated history count
-        String response2 = httpGet(String.format(
-                "/nacos/v2/cs/history/list?dataId=%s&group=%s&pageNo=1&pageSize=100",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
-        int updatedCount = extractTotalCount(response2);
+        Page<ConfigHistoryBasicInfo> page2 = maintainerService.listConfigHistory(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, 1, 100);
+        int updatedCount = page2.getTotalCount();
 
         assertTrue(updatedCount > initialCount,
                 "History count should increase after updates; initial=" + initialCount + ", updated=" + updatedCount);
@@ -295,25 +186,21 @@ public class NacosConfigHistoryTest {
         Thread.sleep(500);
 
         // Get history list to find the record ID
-        String listResponse = httpGet(String.format(
-                "/nacos/v2/cs/history/list?dataId=%s&group=%s&pageNo=1&pageSize=10",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
-        assertNotNull(listResponse, "History list should not be null");
+        Page<ConfigHistoryBasicInfo> historyPage = maintainerService.listConfigHistory(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, 1, 10);
+        assertNotNull(historyPage, "History list should not be null");
+        assertFalse(historyPage.getPageItems().isEmpty(), "Should find at least one history record");
 
-        String recordId = extractFirstId(listResponse);
-        assertNotNull(recordId, "Should find at least one history record");
+        Long recordId = historyPage.getPageItems().get(0).getId();
+        assertNotNull(recordId, "Should find at least one history record ID");
 
         // Get previous version using the record ID
-        String response = httpGet(String.format(
-                "/nacos/v2/cs/history/previous?dataId=%s&group=%s&id=%s",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
-                recordId));
+        ConfigHistoryDetailInfo previousVersion = maintainerService.getPreviousConfigHistoryInfo(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, recordId);
 
-        assertNotNull(response, "Previous version response should not be null");
-        // The previous version endpoint should return data (content may vary based on which record we used)
-        assertTrue(response.contains(dataId) || response.contains("content") || response.contains("version"),
+        assertNotNull(previousVersion, "Previous version response should not be null");
+        // The previous version should contain meaningful config data
+        assertTrue(previousVersion.getDataId() != null || previousVersion.getContent() != null,
                 "Previous version response should contain meaningful config data");
 
         // Cleanup
@@ -336,14 +223,15 @@ public class NacosConfigHistoryTest {
         }
         Thread.sleep(1000);
 
-        // List all configs in namespace (empty namespace = public)
-        String response = httpGet("/nacos/v2/cs/history/configs?tenant=");
+        // List all configs in namespace (empty namespace = public) via maintainer client
+        List<ConfigBasicInfo> configList = maintainerService.getConfigListByNamespace(DEFAULT_NAMESPACE);
 
-        assertNotNull(response, "Namespace configs response should not be null");
+        assertNotNull(configList, "Namespace configs list should not be null");
         // Verify our configs appear in the response
         for (int i = 0; i < configCount; i++) {
-            assertTrue(response.contains(prefix + "-" + i),
-                    "Namespace config list should contain config: " + prefix + "-" + i);
+            String expectedDataId = prefix + "-" + i;
+            boolean found = configList.stream().anyMatch(c -> expectedDataId.equals(c.getDataId()));
+            assertTrue(found, "Namespace config list should contain config: " + expectedDataId);
         }
 
         // Cleanup
@@ -371,25 +259,19 @@ public class NacosConfigHistoryTest {
         Thread.sleep(500);
 
         // Query history in a different (non-existent) namespace - should have no records for this dataId
-        String response = httpGet(String.format(
-                "/nacos/v2/cs/history/list?dataId=%s&group=%s&tenant=%s&pageNo=1&pageSize=10",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
-                URLEncoder.encode(namespace, "UTF-8")));
+        Page<ConfigHistoryBasicInfo> isolatedPage = maintainerService.listConfigHistory(
+                dataId, DEFAULT_GROUP, namespace, 1, 10);
 
-        assertNotNull(response, "Namespace history response should not be null");
-
-        int isolatedCount = extractTotalCount(response);
+        assertNotNull(isolatedPage, "Namespace history page should not be null");
+        int isolatedCount = isolatedPage.getTotalCount();
         // In a namespace where we never published, there should be 0 records
-        assertTrue(isolatedCount == 0 || isolatedCount == -1,
+        assertTrue(isolatedCount == 0,
                 "History in isolated namespace should have 0 entries, got: " + isolatedCount);
 
         // Verify default namespace has history
-        String defaultResponse = httpGet(String.format(
-                "/nacos/v2/cs/history/list?dataId=%s&group=%s&pageNo=1&pageSize=10",
-                URLEncoder.encode(dataId, "UTF-8"),
-                URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
-        int defaultCount = extractTotalCount(defaultResponse);
+        Page<ConfigHistoryBasicInfo> defaultPage = maintainerService.listConfigHistory(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, 1, 10);
+        int defaultCount = defaultPage.getTotalCount();
         assertTrue(defaultCount >= 1,
                 "History in default namespace should have at least 1 entry, got: " + defaultCount);
 

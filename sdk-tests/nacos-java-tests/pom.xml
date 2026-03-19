@@ -28,6 +28,14 @@
             <version>${nacos.version}</version>
         </dependency>
 
+        <!-- Nacos Maintainer Client (admin operations) -->
+        <dependency>
+            <groupId>com.alibaba.nacos</groupId>
+            <artifactId>nacos-maintainer-client</artifactId>
+            <version>${nacos.version}</version>
+            <scope>test</scope>
+        </dependency>
+
         <!-- JUnit 5 -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
