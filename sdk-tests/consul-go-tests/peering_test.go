@@ -137,3 +137,45 @@ func TestPeeringGenerateTokenWithMeta(t *testing.T) {
 		t.Logf("Peering meta: %v", peering.Meta)
 	}
 }
+
+// CP-009: Test peering establish
+func TestPeeringEstablish(t *testing.T) {
+	client := getClient(t)
+
+	// Generate a peering token first
+	peerName := "peer-establish-" + randomID()
+	genReq := api.PeeringGenerateTokenRequest{
+		PeerName: peerName,
+	}
+
+	genResp, _, err := client.Peerings().GenerateToken(nil, genReq, nil)
+	if err != nil {
+		t.Skip("Peering API not available")
+	}
+	defer client.Peerings().Delete(nil, peerName, nil)
+
+	require.NotEmpty(t, genResp.PeeringToken, "Should return a peering token")
+
+	// Establish peering using the token
+	establishName := "peer-established-" + randomID()
+	estReq := api.PeeringEstablishRequest{
+		PeerName:     establishName,
+		PeeringToken: genResp.PeeringToken,
+	}
+
+	_, _, err = client.Peerings().Establish(nil, estReq, nil)
+	defer client.Peerings().Delete(nil, establishName, nil)
+
+	if err != nil {
+		// Establish may fail in single-datacenter test setups
+		t.Logf("Peering establish error (may not be supported in test env): %v", err)
+		t.Skip("Peering establish not supported in this environment")
+	}
+
+	// Read the established peering
+	peering, _, err := client.Peerings().Read(nil, establishName, nil)
+	if err == nil && peering != nil {
+		assert.Equal(t, establishName, peering.Name, "Established peering name should match")
+		t.Logf("Established peering %s, state: %s", peering.Name, peering.State)
+	}
+}

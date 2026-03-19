@@ -92,6 +92,7 @@ pub struct CoordinateQueryParams {
 // ============================================================================
 
 /// In-memory coordinate service
+#[derive(Clone)]
 pub struct ConsulCoordinateService {
     /// Node coordinates: key = "node:segment"
     coordinates: Arc<DashMap<String, CoordinateEntry>>,

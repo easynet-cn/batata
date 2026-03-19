@@ -1650,21 +1650,11 @@ pub async fn agent_monitor(
         .body(message)
 }
 
-/// GET /v1/agent/metrics/stream
-/// Streams metrics from the agent as a JSON streaming response.
-pub async fn agent_metrics_stream(
-    req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
-    acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
-    }
-
-    // Collect current metrics and return as a single streamed JSON response
+/// Collect current metrics snapshot from the naming service.
+fn collect_metrics_snapshot(
+    naming_service: &NamingService,
+    dc_config: &ConsulDatacenterConfig,
+) -> MetricsResponse {
     let (_, service_names) = naming_service.list_services(
         &dc_config.default_namespace,
         &dc_config.default_group,
@@ -1687,32 +1677,68 @@ pub async fn agent_metrics_stream(
         healthy_instances += instances.iter().filter(|i| i.healthy).count();
     }
 
-    let gauges = vec![
-        GaugeMetric::new("consul.catalog.service.count", service_count as f64),
-        GaugeMetric::new(
-            "consul.catalog.service.instance.count",
-            total_instances as f64,
-        ),
-        GaugeMetric::new(
-            "batata.naming.healthy_instance_count",
-            healthy_instances as f64,
-        ),
-    ];
-
-    let response = MetricsResponse {
+    MetricsResponse {
         timestamp: chrono::Utc::now().to_rfc3339(),
-        gauges,
+        gauges: vec![
+            GaugeMetric::new("consul.catalog.service.count", service_count as f64),
+            GaugeMetric::new(
+                "consul.catalog.service.instance.count",
+                total_instances as f64,
+            ),
+            GaugeMetric::new(
+                "batata.naming.healthy_instance_count",
+                healthy_instances as f64,
+            ),
+        ],
         counters: Vec::new(),
         samples: Vec::new(),
         points: Vec::new(),
-    };
+    }
+}
+
+/// GET /v1/agent/metrics/stream
+/// Streams metrics from the agent with chunked transfer encoding.
+/// Emits a JSON metrics snapshot every 10 seconds until client disconnects.
+pub async fn agent_metrics_stream(
+    req: HttpRequest,
+    naming_service: web::Data<Arc<NamingService>>,
+    acl_service: web::Data<AclService>,
+    dc_config: web::Data<ConsulDatacenterConfig>,
+    index_provider: web::Data<ConsulIndexProvider>,
+) -> HttpResponse {
+    let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
+    if !authz.allowed {
+        return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    let ns = naming_service.into_inner();
+    let dc = dc_config.into_inner();
+    let stream = futures::stream::unfold(0u64, move |tick| {
+        let ns = ns.clone();
+        let dc = dc.clone();
+        async move {
+            if tick > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+            let snapshot = collect_metrics_snapshot(&ns, &dc);
+            let mut bytes = serde_json::to_vec(&snapshot).unwrap_or_default();
+            bytes.push(b'\n');
+            Some((
+                Ok::<_, actix_web::Error>(actix_web::web::Bytes::from(bytes)),
+                tick + 1,
+            ))
+        }
+    });
 
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-        .json(response)
+        .insert_header(("Content-Type", "application/json"))
+        .insert_header(("Transfer-Encoding", "chunked"))
+        .streaming(stream)
 }
 
 /// GET /v1/agent/metrics/stream (real cluster variant)
+/// Streams metrics with cluster member data every 10 seconds.
 pub async fn agent_metrics_stream_real(
     req: HttpRequest,
     naming_service: web::Data<Arc<NamingService>>,
@@ -1726,59 +1752,37 @@ pub async fn agent_metrics_stream_real(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let (_, service_names) = naming_service.list_services(
-        &dc_config.default_namespace,
-        &dc_config.default_group,
-        1,
-        10000,
-    );
-    let service_count = service_names.len();
-
-    let mut total_instances: usize = 0;
-    let mut healthy_instances: usize = 0;
-    for sn in &service_names {
-        let instances = naming_service.get_instances(
-            &dc_config.default_namespace,
-            &dc_config.default_group,
-            sn,
-            "",
-            false,
-        );
-        total_instances += instances.len();
-        healthy_instances += instances.iter().filter(|i| i.healthy).count();
-    }
-
-    let mut gauges = Vec::new();
-    gauges.push(GaugeMetric::new(
-        "consul.catalog.service.count",
-        service_count as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "consul.catalog.service.instance.count",
-        total_instances as f64,
-    ));
-    gauges.push(GaugeMetric::new(
-        "batata.naming.healthy_instance_count",
-        healthy_instances as f64,
-    ));
-
-    let health_summary = member_manager.health_summary();
-    gauges.push(GaugeMetric::new(
-        "consul.serf.member.count",
-        health_summary.total as f64,
-    ));
-
-    let response = MetricsResponse {
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        gauges,
-        counters: Vec::new(),
-        samples: Vec::new(),
-        points: Vec::new(),
-    };
+    let ns = naming_service.into_inner();
+    let dc = dc_config.into_inner();
+    let mm = member_manager.into_inner();
+    let stream = futures::stream::unfold(0u64, move |tick| {
+        let ns = ns.clone();
+        let dc = dc.clone();
+        let mm = mm.clone();
+        async move {
+            if tick > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+            let mut snapshot = collect_metrics_snapshot(&ns, &dc);
+            let health_summary = mm.health_summary();
+            snapshot.gauges.push(GaugeMetric::new(
+                "consul.serf.member.count",
+                health_summary.total as f64,
+            ));
+            let mut bytes = serde_json::to_vec(&snapshot).unwrap_or_default();
+            bytes.push(b'\n');
+            Some((
+                Ok::<_, actix_web::Error>(actix_web::web::Bytes::from(bytes)),
+                tick + 1,
+            ))
+        }
+    });
 
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-        .json(response)
+        .insert_header(("Content-Type", "application/json"))
+        .insert_header(("Transfer-Encoding", "chunked"))
+        .streaming(stream)
 }
 
 /// PUT /v1/agent/token/{type}

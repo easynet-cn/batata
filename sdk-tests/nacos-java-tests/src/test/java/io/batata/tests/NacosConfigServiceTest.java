@@ -21,28 +21,29 @@ import static org.junit.jupiter.api.Assertions.*;
  * Tests Batata's compatibility with official Nacos Java SDK for configuration management.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@org.junit.jupiter.api.TestInstance(org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS)
 public class NacosConfigServiceTest {
 
-    private static ConfigService configService;
-    private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
+    private ConfigService configService;
+    private final String DEFAULT_GROUP = "DEFAULT_GROUP";
 
     @BeforeAll
-    static void setup() throws NacosException {
+    void setup() throws NacosException {
         String serverAddr = System.getProperty("nacos.server", "127.0.0.1:8848");
         String username = System.getProperty("nacos.username", "nacos");
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         configService = NacosFactory.createConfigService(properties);
         assertNotNull(configService, "ConfigService should be created successfully");
     }
 
     @AfterAll
-    static void teardown() throws NacosException {
+    void teardown() throws NacosException {
         if (configService != null) {
             configService.shutDown();
         }
@@ -251,10 +252,10 @@ public class NacosConfigServiceTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("namespace", namespace);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("namespace", namespace);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         ConfigService nsConfigService = NacosFactory.createConfigService(properties);
 

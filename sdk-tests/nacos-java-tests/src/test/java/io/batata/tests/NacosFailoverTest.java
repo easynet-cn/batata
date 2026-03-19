@@ -43,17 +43,14 @@ public class NacosFailoverTest {
         cacheDir = System.getProperty("java.io.tmpdir") + "/nacos-cache-test-" + System.currentTimeMillis();
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
-        properties.put("nacos.naming.cache.dir", cacheDir);
-        properties.put("nacos.config.cache.dir", cacheDir);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
+        properties.setProperty("nacos.naming.cache.dir", cacheDir);
+        properties.setProperty("nacos.config.cache.dir", cacheDir);
 
         configService = NacosFactory.createConfigService(properties);
         namingService = NacosFactory.createNamingService(properties);
-
-        System.out.println("Nacos Failover Test Setup - Server: " + serverAddr);
-        System.out.println("Cache directory: " + cacheDir);
     }
 
     @AfterAll
@@ -69,7 +66,7 @@ public class NacosFailoverTest {
         try {
             deleteDirectory(Paths.get(cacheDir));
         } catch (Exception e) {
-            System.out.println("Cache cleanup: " + e.getMessage());
+            // Cache cleanup is best-effort
         }
     }
 
@@ -103,8 +100,9 @@ public class NacosFailoverTest {
         String fetched = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         assertEquals(content, fetched, "Should fetch published content");
 
-        // Verify local cache exists (implementation dependent)
-        System.out.println("Config cached successfully for: " + dataId);
+        // Second fetch - should return same content (from cache or server)
+        String fetchedAgain = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        assertEquals(content, fetchedAgain, "Second fetch should return same cached content");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -124,24 +122,32 @@ public class NacosFailoverTest {
 
         // Fetch to trigger snapshot
         String fetched = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
-        assertNotNull(fetched);
+        assertNotNull(fetched, "Fetched config should not be null");
+        assertEquals(content, fetched, "Fetched content should match published content");
 
         // Add listener to ensure config is being watched
-        configService.addListener(dataId, DEFAULT_GROUP, new Listener() {
+        AtomicReference<String> listenerContent = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+        Listener listener = new Listener() {
             @Override
             public Executor getExecutor() { return null; }
 
             @Override
             public void receiveConfigInfo(String configInfo) {
-                System.out.println("Snapshot listener received: " + configInfo);
+                listenerContent.set(configInfo);
+                latch.countDown();
             }
-        });
+        };
 
+        configService.addListener(dataId, DEFAULT_GROUP, listener);
         Thread.sleep(500);
 
-        System.out.println("Snapshot created for: " + dataId);
+        // Verify snapshot by re-fetching
+        String reFetched = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        assertEquals(content, reFetched, "Re-fetched config should match original content");
 
         // Cleanup
+        configService.removeListener(dataId, DEFAULT_GROUP, listener);
         configService.removeConfig(dataId, DEFAULT_GROUP);
     }
 
@@ -162,7 +168,6 @@ public class NacosFailoverTest {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
-                System.out.println("Listener received: " + configInfo);
                 receivedContent.set(configInfo);
                 latch.countDown();
             }
@@ -177,7 +182,8 @@ public class NacosFailoverTest {
         // Wait for notification
         boolean received = latch.await(15, TimeUnit.SECONDS);
         assertTrue(received, "Should receive config notification");
-        assertEquals(content, receivedContent.get());
+        assertEquals(content, receivedContent.get(),
+                "Listener should receive the exact published content");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -196,8 +202,9 @@ public class NacosFailoverTest {
         String content = configService.getConfig(dataId, DEFAULT_GROUP, 2000);
         long duration = System.currentTimeMillis() - startTime;
 
-        System.out.println("Timeout test - Duration: " + duration + "ms, Content: " + content);
         assertNull(content, "Non-existent config should return null");
+        assertTrue(duration < 10000,
+                "Config fetch should complete within reasonable time, took " + duration + "ms");
     }
 
     /**
@@ -217,8 +224,12 @@ public class NacosFailoverTest {
         String fetch2 = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
         String fetch3 = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
 
+        assertNotNull(fetch1, "First fetch should not be null");
+        assertNotNull(fetch2, "Second fetch should not be null");
+        assertNotNull(fetch3, "Third fetch should not be null");
         assertEquals(fetch1, fetch2, "Multiple fetches should return same content");
         assertEquals(fetch2, fetch3, "Multiple fetches should return same content");
+        assertEquals(content, fetch1, "Fetched content should match original");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -254,7 +265,12 @@ public class NacosFailoverTest {
         List<Instance> instances2 = namingService.getAllInstances(serviceName);
         assertEquals(3, instances2.size(), "Should find 3 instances from cache");
 
-        System.out.println("Service instances cached for: " + serviceName);
+        // Verify instance details are consistent between queries
+        Set<String> ips1 = new HashSet<>();
+        Set<String> ips2 = new HashSet<>();
+        for (Instance inst : instances1) { ips1.add(inst.getIp()); }
+        for (Instance inst : instances2) { ips2.add(inst.getIp()); }
+        assertEquals(ips1, ips2, "Cached instances should have same IPs as first query");
 
         // Cleanup
         for (int i = 0; i < 3; i++) {
@@ -281,7 +297,9 @@ public class NacosFailoverTest {
 
         // Query to populate cache
         List<Instance> instances = namingService.getAllInstances(serviceName);
-        assertFalse(instances.isEmpty());
+        assertFalse(instances.isEmpty(), "Should have at least one instance");
+        assertEquals("1.0.0", instances.get(0).getMetadata().get("version"),
+                "Initial version should be 1.0.0");
 
         // Update instance
         instance.setMetadata(Map.of("version", "2.0.0"));
@@ -289,12 +307,13 @@ public class NacosFailoverTest {
 
         Thread.sleep(1000);
 
-        // Query again - should get updated info
-        instances = namingService.getAllInstances(serviceName);
-        assertFalse(instances.isEmpty());
+        // Query again with subscribe=false to bypass local cache
+        instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
+        assertFalse(instances.isEmpty(), "Should still have instance after update");
 
         String version = instances.get(0).getMetadata().get("version");
-        System.out.println("Instance version after update: " + version);
+        assertEquals("2.0.0", version,
+                "Instance version should be updated to 2.0.0");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.201.1", 8080);
@@ -315,7 +334,6 @@ public class NacosFailoverTest {
             if (event instanceof com.alibaba.nacos.api.naming.listener.NamingEvent) {
                 List<Instance> instances = ((com.alibaba.nacos.api.naming.listener.NamingEvent) event).getInstances();
                 cachedInstances.set(instances);
-                System.out.println("Subscription update: " + instances.size() + " instances");
                 latch.countDown();
             }
         });
@@ -328,9 +346,13 @@ public class NacosFailoverTest {
         // Wait for subscription notification
         boolean received = latch.await(10, TimeUnit.SECONDS);
         assertTrue(received, "Should receive subscription update");
-        assertNotNull(cachedInstances.get());
+        assertNotNull(cachedInstances.get(), "Cached instances should not be null");
+        assertFalse(cachedInstances.get().isEmpty(),
+                "Subscription cache should contain at least one instance");
 
-        System.out.println("Subscription cache updated for: " + serviceName);
+        boolean foundRegistered = cachedInstances.get().stream()
+                .anyMatch(inst -> "192.168.202.1".equals(inst.getIp()));
+        assertTrue(foundRegistered, "Subscription cache should contain the registered instance");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.202.1", 8080);
@@ -352,11 +374,12 @@ public class NacosFailoverTest {
 
         // Query to populate cache
         List<Instance> instances = namingService.getAllInstances(serviceName);
-        assertFalse(instances.isEmpty());
-
-        // Check if failover mode can be detected
-        // This is implementation-specific; the SDK should handle server unavailability gracefully
-        System.out.println("Failover switch test - instances cached: " + instances.size());
+        assertFalse(instances.isEmpty(), "Should have cached instance");
+        assertEquals(1, instances.size(), "Should have exactly 1 cached instance");
+        assertEquals("192.168.203.1", instances.get(0).getIp(),
+                "Cached instance should have the registered IP");
+        assertEquals(8080, instances.get(0).getPort(),
+                "Cached instance should have the registered port");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.203.1", 8080);
@@ -372,14 +395,17 @@ public class NacosFailoverTest {
         String content = "fallback.test=value";
 
         // Publish and fetch to create cache
-        configService.publishConfig(dataId, DEFAULT_GROUP, content);
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
+        assertTrue(published, "Config should be published for fallback test");
         Thread.sleep(1000);
 
         String fetched = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
-        assertEquals(content, fetched);
+        assertEquals(content, fetched, "Should fetch the published fallback content");
 
-        // The SDK should maintain local cache for fallback scenarios
-        System.out.println("Local fallback test - content cached successfully");
+        // Fetch again to verify cache/fallback consistency
+        String fetchedAgain = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        assertEquals(content, fetchedAgain,
+                "Subsequent fetch should return same content from cache/server");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -402,7 +428,7 @@ public class NacosFailoverTest {
 
         // Query to populate cache
         List<Instance> initial = namingService.getAllInstances(serviceName);
-        assertEquals(2, initial.size());
+        assertEquals(2, initial.size(), "Should have 2 initial instances");
 
         // Add more instances
         namingService.registerInstance(serviceName, "192.168.204.3", 8080);
@@ -411,8 +437,13 @@ public class NacosFailoverTest {
         // Query again - should get updated list
         List<Instance> updated = namingService.getAllInstances(serviceName);
         assertTrue(updated.size() >= 2, "Should have at least initial instances");
+        assertEquals(3, updated.size(),
+                "Should have 3 instances after adding one more");
 
-        System.out.println("Stale cache test - initial: " + initial.size() + ", updated: " + updated.size());
+        // Verify the new instance is present
+        boolean foundNew = updated.stream()
+                .anyMatch(inst -> "192.168.204.3".equals(inst.getIp()));
+        assertTrue(foundNew, "Updated list should contain the newly added instance");
 
         // Cleanup
         for (int i = 0; i < 3; i++) {
@@ -428,31 +459,26 @@ public class NacosFailoverTest {
     void testCacheDirectoryStructure() throws NacosException, InterruptedException {
         String dataId = "dir-test-" + UUID.randomUUID().toString().substring(0, 8);
         String serviceName = "dir-svc-" + UUID.randomUUID().toString().substring(0, 8);
+        String configContent = "dir.test=value";
 
         // Create config cache
-        configService.publishConfig(dataId, DEFAULT_GROUP, "dir.test=value");
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, configContent);
+        assertTrue(published, "Config should be published for directory test");
         Thread.sleep(500);
-        configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        String fetchedConfig = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+        assertEquals(configContent, fetchedConfig, "Should fetch config for cache creation");
 
         // Create naming cache
         namingService.registerInstance(serviceName, "192.168.205.1", 8080);
         Thread.sleep(500);
-        namingService.getAllInstances(serviceName);
+        List<Instance> instances = namingService.getAllInstances(serviceName);
+        assertFalse(instances.isEmpty(), "Should have instances for cache creation");
 
-        // Check cache directory
+        // Cache directory may or may not exist depending on SDK implementation
+        // The important thing is that config and naming operations work correctly
         Path cachePath = Paths.get(cacheDir);
-        if (Files.exists(cachePath)) {
-            System.out.println("Cache directory exists: " + cachePath);
-            try {
-                Files.walk(cachePath, 2).forEach(p -> {
-                    System.out.println("  " + cachePath.relativize(p));
-                });
-            } catch (IOException e) {
-                System.out.println("Could not list cache directory: " + e.getMessage());
-            }
-        } else {
-            System.out.println("Cache directory not created (implementation may use different location)");
-        }
+        // This is an informational check - cache location is implementation-dependent
+        assertNotNull(cachePath, "Cache path should be a valid path");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -498,10 +524,8 @@ public class NacosFailoverTest {
 
         startLatch.countDown();
         boolean completed = doneLatch.await(30, TimeUnit.SECONDS);
-        assertTrue(completed, "All threads should complete");
-        assertNull(error.get(), "No errors during concurrent access");
-
-        System.out.println("Concurrent cache access test passed");
+        assertTrue(completed, "All threads should complete within timeout");
+        assertNull(error.get(), "No errors should occur during concurrent cache access");
 
         // Cleanup
         for (int i = 0; i < 5; i++) {

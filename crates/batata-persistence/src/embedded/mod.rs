@@ -278,6 +278,30 @@ impl ConfigPersistence for EmbeddedPersistService {
 
         self.put_json(CF_CONFIG, &key, &value)?;
 
+        // Build ext_info JSON with config metadata (consistent with DB mode)
+        let ext_info = serde_json::json!({
+            "config_tags": config_tags,
+            "desc": desc,
+            "use": r#use,
+            "effect": effect,
+            "type": r#type,
+            "schema": schema,
+        })
+        .to_string();
+
+        // For update, record the OLD content in history (before change)
+        let (history_content, history_md5) = if is_update {
+            if let Some(ref ex) = existing {
+                let old_content = ex["content"].as_str().unwrap_or("");
+                let old_md5 = ex["md5"].as_str().unwrap_or("");
+                (old_content.to_string(), old_md5.to_string())
+            } else {
+                (content.to_string(), md5_val.clone())
+            }
+        } else {
+            (content.to_string(), md5_val.clone())
+        };
+
         // Insert history entry
         let history_id = Self::generate_history_id();
         let op_type = if is_update { "U" } else { "I" };
@@ -288,15 +312,15 @@ impl ConfigPersistence for EmbeddedPersistService {
             "data_id": data_id,
             "group": group_id,
             "tenant": tenant_id,
-            "content": content,
-            "md5": md5_val,
+            "content": history_content,
+            "md5": history_md5,
             "app_name": app_name,
             "src_user": src_user,
             "src_ip": src_ip,
             "op_type": op_type,
-            "publish_type": "",
+            "publish_type": "formal",
             "gray_name": "",
-            "ext_info": "",
+            "ext_info": ext_info,
             "encrypted_data_key": encrypted_data_key,
             "created_time": now,
             "modified_time": now,
@@ -326,6 +350,17 @@ impl ConfigPersistence for EmbeddedPersistService {
         // Delete the config
         self.delete_key(CF_CONFIG, &key)?;
 
+        // Build ext_info from existing config metadata
+        let ext_info = serde_json::json!({
+            "config_tags": existing["config_tags"].as_str().unwrap_or(""),
+            "desc": existing["desc"].as_str().unwrap_or(""),
+            "use": existing["use"].as_str().unwrap_or(""),
+            "effect": existing["effect"].as_str().unwrap_or(""),
+            "type": existing["config_type"].as_str().unwrap_or(""),
+            "schema": existing["schema"].as_str().unwrap_or(""),
+        })
+        .to_string();
+
         // Insert delete history
         let history_id = Self::generate_history_id();
         let now = chrono::Utc::now().timestamp_millis();
@@ -342,9 +377,9 @@ impl ConfigPersistence for EmbeddedPersistService {
             "src_user": src_user,
             "src_ip": client_ip,
             "op_type": "D",
-            "publish_type": "",
+            "publish_type": "formal",
             "gray_name": "",
-            "ext_info": "",
+            "ext_info": ext_info,
             "encrypted_data_key": existing["encrypted_data_key"],
             "created_time": now,
             "modified_time": now,

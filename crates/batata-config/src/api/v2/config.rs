@@ -89,6 +89,7 @@ pub async fn get_config(
 
     // Get config from persistence service
     let persistence = data.persistence();
+    let enc_svc = crate::service::encryption::get_encryption_service(&data);
 
     // Check for matching gray config by client IP
     let client_ip = req
@@ -118,12 +119,15 @@ pub async fn get_config(
 
         for (gray, rule) in candidates {
             if rule.matches(&labels) {
+                let decrypted = enc_svc
+                    .decrypt_if_needed(&params.data_id, &gray.content, &gray.encrypted_data_key)
+                    .await;
                 return HttpResponse::Ok()
                     .insert_header(("Config-Type", ""))
                     .insert_header(("Content-MD5", gray.md5.as_str()))
                     .insert_header(("Cache-Control", "no-cache"))
                     .insert_header(("Pragma", "no-cache"))
-                    .json(Result::<String>::success(gray.content.clone()));
+                    .json(Result::<String>::success(decrypted));
             }
         }
     }
@@ -133,12 +137,17 @@ pub async fn get_config(
         .config_find_one(&params.data_id, &params.group, namespace_id)
         .await
     {
-        Ok(Some(config)) => HttpResponse::Ok()
-            .insert_header(("Config-Type", config.config_type.as_str()))
-            .insert_header(("Content-MD5", config.md5.as_str()))
-            .insert_header(("Cache-Control", "no-cache"))
-            .insert_header(("Pragma", "no-cache"))
-            .json(Result::<String>::success(config.content)),
+        Ok(Some(config)) => {
+            let decrypted = enc_svc
+                .decrypt_if_needed(&params.data_id, &config.content, &config.encrypted_data_key)
+                .await;
+            HttpResponse::Ok()
+                .insert_header(("Config-Type", config.config_type.as_str()))
+                .insert_header(("Content-MD5", config.md5.as_str()))
+                .insert_header(("Cache-Control", "no-cache"))
+                .insert_header(("Pragma", "no-cache"))
+                .json(Result::<String>::success(decrypted))
+        }
         Ok(None) => Result::<Option<String>>::http_response(
             404,
             error::RESOURCE_NOT_FOUND.code,
@@ -230,6 +239,12 @@ pub async fn publish_config(
 
     let persistence = data.persistence();
 
+    // Encrypt content if needed (based on data_id pattern)
+    let enc_svc = crate::service::encryption::get_encryption_service(&data);
+    let (encrypted_content, encrypted_key) = enc_svc
+        .encrypt_if_needed(&form.data_id, &form.content)
+        .await;
+
     // Handle gray (beta) publish if betaIps is provided
     if let Some(ref beta_ips) = beta_ips
         && !beta_ips.is_empty()
@@ -273,13 +288,13 @@ pub async fn publish_config(
                 &form.data_id,
                 &form.group,
                 namespace_id,
-                &form.content,
+                &encrypted_content,
                 "beta",
                 &gray_rule,
                 &src_user,
                 &src_ip,
                 form.app_name.as_deref().unwrap_or(""),
-                "",
+                &encrypted_key,
             )
             .await
         {
@@ -348,13 +363,13 @@ pub async fn publish_config(
                 &form.data_id,
                 &form.group,
                 namespace_id,
-                &form.content,
+                &encrypted_content,
                 &gray_name,
                 &gray_rule,
                 &src_user,
                 &src_ip,
                 form.app_name.as_deref().unwrap_or(""),
-                "",
+                &encrypted_key,
             )
             .await
         {
@@ -386,7 +401,7 @@ pub async fn publish_config(
             &form.data_id,
             &form.group,
             namespace_id,
-            &form.content,
+            &encrypted_content,
             form.app_name.as_deref().unwrap_or(""),
             &src_user,
             &src_ip,
@@ -396,7 +411,7 @@ pub async fn publish_config(
             form.effect.as_deref().unwrap_or(""),
             form.r#type.as_deref().unwrap_or(""),
             form.schema.as_deref().unwrap_or(""),
-            "",
+            &encrypted_key,
         )
         .await
     {

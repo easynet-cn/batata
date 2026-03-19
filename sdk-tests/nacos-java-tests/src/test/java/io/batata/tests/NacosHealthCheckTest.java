@@ -11,6 +11,7 @@ import org.junit.jupiter.api.*;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -36,12 +37,11 @@ public class NacosHealthCheckTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         namingService = NacosFactory.createNamingService(properties);
-        System.out.println("Nacos Health Check Test Setup - Server: " + serverAddr);
     }
 
     @AfterAll
@@ -75,8 +75,9 @@ public class NacosHealthCheckTest {
 
         Instance found = instances.get(0);
         assertTrue(found.isHealthy(), "Instance should be healthy");
-
-        System.out.println("Healthy instance registered: " + found.isHealthy());
+        assertEquals("192.168.10.1", found.getIp(), "Instance IP should match");
+        assertEquals(8080, found.getPort(), "Instance port should match");
+        assertEquals(1.0, found.getWeight(), 0.01, "Instance weight should match");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);
@@ -102,8 +103,9 @@ public class NacosHealthCheckTest {
         // Get all instances including unhealthy
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(allInstances.isEmpty(), "Should have registered instance");
-
-        System.out.println("All instances count: " + allInstances.size());
+        assertEquals(1, allInstances.size(), "Should have exactly 1 instance");
+        assertEquals("192.168.10.2", allInstances.get(0).getIp(),
+                "Instance IP should match the registered unhealthy instance");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);
@@ -136,9 +138,12 @@ public class NacosHealthCheckTest {
         // Select only healthy
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
 
-        System.out.println("Healthy instances: " + healthyInstances.size());
+        assertNotNull(healthyInstances, "Healthy instances list should not be null");
+        assertFalse(healthyInstances.isEmpty(), "Should find at least one healthy instance");
         for (Instance inst : healthyInstances) {
             assertTrue(inst.isHealthy(), "Selected instance should be healthy");
+            assertNotEquals("192.168.10.11", inst.getIp(),
+                    "Unhealthy instance should not appear in healthy selection");
         }
 
         // Cleanup
@@ -154,21 +159,29 @@ public class NacosHealthCheckTest {
     void testSelectAllInstances() throws NacosException, InterruptedException {
         String serviceName = "select-all-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Register mixed health instances
+        // Register mixed health instances with delay between each to allow cache updates
         for (int i = 0; i < 3; i++) {
             Instance instance = new Instance();
             instance.setIp("192.168.10." + (20 + i));
             instance.setPort(8080);
             instance.setHealthy(i % 2 == 0); // Alternate health status
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
+            Thread.sleep(1000);
         }
 
-        Thread.sleep(1000);
+        Thread.sleep(3000);
 
-        // Select all (healthy = false means include unhealthy)
-        List<Instance> allInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, false);
+        // Select all (healthy = false means include unhealthy) using non-subscribe query
+        List<Instance> allInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false, false);
 
-        System.out.println("All instances (including unhealthy): " + allInstances.size());
+        assertNotNull(allInstances, "Instance list should not be null");
+        assertTrue(allInstances.size() >= 3,
+                "Should have at least 3 instances (including unhealthy), got: " + allInstances.size());
+
+        Set<String> ips = allInstances.stream().map(Instance::getIp).collect(Collectors.toSet());
+        assertTrue(ips.contains("192.168.10.20"), "Should include instance 192.168.10.20");
+        assertTrue(ips.contains("192.168.10.21"), "Should include instance 192.168.10.21");
+        assertTrue(ips.contains("192.168.10.22"), "Should include instance 192.168.10.22");
 
         // Cleanup
         for (int i = 0; i < 3; i++) {
@@ -201,10 +214,14 @@ public class NacosHealthCheckTest {
         Thread.sleep(1000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
-        assertFalse(instances.isEmpty());
+        assertFalse(instances.isEmpty(), "Should have instance with TCP health check");
 
         Instance found = instances.get(0);
-        System.out.println("TCP health check instance metadata: " + found.getMetadata());
+        assertEquals("TCP", found.getMetadata().get("healthCheckType"),
+                "Health check type metadata should be TCP");
+        assertEquals("8080", found.getMetadata().get("healthCheckPort"),
+                "Health check port metadata should be 8080");
+        assertEquals("192.168.10.30", found.getIp(), "Instance IP should match");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);
@@ -234,11 +251,15 @@ public class NacosHealthCheckTest {
         Thread.sleep(1000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
-        assertFalse(instances.isEmpty());
+        assertFalse(instances.isEmpty(), "Should have instance with HTTP health check");
 
         Instance found = instances.get(0);
-        assertEquals("/health", found.getMetadata().get("healthCheckPath"));
-        System.out.println("HTTP health check path: " + found.getMetadata().get("healthCheckPath"));
+        assertEquals("/health", found.getMetadata().get("healthCheckPath"),
+                "Health check path should be /health");
+        assertEquals("HTTP", found.getMetadata().get("healthCheckType"),
+                "Health check type should be HTTP");
+        assertEquals("8080", found.getMetadata().get("healthCheckPort"),
+                "Health check port should be 8080");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);
@@ -282,17 +303,27 @@ public class NacosHealthCheckTest {
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
 
         assertEquals(2, healthyInstances.size(), "Should have 2 healthy instances");
+        for (Instance inst : healthyInstances) {
+            assertTrue(inst.isHealthy(), "All selected instances should be healthy");
+            assertNotEquals("192.168.10.42", inst.getIp(),
+                    "Unhealthy instance should not be in healthy selection");
+        }
 
         // Count selections (high weight should be selected more often)
         Map<String, Integer> selectionCount = new HashMap<>();
         for (int i = 0; i < 100; i++) {
             Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
-            if (selected != null) {
-                selectionCount.merge(selected.getIp(), 1, Integer::sum);
-            }
+            assertNotNull(selected, "Should select a healthy instance");
+            assertTrue(selected.isHealthy(), "Selected instance must be healthy");
+            selectionCount.merge(selected.getIp(), 1, Integer::sum);
         }
 
-        System.out.println("Selection distribution: " + selectionCount);
+        int highCount = selectionCount.getOrDefault("192.168.10.40", 0);
+        int lowCount = selectionCount.getOrDefault("192.168.10.41", 0);
+        assertTrue(highCount > lowCount,
+                "High weight healthy instance should be selected more often, got high=" + highCount + " low=" + lowCount);
+        assertFalse(selectionCount.containsKey("192.168.10.42"),
+                "Unhealthy instance should never be selected via selectOneHealthyInstance");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, high);
@@ -328,14 +359,19 @@ public class NacosHealthCheckTest {
 
         // Select should prefer non-zero weight
         int zeroSelected = 0;
+        int normalSelected = 0;
         for (int i = 0; i < 50; i++) {
             Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
-            if (selected != null && selected.getIp().equals("192.168.10.50")) {
+            assertNotNull(selected, "Should select an instance");
+            if (selected.getIp().equals("192.168.10.50")) {
                 zeroSelected++;
+            } else {
+                normalSelected++;
             }
         }
 
-        System.out.println("Zero weight instance selected: " + zeroSelected + " times out of 50");
+        assertTrue(normalSelected > zeroSelected,
+                "Normal weight instance should be selected more than zero weight, got normal=" + normalSelected + " zero=" + zeroSelected);
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, zero);
@@ -364,9 +400,10 @@ public class NacosHealthCheckTest {
         Thread.sleep(2000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
-        if (!instances.isEmpty()) {
-            System.out.println("Ephemeral instance status: " + instances.get(0).isHealthy());
-        }
+        assertFalse(instances.isEmpty(), "Ephemeral instance should still be registered");
+        assertTrue(instances.get(0).isEphemeral(), "Instance should be ephemeral");
+        assertTrue(instances.get(0).isHealthy(),
+                "Ephemeral instance should remain healthy with active gRPC connection");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);
@@ -393,8 +430,10 @@ public class NacosHealthCheckTest {
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have ephemeral instance");
         assertTrue(instances.get(0).isEphemeral(), "Instance should be ephemeral");
-
-        System.out.println("Ephemeral instance healthy after 2s: " + instances.get(0).isHealthy());
+        assertTrue(instances.get(0).isHealthy(),
+                "Ephemeral instance should stay healthy with active connection after 2s");
+        assertEquals("192.168.10.61", instances.get(0).getIp(),
+                "Instance IP should match");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);
@@ -440,10 +479,16 @@ public class NacosHealthCheckTest {
         List<Instance> clusterAHealthy = namingService.selectInstances(
                 serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a"), true);
 
-        System.out.println("Healthy instances in cluster-a: " + clusterAHealthy.size());
+        assertNotNull(clusterAHealthy, "Cluster-a healthy list should not be null");
+        assertFalse(clusterAHealthy.isEmpty(), "Should find healthy instances in cluster-a");
+
         for (Instance inst : clusterAHealthy) {
-            assertEquals("cluster-a", inst.getClusterName());
-            assertTrue(inst.isHealthy());
+            assertEquals("cluster-a", inst.getClusterName(),
+                    "All instances should belong to cluster-a");
+            assertTrue(inst.isHealthy(),
+                    "All selected instances should be healthy");
+            assertNotEquals("192.168.10.71", inst.getIp(),
+                    "Unhealthy instance should not be in the selection");
         }
 
         // Cleanup
@@ -463,7 +508,7 @@ public class NacosHealthCheckTest {
         String[] clusters = {"dc1", "dc2", "dc3"};
         for (String cluster : clusters) {
             Instance instance = new Instance();
-            instance.setIp("192.168.11." + cluster.hashCode() % 256);
+            instance.setIp("192.168.11." + Math.abs(cluster.hashCode() % 256));
             instance.setPort(8080);
             instance.setClusterName(cluster);
             instance.setHealthy(true);
@@ -475,14 +520,26 @@ public class NacosHealthCheckTest {
         // Get all instances from all clusters
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
 
-        System.out.println("Total instances across all clusters: " + allInstances.size());
+        assertNotNull(allInstances, "All instances list should not be null");
+        assertEquals(3, allInstances.size(),
+                "Should have 3 instances across all clusters");
+
+        Set<String> clusterNames = allInstances.stream()
+                .map(Instance::getClusterName)
+                .collect(Collectors.toSet());
+        assertEquals(3, clusterNames.size(), "Should have instances in 3 different clusters");
+        assertTrue(clusterNames.contains("dc1"), "Should contain dc1 cluster");
+        assertTrue(clusterNames.contains("dc2"), "Should contain dc2 cluster");
+        assertTrue(clusterNames.contains("dc3"), "Should contain dc3 cluster");
+
         for (Instance inst : allInstances) {
-            System.out.println("  " + inst.getIp() + " in " + inst.getClusterName());
+            assertTrue(inst.isHealthy(), "All instances should be healthy");
+            assertEquals(8080, inst.getPort(), "All instances should have port 8080");
         }
 
         // Cleanup
         for (String cluster : clusters) {
-            namingService.deregisterInstance(serviceName, "192.168.11." + cluster.hashCode() % 256, 8080, cluster);
+            namingService.deregisterInstance(serviceName, "192.168.11." + Math.abs(cluster.hashCode() % 256), 8080, cluster);
         }
     }
 }

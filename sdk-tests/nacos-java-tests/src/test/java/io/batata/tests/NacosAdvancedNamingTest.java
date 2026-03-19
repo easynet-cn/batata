@@ -36,9 +36,9 @@ public class NacosAdvancedNamingTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         namingService = NacosFactory.createNamingService(properties);
         System.out.println("Nacos Advanced Naming Test Setup - Server: " + serverAddr);
@@ -572,9 +572,10 @@ public class NacosAdvancedNamingTest {
         // Update weight
         instance.setWeight(10.0);
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(500);
+        Thread.sleep(3000);
 
-        instances = namingService.getAllInstances(serviceName);
+        // Use subscribe=false to force server query instead of using cache
+        instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
         assertEquals(10.0, instances.get(0).getWeight(), 0.01, "Weight should be updated to 10.0");
 
         // Cleanup

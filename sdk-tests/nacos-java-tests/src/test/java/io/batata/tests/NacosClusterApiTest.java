@@ -32,7 +32,8 @@ public class NacosClusterApiTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         accessToken = loginV3(username, password);
-        System.out.println("Cluster API Test Setup - Server: " + serverAddr + ", Console: " + consoleAddr);
+        assertFalse(accessToken.isEmpty(),
+                "Should obtain access token via V3 login");
     }
 
     // ==================== V2 Cluster API Tests ====================
@@ -44,11 +45,21 @@ public class NacosClusterApiTest {
     @Order(1)
     void testGetCurrentNode() throws Exception {
         String response = httpGetMain("/nacos/v2/core/cluster/node/self");
-        System.out.println("V2 Current node: " + response);
-        assertNotNull(response, "Response should not be null");
-        // Should contain node information
-        assertTrue(response.contains("ip") || response.contains("address") || response.contains("data"),
-                "Response should contain node information");
+        assertNotNull(response, "V2 current node response should not be null");
+        assertFalse(response.isEmpty(), "V2 current node response should not be empty");
+
+        // Verify response is valid JSON containing expected structure
+        assertTrue(response.contains("{"), "Response should be JSON");
+
+        // Verify essential node fields
+        assertTrue(response.contains("ip") || response.contains("address"),
+                "Node response should contain IP or address field");
+        assertTrue(response.contains("port"),
+                "Node response should contain port field");
+
+        // Verify success indicator
+        assertTrue(response.contains("200") || response.contains("data") || response.contains("\"code\""),
+                "Response should indicate success or contain data");
     }
 
     /**
@@ -58,8 +69,22 @@ public class NacosClusterApiTest {
     @Order(2)
     void testListClusterNodes() throws Exception {
         String response = httpGetMain("/nacos/v2/core/cluster/node/list");
-        System.out.println("V2 Cluster nodes: " + response);
-        assertNotNull(response, "Response should not be null");
+        assertNotNull(response, "V2 cluster node list response should not be null");
+        assertFalse(response.isEmpty(), "V2 cluster node list response should not be empty");
+
+        // Response should be valid JSON
+        assertTrue(response.contains("{"), "Response should be JSON");
+
+        // In a running server, the node list should contain at least the current node
+        assertTrue(response.contains("ip") || response.contains("address"),
+                "Node list should contain at least one node with IP/address");
+        assertTrue(response.contains("port"),
+                "Node list should contain at least one node with port");
+
+        // Verify the list is not empty (at least the self node should be present)
+        // The response typically has a "data" array
+        assertFalse(response.contains("\"data\":[]"),
+                "Node list should not be empty; at least the current node should be present");
     }
 
     /**
@@ -69,8 +94,16 @@ public class NacosClusterApiTest {
     @Order(3)
     void testNodeHealth() throws Exception {
         String response = httpGetMain("/nacos/v2/core/cluster/node/self/health");
-        System.out.println("V2 Node health: " + response);
-        assertNotNull(response, "Response should not be null");
+        assertNotNull(response, "V2 node health response should not be null");
+        assertFalse(response.isEmpty(), "V2 node health response should not be empty");
+
+        // Health check should return a valid response
+        assertTrue(response.contains("{"), "Response should be JSON");
+        // A running node should report a healthy status
+        assertTrue(
+                response.contains("UP") || response.contains("READY")
+                        || response.contains("200") || response.contains("\"data\""),
+                "Health response should indicate a healthy state (UP/READY/200)");
     }
 
     // ==================== V3 Console Cluster API Tests ====================
@@ -82,8 +115,16 @@ public class NacosClusterApiTest {
     @Order(4)
     void testV3ClusterNodes() throws Exception {
         String response = httpGetConsole("/v3/console/core/cluster/nodes");
-        System.out.println("V3 Cluster nodes: " + response);
-        assertNotNull(response, "Response should not be null");
+        assertNotNull(response, "V3 cluster nodes response should not be null");
+        assertFalse(response.isEmpty(), "V3 cluster nodes response should not be empty");
+
+        assertTrue(response.contains("{"), "Response should be JSON");
+
+        // Should contain node data with IP and port
+        assertTrue(response.contains("ip") || response.contains("address"),
+                "V3 cluster nodes should contain IP/address for at least one node");
+        assertTrue(response.contains("port"),
+                "V3 cluster nodes should contain port for at least one node");
     }
 
     /**
@@ -93,8 +134,15 @@ public class NacosClusterApiTest {
     @Order(5)
     void testV3ClusterHealth() throws Exception {
         String response = httpGetConsole("/v3/console/core/cluster/health");
-        System.out.println("V3 Cluster health: " + response);
-        assertNotNull(response, "Response should not be null");
+        assertNotNull(response, "V3 cluster health response should not be null");
+        assertFalse(response.isEmpty(), "V3 cluster health response should not be empty");
+
+        assertTrue(response.contains("{"), "Response should be JSON");
+        // Health endpoint should indicate cluster health status
+        assertTrue(
+                response.contains("UP") || response.contains("READY")
+                        || response.contains("200") || response.contains("\"data\""),
+                "V3 cluster health should indicate a healthy state");
     }
 
     /**
@@ -104,8 +152,21 @@ public class NacosClusterApiTest {
     @Order(6)
     void testV3ClusterSelf() throws Exception {
         String response = httpGetConsole("/v3/console/core/cluster/self");
-        System.out.println("V3 Cluster self: " + response);
-        assertNotNull(response, "Response should not be null");
+        assertNotNull(response, "V3 cluster self response should not be null");
+        assertFalse(response.isEmpty(), "V3 cluster self response should not be empty");
+
+        assertTrue(response.contains("{"), "Response should be JSON");
+
+        // Self info should include the current node's IP and port
+        assertTrue(response.contains("ip") || response.contains("address"),
+                "V3 cluster self should contain current node IP/address");
+        assertTrue(response.contains("port"),
+                "V3 cluster self should contain current node port");
+
+        // Should also contain state/status info
+        assertTrue(response.contains("state") || response.contains("status")
+                        || response.contains("UP") || response.contains("READY"),
+                "V3 cluster self should contain node state information");
     }
 
     /**
@@ -115,8 +176,13 @@ public class NacosClusterApiTest {
     @Order(7)
     void testV3StandaloneMode() throws Exception {
         String response = httpGetConsole("/v3/console/core/cluster/standalone");
-        System.out.println("V3 Standalone mode: " + response);
-        assertNotNull(response, "Response should not be null");
+        assertNotNull(response, "V3 standalone mode response should not be null");
+        assertFalse(response.isEmpty(), "V3 standalone mode response should not be empty");
+
+        // Response should contain a boolean indicator for standalone mode
+        assertTrue(response.contains("true") || response.contains("false")
+                        || response.contains("data"),
+                "V3 standalone response should indicate true/false or contain data");
     }
 
     /**
@@ -126,18 +192,23 @@ public class NacosClusterApiTest {
     @Order(8)
     void testClusterNodeRequiredFields() throws Exception {
         String response = httpGetMain("/nacos/v2/core/cluster/node/self");
-        System.out.println("Node fields check: " + response);
         assertNotNull(response, "Response should not be null");
+        assertFalse(response.isEmpty(), "Response should not be empty");
 
-        // Verify essential fields are present (either in data or directly)
+        // Verify all essential fields are present
         boolean hasIp = response.contains("ip") || response.contains("address");
         boolean hasPort = response.contains("port");
         boolean hasState = response.contains("state") || response.contains("status");
 
-        System.out.println("Has IP: " + hasIp + ", Has Port: " + hasPort + ", Has State: " + hasState);
+        assertTrue(hasIp, "Node response MUST contain IP or address field");
+        assertTrue(hasPort, "Node response MUST contain port field");
+        assertTrue(hasState, "Node response MUST contain state or status field");
 
-        // At minimum, node info should have ip and port
-        assertTrue(hasIp || hasPort, "Node response should contain address or port information");
+        // Verify port value is a reasonable number (present as a numeric value)
+        // Port should appear as a number like 8848 or 9848
+        assertTrue(response.contains("8848") || response.contains("9848")
+                        || response.matches(".*\"port\"\\s*:\\s*\\d+.*"),
+                "Port should contain a valid numeric value");
     }
 
     // ==================== Helper Methods ====================
@@ -150,6 +221,9 @@ public class NacosClusterApiTest {
         URL url = new URL(fullUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
+        int responseCode = conn.getResponseCode();
+        assertTrue(responseCode < 500,
+                "Main server request to " + path + " should not return server error, got: " + responseCode);
         return readResponse(conn);
     }
 
@@ -171,7 +245,7 @@ public class NacosClusterApiTest {
                 return readResponse(conn);
             }
         } catch (Exception e) {
-            System.out.println("Console server not available, falling back to main server: " + e.getMessage());
+            // Console server not available, fall back to main server
         }
 
         // Fallback to main server
@@ -182,6 +256,9 @@ public class NacosClusterApiTest {
         URL url = new URL(fullUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
+        int responseCode = conn.getResponseCode();
+        assertTrue(responseCode < 500,
+                "Fallback request to /nacos" + path + " should not return server error, got: " + responseCode);
         return readResponse(conn);
     }
 
@@ -197,21 +274,23 @@ public class NacosClusterApiTest {
                 + "&password=" + URLEncoder.encode(password, "UTF-8");
         conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
 
-        if (conn.getResponseCode() == 200) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-            String resp = response.toString();
-            if (resp.contains("accessToken")) {
-                int start = resp.indexOf("accessToken") + 14;
-                int end = resp.indexOf("\"", start);
-                if (end > start) return resp.substring(start, end);
-            }
+        assertEquals(200, conn.getResponseCode(),
+                "V3 login should return HTTP 200");
+
+        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
         }
-        return "";
+        String resp = response.toString();
+        assertTrue(resp.contains("accessToken"),
+                "Login response should contain accessToken field");
+
+        int start = resp.indexOf("accessToken") + 14;
+        int end = resp.indexOf("\"", start);
+        assertTrue(end > start, "accessToken value should be non-empty");
+        return resp.substring(start, end);
     }
 
     private static String readResponse(HttpURLConnection conn) throws Exception {

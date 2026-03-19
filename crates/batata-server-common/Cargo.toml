@@ -54,6 +54,9 @@ uuid = { workspace = true }
 # Rate limiting
 dashmap = { workspace = true }
 
+# Plugin system
+batata-plugin = { workspace = true }
+
 # Metrics
 metrics = { workspace = true }
 

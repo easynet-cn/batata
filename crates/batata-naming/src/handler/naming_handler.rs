@@ -241,7 +241,22 @@ impl InstanceRequestHandler {
         // Build notification
         let notification =
             NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
+
+        // Debug: log the exact JSON being sent so we can compare with Nacos
+        if let Ok(json) = serde_json::to_string(&notification) {
+            info!("NotifySubscriberRequest JSON: {}", json);
+        }
+
         let payload = notification.build_server_push_payload();
+
+        // Debug: log payload metadata type
+        if let Some(meta) = &payload.metadata {
+            info!(
+                "NotifySubscriberRequest payload type='{}', body_len={}",
+                meta.r#type,
+                payload.body.as_ref().map(|b| b.value.len()).unwrap_or(0)
+            );
+        }
 
         info!(
             "Notifying {} subscribers for service {}@@{}@@{}",

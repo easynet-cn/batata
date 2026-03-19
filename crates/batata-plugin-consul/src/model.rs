@@ -976,6 +976,12 @@ pub struct HealthQueryParams {
 
     /// Filter expression
     pub filter: Option<String>,
+
+    /// Blocking query: minimum index to wait for (X-Consul-Index)
+    pub index: Option<u64>,
+
+    /// Blocking query: maximum wait time (e.g. "5m", "30s")
+    pub wait: Option<String>,
 }
 
 /// Query parameters for check update endpoints

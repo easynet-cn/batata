@@ -133,6 +133,17 @@ batata.ratelimit.auth.window_seconds: 60
 batata.ratelimit.auth.lockout_seconds: 300
 
 # =============================================================================
+# Control Plugin (TPS Rate Limiting & Connection Control)
+# =============================================================================
+
+# Enable TPS rate limiting and connection control
+batata.plugin.control.enabled: true
+# Default TPS limit per control point when no specific rule matches
+batata.plugin.control.default_tps: 10000
+# Maximum concurrent gRPC connections
+batata.plugin.control.max_connections: 50000
+
+# =============================================================================
 # Config Module
 # =============================================================================
 

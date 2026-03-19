@@ -9,4 +9,5 @@ pub mod cluster;
 pub mod distro;
 pub mod generic;
 pub mod lock;
+pub mod param_check;
 pub mod rpc;

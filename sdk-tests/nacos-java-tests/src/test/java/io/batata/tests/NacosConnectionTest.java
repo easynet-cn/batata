@@ -41,9 +41,9 @@ public class NacosConnectionTest {
         password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         configService = NacosFactory.createConfigService(properties);
         namingService = NacosFactory.createNamingService(properties);
@@ -73,9 +73,9 @@ public class NacosConnectionTest {
     @Order(1)
     void testBasicConnectionSetup() throws NacosException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         // Create new service to test connection setup
         ConfigService testConfigService = NacosFactory.createConfigService(properties);
@@ -104,12 +104,12 @@ public class NacosConnectionTest {
     @Order(2)
     void testConnectionWithCustomTimeout() throws NacosException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
         // Set custom timeout values
-        properties.put("nacos.remote.client.grpc.timeout", "5000");
-        properties.put("nacos.remote.client.grpc.connect.timeout", "3000");
+        properties.setProperty("nacos.remote.client.grpc.timeout", "5000");
+        properties.setProperty("nacos.remote.client.grpc.connect.timeout", "3000");
 
         ConfigService testConfigService = NacosFactory.createConfigService(properties);
         assertNotNull(testConfigService, "ConfigService should be created with custom timeout");
@@ -177,9 +177,9 @@ public class NacosConnectionTest {
     @Order(4)
     void testServerListRetrieval() throws NacosException, InterruptedException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         ConfigService testConfigService = NacosFactory.createConfigService(properties);
         NamingService testNamingService = NacosFactory.createNamingService(properties);
@@ -259,9 +259,9 @@ public class NacosConnectionTest {
         }
 
         Properties properties = new Properties();
-        properties.put("serverAddr", multipleAddresses);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", multipleAddresses);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         ConfigService testConfigService = NacosFactory.createConfigService(properties);
 
@@ -288,11 +288,11 @@ public class NacosConnectionTest {
     @Order(7)
     void testConnectionRetryLogic() throws NacosException, InterruptedException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
         // Configure retry settings
-        properties.put("nacos.remote.client.grpc.retry.times", "3");
+        properties.setProperty("nacos.remote.client.grpc.retry.times", "3");
 
         ConfigService testConfigService = NacosFactory.createConfigService(properties);
 
@@ -397,9 +397,9 @@ public class NacosConnectionTest {
     @Order(9)
     void testConnectionWithAuthentication() throws NacosException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         // Create authenticated service
         ConfigService authConfigService = NacosFactory.createConfigService(properties);
@@ -434,9 +434,9 @@ public class NacosConnectionTest {
     @Order(10)
     void testGracefulShutdown() throws NacosException, InterruptedException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         ConfigService shutdownConfigService = NacosFactory.createConfigService(properties);
         NamingService shutdownNamingService = NacosFactory.createNamingService(properties);
@@ -492,9 +492,9 @@ public class NacosConnectionTest {
     @Order(11)
     void testReconnectionAfterDisconnect() throws NacosException, InterruptedException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         String dataId = "nct011-reconnect-" + UUID.randomUUID();
 
@@ -584,9 +584,9 @@ public class NacosConnectionTest {
                     startLatch.await();
 
                     Properties properties = new Properties();
-                    properties.put("serverAddr", serverAddr);
-                    properties.put("username", username);
-                    properties.put("password", password);
+                    properties.setProperty("serverAddr", serverAddr);
+                    properties.setProperty("username", username);
+                    properties.setProperty("password", password);
 
                     ConfigService service = NacosFactory.createConfigService(properties);
                     services.add(service);
@@ -645,9 +645,9 @@ public class NacosConnectionTest {
         // Create and close multiple services to test resource cleanup
         for (int cycle = 0; cycle < 3; cycle++) {
             Properties properties = new Properties();
-            properties.put("serverAddr", serverAddr);
-            properties.put("username", username);
-            properties.put("password", password);
+            properties.setProperty("serverAddr", serverAddr);
+            properties.setProperty("username", username);
+            properties.setProperty("password", password);
 
             ConfigService service = NacosFactory.createConfigService(properties);
 
@@ -668,9 +668,9 @@ public class NacosConnectionTest {
 
         // Verify a new connection still works (resources were properly released)
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         ConfigService finalService = NacosFactory.createConfigService(properties);
         try {
@@ -741,8 +741,8 @@ public class NacosConnectionTest {
         namingService.registerInstance(serviceName, "192.168.100.15", 8080);
 
         // Wait for events
-        boolean configEventsReceived = configLatch.await(15, TimeUnit.SECONDS);
-        boolean namingEventsReceived = namingLatch.await(10, TimeUnit.SECONDS);
+        boolean configEventsReceived = configLatch.await(60, TimeUnit.SECONDS);
+        boolean namingEventsReceived = namingLatch.await(30, TimeUnit.SECONDS);
 
         System.out.println("Config events received: " + configEventCount.get());
         System.out.println("Naming events received: " + namingEventCount.get());

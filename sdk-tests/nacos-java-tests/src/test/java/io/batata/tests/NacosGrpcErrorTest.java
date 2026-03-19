@@ -35,14 +35,12 @@ public class NacosGrpcErrorTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         configService = NacosFactory.createConfigService(properties);
         namingService = NacosFactory.createNamingService(properties);
-
-        System.out.println("Nacos gRPC Error Test Setup - Server: " + serverAddr);
     }
 
     @AfterAll
@@ -62,21 +60,16 @@ public class NacosGrpcErrorTest {
      */
     @Test
     @Order(1)
-    void testConfigGetShortTimeout() {
+    void testConfigGetShortTimeout() throws NacosException {
         String dataId = "nonexistent-" + UUID.randomUUID().toString().substring(0, 8);
 
         long startTime = System.currentTimeMillis();
-        try {
-            // Short timeout for non-existent config
-            String content = configService.getConfig(dataId, DEFAULT_GROUP, 1000);
-            long duration = System.currentTimeMillis() - startTime;
+        String content = configService.getConfig(dataId, DEFAULT_GROUP, 1000);
+        long duration = System.currentTimeMillis() - startTime;
 
-            assertNull(content, "Non-existent config should return null");
-            assertTrue(duration < 5000, "Should respect timeout");
-            System.out.println("Short timeout test - Duration: " + duration + "ms");
-        } catch (NacosException e) {
-            System.out.println("Short timeout exception: " + e.getMessage());
-        }
+        assertNull(content, "Non-existent config should return null");
+        assertTrue(duration < 5000,
+                "Should complete within 5 seconds (timeout was 1s), actual: " + duration + "ms");
     }
 
     /**
@@ -89,14 +82,18 @@ public class NacosGrpcErrorTest {
 
         long startTime = System.currentTimeMillis();
         try {
-            // Very short timeout
             String content = configService.getConfig(dataId, DEFAULT_GROUP, 100);
             long duration = System.currentTimeMillis() - startTime;
-
-            System.out.println("Very short timeout test - Duration: " + duration + "ms, Content: " + content);
+            // If it returns, content should be null (non-existent) and it should be fast
+            assertNull(content,
+                    "Non-existent config with very short timeout should return null");
+            assertTrue(duration < 3000,
+                    "Very short timeout should complete quickly, actual: " + duration + "ms");
         } catch (NacosException e) {
             long duration = System.currentTimeMillis() - startTime;
-            System.out.println("Very short timeout - Duration: " + duration + "ms, Error: " + e.getErrCode());
+            // A timeout exception is also acceptable for very short timeout
+            assertTrue(duration < 5000,
+                    "Even on timeout exception, should not take too long, actual: " + duration + "ms");
         }
     }
 
@@ -114,7 +111,13 @@ public class NacosGrpcErrorTest {
         long duration = System.currentTimeMillis() - startTime;
 
         assertTrue(result, "Publish should succeed");
-        System.out.println("Publish timeout test - Duration: " + duration + "ms");
+        assertTrue(duration < 10000,
+                "Publish should complete within 10 seconds, actual: " + duration + "ms");
+
+        // Verify the config was actually persisted
+        String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
+        assertEquals(content, retrieved,
+                "Published config should be retrievable after publish");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -123,30 +126,38 @@ public class NacosGrpcErrorTest {
     // ==================== Permission Error Tests ====================
 
     /**
-     * NGE-004: Test permission denied handling (403)
+     * NGE-004: Test permission denied handling (invalid credentials)
+     *
+     * Note: Some server implementations may not reject invalid credentials on
+     * gRPC config read operations (e.g., getConfig may return null instead of
+     * throwing). This test accepts both behaviors.
      */
     @Test
     @Order(4)
     void testPermissionDenied() {
-        // Create a service with restricted access credentials
         Properties props = new Properties();
         props.put("serverAddr", System.getProperty("nacos.server", "127.0.0.1:8848"));
         props.put("username", "invalid-user");
         props.put("password", "invalid-password");
 
+        boolean exceptionThrown = false;
+        boolean returnedNull = false;
         try {
             ConfigService restrictedService = NacosFactory.createConfigService(props);
-
-            // Attempt operation that requires auth
-            String content = restrictedService.getConfig("test-config", DEFAULT_GROUP, 3000);
-            System.out.println("Permission test - Content: " + content);
-
-            restrictedService.shutDown();
+            try {
+                String result = restrictedService.getConfig("test-config", DEFAULT_GROUP, 5000);
+                returnedNull = (result == null);
+            } finally {
+                restrictedService.shutDown();
+            }
         } catch (NacosException e) {
-            System.out.println("Permission denied error code: " + e.getErrCode());
-            System.out.println("Permission denied message: " + e.getMessage());
-            // 403 or authentication error is expected
+            exceptionThrown = true;
+            assertTrue(e.getErrCode() != 0,
+                    "NacosException error code should be non-zero for auth failure, got: " + e.getErrCode());
         }
+
+        assertTrue(exceptionThrown || returnedNull,
+                "Operations with invalid credentials should either throw NacosException or return null");
     }
 
     /**
@@ -158,21 +169,20 @@ public class NacosGrpcErrorTest {
         String dataId = "ns-test-" + UUID.randomUUID().toString().substring(0, 8);
         String namespace = "restricted-namespace-" + UUID.randomUUID().toString().substring(0, 8);
 
+        Properties props = new Properties();
+        props.put("serverAddr", System.getProperty("nacos.server", "127.0.0.1:8848"));
+        props.put("username", System.getProperty("nacos.username", "nacos"));
+        props.put("password", System.getProperty("nacos.password", "nacos"));
+        props.put("namespace", namespace);
+
+        ConfigService nsService = NacosFactory.createConfigService(props);
         try {
-            // Try to access a namespace that doesn't exist or is restricted
-            Properties props = new Properties();
-            props.put("serverAddr", System.getProperty("nacos.server", "127.0.0.1:8848"));
-            props.put("username", System.getProperty("nacos.username", "nacos"));
-            props.put("password", System.getProperty("nacos.password", "nacos"));
-            props.put("namespace", namespace);
-
-            ConfigService nsService = NacosFactory.createConfigService(props);
+            // Non-existent namespace: config get should return null (no data)
             String content = nsService.getConfig(dataId, DEFAULT_GROUP, 3000);
-
-            System.out.println("Namespace test - Content: " + content);
+            assertNull(content,
+                    "Getting config from non-existent namespace should return null");
+        } finally {
             nsService.shutDown();
-        } catch (NacosException e) {
-            System.out.println("Namespace access error: " + e.getErrCode() + " - " + e.getMessage());
         }
     }
 
@@ -190,15 +200,14 @@ public class NacosGrpcErrorTest {
         for (int i = 0; i < 5; i++) {
             String content = "recovery.iteration=" + i;
             boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
-            assertTrue(published, "Iteration " + i + " should succeed");
+            assertTrue(published, "Publish should succeed in iteration " + i);
 
             String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
-            assertEquals(content, retrieved, "Content should match in iteration " + i);
+            assertEquals(content, retrieved,
+                    "Content should match in iteration " + i);
 
             Thread.sleep(200);
         }
-
-        System.out.println("Connection recovery test passed - 5 iterations");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -212,11 +221,9 @@ public class NacosGrpcErrorTest {
     void testServerStatus() throws NacosException {
         String status = configService.getServerStatus();
         assertNotNull(status, "Server status should not be null");
-        System.out.println("Server status: " + status);
-
-        // Status should be UP or DOWN
-        assertTrue(status.equals("UP") || status.equals("DOWN") || !status.isEmpty(),
-                "Status should be valid");
+        assertFalse(status.isEmpty(), "Server status should not be empty");
+        assertEquals("UP", status,
+                "Config server status should be UP for a running server");
     }
 
     /**
@@ -227,7 +234,9 @@ public class NacosGrpcErrorTest {
     void testNamingServerStatus() throws NacosException {
         String status = namingService.getServerStatus();
         assertNotNull(status, "Naming server status should not be null");
-        System.out.println("Naming server status: " + status);
+        assertFalse(status.isEmpty(), "Naming server status should not be empty");
+        assertEquals("UP", status,
+                "Naming server status should be UP for a running server");
     }
 
     // ==================== Concurrent Error Handling Tests ====================
@@ -253,17 +262,23 @@ public class NacosGrpcErrorTest {
                     String dataId = prefix + "-" + index;
                     String content = "concurrent.test=" + index;
 
-                    // Rapid operations
-                    configService.publishConfig(dataId, DEFAULT_GROUP, content);
-                    String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
-                    configService.removeConfig(dataId, DEFAULT_GROUP);
+                    boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
+                    assertTrue(published,
+                            "Concurrent publish should succeed for thread " + index);
 
-                    if (retrieved != null) {
-                        successCount.incrementAndGet();
-                    }
+                    String retrieved = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
+                    assertNotNull(retrieved,
+                            "Concurrent get should return content for thread " + index);
+                    assertEquals(content, retrieved,
+                            "Retrieved content should match published content in thread " + index);
+
+                    boolean removed = configService.removeConfig(dataId, DEFAULT_GROUP);
+                    assertTrue(removed,
+                            "Concurrent remove should succeed for thread " + index);
+
+                    successCount.incrementAndGet();
                 } catch (Exception e) {
                     errorCount.incrementAndGet();
-                    System.out.println("Concurrent error in thread " + index + ": " + e.getMessage());
                 } finally {
                     doneLatch.countDown();
                 }
@@ -273,8 +288,11 @@ public class NacosGrpcErrorTest {
         startLatch.countDown();
         boolean completed = doneLatch.await(60, TimeUnit.SECONDS);
 
-        assertTrue(completed, "All threads should complete");
-        System.out.println("Concurrent test - Success: " + successCount.get() + ", Errors: " + errorCount.get());
+        assertTrue(completed, "All threads should complete within 60 seconds");
+        assertEquals(threadCount, successCount.get(),
+                "All " + threadCount + " threads should succeed");
+        assertEquals(0, errorCount.get(),
+                "No errors should occur during concurrent operations");
     }
 
     /**
@@ -284,27 +302,27 @@ public class NacosGrpcErrorTest {
     @Order(10)
     void testRapidSubscribeUnsubscribe() throws NacosException, InterruptedException {
         String serviceName = "rapid-sub-" + UUID.randomUUID().toString().substring(0, 8);
-        AtomicInteger subscribeCount = new AtomicInteger(0);
 
         // Register a service first
         namingService.registerInstance(serviceName, "192.168.100.1", 8080);
         Thread.sleep(500);
 
-        // Rapid subscribe/unsubscribe cycles
+        // Rapid subscribe/unsubscribe cycles should not throw
         for (int i = 0; i < 5; i++) {
-            final int cycle = i;
-            com.alibaba.nacos.api.naming.listener.EventListener listener = event -> {
-                subscribeCount.incrementAndGet();
-                System.out.println("Cycle " + cycle + " received event");
-            };
-
+            com.alibaba.nacos.api.naming.listener.EventListener listener = event -> {};
             namingService.subscribe(serviceName, listener);
             Thread.sleep(100);
             namingService.unsubscribe(serviceName, listener);
             Thread.sleep(100);
         }
 
-        System.out.println("Rapid subscribe/unsubscribe test - Events received: " + subscribeCount.get());
+        // Verify the service is still accessible after rapid cycles
+        List<Instance> instances = namingService.getAllInstances(serviceName);
+        assertNotNull(instances, "Instance list should not be null after rapid sub/unsub");
+        assertFalse(instances.isEmpty(),
+                "Instance list should still contain the registered instance");
+        assertEquals("192.168.100.1", instances.get(0).getIp(),
+                "Instance IP should match after rapid sub/unsub cycles");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.100.1", 8080);
@@ -313,88 +331,49 @@ public class NacosGrpcErrorTest {
     // ==================== Invalid Input Tests ====================
 
     /**
-     * NGE-011: Test invalid dataId handling
+     * NGE-011: Test invalid dataId handling - null
      */
     @Test
     @Order(11)
-    void testInvalidDataId() {
-        String[] invalidDataIds = {
-                "",
-                null,
-                "   ",
-                "a".repeat(1000) // Very long dataId
-        };
+    void testNullDataId() {
+        Exception thrown = assertThrows(Exception.class, () -> {
+            configService.getConfig(null, DEFAULT_GROUP, 3000);
+        }, "Null dataId should throw an exception");
 
-        for (String dataId : invalidDataIds) {
-            try {
-                if (dataId == null) {
-                    configService.getConfig(null, DEFAULT_GROUP, 3000);
-                } else {
-                    configService.getConfig(dataId, DEFAULT_GROUP, 3000);
-                }
-                System.out.println("DataId '" + dataId + "' - No error");
-            } catch (NacosException e) {
-                System.out.println("DataId '" + dataId + "' - Error: " + e.getErrCode());
-            } catch (IllegalArgumentException e) {
-                System.out.println("DataId '" + dataId + "' - IllegalArgument: " + e.getMessage());
-            }
-        }
+        assertTrue(thrown instanceof NacosException || thrown instanceof IllegalArgumentException,
+                "Exception should be NacosException or IllegalArgumentException, got: "
+                        + thrown.getClass().getName());
     }
 
     /**
-     * NGE-012: Test invalid group handling
+     * NGE-012: Test invalid dataId handling - empty string
      */
     @Test
     @Order(12)
-    void testInvalidGroup() {
-        String dataId = "valid-dataid-" + UUID.randomUUID().toString().substring(0, 8);
-        String[] invalidGroups = {
-                "",
-                null,
-                "   "
-        };
+    void testEmptyDataId() {
+        Exception thrown = assertThrows(Exception.class, () -> {
+            configService.getConfig("", DEFAULT_GROUP, 3000);
+        }, "Empty dataId should throw an exception");
 
-        for (String group : invalidGroups) {
-            try {
-                configService.getConfig(dataId, group, 3000);
-                System.out.println("Group '" + group + "' - No error");
-            } catch (NacosException e) {
-                System.out.println("Group '" + group + "' - Error: " + e.getErrCode());
-            } catch (IllegalArgumentException e) {
-                System.out.println("Group '" + group + "' - IllegalArgument: " + e.getMessage());
-            }
-        }
+        assertTrue(thrown instanceof NacosException || thrown instanceof IllegalArgumentException,
+                "Exception should be NacosException or IllegalArgumentException, got: "
+                        + thrown.getClass().getName());
     }
 
     /**
-     * NGE-013: Test invalid service name handling
+     * NGE-013: Test invalid service name handling - null
      */
     @Test
     @Order(13)
-    void testInvalidServiceName() {
-        String[] invalidNames = {
-                "",
-                null,
-                "   "
-        };
+    void testNullServiceName() {
+        Exception thrown = assertThrows(Exception.class, () -> {
+            namingService.registerInstance(null, "192.168.1.1", 8080);
+        }, "Null service name should throw an exception");
 
-        for (String name : invalidNames) {
-            try {
-                if (name == null) {
-                    namingService.registerInstance(null, "192.168.1.1", 8080);
-                } else {
-                    namingService.registerInstance(name, "192.168.1.1", 8080);
-                }
-                System.out.println("Service name '" + name + "' - No error");
-            } catch (NacosException e) {
-                System.out.println("Service name '" + name + "' - Error: " + e.getErrCode());
-            } catch (IllegalArgumentException e) {
-                System.out.println("Service name '" + name + "' - IllegalArgument: " + e.getMessage());
-            }
-        }
+        assertTrue(thrown instanceof NacosException || thrown instanceof IllegalArgumentException,
+                "Exception should be NacosException or IllegalArgumentException, got: "
+                        + thrown.getClass().getName());
     }
-
-    // ==================== Listener Error Tests ====================
 
     /**
      * NGE-014: Test listener exception handling
@@ -404,10 +383,11 @@ public class NacosGrpcErrorTest {
     void testListenerExceptionHandling() throws NacosException, InterruptedException {
         String dataId = "listener-error-" + UUID.randomUUID().toString().substring(0, 8);
         AtomicInteger callCount = new AtomicInteger(0);
-        CountDownLatch latch = new CountDownLatch(2);
+        CountDownLatch secondCallLatch = new CountDownLatch(1);
+        AtomicReference<String> lastContent = new AtomicReference<>();
 
-        // Add listener that throws exception
-        configService.addListener(dataId, DEFAULT_GROUP, new Listener() {
+        // Add listener that throws exception on first call
+        Listener listener = new Listener() {
             @Override
             public Executor getExecutor() {
                 return null;
@@ -415,25 +395,30 @@ public class NacosGrpcErrorTest {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
-                callCount.incrementAndGet();
-                latch.countDown();
-                if (callCount.get() == 1) {
+                int count = callCount.incrementAndGet();
+                if (count == 1) {
                     throw new RuntimeException("Simulated listener error");
                 }
-                System.out.println("Listener received after error: " + configInfo);
+                lastContent.set(configInfo);
+                secondCallLatch.countDown();
             }
-        });
+        };
 
+        configService.addListener(dataId, DEFAULT_GROUP, listener);
         Thread.sleep(500);
 
         // Publish config twice
         configService.publishConfig(dataId, DEFAULT_GROUP, "first=value");
-        Thread.sleep(1000);
+        Thread.sleep(5000);
         configService.publishConfig(dataId, DEFAULT_GROUP, "second=value");
 
-        boolean received = latch.await(15, TimeUnit.SECONDS);
-
-        System.out.println("Listener error test - Calls: " + callCount.get() + ", Received both: " + received);
+        boolean receivedSecond = secondCallLatch.await(15, TimeUnit.SECONDS);
+        assertTrue(receivedSecond,
+                "Listener should recover and receive second config change after throwing on first");
+        assertTrue(callCount.get() >= 2,
+                "Listener should have been called at least twice, actual: " + callCount.get());
+        assertEquals("second=value", lastContent.get(),
+                "Last received content should be 'second=value'");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -465,20 +450,20 @@ public class NacosGrpcErrorTest {
                 }
                 lastReceived.set(configInfo);
                 latch.countDown();
-                System.out.println("Slow listener finished processing: " + configInfo);
             }
         });
 
         Thread.sleep(500);
 
         // Publish config
-        long startTime = System.currentTimeMillis();
-        configService.publishConfig(dataId, DEFAULT_GROUP, "slow.test=value");
+        String content = "slow.test=value";
+        configService.publishConfig(dataId, DEFAULT_GROUP, content);
 
-        boolean received = latch.await(10, TimeUnit.SECONDS);
-        long duration = System.currentTimeMillis() - startTime;
-
-        System.out.println("Slow listener test - Duration: " + duration + "ms, Received: " + received);
+        boolean received = latch.await(15, TimeUnit.SECONDS);
+        assertTrue(received,
+                "Slow listener should eventually receive config notification");
+        assertEquals(content, lastReceived.get(),
+                "Slow listener should receive the correct config content");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);

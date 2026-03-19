@@ -21,7 +21,11 @@ import static org.junit.jupiter.api.Assertions.*;
  * Tests for the NamingMaintainService interface: instance updates,
  * service CRUD, and service selector management.
  * Aligned with Nacos MaintainServiceNamingITCase.
+ *
+ * DISABLED: NamingMaintainService internally uses V1 HTTP API (/nacos/v1/ns/instance),
+ * which Batata does not support by design (Nacos 3.x direction is V2/V3 only).
  */
+@Disabled("NamingMaintainService uses V1 HTTP API internally, not supported by Batata")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class NacosMaintainServiceTest {
 
@@ -36,9 +40,9 @@ public class NacosMaintainServiceTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         maintainService = NacosFactory.createMaintainService(properties);
         namingService = NacosFactory.createNamingService(properties);

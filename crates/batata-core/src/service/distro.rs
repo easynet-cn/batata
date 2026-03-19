@@ -276,6 +276,11 @@ impl DistroProtocol {
         &self.mapper
     }
 
+    /// Get the local node address
+    pub fn local_address(&self) -> &str {
+        &self.local_address
+    }
+
     /// Check whether the protocol has completed initial data loading
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Relaxed)

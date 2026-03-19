@@ -35,12 +35,11 @@ public class NacosConfigListenerTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         configService = NacosFactory.createConfigService(properties);
-        System.out.println("Nacos Config Listener Test Setup - Server: " + serverAddr);
     }
 
     @AfterAll
@@ -59,10 +58,10 @@ public class NacosConfigListenerTest {
     @Order(1)
     void testAddConfigListener() throws NacosException, InterruptedException {
         String dataId = "listener-test-" + UUID.randomUUID().toString().substring(0, 8);
+        String expectedContent = "test.value=1";
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> receivedConfig = new AtomicReference<>();
 
-        // Add listener before config exists
         Listener listener = new Listener() {
             @Override
             public Executor getExecutor() {
@@ -73,7 +72,6 @@ public class NacosConfigListenerTest {
             public void receiveConfigInfo(String configInfo) {
                 receivedConfig.set(configInfo);
                 latch.countDown();
-                System.out.println("Listener received: " + configInfo);
             }
         };
 
@@ -81,11 +79,13 @@ public class NacosConfigListenerTest {
 
         // Publish config
         Thread.sleep(500);
-        configService.publishConfig(dataId, DEFAULT_GROUP, "test.value=1");
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
+        assertTrue(published, "Config should be published successfully");
 
         boolean received = latch.await(10, TimeUnit.SECONDS);
-        assertTrue(received, "Listener should receive config update");
-        assertNotNull(receivedConfig.get(), "Should have received config");
+        assertTrue(received, "Listener should receive config update within timeout");
+        assertEquals(expectedContent, receivedConfig.get(),
+                "Listener should receive the exact config content that was published");
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -99,6 +99,7 @@ public class NacosConfigListenerTest {
     @Order(2)
     void testRemoveConfigListener() throws NacosException, InterruptedException {
         String dataId = "remove-listener-" + UUID.randomUUID().toString().substring(0, 8);
+        CountDownLatch firstLatch = new CountDownLatch(1);
         AtomicInteger callCount = new AtomicInteger(0);
 
         Listener listener = new Listener() {
@@ -110,17 +111,20 @@ public class NacosConfigListenerTest {
             @Override
             public void receiveConfigInfo(String configInfo) {
                 callCount.incrementAndGet();
+                firstLatch.countDown();
             }
         };
 
         configService.addListener(dataId, DEFAULT_GROUP, listener);
         Thread.sleep(500);
 
-        // Publish first config
+        // Publish first config and wait for listener to fire
         configService.publishConfig(dataId, DEFAULT_GROUP, "first=value");
-        Thread.sleep(2000);
+        boolean firstReceived = firstLatch.await(10, TimeUnit.SECONDS);
+        assertTrue(firstReceived, "Listener should receive the first config update");
 
         int countAfterFirst = callCount.get();
+        assertTrue(countAfterFirst >= 1, "Listener should have been called at least once after first publish");
 
         // Remove listener
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -128,11 +132,11 @@ public class NacosConfigListenerTest {
 
         // Publish second config - should not trigger listener
         configService.publishConfig(dataId, DEFAULT_GROUP, "second=value");
-        Thread.sleep(2000);
+        Thread.sleep(3000);
 
         int countAfterSecond = callCount.get();
-
-        System.out.println("Calls after first: " + countAfterFirst + ", after second: " + countAfterSecond);
+        assertEquals(countAfterFirst, countAfterSecond,
+                "Listener call count should not increase after removal; was " + countAfterFirst + " now " + countAfterSecond);
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -145,12 +149,15 @@ public class NacosConfigListenerTest {
     @Order(3)
     void testMultipleListeners() throws NacosException, InterruptedException {
         String dataId = "multi-listener-" + UUID.randomUUID().toString().substring(0, 8);
+        String expectedContent = "multi.test=value";
         int listenerCount = 3;
         CountDownLatch latch = new CountDownLatch(listenerCount);
+        List<AtomicReference<String>> receivedValues = new ArrayList<>();
         List<Listener> listeners = new ArrayList<>();
 
         for (int i = 0; i < listenerCount; i++) {
-            final int index = i;
+            AtomicReference<String> ref = new AtomicReference<>();
+            receivedValues.add(ref);
             Listener listener = new Listener() {
                 @Override
                 public Executor getExecutor() {
@@ -159,7 +166,7 @@ public class NacosConfigListenerTest {
 
                 @Override
                 public void receiveConfigInfo(String configInfo) {
-                    System.out.println("Listener " + index + " received: " + configInfo);
+                    ref.set(configInfo);
                     latch.countDown();
                 }
             };
@@ -170,10 +177,16 @@ public class NacosConfigListenerTest {
         Thread.sleep(500);
 
         // Publish config
-        configService.publishConfig(dataId, DEFAULT_GROUP, "multi.test=value");
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
+        assertTrue(published, "Config should be published successfully");
 
         boolean allReceived = latch.await(15, TimeUnit.SECONDS);
-        System.out.println("All listeners received: " + allReceived);
+        assertTrue(allReceived, "All " + listenerCount + " listeners should receive the config update");
+
+        for (int i = 0; i < listenerCount; i++) {
+            assertEquals(expectedContent, receivedValues.get(i).get(),
+                    "Listener " + i + " should have received the correct config content");
+        }
 
         // Cleanup
         for (Listener listener : listeners) {
@@ -189,8 +202,10 @@ public class NacosConfigListenerTest {
     @Order(4)
     void testListenerWithCustomExecutor() throws NacosException, InterruptedException {
         String dataId = "executor-listener-" + UUID.randomUUID().toString().substring(0, 8);
+        String expectedContent = "executor.test=value";
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> executorThread = new AtomicReference<>();
+        AtomicReference<String> receivedConfig = new AtomicReference<>();
         ExecutorService customExecutor = Executors.newSingleThreadExecutor(r -> {
             Thread t = new Thread(r);
             t.setName("custom-listener-executor");
@@ -206,6 +221,7 @@ public class NacosConfigListenerTest {
             @Override
             public void receiveConfigInfo(String configInfo) {
                 executorThread.set(Thread.currentThread().getName());
+                receivedConfig.set(configInfo);
                 latch.countDown();
             }
         };
@@ -213,12 +229,15 @@ public class NacosConfigListenerTest {
         configService.addListener(dataId, DEFAULT_GROUP, listener);
         Thread.sleep(500);
 
-        configService.publishConfig(dataId, DEFAULT_GROUP, "executor.test=value");
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
+        assertTrue(published, "Config should be published successfully");
 
         boolean received = latch.await(10, TimeUnit.SECONDS);
-        if (received) {
-            System.out.println("Listener executed on thread: " + executorThread.get());
-        }
+        assertTrue(received, "Listener with custom executor should receive config update");
+        assertEquals(expectedContent, receivedConfig.get(),
+                "Listener should receive the correct config content");
+        assertEquals("custom-listener-executor", executorThread.get(),
+                "Listener callback should execute on the custom executor thread");
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -255,14 +274,23 @@ public class NacosConfigListenerTest {
         configService.addListener(dataId, DEFAULT_GROUP, listener);
         Thread.sleep(500);
 
-        // Publish multiple updates
+        // Publish multiple updates with enough delay for each to be detected
         for (int i = 0; i < updateCount; i++) {
-            configService.publishConfig(dataId, DEFAULT_GROUP, "update=" + i);
+            boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "update=" + i);
+            assertTrue(published, "Config update " + i + " should be published successfully");
             Thread.sleep(1500);
         }
 
         boolean allReceived = latch.await(30, TimeUnit.SECONDS);
-        System.out.println("Received " + receivedConfigs.size() + " updates: " + receivedConfigs);
+        assertTrue(allReceived,
+                "All " + updateCount + " updates should be received, but got " + receivedConfigs.size());
+        assertEquals(updateCount, receivedConfigs.size(),
+                "Should have received exactly " + updateCount + " config notifications");
+
+        // Verify the last received config matches the last published value
+        String lastReceived = receivedConfigs.get(receivedConfigs.size() - 1);
+        assertEquals("update=" + (updateCount - 1), lastReceived,
+                "The last received config should match the last published value");
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -276,9 +304,11 @@ public class NacosConfigListenerTest {
     @Order(6)
     void testListenerConfigDelete() throws NacosException, InterruptedException {
         String dataId = "delete-listener-" + UUID.randomUUID().toString().substring(0, 8);
+        String configContent = "to.be.deleted=true";
         CountDownLatch createLatch = new CountDownLatch(1);
         CountDownLatch deleteLatch = new CountDownLatch(1);
         AtomicReference<String> lastConfig = new AtomicReference<>();
+        AtomicReference<String> deleteNotification = new AtomicReference<>();
 
         Listener listener = new Listener() {
             @Override
@@ -292,9 +322,9 @@ public class NacosConfigListenerTest {
                 if (previous == null) {
                     createLatch.countDown();
                 } else if (configInfo == null || configInfo.isEmpty()) {
+                    deleteNotification.set(configInfo);
                     deleteLatch.countDown();
                 }
-                System.out.println("Config change: " + previous + " -> " + configInfo);
             }
         };
 
@@ -302,16 +332,25 @@ public class NacosConfigListenerTest {
         Thread.sleep(500);
 
         // Create config
-        configService.publishConfig(dataId, DEFAULT_GROUP, "to.be.deleted=true");
-        createLatch.await(10, TimeUnit.SECONDS);
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, configContent);
+        assertTrue(published, "Config should be published successfully");
+
+        boolean createReceived = createLatch.await(10, TimeUnit.SECONDS);
+        assertTrue(createReceived, "Listener should receive the create notification");
+        assertEquals(configContent, lastConfig.get(),
+                "Listener should receive the exact published content on create");
 
         Thread.sleep(1000);
 
         // Delete config
-        configService.removeConfig(dataId, DEFAULT_GROUP);
+        boolean deleted = configService.removeConfig(dataId, DEFAULT_GROUP);
+        assertTrue(deleted, "Config should be removed successfully");
 
         boolean deleteReceived = deleteLatch.await(10, TimeUnit.SECONDS);
-        System.out.println("Delete notification received: " + deleteReceived);
+        assertTrue(deleteReceived, "Listener should receive delete notification");
+        String deleteValue = deleteNotification.get();
+        assertTrue(deleteValue == null || deleteValue.isEmpty(),
+                "Delete notification should have null or empty content, got: " + deleteValue);
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -327,6 +366,7 @@ public class NacosConfigListenerTest {
     void testListenerInNamespace() throws NacosException, InterruptedException {
         String namespace = "test-ns-" + UUID.randomUUID().toString().substring(0, 8);
         String dataId = "ns-listener-" + UUID.randomUUID().toString().substring(0, 8);
+        String expectedContent = "namespace.config=value";
 
         // Create config service for namespace
         Properties props = new Properties();
@@ -335,37 +375,44 @@ public class NacosConfigListenerTest {
         props.put("password", System.getProperty("nacos.password", "nacos"));
         props.put("namespace", namespace);
 
+        ConfigService nsConfigService = NacosFactory.createConfigService(props);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> receivedConfig = new AtomicReference<>();
+
+        Listener listener = new Listener() {
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+
+            @Override
+            public void receiveConfigInfo(String configInfo) {
+                receivedConfig.set(configInfo);
+                latch.countDown();
+            }
+        };
+
         try {
-            ConfigService nsConfigService = NacosFactory.createConfigService(props);
-            CountDownLatch latch = new CountDownLatch(1);
-
-            Listener listener = new Listener() {
-                @Override
-                public Executor getExecutor() {
-                    return null;
-                }
-
-                @Override
-                public void receiveConfigInfo(String configInfo) {
-                    System.out.println("Namespace listener received: " + configInfo);
-                    latch.countDown();
-                }
-            };
-
             nsConfigService.addListener(dataId, DEFAULT_GROUP, listener);
             Thread.sleep(500);
 
-            nsConfigService.publishConfig(dataId, DEFAULT_GROUP, "namespace.config=value");
+            boolean published = nsConfigService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
+            assertTrue(published, "Config should be published in namespace successfully");
 
             boolean received = latch.await(10, TimeUnit.SECONDS);
-            System.out.println("Namespace listener received update: " + received);
+            assertTrue(received, "Namespace listener should receive update within timeout");
+            assertEquals(expectedContent, receivedConfig.get(),
+                    "Namespace listener should receive the correct config content");
 
+            // Verify config in default namespace is not affected
+            String defaultNsConfig = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
+            assertNull(defaultNsConfig,
+                    "Config published in custom namespace should not be visible in default namespace");
+        } finally {
             // Cleanup
             nsConfigService.removeListener(dataId, DEFAULT_GROUP, listener);
             nsConfigService.removeConfig(dataId, DEFAULT_GROUP);
             nsConfigService.shutDown();
-        } catch (Exception e) {
-            System.out.println("Namespace listener test: " + e.getMessage());
         }
     }
 
@@ -377,7 +424,9 @@ public class NacosConfigListenerTest {
     void testListenerInCustomGroup() throws NacosException, InterruptedException {
         String dataId = "group-listener-" + UUID.randomUUID().toString().substring(0, 8);
         String group = "CUSTOM_GROUP";
+        String expectedContent = "custom.group.config=value";
         CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> receivedConfig = new AtomicReference<>();
 
         Listener listener = new Listener() {
             @Override
@@ -387,7 +436,7 @@ public class NacosConfigListenerTest {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
-                System.out.println("Custom group listener received: " + configInfo);
+                receivedConfig.set(configInfo);
                 latch.countDown();
             }
         };
@@ -395,10 +444,18 @@ public class NacosConfigListenerTest {
         configService.addListener(dataId, group, listener);
         Thread.sleep(500);
 
-        configService.publishConfig(dataId, group, "custom.group.config=value");
+        boolean published = configService.publishConfig(dataId, group, expectedContent);
+        assertTrue(published, "Config should be published to custom group successfully");
 
         boolean received = latch.await(10, TimeUnit.SECONDS);
-        System.out.println("Custom group listener received update: " + received);
+        assertTrue(received, "Custom group listener should receive update within timeout");
+        assertEquals(expectedContent, receivedConfig.get(),
+                "Custom group listener should receive the correct config content");
+
+        // Verify config in DEFAULT_GROUP is not affected
+        String defaultGroupConfig = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
+        assertNull(defaultGroupConfig,
+                "Config published in custom group should not be visible in DEFAULT_GROUP");
 
         // Cleanup
         configService.removeListener(dataId, group, listener);
@@ -412,12 +469,13 @@ public class NacosConfigListenerTest {
      */
     @Test
     @Order(9)
-    void testConcurrentListenerOperations() throws InterruptedException {
+    void testConcurrentListenerOperations() throws NacosException, InterruptedException {
         String dataId = "concurrent-listener-" + UUID.randomUUID().toString().substring(0, 8);
         int threadCount = 10;
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch = new CountDownLatch(threadCount);
         List<Listener> listeners = new CopyOnWriteArrayList<>();
+        AtomicInteger errorCount = new AtomicInteger(0);
 
         for (int i = 0; i < threadCount; i++) {
             final int index = i;
@@ -433,7 +491,7 @@ public class NacosConfigListenerTest {
 
                         @Override
                         public void receiveConfigInfo(String configInfo) {
-                            System.out.println("Concurrent listener " + index + " received");
+                            // no-op
                         }
                     };
 
@@ -447,7 +505,7 @@ public class NacosConfigListenerTest {
                         configService.removeListener(dataId, DEFAULT_GROUP, listener);
                     }
                 } catch (Exception e) {
-                    System.err.println("Concurrent listener error: " + e.getMessage());
+                    errorCount.incrementAndGet();
                 } finally {
                     doneLatch.countDown();
                 }
@@ -457,15 +515,18 @@ public class NacosConfigListenerTest {
         startLatch.countDown();
         boolean completed = doneLatch.await(30, TimeUnit.SECONDS);
 
-        System.out.println("Concurrent operations completed: " + completed);
-        System.out.println("Total listeners added: " + listeners.size());
+        assertTrue(completed, "All concurrent listener operations should complete within timeout");
+        assertEquals(0, errorCount.get(),
+                "No errors should occur during concurrent listener add/remove operations");
+        assertEquals(threadCount, listeners.size(),
+                "All " + threadCount + " listeners should have been added before any removal");
 
         // Cleanup
         for (Listener listener : listeners) {
             try {
                 configService.removeListener(dataId, DEFAULT_GROUP, listener);
             } catch (Exception e) {
-                // Ignore
+                // Ignore cleanup errors for already-removed listeners
             }
         }
     }
@@ -478,6 +539,7 @@ public class NacosConfigListenerTest {
     void testListenerRapidChanges() throws NacosException, InterruptedException {
         String dataId = "rapid-changes-" + UUID.randomUUID().toString().substring(0, 8);
         AtomicInteger receiveCount = new AtomicInteger(0);
+        AtomicReference<String> lastReceived = new AtomicReference<>();
         int changeCount = 10;
 
         Listener listener = new Listener() {
@@ -489,6 +551,7 @@ public class NacosConfigListenerTest {
             @Override
             public void receiveConfigInfo(String configInfo) {
                 receiveCount.incrementAndGet();
+                lastReceived.set(configInfo);
             }
         };
 
@@ -497,14 +560,20 @@ public class NacosConfigListenerTest {
 
         // Rapid config changes
         for (int i = 0; i < changeCount; i++) {
-            configService.publishConfig(dataId, DEFAULT_GROUP, "rapid.change=" + i);
-            Thread.sleep(100); // Small delay between changes
+            boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, "rapid.change=" + i);
+            assertTrue(published, "Rapid config change " + i + " should be published successfully");
+            Thread.sleep(500); // Delay between changes to allow each to be detected
         }
 
-        // Wait for all notifications
+        // Wait for notifications to settle
         Thread.sleep(5000);
 
-        System.out.println("Published " + changeCount + " changes, received " + receiveCount.get() + " notifications");
+        int received = receiveCount.get();
+        assertTrue(received >= 1,
+                "Listener should receive at least 1 notification under rapid changes, got " + received);
+        // The last received config should be the final value (some intermediate ones may be coalesced)
+        assertEquals("rapid.change=" + (changeCount - 1), lastReceived.get(),
+                "The last received config should match the final published value");
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -520,7 +589,9 @@ public class NacosConfigListenerTest {
     @Order(11)
     void testListenerForNonExistentConfig() throws NacosException, InterruptedException {
         String dataId = "nonexistent-" + UUID.randomUUID().toString().substring(0, 8);
+        String expectedContent = "now.exists=true";
         CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> receivedConfig = new AtomicReference<>();
 
         Listener listener = new Listener() {
             @Override
@@ -530,20 +601,27 @@ public class NacosConfigListenerTest {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
-                System.out.println("Non-existent config listener received: " + configInfo);
+                receivedConfig.set(configInfo);
                 latch.countDown();
             }
         };
 
-        // Add listener for non-existent config
+        // Add listener for non-existent config - should not throw
         configService.addListener(dataId, DEFAULT_GROUP, listener);
         Thread.sleep(500);
 
+        // Verify config does not exist yet
+        String current = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
+        assertNull(current, "Config should not exist before publishing");
+
         // Now create the config
-        configService.publishConfig(dataId, DEFAULT_GROUP, "now.exists=true");
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
+        assertTrue(published, "Config should be published successfully");
 
         boolean received = latch.await(10, TimeUnit.SECONDS);
-        System.out.println("Received notification for newly created config: " + received);
+        assertTrue(received, "Listener should be notified when a previously non-existent config is created");
+        assertEquals(expectedContent, receivedConfig.get(),
+                "Listener should receive the correct content for newly created config");
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -557,6 +635,8 @@ public class NacosConfigListenerTest {
     @Order(12)
     void testDuplicateListenerAdd() throws NacosException, InterruptedException {
         String dataId = "duplicate-listener-" + UUID.randomUUID().toString().substring(0, 8);
+        String expectedContent = "duplicate.test=value";
+        CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger callCount = new AtomicInteger(0);
 
         Listener listener = new Listener() {
@@ -568,6 +648,7 @@ public class NacosConfigListenerTest {
             @Override
             public void receiveConfigInfo(String configInfo) {
                 callCount.incrementAndGet();
+                latch.countDown();
             }
         };
 
@@ -578,10 +659,15 @@ public class NacosConfigListenerTest {
 
         Thread.sleep(500);
 
-        configService.publishConfig(dataId, DEFAULT_GROUP, "duplicate.test=value");
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
+        assertTrue(published, "Config should be published successfully");
+
+        latch.await(10, TimeUnit.SECONDS);
         Thread.sleep(3000);
 
-        System.out.println("Duplicate listener call count: " + callCount.get());
+        // Duplicate adds of the same listener instance should result in only one callback
+        assertEquals(1, callCount.get(),
+                "Adding the same listener instance multiple times should only trigger one callback, got " + callCount.get());
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -596,7 +682,7 @@ public class NacosConfigListenerTest {
     void testLargeConfigNotification() throws NacosException, InterruptedException {
         String dataId = "large-config-" + UUID.randomUUID().toString().substring(0, 8);
         CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<Integer> receivedSize = new AtomicReference<>();
+        AtomicReference<String> receivedContent = new AtomicReference<>();
 
         Listener listener = new Listener() {
             @Override
@@ -606,9 +692,7 @@ public class NacosConfigListenerTest {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
-                if (configInfo != null) {
-                    receivedSize.set(configInfo.length());
-                }
+                receivedContent.set(configInfo);
                 latch.countDown();
             }
         };
@@ -616,16 +700,26 @@ public class NacosConfigListenerTest {
         configService.addListener(dataId, DEFAULT_GROUP, listener);
         Thread.sleep(500);
 
-        // Create large config (100KB)
+        // Create large config (~100KB)
         StringBuilder largeContent = new StringBuilder();
         for (int i = 0; i < 10000; i++) {
             largeContent.append("property").append(i).append("=value").append(i).append("\n");
         }
+        String expectedContent = largeContent.toString();
+        int expectedSize = expectedContent.length();
 
-        configService.publishConfig(dataId, DEFAULT_GROUP, largeContent.toString());
+        boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, expectedContent);
+        assertTrue(published, "Large config should be published successfully");
 
         boolean received = latch.await(15, TimeUnit.SECONDS);
-        System.out.println("Large config received: " + received + ", size: " + receivedSize.get() + " bytes");
+        assertTrue(received, "Listener should receive large config update within timeout");
+        assertNotNull(receivedContent.get(), "Received content should not be null");
+        assertEquals(expectedSize, receivedContent.get().length(),
+                "Received config size should match published config size");
+        assertTrue(receivedContent.get().contains("property0=value0"),
+                "Received large config should contain the first property");
+        assertTrue(receivedContent.get().contains("property9999=value9999"),
+                "Received large config should contain the last property");
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);

@@ -6,8 +6,8 @@
 use actix_web::{Scope, web};
 
 use super::{
-    audit, cluster, config, health, history, metrics, namespace, server_state, service, sync,
-    tracing_api,
+    audit, cluster, config, control, health, history, metrics, namespace, server_state, service,
+    sync, tracing_api,
 };
 
 /// Create the v3 console routes (non-AI only)
@@ -24,4 +24,5 @@ pub fn routes() -> Scope {
         .service(audit::routes())
         .service(sync::routes())
         .service(tracing_api::routes())
+        .service(control::routes())
 }

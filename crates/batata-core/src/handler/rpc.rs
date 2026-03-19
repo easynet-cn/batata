@@ -21,6 +21,7 @@ use crate::api::{
 };
 
 use batata_api::model::APPNAME;
+use batata_api::remote::RequestTrait;
 
 /// Auth requirement level for handlers
 /// Corresponds to Nacos's @Secured annotation with action and apiType parameters
@@ -237,12 +238,40 @@ impl PayloadHandler for DefaultHandler {
     }
 }
 
+/// Maps gRPC message types to TPS control point names (following Nacos conventions).
+pub fn grpc_tps_point(message_type: &str) -> Option<&'static str> {
+    match message_type {
+        "ConfigPublishRequest" => Some("ConfigPublish"),
+        "ConfigQueryRequest" => Some("ConfigQuery"),
+        "ConfigRemoveRequest" => Some("ConfigRemove"),
+        "ConfigBatchListenRequest" => Some("ConfigListen"),
+        "ConfigFuzzyWatchRequest" => Some("ConfigFuzzyWatch"),
+        "InstanceRequest" => Some("RemoteNamingInstanceRegisterDeregister"),
+        "BatchInstanceRequest" => Some("RemoteNamingInstanceBatchRegister"),
+        "PersistentInstanceRequest" => Some("RemoteNamingInstanceRegisterDeregister"),
+        "ServiceQueryRequest" => Some("RemoteNamingServiceQuery"),
+        "ServiceListRequest" => Some("RemoteNamingServiceListQuery"),
+        "SubscribeServiceRequest" => Some("RemoteNamingServiceSubscribeUnsubscribe"),
+        "HealthCheckRequest" => Some("HealthCheck"),
+        _ => None,
+    }
+}
+
+/// Trait for TPS control checking in gRPC handler dispatch.
+#[tonic::async_trait]
+pub trait TpsChecker: Send + Sync {
+    /// Check if a request should be rate-limited. Returns Ok(()) if allowed,
+    /// or Err with a Status if the request should be rejected.
+    async fn check_tps(&self, message_type: &str, client_ip: &str) -> Result<(), Status>;
+}
+
 // Registry for managing payload handlers by message type
 // Supports dynamic handler registration with logging for debugging
 pub struct HandlerRegistry {
     handlers: HashMap<String, Arc<dyn PayloadHandler>>,
     default_handler: Arc<dyn PayloadHandler>,
     auth_service: Arc<GrpcAuthService>,
+    tps_checker: Option<Arc<dyn TpsChecker>>,
 }
 
 impl Default for HandlerRegistry {
@@ -257,6 +286,7 @@ impl HandlerRegistry {
             handlers: HashMap::new(),
             default_handler: Arc::new(DefaultHandler {}),
             auth_service: Arc::new(GrpcAuthService::default()),
+            tps_checker: None,
         }
     }
 
@@ -266,6 +296,21 @@ impl HandlerRegistry {
             handlers: HashMap::new(),
             default_handler: Arc::new(DefaultHandler {}),
             auth_service: Arc::new(auth_service),
+            tps_checker: None,
+        }
+    }
+
+    /// Set the TPS checker for rate limiting gRPC requests
+    pub fn set_tps_checker(&mut self, checker: Arc<dyn TpsChecker>) {
+        self.tps_checker = Some(checker);
+    }
+
+    /// Check TPS limits for a message type. Returns Ok(()) if allowed.
+    pub async fn check_tps(&self, message_type: &str, client_ip: &str) -> Result<(), Status> {
+        if let Some(ref checker) = self.tps_checker {
+            checker.check_tps(message_type, client_ip).await
+        } else {
+            Ok(())
         }
     }
 
@@ -361,6 +406,15 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             let payload = request.get_ref();
 
             let handler = self.handler_registry.get_handler(message_type);
+
+            // Check TPS limits before processing
+            let client_ip = &connection.meta_info.remote_ip;
+            self.handler_registry
+                .check_tps(message_type, client_ip)
+                .await?;
+
+            // Validate request parameters
+            crate::handler::param_check::check_request_params(message_type, payload)?;
 
             // Check authentication based on handler's auth requirement
             // Following Nacos RemoteRequestAuthFilter logic:
@@ -530,6 +584,31 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                 let client = GrpcClient::new(con, tx.clone());
 
                                 connection_manager.register(&connection_id, client).await;
+
+                                // Send SetupAckRequest with server abilities to client
+                                // This enables FuzzyWatch, LockService, etc.
+                                if request.ability_table.is_some() {
+                                    let mut abilities = std::collections::HashMap::new();
+                                    abilities.insert("fuzzyWatch".to_string(), true);
+                                    abilities.insert("lock".to_string(), true);
+                                    abilities.insert("mcp".to_string(), true);
+                                    abilities.insert("agent".to_string(), true);
+                                    abilities.insert(
+                                        "supportPersistentInstanceByGrpc".to_string(),
+                                        true,
+                                    );
+
+                                    let ack = batata_api::remote::model::SetupAckRequest {
+                                        server_requst: Default::default(),
+                                        ability_table: Some(abilities),
+                                    };
+                                    if let Err(e) =
+                                        tx.send(Ok(ack.build_server_push_payload())).await
+                                    {
+                                        tracing::warn!("Failed to send SetupAckRequest: {}", e);
+                                    }
+                                }
+
                                 // ConnectionSetupRequest is fully handled here - don't route through handler registry
                                 continue;
                             }
@@ -546,6 +625,46 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                             }
 
                             let handler = handler_registry.get_handler(message_type);
+
+                            // Check TPS limits before processing
+                            let client_ip = &connection.meta_info.remote_ip;
+                            if let Err(e) =
+                                handler_registry.check_tps(message_type, client_ip).await
+                            {
+                                tracing::warn!(
+                                    "TPS limit exceeded for {}: {}",
+                                    message_type,
+                                    e.message()
+                                );
+                                if let Err(send_err) = tx.send(Err(e)).await {
+                                    tracing::error!(
+                                        "Failed to send TPS error response: {}",
+                                        send_err
+                                    );
+                                    break;
+                                }
+                                continue;
+                            }
+
+                            // Validate request parameters
+                            if let Err(e) = crate::handler::param_check::check_request_params(
+                                message_type,
+                                &payload,
+                            ) {
+                                tracing::warn!(
+                                    "Param check failed for {}: {}",
+                                    message_type,
+                                    e.message()
+                                );
+                                if let Err(send_err) = tx.send(Err(e)).await {
+                                    tracing::error!(
+                                        "Failed to send param check error: {}",
+                                        send_err
+                                    );
+                                    break;
+                                }
+                                continue;
+                            }
 
                             // Check authentication based on handler's auth requirement
                             // Following Nacos RemoteRequestAuthFilter logic

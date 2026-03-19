@@ -29,6 +29,7 @@ batata-naming = { workspace = true }
 batata-console = { workspace = true }
 batata-ai = { workspace = true }
 batata-server-common = { workspace = true }
+batata-plugin = { workspace = true }
 batata-plugin-consul = { workspace = true }
 batata-plugin-cloud = { workspace = true }
 batata-maintainer-client = { workspace = true }

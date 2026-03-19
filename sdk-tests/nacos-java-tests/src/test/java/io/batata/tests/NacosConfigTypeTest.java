@@ -34,9 +34,9 @@ public class NacosConfigTypeTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         configService = NacosFactory.createConfigService(properties);
         System.out.println("Nacos Config Type Test Setup - Server: " + serverAddr);

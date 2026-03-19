@@ -34,7 +34,6 @@ public class NacosConfigBetaTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         accessToken = loginV3(username, password);
-        System.out.println("Config Beta Test Setup - Server: " + serverAddr);
     }
 
     // ==================== Beta Config Tests ====================
@@ -52,9 +51,12 @@ public class NacosConfigBetaTest {
                 URLEncoder.encode(dataId, "UTF-8"),
                 URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
                 URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
-        System.out.println("Query non-existent beta config: " + response);
-        // Should return appropriate response indicating no beta config
-        assertNotNull(response);
+
+        assertNotNull(response, "Response for non-existent beta config should not be null");
+        // The response should indicate no beta config exists (either error code or empty data)
+        // It should NOT contain beta content since none was published
+        assertFalse(response.contains("\"betaIps\"") && response.contains("\"content\""),
+                "Query for non-existent beta config should not return beta config data");
     }
 
     /**
@@ -66,6 +68,7 @@ public class NacosConfigBetaTest {
         String dataId = "beta-publish-" + UUID.randomUUID().toString().substring(0, 8);
         String normalContent = "beta.normal=value";
         String betaContent = "beta.gray=value";
+        String betaIps = "127.0.0.1";
 
         // Publish normal config first
         publishConfig(dataId, DEFAULT_GROUP, normalContent);
@@ -78,9 +81,9 @@ public class NacosConfigBetaTest {
                 URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
                 URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8"),
                 URLEncoder.encode(betaContent, "UTF-8"),
-                URLEncoder.encode("127.0.0.1", "UTF-8"));
+                URLEncoder.encode(betaIps, "UTF-8"));
         String publishResponse = httpPost("/nacos/v3/console/cs/config/beta", betaBody);
-        System.out.println("Publish beta config: " + publishResponse);
+        assertNotNull(publishResponse, "Beta publish response should not be null");
 
         // Query beta config
         String queryResponse = httpGet(String.format(
@@ -88,7 +91,12 @@ public class NacosConfigBetaTest {
                 URLEncoder.encode(dataId, "UTF-8"),
                 URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
                 URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
-        System.out.println("Query beta config: " + queryResponse);
+
+        assertNotNull(queryResponse, "Beta query response should not be null");
+        assertTrue(queryResponse.contains(betaContent),
+                "Beta config query should return the published beta content: " + betaContent);
+        assertTrue(queryResponse.contains(betaIps),
+                "Beta config query should return the beta IPs: " + betaIps);
 
         // Cleanup
         httpDelete(String.format(
@@ -123,21 +131,40 @@ public class NacosConfigBetaTest {
         httpPost("/nacos/v3/console/cs/config/beta", betaBody);
         Thread.sleep(500);
 
+        // Verify beta exists before deletion
+        String beforeDelete = httpGet(String.format(
+                "/nacos/v3/console/cs/config/beta?dataId=%s&groupName=%s&namespaceId=%s",
+                URLEncoder.encode(dataId, "UTF-8"),
+                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
+                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
+        assertTrue(beforeDelete.contains(betaContent),
+                "Beta config should exist before deletion");
+
         // Delete beta config
         String deleteResponse = httpDelete(String.format(
                 "/nacos/v3/console/cs/config/beta?dataId=%s&groupName=%s&namespaceId=%s",
                 URLEncoder.encode(dataId, "UTF-8"),
                 URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
                 URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
-        System.out.println("Delete beta config: " + deleteResponse);
+        assertNotNull(deleteResponse, "Delete beta response should not be null");
 
         // Verify beta is gone
-        String queryResponse = httpGet(String.format(
+        String afterDelete = httpGet(String.format(
                 "/nacos/v3/console/cs/config/beta?dataId=%s&groupName=%s&namespaceId=%s",
                 URLEncoder.encode(dataId, "UTF-8"),
                 URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
                 URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
-        System.out.println("Query after beta delete: " + queryResponse);
+        assertFalse(afterDelete.contains(betaContent),
+                "After deletion, beta config content should no longer be returned");
+
+        // Verify normal config still exists after beta deletion
+        String normalResponse = httpGet(String.format(
+                "/nacos/v3/console/cs/config?dataId=%s&groupName=%s&namespaceId=%s",
+                URLEncoder.encode(dataId, "UTF-8"),
+                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
+                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
+        assertTrue(normalResponse.contains(normalContent),
+                "Normal config should still exist after beta config deletion");
 
         // Cleanup
         deleteConfig(dataId, DEFAULT_GROUP);
@@ -157,7 +184,7 @@ public class NacosConfigBetaTest {
         publishConfig(dataId, DEFAULT_GROUP, normalContent);
         Thread.sleep(500);
 
-        // Publish beta config
+        // Publish beta config with a different IP (not the test client)
         String betaBody = String.format(
                 "dataId=%s&groupName=%s&namespaceId=%s&content=%s&betaIps=%s",
                 URLEncoder.encode(dataId, "UTF-8"),
@@ -165,22 +192,103 @@ public class NacosConfigBetaTest {
                 URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8"),
                 URLEncoder.encode(betaContent, "UTF-8"),
                 URLEncoder.encode("10.0.0.1", "UTF-8"));
-        httpPost("/nacos/v3/console/cs/config/beta", betaBody);
+        String betaResponse = httpPost("/nacos/v3/console/cs/config/beta", betaBody);
+        assertNotNull(betaResponse, "Beta publish response should not be null");
         Thread.sleep(500);
 
-        // Get normal config via console API - should return normal content
+        // Get normal config via console API - should return normal content, not beta
         String response = httpGet(String.format(
                 "/nacos/v3/console/cs/config?dataId=%s&groupName=%s&namespaceId=%s",
                 URLEncoder.encode(dataId, "UTF-8"),
                 URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
                 URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
-        System.out.println("Normal config while beta exists: " + response);
 
-        // Normal config should contain original content
-        if (response.contains("content")) {
-            assertFalse(response.contains("beta.check.gray"),
-                    "Normal config retrieval should not return beta content");
-        }
+        assertNotNull(response, "Normal config response should not be null");
+        assertTrue(response.contains(normalContent),
+                "Normal config retrieval should return the normal content: " + normalContent);
+        assertFalse(response.contains(betaContent),
+                "Normal config retrieval should NOT return beta content: " + betaContent);
+
+        // Verify beta config is independently queryable via beta endpoint
+        String betaQuery = httpGet(String.format(
+                "/nacos/v3/console/cs/config/beta?dataId=%s&groupName=%s&namespaceId=%s",
+                URLEncoder.encode(dataId, "UTF-8"),
+                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
+                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
+        assertTrue(betaQuery.contains(betaContent),
+                "Beta endpoint should return the beta content");
+        assertTrue(betaQuery.contains("10.0.0.1"),
+                "Beta endpoint should return the configured beta IPs");
+
+        // Cleanup
+        httpDelete(String.format(
+                "/nacos/v3/console/cs/config/beta?dataId=%s&groupName=%s&namespaceId=%s",
+                URLEncoder.encode(dataId, "UTF-8"),
+                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
+                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
+        deleteConfig(dataId, DEFAULT_GROUP);
+    }
+
+    /**
+     * BETA-005: Test update beta config content and IPs
+     */
+    @Test
+    @Order(5)
+    void testUpdateBetaConfig() throws Exception {
+        String dataId = "beta-update-" + UUID.randomUUID().toString().substring(0, 8);
+        String normalContent = "beta.update.normal=value";
+        String betaContent1 = "beta.update.gray=v1";
+        String betaContent2 = "beta.update.gray=v2";
+        String betaIps1 = "127.0.0.1";
+        String betaIps2 = "127.0.0.1,192.168.1.1";
+
+        // Publish normal config
+        publishConfig(dataId, DEFAULT_GROUP, normalContent);
+        Thread.sleep(500);
+
+        // Publish initial beta config
+        String betaBody1 = String.format(
+                "dataId=%s&groupName=%s&namespaceId=%s&content=%s&betaIps=%s",
+                URLEncoder.encode(dataId, "UTF-8"),
+                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
+                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8"),
+                URLEncoder.encode(betaContent1, "UTF-8"),
+                URLEncoder.encode(betaIps1, "UTF-8"));
+        httpPost("/nacos/v3/console/cs/config/beta", betaBody1);
+        Thread.sleep(500);
+
+        // Verify initial beta
+        String query1 = httpGet(String.format(
+                "/nacos/v3/console/cs/config/beta?dataId=%s&groupName=%s&namespaceId=%s",
+                URLEncoder.encode(dataId, "UTF-8"),
+                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
+                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
+        assertTrue(query1.contains(betaContent1),
+                "Initial beta config should contain first content");
+        assertTrue(query1.contains(betaIps1),
+                "Initial beta config should contain first IPs");
+
+        // Update beta config with new content and IPs
+        String betaBody2 = String.format(
+                "dataId=%s&groupName=%s&namespaceId=%s&content=%s&betaIps=%s",
+                URLEncoder.encode(dataId, "UTF-8"),
+                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
+                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8"),
+                URLEncoder.encode(betaContent2, "UTF-8"),
+                URLEncoder.encode(betaIps2, "UTF-8"));
+        httpPost("/nacos/v3/console/cs/config/beta", betaBody2);
+        Thread.sleep(500);
+
+        // Verify updated beta
+        String query2 = httpGet(String.format(
+                "/nacos/v3/console/cs/config/beta?dataId=%s&groupName=%s&namespaceId=%s",
+                URLEncoder.encode(dataId, "UTF-8"),
+                URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
+                URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8")));
+        assertTrue(query2.contains(betaContent2),
+                "Updated beta config should contain new content: " + betaContent2);
+        assertFalse(query2.contains(betaContent1),
+                "Updated beta config should NOT contain old content: " + betaContent1);
 
         // Cleanup
         httpDelete(String.format(
@@ -200,7 +308,8 @@ public class NacosConfigBetaTest {
                 URLEncoder.encode(group, "UTF-8"),
                 URLEncoder.encode(DEFAULT_NAMESPACE, "UTF-8"),
                 URLEncoder.encode(content, "UTF-8"));
-        httpPost("/nacos/v3/console/cs/config", body);
+        String response = httpPost("/nacos/v3/console/cs/config", body);
+        assertNotNull(response, "Publish config response should not be null for dataId: " + dataId);
     }
 
     private void deleteConfig(String dataId, String group) throws Exception {

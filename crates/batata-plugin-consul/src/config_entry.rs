@@ -103,6 +103,7 @@ pub struct ConfigEntryRequest {
 // ============================================================================
 
 /// In-memory config entry service
+#[derive(Clone)]
 pub struct ConsulConfigEntryService {
     /// Entries stored by "kind/name" key
     entries: Arc<DashMap<String, ConfigEntry>>,

@@ -55,5 +55,8 @@ moka = { workspace = true }
 # JWT
 jsonwebtoken = { workspace = true }
 
+# Regex
+regex = { workspace = true }
+
 # System info (for handler metrics)
 sysinfo = { workspace = true }

@@ -24,6 +24,7 @@ pub mod ai;
 pub mod ai_handler; // AI module gRPC handlers (MCP + A2A)
 pub mod cluster_handler; // Cluster module gRPC handlers
 pub mod config_handler; // Config module gRPC handlers
+pub mod connection_limit; // Connection limit checker for gRPC
 pub mod distro_handler; // Distro protocol gRPC handlers
 pub mod encryption_manager; // Encryption manager with hot reload
 pub mod handler; // Request handlers for gRPC communication
@@ -32,3 +33,4 @@ pub mod lock; // In-memory distributed lock service
 pub mod lock_handler; // Lock module gRPC handlers
 pub mod naming_handler; // Naming module gRPC handlers
 pub mod rpc; // Remote procedure call services
+pub mod tps_checker; // TPS control checker for gRPC rate limiting

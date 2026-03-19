@@ -1,0 +1,29 @@
+[package]
+name = "batata-integration-tests"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Integration tests for Batata server"
+publish = false
+
+[dependencies]
+# Test utilities exposed as library for other crates
+batata-client = { workspace = true }
+batata-common = { workspace = true }
+batata-api = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full", "test-util"] }
+sea-orm = { workspace = true }
+
+[dev-dependencies]
+# Only needed for test binaries
+tokio = { workspace = true, features = ["full", "test-util"] }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+md5 = "0.7"
+batata-api = { workspace = true }

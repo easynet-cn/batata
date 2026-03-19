@@ -89,22 +89,22 @@ public class NacosNamespaceTest {
 
     private ConfigService createConfigService(String namespace) throws NacosException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
         if (namespace != null && !namespace.isEmpty() && !namespace.equals(PUBLIC_NAMESPACE)) {
-            properties.put("namespace", namespace);
+            properties.setProperty("namespace", namespace);
         }
         return NacosFactory.createConfigService(properties);
     }
 
     private NamingService createNamingService(String namespace) throws NacosException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
         if (namespace != null && !namespace.isEmpty() && !namespace.equals(PUBLIC_NAMESPACE)) {
-            properties.put("namespace", namespace);
+            properties.setProperty("namespace", namespace);
         }
         return NacosFactory.createNamingService(properties);
     }
@@ -231,15 +231,15 @@ public class NacosNamespaceTest {
 
     private String createNamespace(String namespaceId, String namespaceName, String namespaceDesc) throws Exception {
         String body = String.format(
-                "namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
+                "customNamespaceId=%s&namespaceName=%s&namespaceDesc=%s",
                 URLEncoder.encode(namespaceId, "UTF-8"),
                 URLEncoder.encode(namespaceName, "UTF-8"),
                 URLEncoder.encode(namespaceDesc, "UTF-8"));
-        return httpPost("/nacos/v2/console/namespace", body);
+        return httpPost("/nacos/v3/console/core/namespace", body);
     }
 
     private String deleteNamespace(String namespaceId) throws Exception {
-        return httpDelete("/nacos/v2/console/namespace?namespaceId=" + URLEncoder.encode(namespaceId, "UTF-8"));
+        return httpDelete("/nacos/v3/console/core/namespace?namespaceId=" + URLEncoder.encode(namespaceId, "UTF-8"));
     }
 
     // ==================== Namespace Tests ====================
@@ -254,7 +254,7 @@ public class NacosNamespaceTest {
     @Order(1)
     void testDefaultNamespace() throws Exception {
         // The public namespace should be available by default
-        String response = httpGet("/nacos/v2/console/namespace/list");
+        String response = httpGet("/nacos/v3/console/core/namespace/list");
         System.out.println("Namespace list: " + response);
         assertNotNull(response);
 
@@ -297,7 +297,7 @@ public class NacosNamespaceTest {
             System.out.println("Create namespace response: " + createResponse);
 
             // Verify namespace exists
-            String getResponse = httpGet("/nacos/v2/console/namespace?namespaceId=" + namespaceId);
+            String getResponse = httpGet("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
             System.out.println("Get namespace response: " + getResponse);
             assertNotNull(getResponse);
 
@@ -557,7 +557,7 @@ public class NacosNamespaceTest {
             createNamespace(namespaceId, namespaceName, namespaceDesc);
 
             // Get namespace details
-            String getResponse = httpGet("/nacos/v2/console/namespace?namespaceId=" + namespaceId);
+            String getResponse = httpGet("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
             System.out.println("Namespace metadata: " + getResponse);
             assertNotNull(getResponse);
 
@@ -593,7 +593,7 @@ public class NacosNamespaceTest {
             Thread.sleep(500);
 
             // List all namespaces
-            String listResponse = httpGet("/nacos/v2/console/namespace/list");
+            String listResponse = httpGet("/nacos/v3/console/core/namespace/list");
             System.out.println("Namespace list: " + listResponse);
             assertNotNull(listResponse);
 
@@ -623,7 +623,7 @@ public class NacosNamespaceTest {
         createNamespace(namespaceId, "To Be Deleted NS", "Will be deleted");
 
         // First verify namespace exists
-        String beforeDelete = httpGet("/nacos/v2/console/namespace/list");
+        String beforeDelete = httpGet("/nacos/v3/console/core/namespace/list");
         assertTrue(beforeDelete.contains(namespaceId), "Namespace should exist before deletion");
 
         // Add some data to the namespace
@@ -642,7 +642,7 @@ public class NacosNamespaceTest {
 
         // Verify namespace is deleted
         Thread.sleep(500);
-        String afterDelete = httpGet("/nacos/v2/console/namespace/list");
+        String afterDelete = httpGet("/nacos/v3/console/core/namespace/list");
         assertFalse(afterDelete.contains("\"" + namespaceId + "\""),
                 "Namespace should not exist after deletion");
     }
@@ -670,11 +670,11 @@ public class NacosNamespaceTest {
                     URLEncoder.encode(namespaceId, "UTF-8"),
                     URLEncoder.encode(updatedName, "UTF-8"),
                     URLEncoder.encode(updatedDesc, "UTF-8"));
-            String updateResponse = httpPut("/nacos/v2/console/namespace", updateBody);
+            String updateResponse = httpPut("/nacos/v3/console/core/namespace", updateBody);
             System.out.println("Update namespace response: " + updateResponse);
 
             // Verify update
-            String getResponse = httpGet("/nacos/v2/console/namespace?namespaceId=" + namespaceId);
+            String getResponse = httpGet("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
             System.out.println("Get updated namespace: " + getResponse);
 
             // Should contain updated information

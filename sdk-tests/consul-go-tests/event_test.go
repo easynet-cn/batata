@@ -5,6 +5,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ==================== Event API Tests ====================
@@ -176,4 +177,28 @@ func TestEventFireWithTagFilter(t *testing.T) {
 
 	assert.NotEmpty(t, eventID)
 	t.Logf("Fired tag-specific event: %s", eventID)
+}
+
+// CE-007: Test event IDToIndex
+func TestEventIDToIndex(t *testing.T) {
+	client := getClient(t)
+
+	// Fire an event to get an ID
+	eventName := "idtoindex-event-" + randomID()
+	event := &api.UserEvent{
+		Name:    eventName,
+		Payload: []byte("idtoindex test"),
+	}
+
+	eventID, _, err := client.Event().Fire(event, nil)
+	if err != nil {
+		t.Skip("Event API not supported")
+	}
+	require.NotEmpty(t, eventID, "Should return event ID")
+
+	// Convert event ID to index
+	idx := client.Event().IDToIndex(eventID)
+	assert.True(t, idx > 0, "IDToIndex should return an index > 0")
+
+	t.Logf("Event ID %s maps to index %d", eventID, idx)
 }

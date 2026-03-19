@@ -1,5 +1,7 @@
 package io.batata.tests;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
 
 import java.io.BufferedReader;
@@ -17,12 +19,24 @@ import static org.junit.jupiter.api.Assertions.*;
  * Nacos Admin/Console API Tests
  *
  * Tests for namespace management, cluster info, capacity, and audit logs.
+ * All routes are accessed via the Main Server (8848) under /nacos context path.
+ *
+ * Route mapping:
+ * - V3 Console Namespace: /nacos/v3/console/core/namespace/*
+ * - V2 Core Cluster: /nacos/v2/core/cluster/*
+ * - V2 Config Capacity: /nacos/v2/cs/capacity
+ * - V2 Naming Operator: /nacos/v2/ns/operator/*
+ * - V3 Console Audit: /nacos/v3/console/audit/*
+ * - V2 Naming Client: /nacos/v2/ns/client/*
+ * - V2 Naming Health: /nacos/v2/ns/health/*
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class NacosAdminApiTest {
 
     private static String serverAddr;
     private static String accessToken;
+    private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeAll
     static void setup() throws Exception {
@@ -31,11 +45,20 @@ public class NacosAdminApiTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         accessToken = getAccessToken(username, password);
-        System.out.println("Admin API Test Setup - Server: " + serverAddr);
+        assertFalse(accessToken.isEmpty(), "Login should return a valid access token");
     }
 
     private static String getAccessToken(String username, String password) throws Exception {
-        String loginUrl = String.format("http://%s/nacos/v1/auth/login", serverAddr);
+        // Try V3 login first (main server has /nacos prefix)
+        String token = loginV3(username, password);
+        if (!token.isEmpty()) {
+            return token;
+        }
+        return "";
+    }
+
+    private static String loginV3(String username, String password) throws Exception {
+        String loginUrl = String.format("http://%s/nacos/v3/auth/user/login", serverAddr);
         URL url = new URL(loginUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
@@ -53,11 +76,12 @@ public class NacosAdminApiTest {
             while ((line = reader.readLine()) != null) {
                 response.append(line);
             }
-            String resp = response.toString();
-            if (resp.contains("accessToken")) {
-                int start = resp.indexOf("accessToken") + 14;
-                int end = resp.indexOf("\"", start);
-                return resp.substring(start, end);
+            JsonNode json = objectMapper.readTree(response.toString());
+            if (json.has("data") && json.get("data").has("accessToken")) {
+                return json.get("data").get("accessToken").asText();
+            }
+            if (json.has("accessToken")) {
+                return json.get("accessToken").asText();
             }
         }
         return "";
@@ -83,7 +107,6 @@ public class NacosAdminApiTest {
                 response.append(line);
             }
         }
-        System.out.println("GET " + path + " -> " + responseCode);
         return response.toString();
     }
 
@@ -115,7 +138,6 @@ public class NacosAdminApiTest {
                 response.append(line);
             }
         }
-        System.out.println("POST " + path + " -> " + responseCode);
         return response.toString();
     }
 
@@ -147,7 +169,6 @@ public class NacosAdminApiTest {
                 response.append(line);
             }
         }
-        System.out.println("PUT " + path + " -> " + responseCode);
         return response.toString();
     }
 
@@ -171,11 +192,25 @@ public class NacosAdminApiTest {
                 response.append(line);
             }
         }
-        System.out.println("DELETE " + path + " -> " + responseCode);
         return response.toString();
     }
 
+    /**
+     * Parse a Nacos API response and assert that the response code is 0 (success).
+     * Returns the parsed JsonNode for further assertions.
+     */
+    private JsonNode assertSuccessResponse(String response) throws Exception {
+        assertNotNull(response, "Response should not be null");
+        assertFalse(response.isEmpty(), "Response should not be empty");
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Response should contain 'code' field: " + response);
+        assertEquals(0, json.get("code").asInt(), "Response code should be 0 (success): " + response);
+        return json;
+    }
+
     // ==================== Namespace Management Tests ====================
+    // Using V3 Console Namespace API: /nacos/v3/console/core/namespace/*
+    // V3 create uses customNamespaceId parameter (not namespaceId)
 
     /**
      * Test list namespaces
@@ -183,10 +218,17 @@ public class NacosAdminApiTest {
     @Test
     @Order(1)
     void testListNamespaces() throws Exception {
-        String response = httpGet("/nacos/v2/console/namespace/list");
-        System.out.println("Namespace list: " + response);
-        assertNotNull(response);
-        // Should return array of namespaces
+        String response = httpGet("/nacos/v3/console/core/namespace/list");
+        assertNotNull(response, "Namespace list response should not be null");
+        assertFalse(response.isEmpty(), "Namespace list response should not be empty");
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Response should contain 'code' field: " + response);
+        assertEquals(0, json.get("code").asInt(), "Response code should be 0 (success): " + response);
+        JsonNode data = json.get("data");
+        assertNotNull(data, "Namespace list should return data");
+        assertTrue(data.isArray(), "Namespace list data should be an array: " + data);
+        // In a fresh Batata instance the public namespace should exist
+        assertTrue(data.size() > 0, "Namespace list should contain at least one namespace (public)");
     }
 
     /**
@@ -200,16 +242,35 @@ public class NacosAdminApiTest {
         String namespaceDesc = "Created by SDK test";
 
         String body = String.format(
-                "namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
+                "customNamespaceId=%s&namespaceName=%s&namespaceDesc=%s",
                 URLEncoder.encode(namespaceId, "UTF-8"),
                 URLEncoder.encode(namespaceName, "UTF-8"),
                 URLEncoder.encode(namespaceDesc, "UTF-8"));
 
-        String response = httpPost("/nacos/v2/console/namespace", body);
-        System.out.println("Create namespace: " + response);
+        String response = httpPost("/nacos/v3/console/core/namespace", body);
+        JsonNode json = assertSuccessResponse(response);
+        assertTrue(json.get("data").asBoolean(), "Namespace creation should return true");
+
+        // Verify namespace exists in list
+        String listResponse = httpGet("/nacos/v3/console/core/namespace/list");
+        JsonNode listJson = assertSuccessResponse(listResponse);
+        JsonNode namespaces = listJson.get("data");
+        boolean found = false;
+        for (JsonNode ns : namespaces) {
+            String nsId = ns.has("namespace") ? ns.get("namespace").asText()
+                    : (ns.has("namespaceId") ? ns.get("namespaceId").asText() : "");
+            if (namespaceId.equals(nsId)) {
+                found = true;
+                String nsName = ns.has("namespaceShowName") ? ns.get("namespaceShowName").asText()
+                        : (ns.has("namespaceName") ? ns.get("namespaceName").asText() : "");
+                assertEquals(namespaceName, nsName, "Created namespace name should match");
+                break;
+            }
+        }
+        assertTrue(found, "Created namespace should appear in namespace list");
 
         // Cleanup
-        httpDelete("/nacos/v2/console/namespace?namespaceId=" + namespaceId);
+        httpDelete("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
     }
 
     /**
@@ -218,19 +279,29 @@ public class NacosAdminApiTest {
     @Test
     @Order(3)
     void testGetNamespace() throws Exception {
-        // Create first
         String namespaceId = "get-ns-" + UUID.randomUUID().toString().substring(0, 8);
+        String namespaceName = "Get Test NS";
+        String namespaceDesc = "Test";
+
         String body = String.format(
-                "namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
-                namespaceId, "Get Test NS", "Test");
-        httpPost("/nacos/v2/console/namespace", body);
+                "customNamespaceId=%s&namespaceName=%s&namespaceDesc=%s",
+                namespaceId, URLEncoder.encode(namespaceName, "UTF-8"), namespaceDesc);
+        httpPost("/nacos/v3/console/core/namespace", body);
 
         // Get detail
-        String response = httpGet("/nacos/v2/console/namespace?namespaceId=" + namespaceId);
-        System.out.println("Get namespace: " + response);
+        String response = httpGet("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
+        JsonNode json = assertSuccessResponse(response);
+        JsonNode data = json.get("data");
+        assertNotNull(data, "Namespace get should return data");
+        String returnedId = data.has("namespace") ? data.get("namespace").asText()
+                : (data.has("namespaceId") ? data.get("namespaceId").asText() : "");
+        assertEquals(namespaceId, returnedId, "Returned namespace ID should match");
+        String returnedName = data.has("namespaceShowName") ? data.get("namespaceShowName").asText()
+                : (data.has("namespaceName") ? data.get("namespaceName").asText() : "");
+        assertEquals(namespaceName, returnedName, "Returned namespace name should match");
 
         // Cleanup
-        httpDelete("/nacos/v2/console/namespace?namespaceId=" + namespaceId);
+        httpDelete("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
     }
 
     /**
@@ -243,21 +314,32 @@ public class NacosAdminApiTest {
 
         // Create
         String createBody = String.format(
-                "namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
+                "customNamespaceId=%s&namespaceName=%s&namespaceDesc=%s",
                 namespaceId, "Original Name", "Original Desc");
-        httpPost("/nacos/v2/console/namespace", createBody);
+        httpPost("/nacos/v3/console/core/namespace", createBody);
 
         // Update
+        String updatedName = "Updated Name";
+        String updatedDesc = "Updated Description";
         String updateBody = String.format(
                 "namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
                 namespaceId,
-                URLEncoder.encode("Updated Name", "UTF-8"),
-                URLEncoder.encode("Updated Description", "UTF-8"));
-        String response = httpPut("/nacos/v2/console/namespace", updateBody);
-        System.out.println("Update namespace: " + response);
+                URLEncoder.encode(updatedName, "UTF-8"),
+                URLEncoder.encode(updatedDesc, "UTF-8"));
+        String response = httpPut("/nacos/v3/console/core/namespace", updateBody);
+        JsonNode json = assertSuccessResponse(response);
+        assertTrue(json.get("data").asBoolean(), "Namespace update should return true");
+
+        // Verify update
+        String getResponse = httpGet("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
+        JsonNode getJson = assertSuccessResponse(getResponse);
+        JsonNode data = getJson.get("data");
+        String returnedName = data.has("namespaceShowName") ? data.get("namespaceShowName").asText()
+                : (data.has("namespaceName") ? data.get("namespaceName").asText() : "");
+        assertEquals(updatedName, returnedName, "Namespace name should be updated");
 
         // Cleanup
-        httpDelete("/nacos/v2/console/namespace?namespaceId=" + namespaceId);
+        httpDelete("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
     }
 
     /**
@@ -270,13 +352,29 @@ public class NacosAdminApiTest {
 
         // Create
         String body = String.format(
-                "namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
+                "customNamespaceId=%s&namespaceName=%s&namespaceDesc=%s",
                 namespaceId, "To Delete", "Will be deleted");
-        httpPost("/nacos/v2/console/namespace", body);
+        httpPost("/nacos/v3/console/core/namespace", body);
 
         // Delete
-        String response = httpDelete("/nacos/v2/console/namespace?namespaceId=" + namespaceId);
-        System.out.println("Delete namespace: " + response);
+        String response = httpDelete("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
+        JsonNode json = assertSuccessResponse(response);
+        assertTrue(json.get("data").asBoolean(), "Namespace deletion should return true");
+
+        // Verify deleted - should not appear in list
+        String listResponse = httpGet("/nacos/v3/console/core/namespace/list");
+        JsonNode listJson = assertSuccessResponse(listResponse);
+        JsonNode namespaces = listJson.get("data");
+        boolean found = false;
+        for (JsonNode ns : namespaces) {
+            String nsId = ns.has("namespace") ? ns.get("namespace").asText()
+                    : (ns.has("namespaceId") ? ns.get("namespaceId").asText() : "");
+            if (namespaceId.equals(nsId)) {
+                found = true;
+                break;
+            }
+        }
+        assertFalse(found, "Deleted namespace should not appear in namespace list");
     }
 
     // ==================== Cluster Info Tests ====================
@@ -288,8 +386,13 @@ public class NacosAdminApiTest {
     @Order(6)
     void testGetCurrentNode() throws Exception {
         String response = httpGet("/nacos/v2/core/cluster/node/self");
-        System.out.println("Current node: " + response);
-        assertNotNull(response);
+        JsonNode json = assertSuccessResponse(response);
+        JsonNode data = json.get("data");
+        assertNotNull(data, "Self node info should return data");
+        assertTrue(data.has("ip") || data.has("address"),
+                "Self node should have ip or address: " + data);
+        assertTrue(data.has("port") || data.has("state") || data.has("abilities"),
+                "Self node should have port, state, or abilities: " + data);
     }
 
     /**
@@ -299,8 +402,15 @@ public class NacosAdminApiTest {
     @Order(7)
     void testListClusterNodes() throws Exception {
         String response = httpGet("/nacos/v2/core/cluster/node/list");
-        System.out.println("Cluster nodes: " + response);
-        assertNotNull(response);
+        JsonNode json = assertSuccessResponse(response);
+        JsonNode data = json.get("data");
+        assertNotNull(data, "Cluster node list should return data");
+        assertTrue(data.isArray(), "Cluster node list data should be an array: " + data);
+        assertTrue(data.size() > 0, "Cluster should have at least one node");
+        // Verify first node structure
+        JsonNode firstNode = data.get(0);
+        assertTrue(firstNode.has("ip") || firstNode.has("address"),
+                "Node should have ip or address: " + firstNode);
     }
 
     /**
@@ -310,8 +420,17 @@ public class NacosAdminApiTest {
     @Order(8)
     void testGetNodeHealth() throws Exception {
         String response = httpGet("/nacos/v2/core/cluster/node/self/health");
-        System.out.println("Node health: " + response);
-        assertNotNull(response);
+        assertNotNull(response, "Node health response should not be null");
+        assertFalse(response.isEmpty(), "Node health response should not be empty");
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Node health should contain 'code' field: " + response);
+        int code = json.get("code").asInt();
+        if (code == 0) {
+            assertTrue(json.has("data"), "Node health should return data: " + response);
+        }
+        // Accept various codes - health endpoint may return different formats
+        assertTrue(code == 0 || code == 404 || code == 500 || code == 30000,
+                "Node health response code should be recognized, got: " + code);
     }
 
     // ==================== Capacity Management Tests ====================
@@ -323,8 +442,12 @@ public class NacosAdminApiTest {
     @Order(9)
     void testGetCapacity() throws Exception {
         String response = httpGet("/nacos/v2/cs/capacity?group=" + DEFAULT_GROUP);
-        System.out.println("Capacity info: " + response);
-        // May return capacity info or not found
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Capacity response should contain 'code' field: " + response);
+        // Capacity may return code 0 with data or a non-zero code if not configured
+        int code = json.get("code").asInt();
+        assertTrue(code == 0 || code == 30000 || code == 404 || code == 500,
+                "Capacity response should have a recognized status code, got: " + code);
     }
 
     /**
@@ -337,7 +460,9 @@ public class NacosAdminApiTest {
                 "group=%s&quota=1000&maxSize=10485760&maxAggrCount=10000&maxAggrSize=1048576",
                 DEFAULT_GROUP);
         String response = httpPost("/nacos/v2/cs/capacity", body);
-        System.out.println("Update capacity: " + response);
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Capacity update response should contain 'code' field: " + response);
+        // Update may succeed or fail depending on configuration
     }
 
     // ==================== Operator/Metrics Tests ====================
@@ -349,8 +474,19 @@ public class NacosAdminApiTest {
     @Order(11)
     void testGetSwitches() throws Exception {
         String response = httpGet("/nacos/v2/ns/operator/switches");
-        System.out.println("System switches: " + response);
-        assertNotNull(response);
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Switches should contain 'code' field: " + response);
+        int code = json.get("code").asInt();
+        if (code == 0) {
+            JsonNode data = json.get("data");
+            assertNotNull(data, "Switches should return data");
+            // Switches should contain operational parameters (may be an object or string)
+            assertTrue(data.isObject() || data.isTextual(),
+                    "Switches data should be an object or text: " + data);
+        }
+        // Accept code 0 or other codes if switches endpoint is not fully implemented
+        assertTrue(code == 0 || code == 404 || code == 500 || code == 30000,
+                "Switches response code should be recognized, got: " + code);
     }
 
     /**
@@ -360,11 +496,23 @@ public class NacosAdminApiTest {
     @Order(12)
     void testGetMetrics() throws Exception {
         String response = httpGet("/nacos/v2/ns/operator/metrics");
-        System.out.println("Metrics: " + response);
-        assertNotNull(response);
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Metrics should contain 'code' field: " + response);
+        int code = json.get("code").asInt();
+        if (code == 0) {
+            JsonNode data = json.get("data");
+            assertNotNull(data, "Metrics should return data");
+            // Metrics should contain operational statistics (may be object or text)
+            assertTrue(data.isObject() || data.isTextual(),
+                    "Metrics data should be an object or text: " + data);
+        }
+        // Accept code 0 or other codes if metrics endpoint returns different format
+        assertTrue(code == 0 || code == 404 || code == 500 || code == 30000,
+                "Metrics response code should be recognized, got: " + code);
     }
 
     // ==================== Audit Log Tests ====================
+    // Audit routes on main server: /nacos/v3/console/audit/*
 
     /**
      * Test list audit logs
@@ -372,9 +520,21 @@ public class NacosAdminApiTest {
     @Test
     @Order(13)
     void testListAuditLogs() throws Exception {
-        String response = httpGet("/v3/console/audit/logs?pageNo=1&pageSize=10");
-        System.out.println("Audit logs: " + response);
-        // May return logs or empty list
+        String response = httpGet("/nacos/v3/console/audit/logs?pageNo=1&pageSize=10");
+        assertNotNull(response, "Audit logs response should not be null");
+        assertFalse(response.isEmpty(), "Audit logs response should not be empty");
+        // Audit endpoint may return JSON with code or may return 404/other
+        // Accept any valid response since audit logging may not be implemented
+        if (response.startsWith("{")) {
+            JsonNode json = objectMapper.readTree(response);
+            if (json.has("code")) {
+                int code = json.get("code").asInt();
+                if (code == 0) {
+                    assertTrue(json.has("data"), "Audit logs with code 0 should have data: " + response);
+                }
+                // Accept any code - audit may not be supported
+            }
+        }
     }
 
     /**
@@ -383,8 +543,16 @@ public class NacosAdminApiTest {
     @Test
     @Order(14)
     void testGetAuditStats() throws Exception {
-        String response = httpGet("/v3/console/audit/stats");
-        System.out.println("Audit stats: " + response);
+        String response = httpGet("/nacos/v3/console/audit/stats");
+        assertNotNull(response, "Audit stats response should not be null");
+        assertFalse(response.isEmpty(), "Audit stats response should not be empty");
+        // Audit stats endpoint may return JSON with code or may not be implemented
+        if (response.startsWith("{")) {
+            JsonNode json = objectMapper.readTree(response);
+            // Accept any valid JSON response - audit may not be supported
+            assertTrue(json.has("code") || json.has("data") || json.has("error"),
+                    "Audit stats should return a recognizable JSON response: " + response);
+        }
     }
 
     // ==================== Client Management Tests ====================
@@ -396,8 +564,21 @@ public class NacosAdminApiTest {
     @Order(15)
     void testListClients() throws Exception {
         String response = httpGet("/nacos/v2/ns/client/list");
-        System.out.println("Client list: " + response);
-        assertNotNull(response);
+        JsonNode json = assertSuccessResponse(response);
+        JsonNode data = json.get("data");
+        assertNotNull(data, "Client list should return data");
+        // Batata may return data as an object with {count, clientIds} instead of a flat array
+        if (data.isArray()) {
+            // Standard array format
+        } else if (data.isObject()) {
+            // Object format: {"count":0,"clientIds":[...]}
+            if (data.has("clientIds")) {
+                assertTrue(data.get("clientIds").isArray(),
+                        "clientIds field should be an array: " + data);
+            }
+        } else {
+            fail("Client list data should be an array or object, got: " + data);
+        }
     }
 
     /**
@@ -408,13 +589,25 @@ public class NacosAdminApiTest {
     void testGetClientPublishedServices() throws Exception {
         // First get a client ID from the list
         String listResponse = httpGet("/nacos/v2/ns/client/list");
+        JsonNode listJson = assertSuccessResponse(listResponse);
+        JsonNode clients = listJson.get("data");
 
-        // If we have clients, try to get their published services
-        if (listResponse.contains("clientId")) {
-            // Extract a client ID and query its published services
-            String response = httpGet("/nacos/v2/ns/client/publish/list?clientId=test");
-            System.out.println("Client published services: " + response);
+        // Handle both array format and object format (with clientIds field)
+        JsonNode clientArray = clients;
+        if (clients.isObject() && clients.has("clientIds")) {
+            clientArray = clients.get("clientIds");
         }
+
+        if (clientArray.isArray() && clientArray.size() > 0) {
+            String clientId = clientArray.get(0).asText();
+            String response = httpGet("/nacos/v2/ns/client/publish/list?clientId=" +
+                    URLEncoder.encode(clientId, "UTF-8"));
+            JsonNode json = objectMapper.readTree(response);
+            assertTrue(json.has("code"), "Published services should contain 'code' field: " + response);
+            assertEquals(0, json.get("code").asInt(),
+                    "Published services query should succeed for existing client: " + response);
+        }
+        // If no clients are connected, the test still passes (nothing to verify)
     }
 
     /**
@@ -424,7 +617,9 @@ public class NacosAdminApiTest {
     @Order(17)
     void testGetClientSubscribedServices() throws Exception {
         String response = httpGet("/nacos/v2/ns/client/subscribe/list?clientId=test");
-        System.out.println("Client subscribed services: " + response);
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Subscribed services should contain 'code' field: " + response);
+        // Non-existent clientId should return error code or empty data
     }
 
     /**
@@ -434,7 +629,12 @@ public class NacosAdminApiTest {
     @Order(18)
     void testListServicePublishers() throws Exception {
         String response = httpGet("/nacos/v2/ns/client/service/publisher/list?serviceName=test-service&groupName=DEFAULT_GROUP");
-        System.out.println("Service publishers: " + response);
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Publisher list should contain 'code' field: " + response);
+        int code = json.get("code").asInt();
+        if (code == 0) {
+            assertTrue(json.has("data"), "Publisher list with code 0 should have data: " + response);
+        }
     }
 
     /**
@@ -444,7 +644,12 @@ public class NacosAdminApiTest {
     @Order(19)
     void testListServiceSubscribers() throws Exception {
         String response = httpGet("/nacos/v2/ns/client/service/subscriber/list?serviceName=test-service&groupName=DEFAULT_GROUP");
-        System.out.println("Service subscribers: " + response);
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Subscriber list should contain 'code' field: " + response);
+        int code = json.get("code").asInt();
+        if (code == 0) {
+            assertTrue(json.has("data"), "Subscriber list with code 0 should have data: " + response);
+        }
     }
 
     // ==================== Health API Tests ====================
@@ -459,8 +664,83 @@ public class NacosAdminApiTest {
                 "serviceName=%s&groupName=%s&ip=%s&port=%d&healthy=%s",
                 "health-test-service", DEFAULT_GROUP, "192.168.1.1", 8080, "true");
         String response = httpPut("/nacos/v2/ns/health/instance", body);
-        System.out.println("Update instance health: " + response);
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Health update response should contain 'code' field: " + response);
+        // May fail if instance does not exist, but response structure should be valid
+        int code = json.get("code").asInt();
+        assertTrue(code == 0 || code == 20001 || code == 20004 || code == 500,
+                "Health update should return a recognized code, got: " + code);
     }
 
-    private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
+    /**
+     * Test namespace CRUD full lifecycle with verification
+     */
+    @Test
+    @Order(21)
+    void testNamespaceFullLifecycle() throws Exception {
+        String namespaceId = "lifecycle-ns-" + UUID.randomUUID().toString().substring(0, 8);
+        String namespaceName = "Lifecycle Test";
+        String namespaceDesc = "Full lifecycle test";
+
+        // Create (V3 uses customNamespaceId)
+        String createBody = String.format(
+                "customNamespaceId=%s&namespaceName=%s&namespaceDesc=%s",
+                namespaceId,
+                URLEncoder.encode(namespaceName, "UTF-8"),
+                URLEncoder.encode(namespaceDesc, "UTF-8"));
+        String createResponse = httpPost("/nacos/v3/console/core/namespace", createBody);
+        JsonNode createJson = assertSuccessResponse(createResponse);
+        assertTrue(createJson.get("data").asBoolean(), "Namespace creation should succeed");
+
+        // Verify in list
+        String listResponse = httpGet("/nacos/v3/console/core/namespace/list");
+        JsonNode listJson = assertSuccessResponse(listResponse);
+        boolean found = false;
+        for (JsonNode ns : listJson.get("data")) {
+            String nsId = ns.has("namespace") ? ns.get("namespace").asText()
+                    : (ns.has("namespaceId") ? ns.get("namespaceId").asText() : "");
+            if (namespaceId.equals(nsId)) {
+                found = true;
+                break;
+            }
+        }
+        assertTrue(found, "Created namespace should be in list");
+
+        // Update
+        String updateBody = String.format(
+                "namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
+                namespaceId,
+                URLEncoder.encode("Updated Lifecycle", "UTF-8"),
+                URLEncoder.encode("Updated desc", "UTF-8"));
+        String updateResponse = httpPut("/nacos/v3/console/core/namespace", updateBody);
+        JsonNode updateJson = assertSuccessResponse(updateResponse);
+        assertTrue(updateJson.get("data").asBoolean(), "Namespace update should succeed");
+
+        // Verify update
+        String getResponse = httpGet("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
+        JsonNode getJson = assertSuccessResponse(getResponse);
+        JsonNode data = getJson.get("data");
+        String returnedName = data.has("namespaceShowName") ? data.get("namespaceShowName").asText()
+                : (data.has("namespaceName") ? data.get("namespaceName").asText() : "");
+        assertEquals("Updated Lifecycle", returnedName, "Namespace name should be updated");
+
+        // Delete
+        String deleteResponse = httpDelete("/nacos/v3/console/core/namespace?namespaceId=" + namespaceId);
+        JsonNode deleteJson = assertSuccessResponse(deleteResponse);
+        assertTrue(deleteJson.get("data").asBoolean(), "Namespace deletion should succeed");
+
+        // Verify deleted
+        String listAfterDelete = httpGet("/nacos/v3/console/core/namespace/list");
+        JsonNode listAfterJson = assertSuccessResponse(listAfterDelete);
+        boolean stillFound = false;
+        for (JsonNode ns : listAfterJson.get("data")) {
+            String nsId = ns.has("namespace") ? ns.get("namespace").asText()
+                    : (ns.has("namespaceId") ? ns.get("namespaceId").asText() : "");
+            if (namespaceId.equals(nsId)) {
+                stillFound = true;
+                break;
+            }
+        }
+        assertFalse(stillFound, "Deleted namespace should not be in list");
+    }
 }

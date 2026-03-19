@@ -34,7 +34,8 @@ use crate::{
     auth,
     console::v3::{ai_a2a as console_a2a, ai_mcp as console_mcp, ai_plugin as console_plugin},
     middleware::{
-        auth::Authentication, rate_limit::RateLimiter, traffic_revise::TrafficReviseFilter,
+        auth::Authentication, distro_filter::DistroFilter, rate_limit::RateLimiter,
+        tps_control::TpsControlMiddleware, traffic_revise::TrafficReviseFilter,
     },
     model::common::AppState,
     service::naming::NamingService,
@@ -54,6 +55,12 @@ pub struct ConsulServices {
     pub lock: ConsulLockService,
     pub semaphore: ConsulSemaphoreService,
     pub peering: Arc<ConsulPeeringService>,
+    pub config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService,
+    pub connect: batata_plugin_consul::connect::ConsulConnectService,
+    pub connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService,
+    pub coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService,
+    pub snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService,
+    pub operator: batata_plugin_consul::operator::ConsulOperatorService,
     pub dc_config: ConsulDatacenterConfig,
     pub index_provider: ConsulIndexProvider,
 }
@@ -102,6 +109,12 @@ impl ConsulServices {
             lock,
             semaphore,
             peering: Arc::new(ConsulPeeringService::new()),
+            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::new(),
+            connect: batata_plugin_consul::connect::ConsulConnectService::new(),
+            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::new(),
+            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::new(),
+            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::new(),
+            operator: batata_plugin_consul::operator::ConsulOperatorService::new(),
             dc_config,
         }
     }
@@ -150,6 +163,12 @@ impl ConsulServices {
             lock,
             semaphore,
             peering: Arc::new(ConsulPeeringService::new()),
+            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::new(),
+            connect: batata_plugin_consul::connect::ConsulConnectService::new(),
+            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::new(),
+            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::new(),
+            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::new(),
+            operator: batata_plugin_consul::operator::ConsulOperatorService::new(),
             dc_config,
             index_provider,
         }
@@ -200,6 +219,12 @@ impl ConsulServices {
             lock,
             semaphore,
             peering: Arc::new(ConsulPeeringService::new()),
+            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::new(),
+            connect: batata_plugin_consul::connect::ConsulConnectService::new(),
+            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::new(),
+            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::new(),
+            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::new(),
+            operator: batata_plugin_consul::operator::ConsulOperatorService::new(),
             dc_config,
             index_provider,
         }
@@ -330,6 +355,12 @@ pub fn consul_server(
             .app_data(web::Data::new(consul_services.lock.clone()))
             .app_data(web::Data::new(consul_services.semaphore.clone()))
             .app_data(web::Data::from(consul_services.peering.clone()))
+            .app_data(web::Data::new(consul_services.config_entry.clone()))
+            .app_data(web::Data::new(consul_services.connect.clone()))
+            .app_data(web::Data::new(consul_services.connect_ca.clone()))
+            .app_data(web::Data::new(consul_services.coordinate.clone()))
+            .app_data(web::Data::new(consul_services.snapshot.clone()))
+            .app_data(web::Data::new(consul_services.operator.clone()))
             .app_data(web::Data::new(consul_services.dc_config.clone()))
             .app_data(web::Data::new(consul_services.index_provider.clone()))
             .app_data(web::QueryConfig::default().error_handler(|err, _req| {
@@ -473,6 +504,7 @@ pub fn main_server(
     config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
     ai_services: AIServices,
     distro_protocol: Option<Arc<DistroProtocol>>,
+    encryption_service: Arc<batata_config::service::encryption::ConfigEncryptionService>,
     context_path: String,
     address: String,
     port: u16,
@@ -485,6 +517,7 @@ pub fn main_server(
     let max_payload_size = app_state.configuration.max_payload_size();
     let max_json_size = app_state.configuration.max_json_size();
     let compression_enabled = app_state.configuration.http_compression_enabled();
+    let control_plugin = app_state.control_plugin.clone();
 
     // Initialize Prometheus metrics recorder (metrics crate integration)
     let prometheus_state = web::Data::new(PrometheusMetricsState::new());
@@ -504,6 +537,8 @@ pub fn main_server(
             // HTTP response compression (gzip, brotli, zstd)
             .wrap(Condition::new(compression_enabled, Compress::default()))
             .wrap(TrafficReviseFilter::new(server_status.clone()))
+            .wrap(DistroFilter::new(distro_protocol.clone()))
+            .wrap(TpsControlMiddleware::new(control_plugin.clone()))
             .wrap(RateLimiter::new(rate_limit_config.clone()))
             .wrap(Authentication)
             .app_data(web::PayloadConfig::new(max_payload_size))
@@ -520,7 +555,9 @@ pub fn main_server(
             .app_data(web::Data::new(cloud_services.prometheus_sd.clone()))
             .app_data(web::Data::new(cloud_services.k8s_sync.clone()))
             // Prometheus metrics state (metrics crate integration)
-            .app_data(prometheus_state.clone());
+            .app_data(prometheus_state.clone())
+            // Config encryption service
+            .app_data(web::Data::new(encryption_service.clone()));
 
         // Inject distro protocol for cluster data synchronization (cluster mode only)
         if let Some(ref distro) = distro_protocol {

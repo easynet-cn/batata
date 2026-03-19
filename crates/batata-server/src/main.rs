@@ -15,6 +15,7 @@ use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
 use batata_persistence::{PersistenceService, StorageMode};
+use batata_plugin::Plugin as _;
 use batata_server::{
     middleware::rate_limit,
     model::{self, common::AppState},
@@ -312,6 +313,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create server status manager (starts in STARTING state)
     let server_status = Arc::new(ServerStatusManager::new());
 
+    // Initialize control plugin for TPS rate limiting and connection control
+    let control_plugin: Option<Arc<dyn batata_plugin::ControlPlugin>> = {
+        let control_config = configuration.control_plugin_config();
+        if !control_config.enabled {
+            info!("Control plugin disabled by configuration");
+            None
+        } else {
+            let plugin = batata_plugin::DefaultControlPlugin::new(control_config);
+            if let Err(e) = plugin.init().await {
+                tracing::warn!("Failed to initialize control plugin: {}", e);
+                None
+            } else {
+                info!(
+                    "Control plugin initialized (TPS limit={}, max connections={})",
+                    configuration.control_plugin_default_tps(),
+                    configuration.control_plugin_max_connections()
+                );
+                Some(Arc::new(plugin))
+            }
+        }
+    };
+
+    // Initialize config encryption service
+    let encryption_service: Arc<batata_config::service::encryption::ConfigEncryptionService> =
+        if configuration.encryption_enabled() {
+            match configuration.encryption_key() {
+                Some(key) => {
+                    match batata_config::service::encryption::ConfigEncryptionService::new(&key) {
+                        Ok(svc) => {
+                            info!("Config encryption enabled");
+                            Arc::new(svc)
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to create encryption service: {}", e);
+                            Arc::new(
+                                batata_config::service::encryption::ConfigEncryptionService::disabled(),
+                            )
+                        }
+                    }
+                }
+                None => {
+                    tracing::warn!("Encryption enabled but no key configured");
+                    Arc::new(
+                        batata_config::service::encryption::ConfigEncryptionService::disabled(),
+                    )
+                }
+            }
+        } else {
+            Arc::new(batata_config::service::encryption::ConfigEncryptionService::disabled())
+        };
+
     // Create application state
     let app_state = Arc::new(AppState {
         configuration,
@@ -324,6 +376,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|m| m as Arc<dyn std::any::Any + Send + Sync>),
         raft_node: raft_node.clone(),
         server_status: server_status.clone(),
+        control_plugin,
+        encryption_service: Some(encryption_service.clone() as Arc<dyn std::any::Any + Send + Sync>),
     });
 
     // If data warmup is disabled (default), transition to UP immediately.
@@ -831,6 +885,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.config_change_notifier.clone(),
                 ai_services.clone(),
                 distro_for_http.clone(),
+                encryption_service.clone(),
                 server_context_path,
                 server_address,
                 server_main_port,
@@ -912,6 +967,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 grpc_servers.config_change_notifier,
                 ai_services,
                 distro_for_http,
+                encryption_service,
                 server_context_path,
                 server_address,
                 server_main_port,

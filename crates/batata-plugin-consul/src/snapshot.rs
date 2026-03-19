@@ -17,6 +17,7 @@ use crate::model::ConsulError;
 // ============================================================================
 
 /// In-memory snapshot service that stores snapshots as binary blobs
+#[derive(Clone)]
 pub struct ConsulSnapshotService {
     /// Stored snapshot data (only keeps latest)
     snapshot_data: Arc<tokio::sync::RwLock<Option<Vec<u8>>>>,

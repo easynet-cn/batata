@@ -21,6 +21,15 @@ use crate::model::{
     ConsulError, HealthCheck, HealthQueryParams, Node, ServiceHealth, ServiceQueryParams,
 };
 
+/// Handle blocking query wait if `index` query parameter is set.
+/// Returns once index advances past the target or timeout elapses.
+async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, wait: Option<&str>) {
+    if let Some(target_index) = index {
+        let timeout = wait.and_then(ConsulIndexProvider::parse_wait_duration);
+        index_provider.wait_for_index(target_index, timeout).await;
+    }
+}
+
 /// Consul Health Check service backed by InstanceCheckRegistry.
 /// All check operations delegate to the unified registry, which immediately
 /// syncs health status changes to NamingService.
@@ -385,6 +394,9 @@ pub async fn get_service_health(
     } else {
         results
     };
+
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))

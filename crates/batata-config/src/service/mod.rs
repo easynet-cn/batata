@@ -21,4 +21,7 @@ pub mod notifier;
 
 pub use capacity::*;
 pub use config::*;
-pub use encryption::{ConfigEncryptionService, ConfigEncryptionServiceBuilder, EncryptionPattern};
+pub use encryption::{
+    ConfigEncryptionService, ConfigEncryptionServiceBuilder, EncryptionPattern,
+    get_encryption_service,
+};

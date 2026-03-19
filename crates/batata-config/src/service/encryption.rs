@@ -161,6 +161,18 @@ impl ConfigEncryptionService {
     }
 }
 
+/// Extract ConfigEncryptionService from AppState's `encryption_service` field.
+/// Returns a disabled service if not available (never panics).
+pub fn get_encryption_service(
+    app_state: &batata_server_common::model::AppState,
+) -> Arc<ConfigEncryptionService> {
+    app_state
+        .encryption_service
+        .as_ref()
+        .and_then(|svc| svc.clone().downcast::<ConfigEncryptionService>().ok())
+        .unwrap_or_else(|| Arc::new(ConfigEncryptionService::disabled()))
+}
+
 /// Builder for ConfigEncryptionService with custom rules
 pub struct ConfigEncryptionServiceBuilder {
     encryption_key: String,

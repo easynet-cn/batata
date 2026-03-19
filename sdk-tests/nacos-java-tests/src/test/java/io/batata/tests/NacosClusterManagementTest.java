@@ -35,14 +35,12 @@ public class NacosClusterManagementTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         namingService = NacosFactory.createNamingService(properties);
         configService = NacosFactory.createConfigService(properties);
-
-        System.out.println("Nacos Cluster Management Test Setup - Server: " + serverAddr);
     }
 
     @AfterAll
@@ -82,8 +80,8 @@ public class NacosClusterManagementTest {
 
         Instance found = instances.get(0);
         assertEquals(clusterName, found.getClusterName(), "Cluster name should match");
-
-        System.out.println("Registered instance in cluster: " + found.getClusterName());
+        assertEquals("192.168.1.100", found.getIp(), "IP should match registered instance");
+        assertEquals(8080, found.getPort(), "Port should match registered instance");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);
@@ -122,7 +120,10 @@ public class NacosClusterManagementTest {
             clusterCounts.merge(inst.getClusterName(), 1, Integer::sum);
         }
 
-        System.out.println("Cluster distribution: " + clusterCounts);
+        for (String cluster : clusters) {
+            assertEquals(1, clusterCounts.getOrDefault(cluster, 0),
+                    "Each cluster should have exactly 1 instance, checking: " + cluster);
+        }
 
         // Cleanup
         for (int i = 0; i < clusters.length; i++) {
@@ -164,15 +165,15 @@ public class NacosClusterManagementTest {
         List<Instance> clusterAInstances = namingService.getAllInstances(
                 serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a"), false);
         assertEquals(1, clusterAInstances.size(), "Should have 1 instance in cluster-a");
-        assertEquals("cluster-a", clusterAInstances.get(0).getClusterName());
+        assertEquals("cluster-a", clusterAInstances.get(0).getClusterName(),
+                "Instance should belong to cluster-a");
+        assertEquals("192.168.1.1", clusterAInstances.get(0).getIp(),
+                "Cluster-a instance should have correct IP");
 
         // Get instances from both clusters (subscribe=false for direct query)
         List<Instance> bothClusters = namingService.getAllInstances(
                 serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a", "cluster-b"), false);
         assertEquals(2, bothClusters.size(), "Should have 2 instances in both clusters");
-
-        System.out.println("Cluster-a instances: " + clusterAInstances.size());
-        System.out.println("Both clusters instances: " + bothClusters.size());
 
         // Cleanup
         namingService.deregisterInstance(serviceName, instanceA);
@@ -209,7 +210,13 @@ public class NacosClusterManagementTest {
         List<Instance> healthyInstances = namingService.selectInstances(
                 serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a"), true);
 
-        System.out.println("Healthy instances in cluster-a: " + healthyInstances.size());
+        assertNotNull(healthyInstances, "Healthy instances list should not be null");
+        for (Instance inst : healthyInstances) {
+            assertTrue(inst.isHealthy(),
+                    "All selected instances should be healthy");
+            assertEquals("cluster-a", inst.getClusterName(),
+                    "All selected instances should belong to cluster-a");
+        }
 
         // Cleanup
         namingService.deregisterInstance(serviceName, healthyA);
@@ -235,16 +242,19 @@ public class NacosClusterManagementTest {
         Thread.sleep(1000);
 
         // Subscribe to get service info
+        CountDownLatch eventLatch = new CountDownLatch(1);
         namingService.subscribe(serviceName, DEFAULT_GROUP, event -> {
-            System.out.println("Service event received");
+            eventLatch.countDown();
         });
 
-        Thread.sleep(500);
+        boolean eventReceived = eventLatch.await(5, TimeUnit.SECONDS);
+        assertTrue(eventReceived, "Should receive service subscription event");
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have service instances");
-
-        System.out.println("Service instances: " + instances.size());
+        assertEquals(1, instances.size(), "Should have exactly 1 instance");
+        assertEquals("192.168.1.50", instances.get(0).getIp(),
+                "Instance IP should match registered value");
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, event -> {});
@@ -282,8 +292,14 @@ public class NacosClusterManagementTest {
         });
 
         boolean received = latch.await(5, TimeUnit.SECONDS);
-        System.out.println("Received subscription event: " + received);
-        System.out.println("Instances in subscription: " + receivedInstances.size());
+        assertTrue(received, "Should receive subscription event with cluster filter");
+        assertFalse(receivedInstances.isEmpty(),
+                "Should have instances in subscription notification");
+
+        for (Instance inst : receivedInstances) {
+            assertEquals("primary", inst.getClusterName(),
+                    "All received instances should belong to primary cluster");
+        }
 
         // Cleanup
         namingService.deregisterInstance(serviceName, instance);
@@ -317,9 +333,16 @@ public class NacosClusterManagementTest {
 
         assertEquals(3, instances.size(), "Should have 3 weighted instances");
 
+        // Verify weights are set correctly
+        Set<Double> expectedWeights = new HashSet<>(Arrays.asList(10.0, 20.0, 30.0));
+        Set<Double> actualWeights = new HashSet<>();
         for (Instance inst : instances) {
-            System.out.println("Instance " + inst.getIp() + " weight: " + inst.getWeight());
+            actualWeights.add(inst.getWeight());
+            assertTrue(inst.getWeight() > 0, "All weights should be positive");
+            assertEquals("weighted", inst.getClusterName(),
+                    "All instances should belong to weighted cluster");
         }
+        assertEquals(expectedWeights, actualWeights, "Instance weights should match expected values");
 
         // Cleanup
         for (int i = 0; i < 3; i++) {
@@ -352,9 +375,9 @@ public class NacosClusterManagementTest {
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have instance");
-        assertEquals(100.0, instances.get(0).getWeight(), 0.01, "Weight should be updated");
-
-        System.out.println("Updated weight: " + instances.get(0).getWeight());
+        assertEquals(100.0, instances.get(0).getWeight(), 0.01, "Weight should be updated to 100.0");
+        assertEquals("192.168.1.80", instances.get(0).getIp(),
+                "IP should remain unchanged after weight update");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, instance);
@@ -382,8 +405,8 @@ public class NacosClusterManagementTest {
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have ephemeral instance");
         assertTrue(instances.get(0).isEphemeral(), "Instance should be ephemeral");
-
-        System.out.println("Ephemeral instance registered: " + instances.get(0).isEphemeral());
+        assertEquals("192.168.1.90", instances.get(0).getIp(),
+                "Ephemeral instance IP should match");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, instance);
@@ -414,9 +437,10 @@ public class NacosClusterManagementTest {
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
         assertFalse(instances.isEmpty(), "Should have ephemeral instance");
         assertTrue(instances.get(0).isEphemeral(), "Instance should be ephemeral");
-        assertEquals("test-app", instances.get(0).getMetadata().get("app"));
-
-        System.out.println("Ephemeral instance with metadata: " + instances.get(0).getMetadata());
+        assertEquals("test-app", instances.get(0).getMetadata().get("app"),
+                "Metadata 'app' should match");
+        assertEquals("1.0", instances.get(0).getMetadata().get("version"),
+                "Metadata 'version' should match");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, instance);
@@ -454,10 +478,12 @@ public class NacosClusterManagementTest {
         assertFalse(instances.isEmpty(), "Should have instance with metadata");
 
         Map<String, String> retrievedMeta = instances.get(0).getMetadata();
-        assertEquals("v2.0.0", retrievedMeta.get("version"));
-        assertEquals("us-west-1", retrievedMeta.get("region"));
-
-        System.out.println("Instance metadata: " + retrievedMeta);
+        assertEquals("v2.0.0", retrievedMeta.get("version"), "version metadata should match");
+        assertEquals("us-west-1", retrievedMeta.get("region"), "region metadata should match");
+        assertEquals("zone-a", retrievedMeta.get("zone"), "zone metadata should match");
+        assertEquals("production", retrievedMeta.get("env"), "env metadata should match");
+        assertEquals("grpc", retrievedMeta.get("protocol"), "protocol metadata should match");
+        assertEquals("true", retrievedMeta.get("weight-override"), "weight-override metadata should match");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, instance);
@@ -495,7 +521,10 @@ public class NacosClusterManagementTest {
         assertFalse(instances.isEmpty(), "Should have updated instance");
 
         Map<String, String> updatedMeta = instances.get(0).getMetadata();
-        System.out.println("Updated metadata: " + updatedMeta);
+        assertEquals("v2.0.0", updatedMeta.get("version"),
+                "Version metadata should be updated to v2.0.0");
+        assertEquals("true", updatedMeta.get("updated"),
+                "New 'updated' metadata key should be present");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, instance);
@@ -513,6 +542,7 @@ public class NacosClusterManagementTest {
         int threadCount = 10;
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch = new CountDownLatch(threadCount);
+        List<Exception> errors = new CopyOnWriteArrayList<>();
 
         for (int i = 0; i < threadCount; i++) {
             final int index = i;
@@ -528,7 +558,7 @@ public class NacosClusterManagementTest {
 
                     namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
                 } catch (Exception e) {
-                    System.err.println("Registration error: " + e.getMessage());
+                    errors.add(e);
                 } finally {
                     doneLatch.countDown();
                 }
@@ -538,11 +568,14 @@ public class NacosClusterManagementTest {
         startLatch.countDown();
         boolean completed = doneLatch.await(30, TimeUnit.SECONDS);
         assertTrue(completed, "All registrations should complete");
+        assertTrue(errors.isEmpty(),
+                "No errors should occur during concurrent registration, got " + errors.size());
 
         Thread.sleep(2000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
-        System.out.println("Concurrent registered instances: " + instances.size());
+        assertEquals(threadCount, instances.size(),
+                "Should have " + threadCount + " concurrently registered instances");
 
         // Cleanup
         for (int i = 0; i < threadCount; i++) {
@@ -575,9 +608,7 @@ public class NacosClusterManagementTest {
         List<com.alibaba.nacos.api.naming.listener.EventListener> listeners = new ArrayList<>();
 
         for (int i = 0; i < subscriberCount; i++) {
-            final int index = i;
             com.alibaba.nacos.api.naming.listener.EventListener listener = event -> {
-                System.out.println("Subscriber " + index + " received event");
                 latch.countDown();
             };
             listeners.add(listener);
@@ -585,7 +616,8 @@ public class NacosClusterManagementTest {
         }
 
         boolean allReceived = latch.await(10, TimeUnit.SECONDS);
-        System.out.println("All subscribers received events: " + allReceived);
+        assertTrue(allReceived,
+                "All " + subscriberCount + " subscribers should receive events");
 
         // Cleanup
         for (com.alibaba.nacos.api.naming.listener.EventListener listener : listeners) {
@@ -602,23 +634,33 @@ public class NacosClusterManagementTest {
     void testServiceListPagination() throws NacosException, InterruptedException {
         String prefix = "paginate-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Register multiple services
+        // Register multiple services with delay between each to allow server processing
         for (int i = 0; i < 5; i++) {
             String serviceName = prefix + "-service-" + i;
             Instance instance = new Instance();
             instance.setIp("192.168.4." + i);
             instance.setPort(8080);
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
+            Thread.sleep(500);
         }
 
-        Thread.sleep(1000);
+        Thread.sleep(3000);
 
-        // Get service list with pagination
+        // Get service list with pagination - use larger page size to ensure all services are returned
         com.alibaba.nacos.api.naming.pojo.ListView<String> serviceList =
-                namingService.getServicesOfServer(1, 10, DEFAULT_GROUP);
+                namingService.getServicesOfServer(1, 100, DEFAULT_GROUP);
 
-        System.out.println("Service count: " + serviceList.getCount());
-        System.out.println("Services: " + serviceList.getData());
+        assertNotNull(serviceList, "Service list should not be null");
+        assertNotNull(serviceList.getData(), "Service data list should not be null");
+        assertFalse(serviceList.getData().isEmpty(), "Service data list should not be empty");
+
+        // Verify our services are in the list
+        long matchingServices = serviceList.getData().stream()
+                .filter(name -> name.startsWith(prefix))
+                .count();
+        assertTrue(matchingServices >= 5,
+                "Should find at least 5 registered services in the list, got: " + matchingServices
+                + " (total services: " + serviceList.getCount() + ", data: " + serviceList.getData() + ")");
 
         // Cleanup
         for (int i = 0; i < 5; i++) {

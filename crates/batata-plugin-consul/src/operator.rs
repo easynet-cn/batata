@@ -191,6 +191,7 @@ pub struct OperatorQueryParams {
 // ============================================================================
 
 /// In-memory operator service
+#[derive(Clone)]
 pub struct ConsulOperatorService {
     /// Raft server list
     pub(crate) servers: Arc<DashMap<String, RaftServer>>,
@@ -466,34 +467,57 @@ impl ConsulOperatorServiceReal {
     }
 
     pub fn get_autopilot_health(&self) -> AutopilotHealthResponse {
+        use batata_api::model::NodeState;
+
         let members = self.member_manager.all_members();
+        let current_index = self.index.load(Ordering::SeqCst);
+        let mut healthy_voters = 0i32;
+
         let servers: Vec<AutopilotServerHealth> = members
             .iter()
             .enumerate()
-            .map(|(i, m)| AutopilotServerHealth {
-                id: m.ip.clone(),
-                name: m.ip.clone(),
-                address: format!("{}:{}", m.ip, m.port),
-                serf_status: "alive".to_string(),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                leader: i == 0,
-                last_contact: "0ms".to_string(),
-                last_term: 1,
-                last_index: self.index.load(Ordering::SeqCst),
-                healthy: true,
-                voter: true,
-                stable_since: chrono::Utc::now().to_rfc3339(),
+            .map(|(i, m)| {
+                let is_healthy = matches!(m.state, NodeState::Up);
+                let serf_status = match m.state {
+                    NodeState::Up => "alive",
+                    NodeState::Down => "failed",
+                    NodeState::Suspicious => "leaving",
+                    _ => "none",
+                };
+                if is_healthy {
+                    healthy_voters += 1;
+                }
+                // Estimate last contact from fail_access_cnt
+                let last_contact = if m.fail_access_cnt == 0 {
+                    "0ms".to_string()
+                } else {
+                    format!("{}ms", m.fail_access_cnt * 200)
+                };
+                AutopilotServerHealth {
+                    id: m.ip.clone(),
+                    name: m.ip.clone(),
+                    address: format!("{}:{}", m.ip, m.port),
+                    serf_status: serf_status.to_string(),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    leader: i == 0,
+                    last_contact,
+                    last_term: 1,
+                    last_index: current_index,
+                    healthy: is_healthy,
+                    voter: true,
+                    stable_since: chrono::Utc::now().to_rfc3339(),
+                }
             })
             .collect();
 
-        let server_count = servers.len() as i32;
+        let total = servers.len() as i32;
+        let quorum_needed = total / 2 + 1;
+        let failure_tolerance = (healthy_voters - quorum_needed).max(0);
+        let all_healthy = healthy_voters == total;
+
         AutopilotHealthResponse {
-            healthy: true,
-            failure_tolerance: if server_count > 1 {
-                (server_count - 1) / 2
-            } else {
-                0
-            },
+            healthy: all_healthy && healthy_voters >= quorum_needed,
+            failure_tolerance,
             servers,
         }
     }
@@ -552,22 +576,41 @@ impl ConsulOperatorServiceReal {
 
     pub fn list_keys(&self) -> Vec<KeyringResponse> {
         let members = self.member_manager.all_members();
+        let num_nodes = members.len() as i32;
         let keys: HashMap<String, i32> = self
             .keyring
             .iter()
             .map(|r| (r.key().clone(), *r.value()))
             .collect();
-        let primary_keys = keys.clone();
 
-        vec![KeyringResponse {
-            wan: false,
-            datacenter: self.datacenter.clone(),
-            segment: "".to_string(),
-            messages: None,
-            keys,
-            primary_keys,
-            num_nodes: members.len() as i32,
-        }]
+        // primary_keys only contains the currently active primary key
+        let primary_key_guard = self.primary_key.try_read().ok().and_then(|g| g.clone());
+        let primary_keys: HashMap<String, i32> = primary_key_guard
+            .iter()
+            .filter_map(|pk| keys.get(pk).map(|&count| (pk.clone(), count)))
+            .collect();
+
+        // Return LAN keyring (WAN keyring is a separate response in real Consul)
+        vec![
+            KeyringResponse {
+                wan: false,
+                datacenter: self.datacenter.clone(),
+                segment: "".to_string(),
+                messages: None,
+                keys: keys.clone(),
+                primary_keys: primary_keys.clone(),
+                num_nodes,
+            },
+            KeyringResponse {
+                wan: true,
+                datacenter: self.datacenter.clone(),
+                segment: "".to_string(),
+                messages: None,
+                keys,
+                primary_keys,
+                num_nodes,
+            },
+        ]
     }
 
     pub fn install_key(&self, key: &str) {

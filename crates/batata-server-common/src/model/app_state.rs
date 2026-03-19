@@ -8,6 +8,7 @@ use batata_auth::service::oauth::OAuthService;
 use batata_consistency::RaftNode;
 use batata_core::cluster::ServerMemberManager;
 use batata_persistence::PersistenceService;
+use batata_plugin::ControlPlugin;
 
 use crate::console::datasource::ConsoleDataSource;
 
@@ -51,6 +52,11 @@ pub struct AppState {
     pub raft_node: Option<Arc<RaftNode>>,
     /// Server lifecycle status (Starting → Up / Down)
     pub server_status: Arc<ServerStatusManager>,
+    /// Control plugin for TPS rate limiting and connection control
+    pub control_plugin: Option<Arc<dyn ControlPlugin>>,
+    /// Config encryption service (stored as `Arc<dyn Any>` to avoid circular dep with batata-config)
+    /// Actual type: `Arc<batata_config::service::encryption::ConfigEncryptionService>`
+    pub encryption_service: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -68,6 +74,8 @@ impl std::fmt::Debug for AppState {
             .field("health_check_manager", &self.health_check_manager.is_some())
             .field("raft_node", &self.raft_node.is_some())
             .field("server_status", &self.server_status)
+            .field("control_plugin", &self.control_plugin.is_some())
+            .field("encryption_service", &self.encryption_service.is_some())
             .finish()
     }
 }
@@ -84,6 +92,8 @@ impl Clone for AppState {
             health_check_manager: self.health_check_manager.clone(),
             raft_node: self.raft_node.clone(),
             server_status: self.server_status.clone(),
+            control_plugin: self.control_plugin.clone(),
+            encryption_service: self.encryption_service.clone(),
         }
     }
 }

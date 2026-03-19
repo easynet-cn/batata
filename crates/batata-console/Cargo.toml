@@ -19,6 +19,7 @@ batata-client = { workspace = true }
 batata-maintainer-client = { workspace = true }
 batata-ai = { workspace = true }
 batata-server-common = { workspace = true }
+batata-plugin = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }

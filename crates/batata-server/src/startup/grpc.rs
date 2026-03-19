@@ -375,6 +375,16 @@ pub fn start_grpc_servers(
 
     // Create connection manager first (needed by handlers and stream service)
     let connection_manager = Arc::new(ConnectionManager::new());
+    // Wire connection limit checker if control plugin is available
+    if let Some(ref control_plugin) = app_state.control_plugin {
+        let limiter = Arc::new(
+            crate::service::connection_limit::ControlPluginConnectionLimiter::new(
+                control_plugin.clone(),
+            ),
+        );
+        connection_manager.set_connection_limit_checker(limiter);
+        info!("gRPC connection limiting enabled");
+    }
     // Start background health checker to eject stale connections
     connection_manager.start_health_checker(app_state.configuration.grpc_connection_stale_ms());
     // Keep a clone for the HTTP server
@@ -411,6 +421,15 @@ pub fn start_grpc_servers(
 
     // Initialize gRPC handlers with auth service
     let mut handler_registry = HandlerRegistry::with_auth(grpc_auth_service);
+
+    // Wire TPS control into gRPC handler dispatch
+    if let Some(ref control_plugin) = app_state.control_plugin {
+        let tps_checker = Arc::new(crate::service::tps_checker::ControlPluginTpsChecker::new(
+            control_plugin.clone(),
+        ));
+        handler_registry.set_tps_checker(tps_checker);
+        info!("gRPC TPS control enabled");
+    }
 
     // Create config fuzzy watch manager
     let config_fuzzy_watch_manager = Arc::new(ConfigFuzzyWatchManager::new());

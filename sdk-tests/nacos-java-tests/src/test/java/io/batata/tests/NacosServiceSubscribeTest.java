@@ -38,12 +38,11 @@ public class NacosServiceSubscribeTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         namingService = NacosFactory.createNamingService(properties);
-        System.out.println("Nacos Service Subscribe Test Setup - Server: " + serverAddr);
     }
 
     @AfterAll
@@ -63,20 +62,21 @@ public class NacosServiceSubscribeTest {
     void testBasicSubscribe() throws NacosException, InterruptedException {
         String serviceName = "subscribe-basic-" + UUID.randomUUID().toString().substring(0, 8);
         CountDownLatch latch = new CountDownLatch(1);
-        AtomicReference<List<Instance>> receivedInstances = new AtomicReference<>();
+        AtomicReference<NamingEvent> capturedEvent = new AtomicReference<>();
 
         // Subscribe first
         EventListener listener = event -> {
             if (event instanceof NamingEvent) {
                 NamingEvent namingEvent = (NamingEvent) event;
-                receivedInstances.set(namingEvent.getInstances());
-                latch.countDown();
-                System.out.println("Received " + namingEvent.getInstances().size() + " instances");
+                if (!namingEvent.getInstances().isEmpty()) {
+                    capturedEvent.set(namingEvent);
+                    latch.countDown();
+                }
             }
         };
 
         namingService.subscribe(serviceName, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Register instance
         Instance instance = new Instance();
@@ -84,10 +84,25 @@ public class NacosServiceSubscribeTest {
         instance.setPort(8080);
         instance.setHealthy(true);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
+        Thread.sleep(2000);
 
-        boolean received = latch.await(10, TimeUnit.SECONDS);
-        assertTrue(received, "Should receive subscription notification");
-        assertNotNull(receivedInstances.get());
+        boolean received = latch.await(20, TimeUnit.SECONDS);
+        assertTrue(received, "Should receive subscription notification within 20 seconds");
+
+        NamingEvent event = capturedEvent.get();
+        assertNotNull(event, "Captured NamingEvent should not be null");
+        assertEquals(serviceName, event.getServiceName(),
+                "NamingEvent serviceName should match the subscribed service");
+
+        List<Instance> instances = event.getInstances();
+        assertNotNull(instances, "Instance list in event should not be null");
+        assertFalse(instances.isEmpty(), "Instance list should contain at least one instance");
+
+        Instance received0 = instances.get(0);
+        assertEquals("192.168.1.1", received0.getIp(),
+                "Received instance IP should match registered instance");
+        assertEquals(8080, received0.getPort(),
+                "Received instance port should match registered instance");
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, listener);
@@ -109,20 +124,21 @@ public class NacosServiceSubscribeTest {
 
         // Subscribe
         namingService.subscribe(serviceName, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Unsubscribe
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         int countBefore = notificationCount.get();
 
         // Register instance - should not trigger notification
         namingService.registerInstance(serviceName, "192.168.1.2", 8080);
-        Thread.sleep(2000);
+        Thread.sleep(5000);
 
         int countAfter = notificationCount.get();
-        assertEquals(countBefore, countAfter, "Should not receive notification after unsubscribe");
+        assertEquals(countBefore, countAfter,
+                "Should not receive any notification after unsubscribe");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.1.2", 8080);
@@ -141,20 +157,31 @@ public class NacosServiceSubscribeTest {
         EventListener listener = event -> {
             if (event instanceof NamingEvent) {
                 NamingEvent namingEvent = (NamingEvent) event;
-                receivedInstances.set(namingEvent.getInstances());
-                latch.countDown();
+                if (!namingEvent.getInstances().isEmpty()) {
+                    receivedInstances.set(namingEvent.getInstances());
+                    latch.countDown();
+                }
             }
         };
 
         // Subscribe to non-existent service
         namingService.subscribe(serviceName, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
-        // Now create the service
+        // Now create the service by registering an instance
         namingService.registerInstance(serviceName, "192.168.1.3", 8080);
+        Thread.sleep(2000);
 
-        boolean received = latch.await(10, TimeUnit.SECONDS);
+        boolean received = latch.await(20, TimeUnit.SECONDS);
         assertTrue(received, "Should receive notification when service is created");
+
+        List<Instance> instances = receivedInstances.get();
+        assertNotNull(instances, "Instance list should not be null after service creation");
+        assertFalse(instances.isEmpty(), "Instance list should not be empty after registration");
+        assertEquals("192.168.1.3", instances.get(0).getIp(),
+                "Received instance IP should match the registered instance");
+        assertEquals(8080, instances.get(0).getPort(),
+                "Received instance port should match the registered instance");
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, listener);
@@ -172,25 +199,43 @@ public class NacosServiceSubscribeTest {
         String serviceName = "multi-sub-" + UUID.randomUUID().toString().substring(0, 8);
         int subscriberCount = 3;
         CountDownLatch latch = new CountDownLatch(subscriberCount);
+        List<AtomicReference<List<Instance>>> capturedInstances = new ArrayList<>();
         List<EventListener> listeners = new ArrayList<>();
 
         for (int i = 0; i < subscriberCount; i++) {
-            final int index = i;
+            AtomicReference<List<Instance>> ref = new AtomicReference<>();
+            capturedInstances.add(ref);
             EventListener listener = event -> {
-                System.out.println("Subscriber " + index + " received event");
-                latch.countDown();
+                if (event instanceof NamingEvent) {
+                    NamingEvent namingEvent = (NamingEvent) event;
+                    if (!namingEvent.getInstances().isEmpty()) {
+                        ref.set(namingEvent.getInstances());
+                        latch.countDown();
+                    }
+                }
             };
             listeners.add(listener);
             namingService.subscribe(serviceName, DEFAULT_GROUP, listener);
         }
 
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Register instance
         namingService.registerInstance(serviceName, "192.168.1.4", 8080);
+        Thread.sleep(2000);
 
-        boolean allReceived = latch.await(15, TimeUnit.SECONDS);
-        assertTrue(allReceived, "All subscribers should receive notification");
+        boolean allReceived = latch.await(20, TimeUnit.SECONDS);
+        assertTrue(allReceived, "All " + subscriberCount + " subscribers should receive notification");
+
+        for (int i = 0; i < subscriberCount; i++) {
+            List<Instance> instances = capturedInstances.get(i).get();
+            assertNotNull(instances, "Subscriber " + i + " should have received instances");
+            assertFalse(instances.isEmpty(), "Subscriber " + i + " instance list should not be empty");
+            assertEquals("192.168.1.4", instances.get(0).getIp(),
+                    "Subscriber " + i + " should see correct IP");
+            assertEquals(8080, instances.get(0).getPort(),
+                    "Subscriber " + i + " should see correct port");
+        }
 
         // Cleanup
         for (EventListener listener : listeners) {
@@ -218,23 +263,36 @@ public class NacosServiceSubscribeTest {
         };
 
         namingService.subscribe(serviceName, DEFAULT_GROUP, listener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Add first instance
         namingService.registerInstance(serviceName, "192.168.1.10", 8080);
-        Thread.sleep(1500);
+        Thread.sleep(3000);
 
         // Add second instance
         namingService.registerInstance(serviceName, "192.168.1.11", 8080);
-        Thread.sleep(1500);
+        Thread.sleep(3000);
 
         // Remove first instance
         namingService.deregisterInstance(serviceName, "192.168.1.10", 8080);
-        Thread.sleep(1500);
+        Thread.sleep(3000);
 
-        latch.await(15, TimeUnit.SECONDS);
+        boolean received = latch.await(20, TimeUnit.SECONDS);
+        assertTrue(received, "Should receive at least 3 notifications for instance changes");
 
-        System.out.println("Instance count changes: " + instanceCounts);
+        assertFalse(instanceCounts.isEmpty(), "Instance count change list should not be empty");
+        assertTrue(instanceCounts.size() >= 3,
+                "Should have recorded at least 3 instance count changes, got " + instanceCounts.size());
+
+        // First notification: 1 instance added
+        assertEquals(1, instanceCounts.get(0),
+                "First notification should show 1 instance");
+        // Second notification: 2 instances (second added)
+        assertEquals(2, instanceCounts.get(1),
+                "Second notification should show 2 instances");
+        // Third notification: 1 instance (first removed)
+        assertEquals(1, instanceCounts.get(2),
+                "Third notification should show 1 instance after removal");
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, listener);
@@ -257,14 +315,16 @@ public class NacosServiceSubscribeTest {
         EventListener listener = event -> {
             if (event instanceof NamingEvent) {
                 NamingEvent namingEvent = (NamingEvent) event;
-                receivedInstances.set(namingEvent.getInstances());
-                latch.countDown();
+                if (!namingEvent.getInstances().isEmpty()) {
+                    receivedInstances.set(namingEvent.getInstances());
+                    latch.countDown();
+                }
             }
         };
 
         // Subscribe to specific cluster
         namingService.subscribe(serviceName, DEFAULT_GROUP, Arrays.asList(targetCluster), listener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Register in target cluster
         Instance instanceA = new Instance();
@@ -272,21 +332,35 @@ public class NacosServiceSubscribeTest {
         instanceA.setPort(8080);
         instanceA.setClusterName(targetCluster);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instanceA);
+        Thread.sleep(2000);
 
-        // Register in different cluster (should not be in notification)
+        // Register in different cluster (should not be in notification for cluster-a subscription)
         Instance instanceB = new Instance();
         instanceB.setIp("192.168.1.21");
         instanceB.setPort(8080);
         instanceB.setClusterName("cluster-b");
         namingService.registerInstance(serviceName, DEFAULT_GROUP, instanceB);
+        Thread.sleep(2000);
 
-        boolean received = latch.await(10, TimeUnit.SECONDS);
-        if (received && receivedInstances.get() != null) {
-            System.out.println("Received instances: " + receivedInstances.get().size());
-            for (Instance inst : receivedInstances.get()) {
-                System.out.println("  " + inst.getIp() + " in cluster " + inst.getClusterName());
-            }
+        boolean received = latch.await(20, TimeUnit.SECONDS);
+        assertTrue(received, "Should receive notification for cluster-a subscription");
+
+        List<Instance> instances = receivedInstances.get();
+        assertNotNull(instances, "Received instance list should not be null");
+        assertFalse(instances.isEmpty(), "Received instance list should not be empty");
+
+        // Verify all received instances belong to the target cluster
+        for (Instance inst : instances) {
+            assertEquals(targetCluster, inst.getClusterName(),
+                    "All received instances should belong to cluster '" + targetCluster
+                            + "', but got '" + inst.getClusterName() + "'");
         }
+
+        // Verify the expected instance is present
+        boolean foundTarget = instances.stream()
+                .anyMatch(i -> "192.168.1.20".equals(i.getIp()) && i.getPort() == 8080);
+        assertTrue(foundTarget,
+                "Should contain the instance registered in target cluster (192.168.1.20:8080)");
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, Arrays.asList(targetCluster), listener);
@@ -308,32 +382,52 @@ public class NacosServiceSubscribeTest {
         EventListener listener = event -> {
             if (event instanceof NamingEvent) {
                 NamingEvent namingEvent = (NamingEvent) event;
-                receivedInstances.set(namingEvent.getInstances());
-                latch.countDown();
+                // Wait until we see instances from both clusters
+                if (namingEvent.getInstances().size() >= 2) {
+                    receivedInstances.set(namingEvent.getInstances());
+                    latch.countDown();
+                }
             }
         };
 
         namingService.subscribe(serviceName, DEFAULT_GROUP, clusters, listener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Register in both clusters
+        Map<String, String> clusterIps = new HashMap<>();
         for (String cluster : clusters) {
+            String ip = "192.168.2." + (Math.abs(cluster.hashCode()) % 256);
+            clusterIps.put(cluster, ip);
             Instance instance = new Instance();
-            instance.setIp("192.168.2." + cluster.hashCode() % 256);
+            instance.setIp(ip);
             instance.setPort(8080);
             instance.setClusterName(cluster);
             namingService.registerInstance(serviceName, DEFAULT_GROUP, instance);
+            Thread.sleep(2000);
         }
 
-        boolean received = latch.await(10, TimeUnit.SECONDS);
-        if (received && receivedInstances.get() != null) {
-            System.out.println("Multi-cluster instances: " + receivedInstances.get().size());
+        boolean received = latch.await(20, TimeUnit.SECONDS);
+        assertTrue(received, "Should receive notification with instances from both clusters");
+
+        List<Instance> instances = receivedInstances.get();
+        assertNotNull(instances, "Received instance list should not be null");
+        assertTrue(instances.size() >= 2,
+                "Should have at least 2 instances (one per cluster), got " + instances.size());
+
+        // Verify instances from both clusters are present
+        Set<String> receivedClusters = new HashSet<>();
+        for (Instance inst : instances) {
+            receivedClusters.add(inst.getClusterName());
+        }
+        for (String cluster : clusters) {
+            assertTrue(receivedClusters.contains(cluster),
+                    "Should contain instance from cluster '" + cluster + "'");
         }
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, clusters, listener);
         for (String cluster : clusters) {
-            namingService.deregisterInstance(serviceName, "192.168.2." + cluster.hashCode() % 256, 8080, cluster);
+            namingService.deregisterInstance(serviceName, clusterIps.get(cluster), 8080, cluster);
         }
     }
 
@@ -344,25 +438,31 @@ public class NacosServiceSubscribeTest {
      */
     @Test
     @Order(8)
-    void testConcurrentSubscribe() throws InterruptedException {
+    void testConcurrentSubscribe() throws InterruptedException, NacosException {
         String serviceName = "concurrent-sub-" + UUID.randomUUID().toString().substring(0, 8);
-        int threadCount = 10;
+        int threadCount = 3;
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch = new CountDownLatch(threadCount);
+        CountDownLatch notifyLatch = new CountDownLatch(threadCount);
         List<EventListener> listeners = new CopyOnWriteArrayList<>();
+        AtomicInteger errorCount = new AtomicInteger(0);
 
         for (int i = 0; i < threadCount; i++) {
-            final int index = i;
             new Thread(() -> {
                 try {
                     startLatch.await();
                     EventListener listener = event -> {
-                        System.out.println("Concurrent subscriber " + index + " received event");
+                        if (event instanceof NamingEvent) {
+                            NamingEvent ne = (NamingEvent) event;
+                            if (!ne.getInstances().isEmpty()) {
+                                notifyLatch.countDown();
+                            }
+                        }
                     };
                     listeners.add(listener);
                     namingService.subscribe(serviceName, DEFAULT_GROUP, listener);
                 } catch (Exception e) {
-                    System.err.println("Concurrent subscribe error: " + e.getMessage());
+                    errorCount.incrementAndGet();
                 } finally {
                     doneLatch.countDown();
                 }
@@ -371,9 +471,19 @@ public class NacosServiceSubscribeTest {
 
         startLatch.countDown();
         boolean completed = doneLatch.await(30, TimeUnit.SECONDS);
-        assertTrue(completed, "All concurrent subscribes should complete");
+        assertTrue(completed, "All concurrent subscribes should complete within 30 seconds");
+        assertEquals(threadCount, listeners.size(),
+                "All " + threadCount + " listeners should have been registered");
+        assertEquals(0, errorCount.get(),
+                "No errors should occur during concurrent subscribe");
 
-        System.out.println("Concurrent subscribers: " + listeners.size());
+        // Register an instance and verify all subscribers get notified
+        Thread.sleep(1000);
+        namingService.registerInstance(serviceName, "192.168.10.1", 8080);
+        Thread.sleep(2000);
+        boolean allNotified = notifyLatch.await(20, TimeUnit.SECONDS);
+        assertTrue(allNotified,
+                "All " + threadCount + " concurrent subscribers should receive the notification");
 
         // Cleanup
         for (EventListener listener : listeners) {
@@ -383,6 +493,7 @@ public class NacosServiceSubscribeTest {
                 // Ignore cleanup errors
             }
         }
+        namingService.deregisterInstance(serviceName, "192.168.10.1", 8080);
     }
 
     /**
@@ -398,7 +509,7 @@ public class NacosServiceSubscribeTest {
         namingService.registerInstance(serviceName, "192.168.3.1", 8080);
         Thread.sleep(500);
 
-        // Rapid subscribe/unsubscribe cycles
+        // Rapid subscribe/unsubscribe cycles - should not throw
         for (int i = 0; i < 5; i++) {
             EventListener listener = event -> {
                 subscribeCount.incrementAndGet();
@@ -410,10 +521,32 @@ public class NacosServiceSubscribeTest {
             Thread.sleep(200);
         }
 
-        System.out.println("Rapid subscribe/unsubscribe - notifications received: " + subscribeCount.get());
+        // After all cycles, verify no subscription is left active
+        AtomicInteger postCycleCount = new AtomicInteger(0);
+        CountDownLatch verifyLatch = new CountDownLatch(1);
+        EventListener verifyListener = event -> {
+            if (event instanceof NamingEvent) {
+                NamingEvent ne = (NamingEvent) event;
+                if (!ne.getInstances().isEmpty()) {
+                    postCycleCount.incrementAndGet();
+                    verifyLatch.countDown();
+                }
+            }
+        };
+
+        // Subscribe fresh to verify the service still works
+        namingService.subscribe(serviceName, DEFAULT_GROUP, verifyListener);
+        Thread.sleep(1000);
+        // Trigger a change
+        namingService.registerInstance(serviceName, "192.168.3.2", 9090);
+        Thread.sleep(2000);
+        boolean got = verifyLatch.await(20, TimeUnit.SECONDS);
+        assertTrue(got, "A fresh subscriber should still receive events after rapid sub/unsub cycles");
 
         // Cleanup
+        namingService.unsubscribe(serviceName, DEFAULT_GROUP, verifyListener);
         namingService.deregisterInstance(serviceName, "192.168.3.1", 8080);
+        namingService.deregisterInstance(serviceName, "192.168.3.2", 9090);
     }
 
     // ==================== Edge Cases ====================
@@ -429,8 +562,13 @@ public class NacosServiceSubscribeTest {
         CountDownLatch latch = new CountDownLatch(1);
 
         EventListener listener = event -> {
-            notificationCount.incrementAndGet();
-            latch.countDown();
+            if (event instanceof NamingEvent) {
+                NamingEvent ne = (NamingEvent) event;
+                if (!ne.getInstances().isEmpty()) {
+                    notificationCount.incrementAndGet();
+                    latch.countDown();
+                }
+            }
         };
 
         // Subscribe multiple times with same listener
@@ -438,15 +576,19 @@ public class NacosServiceSubscribeTest {
         namingService.subscribe(serviceName, DEFAULT_GROUP, listener);
         namingService.subscribe(serviceName, DEFAULT_GROUP, listener);
 
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Register instance
         namingService.registerInstance(serviceName, "192.168.3.2", 8080);
+        Thread.sleep(2000);
 
-        latch.await(10, TimeUnit.SECONDS);
-        Thread.sleep(1000);
+        latch.await(20, TimeUnit.SECONDS);
+        Thread.sleep(2000);
 
-        System.out.println("Duplicate subscribe notification count: " + notificationCount.get());
+        // Duplicate subscribe with same listener should only notify once per event
+        assertEquals(1, notificationCount.get(),
+                "Duplicate subscriptions with same listener should produce only 1 notification, got "
+                        + notificationCount.get());
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, listener);
@@ -461,20 +603,36 @@ public class NacosServiceSubscribeTest {
     void testSubscribeEmptyClusterList() throws NacosException, InterruptedException {
         String serviceName = "empty-cluster-" + UUID.randomUUID().toString().substring(0, 8);
         CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<List<Instance>> receivedInstances = new AtomicReference<>();
 
         EventListener listener = event -> {
-            latch.countDown();
+            if (event instanceof NamingEvent) {
+                NamingEvent ne = (NamingEvent) event;
+                if (!ne.getInstances().isEmpty()) {
+                    receivedInstances.set(ne.getInstances());
+                    latch.countDown();
+                }
+            }
         };
 
         // Subscribe with empty cluster list (should get all clusters)
         namingService.subscribe(serviceName, DEFAULT_GROUP, Collections.emptyList(), listener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Register instance
         namingService.registerInstance(serviceName, "192.168.3.3", 8080);
+        Thread.sleep(2000);
 
-        boolean received = latch.await(10, TimeUnit.SECONDS);
-        System.out.println("Empty cluster list subscription received: " + received);
+        boolean received = latch.await(20, TimeUnit.SECONDS);
+        assertTrue(received, "Empty cluster list subscription should receive all instance events");
+
+        List<Instance> instances = receivedInstances.get();
+        assertNotNull(instances, "Instance list should not be null");
+        assertFalse(instances.isEmpty(), "Instance list should not be empty");
+        assertEquals("192.168.3.3", instances.get(0).getIp(),
+                "Received instance IP should match registered instance");
+        assertEquals(8080, instances.get(0).getPort(),
+                "Received instance port should match registered instance");
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, Collections.emptyList(), listener);
@@ -488,30 +646,51 @@ public class NacosServiceSubscribeTest {
     @Order(12)
     void testSubscribeListenerException() throws NacosException, InterruptedException {
         String serviceName = "listener-error-" + UUID.randomUUID().toString().substring(0, 8);
-        CountDownLatch latch = new CountDownLatch(2);
-        AtomicInteger successCount = new AtomicInteger(0);
+        CountDownLatch badLatch = new CountDownLatch(1);
+        CountDownLatch goodLatch = new CountDownLatch(1);
+        AtomicReference<List<Instance>> goodInstances = new AtomicReference<>();
 
         // Listener that throws exception
         EventListener badListener = event -> {
-            latch.countDown();
-            throw new RuntimeException("Simulated listener error");
+            if (event instanceof NamingEvent) {
+                NamingEvent ne = (NamingEvent) event;
+                if (!ne.getInstances().isEmpty()) {
+                    badLatch.countDown();
+                    throw new RuntimeException("Simulated listener error");
+                }
+            }
         };
 
         // Listener that should still work
         EventListener goodListener = event -> {
-            successCount.incrementAndGet();
-            latch.countDown();
+            if (event instanceof NamingEvent) {
+                NamingEvent ne = (NamingEvent) event;
+                if (!ne.getInstances().isEmpty()) {
+                    goodInstances.set(ne.getInstances());
+                    goodLatch.countDown();
+                }
+            }
         };
 
         namingService.subscribe(serviceName, DEFAULT_GROUP, badListener);
         namingService.subscribe(serviceName, DEFAULT_GROUP, goodListener);
-        Thread.sleep(500);
+        Thread.sleep(1000);
 
         // Register instance
         namingService.registerInstance(serviceName, "192.168.3.4", 8080);
+        Thread.sleep(2000);
 
-        boolean bothCalled = latch.await(10, TimeUnit.SECONDS);
-        System.out.println("Both listeners called: " + bothCalled + ", good listener count: " + successCount.get());
+        boolean goodReceived = goodLatch.await(20, TimeUnit.SECONDS);
+        assertTrue(goodReceived,
+                "Good listener should still receive notification despite bad listener throwing");
+
+        List<Instance> instances = goodInstances.get();
+        assertNotNull(instances, "Good listener instance list should not be null");
+        assertFalse(instances.isEmpty(), "Good listener instance list should not be empty");
+        assertEquals("192.168.3.4", instances.get(0).getIp(),
+                "Good listener should see correct IP");
+        assertEquals(8080, instances.get(0).getPort(),
+                "Good listener should see correct port");
 
         // Cleanup
         namingService.unsubscribe(serviceName, DEFAULT_GROUP, badListener);

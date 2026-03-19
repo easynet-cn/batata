@@ -891,6 +891,41 @@ impl Configuration {
             .unwrap_or(300) as u64
     }
 
+    // ========================================================================
+    // Control Plugin Configuration
+    // ========================================================================
+
+    /// Check if the control plugin (TPS + connection limiting) is enabled
+    pub fn control_plugin_enabled(&self) -> bool {
+        self.config
+            .get_bool("batata.plugin.control.enabled")
+            .unwrap_or(true)
+    }
+
+    /// Get default TPS limit per control point
+    pub fn control_plugin_default_tps(&self) -> u32 {
+        self.config
+            .get_int("batata.plugin.control.default_tps")
+            .unwrap_or(10000) as u32
+    }
+
+    /// Get maximum concurrent gRPC connections
+    pub fn control_plugin_max_connections(&self) -> u32 {
+        self.config
+            .get_int("batata.plugin.control.max_connections")
+            .unwrap_or(50000) as u32
+    }
+
+    /// Create ControlPluginConfig from configuration
+    pub fn control_plugin_config(&self) -> batata_plugin::ControlPluginConfig {
+        batata_plugin::ControlPluginConfig {
+            enabled: self.control_plugin_enabled(),
+            default_tps: self.control_plugin_default_tps(),
+            default_max_connections: self.control_plugin_max_connections(),
+            ..Default::default()
+        }
+    }
+
     /// Create RateLimitConfig from configuration
     pub fn rate_limit_config(&self) -> crate::middleware::rate_limit::RateLimitConfig {
         crate::middleware::rate_limit::RateLimitConfig {

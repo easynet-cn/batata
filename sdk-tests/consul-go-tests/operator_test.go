@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ==================== Operator Raft Tests ====================
@@ -17,15 +18,15 @@ func TestOperatorRaftConfiguration(t *testing.T) {
 	operator := client.Operator()
 
 	config, err := operator.RaftGetConfiguration(nil)
-	if err != nil {
-		t.Logf("Raft configuration not available: %v", err)
-		return
-	}
+	require.NoError(t, err, "RaftGetConfiguration should succeed")
+	require.NotNil(t, config, "Raft configuration should not be nil")
 
-	assert.NotNil(t, config, "Raft configuration should not be nil")
-	t.Logf("Raft servers: %d", len(config.Servers))
+	assert.NotEmpty(t, config.Servers, "Raft configuration should have at least one server")
 
 	for _, server := range config.Servers {
+		assert.NotEmpty(t, server.ID, "Server ID should not be empty")
+		assert.NotEmpty(t, server.Node, "Server Node should not be empty")
+		assert.NotEmpty(t, server.Address, "Server Address should not be empty")
 		t.Logf("Server: ID=%s, Node=%s, Address=%s, Leader=%v, Voter=%v",
 			server.ID, server.Node, server.Address, server.Leader, server.Voter)
 	}
@@ -38,23 +39,22 @@ func TestOperatorRaftLeader(t *testing.T) {
 	operator := client.Operator()
 
 	config, err := operator.RaftGetConfiguration(nil)
-	if err != nil {
-		t.Logf("Raft configuration not available: %v", err)
-		return
-	}
+	require.NoError(t, err, "RaftGetConfiguration should succeed")
+	require.NotNil(t, config, "Raft configuration should not be nil")
 
 	leaderFound := false
 	for _, server := range config.Servers {
 		if server.Leader {
 			leaderFound = true
+			assert.NotEmpty(t, server.Node, "Leader node name should not be empty")
+			assert.NotEmpty(t, server.Address, "Leader address should not be empty")
+			assert.True(t, server.Voter, "Leader should be a voter")
 			t.Logf("Raft leader: %s at %s", server.Node, server.Address)
 			break
 		}
 	}
 
-	if !leaderFound {
-		t.Log("No Raft leader found (may be single-node or no cluster)")
-	}
+	assert.True(t, leaderFound, "A Raft leader should be found in the cluster")
 }
 
 // TestOperatorRaftRemovePeerByAddress tests removing peer by address
@@ -63,13 +63,10 @@ func TestOperatorRaftRemovePeerByAddress(t *testing.T) {
 
 	operator := client.Operator()
 
-	// Try to remove a non-existent peer (should fail gracefully)
+	// Try to remove a non-existent peer (should fail)
 	err := operator.RaftRemovePeerByAddress("192.168.99.99:8300", nil)
-	if err != nil {
-		t.Logf("Remove peer by address: %v (expected for non-existent peer)", err)
-	} else {
-		t.Log("Remove peer by address succeeded")
-	}
+	assert.Error(t, err, "Removing a non-existent peer by address should return an error")
+	t.Logf("Remove peer by address error (expected): %v", err)
 }
 
 // TestOperatorRaftRemovePeerByID tests removing peer by ID
@@ -78,13 +75,10 @@ func TestOperatorRaftRemovePeerByID(t *testing.T) {
 
 	operator := client.Operator()
 
-	// Try to remove a non-existent peer ID
+	// Try to remove a non-existent peer ID (should fail)
 	err := operator.RaftRemovePeerByID("nonexistent-peer-id", nil)
-	if err != nil {
-		t.Logf("Remove peer by ID: %v (expected for non-existent peer)", err)
-	} else {
-		t.Log("Remove peer by ID succeeded")
-	}
+	assert.Error(t, err, "Removing a non-existent peer by ID should return an error")
+	t.Logf("Remove peer by ID error (expected): %v", err)
 }
 
 // ==================== Operator Autopilot Tests ====================
@@ -96,12 +90,15 @@ func TestOperatorAutopilotGetConfiguration(t *testing.T) {
 	operator := client.Operator()
 
 	config, err := operator.AutopilotGetConfiguration(nil)
-	if err != nil {
-		t.Logf("Autopilot configuration not available: %v", err)
-		return
-	}
+	require.NoError(t, err, "AutopilotGetConfiguration should succeed")
+	require.NotNil(t, config, "Autopilot configuration should not be nil")
 
-	assert.NotNil(t, config, "Autopilot configuration should not be nil")
+	// Verify reasonable defaults
+	assert.True(t, config.CleanupDeadServers, "CleanupDeadServers should default to true")
+	assert.True(t, config.LastContactThreshold.Duration() > 0, "LastContactThreshold should be positive")
+	assert.True(t, config.MaxTrailingLogs > 0, "MaxTrailingLogs should be greater than 0")
+	assert.True(t, config.ServerStabilizationTime.Duration() > 0, "ServerStabilizationTime should be positive")
+
 	t.Logf("Autopilot config: CleanupDeadServers=%v, LastContactThreshold=%v, MaxTrailingLogs=%d",
 		config.CleanupDeadServers, config.LastContactThreshold, config.MaxTrailingLogs)
 	t.Logf("ServerStabilizationTime=%v, RedundancyZoneTag=%s, DisableUpgradeMigration=%v",
@@ -116,12 +113,13 @@ func TestOperatorAutopilotSetConfiguration(t *testing.T) {
 
 	// Get current configuration
 	currentConfig, err := operator.AutopilotGetConfiguration(nil)
-	if err != nil {
-		t.Logf("Autopilot not available: %v", err)
-		return
-	}
+	require.NoError(t, err, "AutopilotGetConfiguration should succeed")
+	require.NotNil(t, currentConfig, "Autopilot configuration should not be nil")
 
-	// Try to update configuration
+	// Save original values for restoration and verification
+	originalLastContact := currentConfig.LastContactThreshold
+
+	// Try to update configuration with a modified value
 	newConfig := &api.AutopilotConfiguration{
 		CleanupDeadServers:      currentConfig.CleanupDeadServers,
 		LastContactThreshold:    api.NewReadableDuration(500 * time.Millisecond),
@@ -132,14 +130,25 @@ func TestOperatorAutopilotSetConfiguration(t *testing.T) {
 	}
 
 	err = operator.AutopilotSetConfiguration(newConfig, nil)
-	if err != nil {
-		t.Logf("Autopilot set configuration: %v", err)
-	} else {
-		t.Log("Autopilot configuration updated successfully")
-	}
+	require.NoError(t, err, "AutopilotSetConfiguration should succeed")
+
+	// Verify the update took effect
+	updatedConfig, err := operator.AutopilotGetConfiguration(nil)
+	require.NoError(t, err, "AutopilotGetConfiguration after update should succeed")
+	assert.Equal(t, 500*time.Millisecond, updatedConfig.LastContactThreshold.Duration(),
+		"LastContactThreshold should be updated to 500ms")
 
 	// Restore original configuration
-	operator.AutopilotSetConfiguration(currentConfig, nil)
+	restoreConfig := &api.AutopilotConfiguration{
+		CleanupDeadServers:      currentConfig.CleanupDeadServers,
+		LastContactThreshold:    originalLastContact,
+		MaxTrailingLogs:         currentConfig.MaxTrailingLogs,
+		ServerStabilizationTime: currentConfig.ServerStabilizationTime,
+		RedundancyZoneTag:       currentConfig.RedundancyZoneTag,
+		DisableUpgradeMigration: currentConfig.DisableUpgradeMigration,
+	}
+	err = operator.AutopilotSetConfiguration(restoreConfig, nil)
+	assert.NoError(t, err, "Restoring original Autopilot configuration should succeed")
 }
 
 // TestOperatorAutopilotCASConfiguration tests CAS update of Autopilot configuration
@@ -150,19 +159,27 @@ func TestOperatorAutopilotCASConfiguration(t *testing.T) {
 
 	// Get current configuration
 	currentConfig, err := operator.AutopilotGetConfiguration(nil)
-	if err != nil {
-		t.Logf("Autopilot CAS not available: %v", err)
-		return
-	}
+	require.NoError(t, err, "AutopilotGetConfiguration should succeed")
+	require.NotNil(t, currentConfig, "Autopilot configuration should not be nil")
 
-	// Try CAS update with stale index (should fail)
+	// Try CAS update
+	originalMaxTrailingLogs := currentConfig.MaxTrailingLogs
 	currentConfig.MaxTrailingLogs = currentConfig.MaxTrailingLogs + 100
+
 	success, err := operator.AutopilotCASConfiguration(currentConfig, &api.WriteOptions{})
-	if err != nil {
-		t.Logf("Autopilot CAS update: %v", err)
-	} else {
-		t.Logf("Autopilot CAS update success: %v", success)
-	}
+	require.NoError(t, err, "AutopilotCASConfiguration should not return an error")
+	assert.True(t, success, "AutopilotCASConfiguration should succeed with valid ModifyIndex")
+
+	// Verify the change and restore
+	updatedConfig, err := operator.AutopilotGetConfiguration(nil)
+	require.NoError(t, err, "AutopilotGetConfiguration after CAS should succeed")
+	assert.Equal(t, originalMaxTrailingLogs+100, updatedConfig.MaxTrailingLogs,
+		"MaxTrailingLogs should be updated via CAS")
+
+	// Restore
+	updatedConfig.MaxTrailingLogs = originalMaxTrailingLogs
+	_, err = operator.AutopilotCASConfiguration(updatedConfig, &api.WriteOptions{})
+	assert.NoError(t, err, "Restoring MaxTrailingLogs should succeed")
 }
 
 // TestOperatorAutopilotServerHealth tests getting Autopilot server health
@@ -172,15 +189,17 @@ func TestOperatorAutopilotServerHealth(t *testing.T) {
 	operator := client.Operator()
 
 	health, err := operator.AutopilotServerHealth(nil)
-	if err != nil {
-		t.Logf("Autopilot server health not available: %v", err)
-		return
-	}
+	require.NoError(t, err, "AutopilotServerHealth should succeed")
+	require.NotNil(t, health, "Autopilot server health should not be nil")
 
-	assert.NotNil(t, health, "Autopilot server health should not be nil")
-	t.Logf("Cluster healthy: %v, FailureTolerance: %d", health.Healthy, health.FailureTolerance)
+	assert.True(t, health.Healthy, "Cluster should be healthy")
+	assert.GreaterOrEqual(t, health.FailureTolerance, 0, "FailureTolerance should be >= 0")
+	assert.NotEmpty(t, health.Servers, "Server health list should not be empty")
 
 	for _, server := range health.Servers {
+		assert.NotEmpty(t, server.ID, "Server ID should not be empty")
+		assert.NotEmpty(t, server.Name, "Server Name should not be empty")
+		assert.True(t, server.Healthy, "Server should be healthy")
 		t.Logf("Server: ID=%s, Name=%s, Healthy=%v, Voter=%v, Leader=%v, LastContact=%v",
 			server.ID, server.Name, server.Healthy, server.Voter, server.Leader, server.LastContact)
 	}
@@ -193,14 +212,16 @@ func TestOperatorAutopilotState(t *testing.T) {
 	operator := client.Operator()
 
 	state, err := operator.AutopilotState(nil)
-	if err != nil {
-		t.Logf("Autopilot state not available: %v", err)
-		return
-	}
+	require.NoError(t, err, "AutopilotState should succeed")
+	require.NotNil(t, state, "Autopilot state should not be nil")
 
-	assert.NotNil(t, state, "Autopilot state should not be nil")
-	t.Logf("Autopilot state: Healthy=%v, FailureTolerance=%d, Leader=%s",
-		state.Healthy, state.FailureTolerance, state.Leader)
+	assert.True(t, state.Healthy, "Cluster should be healthy")
+	assert.GreaterOrEqual(t, state.FailureTolerance, 0, "FailureTolerance should be >= 0")
+	assert.NotEmpty(t, string(state.Leader), "Leader should not be empty")
+	assert.NotEmpty(t, state.Voters, "Voters list should not be empty")
+
+	t.Logf("Autopilot state: Healthy=%v, FailureTolerance=%d, Leader=%s, Voters=%v",
+		state.Healthy, state.FailureTolerance, state.Leader, state.Voters)
 }
 
 // ==================== Operator Keyring Tests ====================
@@ -213,14 +234,15 @@ func TestOperatorKeyringList(t *testing.T) {
 
 	keys, err := operator.KeyringList(nil)
 	if err != nil {
-		t.Logf("Keyring list not available (encryption may be disabled): %v", err)
-		return
+		t.Skipf("Keyring list not available (encryption may be disabled): %v", err)
 	}
 
-	assert.NotNil(t, keys, "Keyring list should not be nil")
-	t.Logf("Keyring entries: %d", len(keys))
+	require.NotNil(t, keys, "Keyring list should not be nil")
+	assert.NotEmpty(t, keys, "Keyring list should have at least one entry")
 
 	for _, key := range keys {
+		assert.NotEmpty(t, key.Datacenter, "Datacenter should not be empty")
+		assert.NotEmpty(t, key.Keys, "Keys map should not be empty")
 		t.Logf("Keyring: Datacenter=%s, Segment=%s, Keys=%v",
 			key.Datacenter, key.Segment, key.Keys)
 	}
@@ -232,17 +254,30 @@ func TestOperatorKeyringInstall(t *testing.T) {
 
 	operator := client.Operator()
 
-	// Try to install a test key (32 bytes base64 encoded)
-	testKey := "cg8BpnCK7Nm+bxqkJ7fNBQ==" // Valid 16-byte key base64 encoded
+	// Valid 16-byte key base64 encoded
+	testKey := "cg8BpnCK7Nm+bxqkJ7fNBQ=="
 
 	err := operator.KeyringInstall(testKey, nil)
 	if err != nil {
-		t.Logf("Keyring install: %v (encryption may be disabled)", err)
-	} else {
-		t.Log("Keyring key installed successfully")
-		// Clean up - remove the test key
-		operator.KeyringRemove(testKey, nil)
+		t.Skipf("Keyring install not available (encryption may be disabled): %v", err)
 	}
+
+	// Verify the key was installed by listing keys
+	keys, err := operator.KeyringList(nil)
+	require.NoError(t, err, "KeyringList after install should succeed")
+
+	found := false
+	for _, entry := range keys {
+		if _, ok := entry.Keys[testKey]; ok {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Installed key should appear in keyring list")
+
+	// Clean up - remove the test key
+	err = operator.KeyringRemove(testKey, nil)
+	assert.NoError(t, err, "Removing installed test key should succeed")
 }
 
 // TestOperatorKeyringUse tests setting a primary gossip key
@@ -253,12 +288,31 @@ func TestOperatorKeyringUse(t *testing.T) {
 
 	testKey := "cg8BpnCK7Nm+bxqkJ7fNBQ=="
 
-	err := operator.KeyringUse(testKey, nil)
+	// First install the key
+	err := operator.KeyringInstall(testKey, nil)
 	if err != nil {
-		t.Logf("Keyring use: %v (encryption may be disabled or key not installed)", err)
-	} else {
-		t.Log("Keyring primary key set successfully")
+		t.Skipf("Keyring not available (encryption may be disabled): %v", err)
 	}
+
+	// Set it as primary
+	err = operator.KeyringUse(testKey, nil)
+	require.NoError(t, err, "KeyringUse should succeed for an installed key")
+
+	// Verify the key is listed (it should have usage count reflecting primary status)
+	keys, err := operator.KeyringList(nil)
+	require.NoError(t, err, "KeyringList after use should succeed")
+
+	found := false
+	for _, entry := range keys {
+		if count, ok := entry.Keys[testKey]; ok {
+			found = true
+			assert.True(t, count > 0, "Primary key should have non-zero usage count")
+			break
+		}
+	}
+	assert.True(t, found, "Primary key should appear in keyring list")
+
+	t.Log("Keyring primary key set successfully")
 }
 
 // TestOperatorKeyringRemove tests removing a gossip key
@@ -269,12 +323,26 @@ func TestOperatorKeyringRemove(t *testing.T) {
 
 	testKey := "cg8BpnCK7Nm+bxqkJ7fNBQ=="
 
-	err := operator.KeyringRemove(testKey, nil)
+	// First install the key so we have something to remove
+	err := operator.KeyringInstall(testKey, nil)
 	if err != nil {
-		t.Logf("Keyring remove: %v (encryption may be disabled or key not found)", err)
-	} else {
-		t.Log("Keyring key removed successfully")
+		t.Skipf("Keyring not available (encryption may be disabled): %v", err)
 	}
+
+	// Remove the key
+	err = operator.KeyringRemove(testKey, nil)
+	require.NoError(t, err, "KeyringRemove should succeed for an installed key")
+
+	// Verify the key was removed
+	keys, err := operator.KeyringList(nil)
+	require.NoError(t, err, "KeyringList after remove should succeed")
+
+	for _, entry := range keys {
+		_, exists := entry.Keys[testKey]
+		assert.False(t, exists, "Removed key should not appear in keyring list")
+	}
+
+	t.Log("Keyring key removed successfully")
 }
 
 // ==================== Operator Area Tests (Enterprise) ====================
@@ -287,12 +355,14 @@ func TestOperatorAreaList(t *testing.T) {
 
 	areas, _, err := operator.AreaList(nil)
 	if err != nil {
-		t.Logf("Area list not available (Enterprise feature): %v", err)
-		return
+		t.Skipf("Area list not available (Enterprise feature): %v", err)
 	}
 
+	// Enterprise feature: just verify we got a valid response
+	assert.NotNil(t, areas, "Areas list should not be nil")
 	t.Logf("Areas: %d", len(areas))
 	for _, area := range areas {
+		assert.NotEmpty(t, area.ID, "Area ID should not be empty")
 		t.Logf("Area: ID=%s, PeerDatacenter=%s", area.ID, area.PeerDatacenter)
 	}
 }
@@ -309,17 +379,15 @@ func TestOperatorAreaCreate(t *testing.T) {
 
 	id, _, err := operator.AreaCreate(area, nil)
 	if err != nil {
-		t.Logf("Area create not available (Enterprise feature): %v", err)
-		return
+		t.Skipf("Area create not available (Enterprise feature): %v", err)
 	}
 
+	assert.NotEmpty(t, id, "Created area ID should not be empty")
 	t.Logf("Area created: %s", id)
 
 	// Clean up
 	_, err = operator.AreaDelete(id, nil)
-	if err != nil {
-		t.Logf("Area delete: %v", err)
-	}
+	assert.NoError(t, err, "Area delete should succeed for created area")
 }
 
 // ==================== Operator License Tests (Enterprise) ====================
@@ -332,13 +400,12 @@ func TestOperatorLicenseGet(t *testing.T) {
 
 	license, err := operator.LicenseGet(nil)
 	if err != nil {
-		t.Logf("License get not available (Enterprise feature): %v", err)
-		return
+		t.Skipf("License get not available (Enterprise feature): %v", err)
 	}
 
-	if license != nil {
-		t.Logf("License: Valid=%v, ID=%s", license.Valid, license.License.LicenseID)
-	}
+	require.NotNil(t, license, "License should not be nil")
+	assert.NotEmpty(t, license.License.LicenseID, "License ID should not be empty")
+	t.Logf("License: Valid=%v, ID=%s", license.Valid, license.License.LicenseID)
 }
 
 // ==================== Leader Transfer Tests ====================
@@ -349,13 +416,12 @@ func TestOperatorLeaderTransfer(t *testing.T) {
 
 	operator := client.Operator()
 
-	// Leader transfer to a specific node (will fail without proper cluster)
-	_, err := operator.RaftLeaderTransfer("", nil)
-	if err != nil {
-		t.Logf("Leader transfer: %v (expected in single-node)", err)
-	} else {
-		t.Log("Leader transfer initiated successfully")
-	}
+	// Leader transfer with empty string transfers to any eligible peer
+	// In a single-node cluster this should still not error
+	resp, err := operator.RaftLeaderTransfer("", nil)
+	require.NoError(t, err, "Leader transfer should not return an error")
+	assert.NotNil(t, resp, "Leader transfer response should not be nil")
+	t.Logf("Leader transfer initiated successfully")
 }
 
 // TestOperatorLeaderTransferToNode tests leader transfer to specific node
@@ -366,14 +432,11 @@ func TestOperatorLeaderTransferToNode(t *testing.T) {
 
 	// Get current configuration to find a node
 	config, err := operator.RaftGetConfiguration(nil)
-	if err != nil {
-		t.Logf("Cannot get Raft configuration: %v", err)
-		return
-	}
+	require.NoError(t, err, "RaftGetConfiguration should succeed")
+	require.NotNil(t, config, "Raft configuration should not be nil")
 
 	if len(config.Servers) < 2 {
-		t.Log("Skipping leader transfer - need at least 2 nodes")
-		return
+		t.Skip("Skipping leader transfer - need at least 2 nodes")
 	}
 
 	// Find a non-leader node
@@ -385,17 +448,12 @@ func TestOperatorLeaderTransferToNode(t *testing.T) {
 		}
 	}
 
-	if targetID == "" {
-		t.Log("No eligible transfer target found")
-		return
-	}
+	require.NotEmpty(t, targetID, "Should find an eligible non-leader voter for transfer target")
 
-	_, err = operator.RaftLeaderTransfer(targetID, nil)
-	if err != nil {
-		t.Logf("Leader transfer to %s: %v", targetID, err)
-	} else {
-		t.Logf("Leader transfer to %s initiated", targetID)
-	}
+	resp, err := operator.RaftLeaderTransfer(targetID, nil)
+	require.NoError(t, err, "Leader transfer to specific node should not error")
+	assert.NotNil(t, resp, "Leader transfer response should not be nil")
+	t.Logf("Leader transfer to %s initiated", targetID)
 }
 
 // ==================== Segment Tests (Enterprise) ====================
@@ -408,9 +466,9 @@ func TestOperatorSegmentList(t *testing.T) {
 
 	segments, _, err := operator.SegmentList(nil)
 	if err != nil {
-		t.Logf("Segment list not available (Enterprise feature): %v", err)
-		return
+		t.Skipf("Segment list not available (Enterprise feature): %v", err)
 	}
 
+	assert.NotNil(t, segments, "Segments list should not be nil")
 	t.Logf("Segments: %v", segments)
 }

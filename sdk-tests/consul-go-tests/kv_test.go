@@ -345,3 +345,57 @@ func TestKVDeleteTree(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Empty(t, pairs, "All keys should be deleted")
 }
+
+// CK-010: Test KV DeleteCAS (Compare-And-Swap delete)
+func TestKVDeleteCAS(t *testing.T) {
+	client := getClient(t)
+	key := "ck010/deletecas/" + randomID()
+
+	// Put initial value
+	_, err := client.KV().Put(&api.KVPair{
+		Key:   key,
+		Value: []byte("cas-delete-value"),
+	}, nil)
+	require.NoError(t, err)
+
+	// Get to obtain ModifyIndex
+	pair, _, err := client.KV().Get(key, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pair)
+
+	correctIndex := pair.ModifyIndex
+
+	// DeleteCAS with correct ModifyIndex - should succeed
+	success, _, err := client.KV().DeleteCAS(&api.KVPair{
+		Key:         key,
+		ModifyIndex: correctIndex,
+	}, nil)
+	assert.NoError(t, err)
+	assert.True(t, success, "DeleteCAS with correct ModifyIndex should succeed")
+
+	// Verify deleted
+	pair, _, err = client.KV().Get(key, nil)
+	assert.NoError(t, err)
+	assert.Nil(t, pair, "Key should be deleted after DeleteCAS")
+
+	// Put the key again for the stale CAS test
+	_, err = client.KV().Put(&api.KVPair{
+		Key:   key,
+		Value: []byte("cas-delete-value-2"),
+	}, nil)
+	require.NoError(t, err)
+	defer client.KV().Delete(key, nil)
+
+	// DeleteCAS with stale ModifyIndex - should fail
+	success, _, err = client.KV().DeleteCAS(&api.KVPair{
+		Key:         key,
+		ModifyIndex: correctIndex, // stale index from before re-creation
+	}, nil)
+	assert.NoError(t, err)
+	assert.False(t, success, "DeleteCAS with stale ModifyIndex should fail")
+
+	// Verify key still exists
+	pair, _, err = client.KV().Get(key, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, pair, "Key should still exist after failed DeleteCAS")
+}

@@ -31,12 +31,11 @@ public class NacosConfigChangeNotifyTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         configService = NacosFactory.createConfigService(properties);
-        System.out.println("Config Change Notify Test Setup - Server: " + serverAddr);
     }
 
     @AfterAll
@@ -114,11 +113,11 @@ public class NacosConfigChangeNotifyTest {
         configService.publishConfig(dataId, DEFAULT_GROUP, modifiedContent);
 
         boolean received = modifyLatch.await(15, TimeUnit.SECONDS);
-        System.out.println("Modify notification received: " + received + ", call count: " + callCount.get());
-
-        if (received) {
-            assertEquals(modifiedContent, lastContent.get(), "Should receive modified content");
-        }
+        assertTrue(received, "Listener should fire when config is modified");
+        assertTrue(callCount.get() >= 2,
+                "Listener should have been called at least twice (add + modify), got: " + callCount.get());
+        assertEquals(modifiedContent, lastContent.get(),
+                "Should receive modified content as the last notification");
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -159,15 +158,12 @@ public class NacosConfigChangeNotifyTest {
         configService.removeConfig(dataId, DEFAULT_GROUP);
 
         boolean deleteReceived = deleteLatch.await(10, TimeUnit.SECONDS);
-        System.out.println("Delete notification received: " + deleteReceived);
-        System.out.println("Last content after delete: '" + lastContent.get() + "'");
+        assertTrue(deleteReceived, "Listener should fire when config is deleted");
 
-        if (deleteReceived) {
-            // After delete, content should be null or empty
-            String content = lastContent.get();
-            assertTrue(content == null || content.isEmpty(),
-                    "Content should be null or empty after delete, but was: " + content);
-        }
+        // After delete, content should be null or empty
+        String content = lastContent.get();
+        assertTrue(content == null || content.isEmpty(),
+                "Content should be null or empty after delete, but was: " + content);
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -239,7 +235,8 @@ public class NacosConfigChangeNotifyTest {
         Thread.sleep(3000);
 
         int countAfterFirst = callCount.get();
-        System.out.println("Calls after first publish: " + countAfterFirst);
+        assertTrue(countAfterFirst >= 1,
+                "Should have received at least 1 notification before removal, got: " + countAfterFirst);
 
         // Remove listener
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -250,8 +247,6 @@ public class NacosConfigChangeNotifyTest {
         Thread.sleep(3000);
 
         int countAfterSecond = callCount.get();
-        System.out.println("Calls after second publish (listener removed): " + countAfterSecond);
-
         assertEquals(countAfterFirst, countAfterSecond,
                 "Removed listener should not receive further notifications");
 
@@ -290,10 +285,11 @@ public class NacosConfigChangeNotifyTest {
         latch.await(30, TimeUnit.SECONDS);
 
         int finalCount = receiveCount.get();
-        System.out.println("Published " + changeCount + " rapid changes, received " + finalCount + " notifications");
-
         // Should receive at least some notifications (may coalesce rapid changes)
-        assertTrue(finalCount >= 1, "Should receive at least one notification for rapid changes");
+        assertTrue(finalCount >= 1,
+                "Should receive at least one notification for rapid changes, got: " + finalCount);
+        assertTrue(finalCount <= changeCount * 2,
+                "Should not receive more notifications than changes (with some tolerance), got: " + finalCount);
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);
@@ -327,17 +323,14 @@ public class NacosConfigChangeNotifyTest {
         for (int i = 0; i < changeCount; i++) {
             finalContent = "ccn.latest.change=" + i;
             configService.publishConfig(dataId, DEFAULT_GROUP, finalContent);
-            Thread.sleep(1500);
+            Thread.sleep(5000);
         }
 
-        boolean received = latch.await(30, TimeUnit.SECONDS);
-        System.out.println("Received final value: " + received);
-        System.out.println("Last received content: " + lastReceived.get());
-
-        if (received) {
-            assertEquals(finalContent, lastReceived.get(),
-                    "Last received value should match the final published content");
-        }
+        boolean received = latch.await(60, TimeUnit.SECONDS);
+        assertTrue(received, "Should eventually receive the final config value");
+        assertNotNull(lastReceived.get(), "Last received content should not be null");
+        assertEquals(finalContent, lastReceived.get(),
+                "Last received value should match the final published content");
 
         // Cleanup
         configService.removeListener(dataId, DEFAULT_GROUP, listener);

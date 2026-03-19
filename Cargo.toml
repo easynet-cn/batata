@@ -21,6 +21,7 @@ members = [
     "crates/batata-consul-client",
     "crates/batata-migration",
     "crates/batata-server",
+    "crates/batata-integration-tests",
 ]
 
 [workspace.package]

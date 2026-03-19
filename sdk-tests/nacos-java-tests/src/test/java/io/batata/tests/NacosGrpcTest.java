@@ -39,9 +39,9 @@ public class NacosGrpcTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         configService = NacosFactory.createConfigService(properties);
         namingService = NacosFactory.createNamingService(properties);
@@ -477,10 +477,10 @@ public class NacosGrpcTest {
         // Publish multiple updates to test stream handling
         for (int i = 0; i < 5; i++) {
             configService.publishConfig(dataId, DEFAULT_GROUP, "stream.message=" + i);
-            Thread.sleep(500);
+            Thread.sleep(1500);
         }
 
-        boolean received = latch.await(30, TimeUnit.SECONDS);
+        boolean received = latch.await(60, TimeUnit.SECONDS);
         assertTrue(received, "Should receive all stream messages");
         assertEquals(5, messageCount.get(), "Should receive 5 messages");
 

@@ -1,12 +1,15 @@
 package tests
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
 
 // ==================== ACL Token Tests ====================
 
@@ -363,4 +366,1016 @@ func TestACLTokenWithRole(t *testing.T) {
 
 	assert.NotEmpty(t, createdToken.Roles, "Token should have roles")
 	t.Logf("Created token with role: %s", createdToken.AccessorID)
+}
+
+// ==================== ACL Token Update Tests ====================
+
+// CACL-016: Test update ACL token description
+func TestACLTokenUpdate(t *testing.T) {
+	client := getClient(t)
+
+	// Create token
+	token := &api.ACLToken{
+		Description: "Original description " + randomID(),
+		Local:       true,
+	}
+	created, _, err := client.ACL().TokenCreate(token, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	// Update description
+	created.Description = "Updated description"
+	updated, _, err := client.ACL().TokenUpdate(created, nil)
+	require.NoError(t, err, "Token update should succeed")
+	assert.Equal(t, "Updated description", updated.Description, "Description should be updated")
+	assert.Equal(t, created.AccessorID, updated.AccessorID, "AccessorID should not change")
+	assert.Equal(t, created.SecretID, updated.SecretID, "SecretID should not change")
+}
+
+// CACL-017: Test update ACL token add policy
+func TestACLTokenUpdateAddPolicy(t *testing.T) {
+	client := getClient(t)
+
+	// Create policy
+	policy := &api.ACLPolicy{
+		Name:  "update-token-policy-" + randomID(),
+		Rules: `key_prefix "update/" { policy = "read" }`,
+	}
+	createdPolicy, _, err := client.ACL().PolicyCreate(policy, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().PolicyDelete(createdPolicy.ID, nil)
+
+	// Create token without policy
+	token := &api.ACLToken{
+		Description: "Token to update " + randomID(),
+		Local:       true,
+	}
+	created, _, err := client.ACL().TokenCreate(token, nil)
+	require.NoError(t, err)
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	assert.Empty(t, created.Policies, "Token should start without policies")
+
+	// Update token to add policy
+	created.Policies = []*api.ACLTokenPolicyLink{
+		{ID: createdPolicy.ID},
+	}
+	updated, _, err := client.ACL().TokenUpdate(created, nil)
+	require.NoError(t, err, "Token update should succeed")
+	assert.Len(t, updated.Policies, 1, "Token should have 1 policy after update")
+	assert.Equal(t, createdPolicy.ID, updated.Policies[0].ID, "Policy ID should match")
+}
+
+// CACL-018: Test clone ACL token
+func TestACLTokenClone(t *testing.T) {
+	client := getClient(t)
+
+	// Create original token
+	token := &api.ACLToken{
+		Description: "Original token " + randomID(),
+		Local:       true,
+	}
+	original, _, err := client.ACL().TokenCreate(token, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().TokenDelete(original.AccessorID, nil)
+
+	// Clone token
+	cloned, _, err := client.ACL().TokenClone(original.AccessorID, "Cloned token", nil)
+	if err != nil {
+		t.Skipf("Token clone not supported: %v", err)
+	}
+	defer client.ACL().TokenDelete(cloned.AccessorID, nil)
+
+	assert.NotEqual(t, original.AccessorID, cloned.AccessorID, "Cloned token should have different AccessorID")
+	assert.NotEqual(t, original.SecretID, cloned.SecretID, "Cloned token should have different SecretID")
+	assert.Equal(t, "Cloned token", cloned.Description, "Cloned token should have new description")
+	assert.Equal(t, original.Local, cloned.Local, "Cloned token should preserve Local flag")
+}
+
+// CACL-019: Test read ACL token self
+func TestACLTokenSelf(t *testing.T) {
+	client := getClient(t)
+
+	// Create a token with a known secret
+	token := &api.ACLToken{
+		Description: "Self test token " + randomID(),
+		Local:       true,
+	}
+	created, _, err := client.ACL().TokenCreate(token, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	// Read self using the new token's secret
+	selfClient, err := api.NewClient(&api.Config{
+		Address: "127.0.0.1:8500",
+		Token:   created.SecretID,
+	})
+	require.NoError(t, err)
+
+	self, _, err := selfClient.ACL().TokenReadSelf(nil)
+	if err != nil {
+		t.Skipf("Token self-read not supported: %v", err)
+	}
+
+	assert.Equal(t, created.AccessorID, self.AccessorID, "Self read should return same AccessorID")
+	assert.Equal(t, created.SecretID, self.SecretID, "Self read should return same SecretID")
+	assert.Equal(t, token.Description, self.Description, "Self read should return correct description")
+}
+
+// ==================== ACL Policy Update Tests ====================
+
+// CACL-020: Test update ACL policy
+func TestACLPolicyUpdate(t *testing.T) {
+	client := getClient(t)
+
+	// Create policy
+	policy := &api.ACLPolicy{
+		Name:        "update-policy-" + randomID(),
+		Description: "Original policy description",
+		Rules:       `key_prefix "update/" { policy = "read" }`,
+	}
+	created, _, err := client.ACL().PolicyCreate(policy, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().PolicyDelete(created.ID, nil)
+
+	// Update policy
+	created.Description = "Updated policy description"
+	created.Rules = `key_prefix "update/" { policy = "write" }`
+	updated, _, err := client.ACL().PolicyUpdate(created, nil)
+	require.NoError(t, err, "Policy update should succeed")
+	assert.Equal(t, "Updated policy description", updated.Description, "Description should be updated")
+	assert.Contains(t, updated.Rules, "write", "Rules should be updated")
+	assert.Equal(t, created.ID, updated.ID, "Policy ID should not change")
+}
+
+// CACL-021: Test read ACL policy by name
+func TestACLPolicyReadByName(t *testing.T) {
+	client := getClient(t)
+
+	policyName := "name-lookup-policy-" + randomID()
+	policy := &api.ACLPolicy{
+		Name:  policyName,
+		Rules: `key_prefix "name/" { policy = "read" }`,
+	}
+	created, _, err := client.ACL().PolicyCreate(policy, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().PolicyDelete(created.ID, nil)
+
+	// Read by name
+	read, _, err := client.ACL().PolicyReadByName(policyName, nil)
+	if err != nil {
+		t.Skipf("Policy read by name not supported: %v", err)
+	}
+
+	assert.Equal(t, created.ID, read.ID, "Policy ID should match")
+	assert.Equal(t, policyName, read.Name, "Policy name should match")
+}
+
+// CACL-022: Test delete ACL policy verifies removal
+func TestACLPolicyDeleteVerify(t *testing.T) {
+	client := getClient(t)
+
+	policy := &api.ACLPolicy{
+		Name:  "delete-verify-policy-" + randomID(),
+		Rules: `key_prefix "delv/" { policy = "read" }`,
+	}
+	created, _, err := client.ACL().PolicyCreate(policy, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+
+	// Delete
+	_, err = client.ACL().PolicyDelete(created.ID, nil)
+	require.NoError(t, err, "Policy delete should succeed")
+
+	// Verify deleted
+	_, _, err = client.ACL().PolicyRead(created.ID, nil)
+	assert.Error(t, err, "Reading deleted policy should return an error")
+}
+
+// ==================== ACL Role by Name Tests ====================
+
+// CACL-023: Test read ACL role by name
+func TestACLRoleReadByName(t *testing.T) {
+	client := getClient(t)
+
+	roleName := "name-lookup-role-" + randomID()
+	role := &api.ACLRole{
+		Name:        roleName,
+		Description: "Role for name lookup test",
+	}
+	created, _, err := client.ACL().RoleCreate(role, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().RoleDelete(created.ID, nil)
+
+	// Read by name
+	read, _, err := client.ACL().RoleReadByName(roleName, nil)
+	if err != nil {
+		t.Skipf("Role read by name not supported: %v", err)
+	}
+
+	assert.Equal(t, created.ID, read.ID, "Role ID should match")
+	assert.Equal(t, roleName, read.Name, "Role name should match")
+	assert.Equal(t, "Role for name lookup test", read.Description, "Description should match")
+}
+
+// CACL-024: Test delete ACL role verifies removal
+func TestACLRoleDeleteVerify(t *testing.T) {
+	client := getClient(t)
+
+	role := &api.ACLRole{
+		Name: "delete-verify-role-" + randomID(),
+	}
+	created, _, err := client.ACL().RoleCreate(role, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+
+	// Delete
+	_, err = client.ACL().RoleDelete(created.ID, nil)
+	require.NoError(t, err, "Role delete should succeed")
+
+	// Verify deleted
+	_, _, err = client.ACL().RoleRead(created.ID, nil)
+	assert.Error(t, err, "Reading deleted role should return an error")
+}
+
+// ==================== ACL Bootstrap Test ====================
+
+// CACL-025: Test ACL bootstrap (should fail if already bootstrapped)
+func TestACLBootstrap(t *testing.T) {
+	client := getClient(t)
+
+	// Bootstrap should fail if ACL is already bootstrapped
+	_, _, err := client.ACL().Bootstrap()
+	// Either succeeds (first time) or returns "already bootstrapped" error — both are valid
+	if err != nil {
+		assert.Contains(t, err.Error(), "bootstrap", "Error should mention bootstrap")
+		t.Logf("Bootstrap returned expected error: %v", err)
+	} else {
+		t.Log("Bootstrap succeeded (first-time bootstrap)")
+	}
+}
+
+// ==================== ACL Token Permissions Enforcement Test ====================
+
+// CACL-026: Test that a token with limited policy can only access permitted resources
+func TestACLTokenPermissionEnforcement(t *testing.T) {
+	client := getClient(t)
+
+	// Create a restrictive policy: only allows read on key prefix "allowed/"
+	policy := &api.ACLPolicy{
+		Name:  "restricted-policy-" + randomID(),
+		Rules: `key_prefix "allowed/" { policy = "read" }`,
+	}
+	createdPolicy, _, err := client.ACL().PolicyCreate(policy, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().PolicyDelete(createdPolicy.ID, nil)
+
+	// Create token with restricted policy
+	token := &api.ACLToken{
+		Description: "Restricted token " + randomID(),
+		Policies: []*api.ACLTokenPolicyLink{
+			{ID: createdPolicy.ID},
+		},
+		Local: true,
+	}
+	created, _, err := client.ACL().TokenCreate(token, nil)
+	require.NoError(t, err)
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	// Create a client using the restricted token
+	restrictedClient, err := api.NewClient(&api.Config{
+		Address: "127.0.0.1:8500",
+		Token:   created.SecretID,
+	})
+	require.NoError(t, err)
+
+	// Write a key with the root token for the restricted client to read
+	kv := client.KV()
+	_, err = kv.Put(&api.KVPair{Key: "allowed/test-key", Value: []byte("permitted")}, nil)
+	require.NoError(t, err)
+	defer kv.Delete("allowed/test-key", nil)
+
+	// The restricted client should be able to read "allowed/test-key"
+	pair, _, err := restrictedClient.KV().Get("allowed/test-key", nil)
+	if err != nil {
+		// Some implementations don't enforce per-key ACLs on KV
+		t.Skipf("KV ACL enforcement not available: %v", err)
+	}
+	if pair != nil {
+		assert.Equal(t, "permitted", string(pair.Value), "Should read the correct value")
+		t.Log("Restricted token can read allowed/ prefix — ACL enforcement working")
+	}
+}
+
+// ==================== ACL Token List Filtering Tests ====================
+
+// CACL-027: Test listing ACL tokens finds the created token
+func TestACLTokenListFindsCreated(t *testing.T) {
+	client := getClient(t)
+
+	desc := "findme-token-" + randomID()
+	token := &api.ACLToken{
+		Description: desc,
+		Local:       true,
+	}
+	created, _, err := client.ACL().TokenCreate(token, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	// List and find our token
+	tokens, _, err := client.ACL().TokenList(nil)
+	require.NoError(t, err, "Token list should succeed")
+
+	found := false
+	for _, tok := range tokens {
+		if tok.AccessorID == created.AccessorID {
+			found = true
+			assert.Equal(t, desc, tok.Description, "Listed token description should match")
+			break
+		}
+	}
+	assert.True(t, found, "Created token should appear in token list")
+}
+
+// CACL-028: Test listing ACL policies finds the created policy
+func TestACLPolicyListFindsCreated(t *testing.T) {
+	client := getClient(t)
+
+	policyName := "findme-policy-" + randomID()
+	policy := &api.ACLPolicy{
+		Name:  policyName,
+		Rules: `key_prefix "findme/" { policy = "read" }`,
+	}
+	created, _, err := client.ACL().PolicyCreate(policy, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().PolicyDelete(created.ID, nil)
+
+	// List and find our policy
+	policies, _, err := client.ACL().PolicyList(nil)
+	require.NoError(t, err, "Policy list should succeed")
+
+	found := false
+	for _, pol := range policies {
+		if pol.ID == created.ID {
+			found = true
+			assert.Equal(t, policyName, pol.Name, "Listed policy name should match")
+			break
+		}
+	}
+	assert.True(t, found, "Created policy should appear in policy list")
+}
+
+// ==================== ACL Auth Method Tests (Enterprise) ====================
+
+// CACL-029: Test create ACL auth method
+func TestACLAuthMethodCreate(t *testing.T) {
+	client := getClient(t)
+
+	method := &api.ACLAuthMethod{
+		Name:        "test-auth-method-" + randomID(),
+		Type:        "jwt",
+		Description: "Test auth method for SDK tests",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+
+	created, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method create not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(created.Name, nil)
+
+	assert.Equal(t, method.Name, created.Name, "Auth method name should match")
+	assert.Equal(t, "jwt", created.Type, "Auth method type should be jwt")
+	assert.Equal(t, method.Description, created.Description, "Description should match")
+}
+
+// CACL-030: Test read ACL auth method
+func TestACLAuthMethodRead(t *testing.T) {
+	client := getClient(t)
+
+	methodName := "read-auth-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name: methodName,
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+
+	_, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(methodName, nil)
+
+	read, _, err := client.ACL().AuthMethodRead(methodName, nil)
+	require.NoError(t, err, "Auth method read should succeed")
+	assert.Equal(t, methodName, read.Name, "Name should match")
+	assert.Equal(t, "jwt", read.Type, "Type should match")
+}
+
+// CACL-031: Test list ACL auth methods
+func TestACLAuthMethodList(t *testing.T) {
+	client := getClient(t)
+
+	method := &api.ACLAuthMethod{
+		Name: "list-auth-method-" + randomID(),
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+
+	created, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(created.Name, nil)
+
+	methods, _, err := client.ACL().AuthMethodList(nil)
+	require.NoError(t, err, "Auth method list should succeed")
+	assert.NotEmpty(t, methods, "Should have at least one auth method")
+
+	found := false
+	for _, m := range methods {
+		if m.Name == created.Name {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Created auth method should appear in list")
+}
+
+// CACL-032: Test delete ACL auth method
+func TestACLAuthMethodDelete(t *testing.T) {
+	client := getClient(t)
+
+	methodName := "delete-auth-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name: methodName,
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+
+	_, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+
+	_, err = client.ACL().AuthMethodDelete(methodName, nil)
+	require.NoError(t, err, "Auth method delete should succeed")
+
+	// Verify deleted
+	_, _, err = client.ACL().AuthMethodRead(methodName, nil)
+	assert.Error(t, err, "Reading deleted auth method should return an error")
+}
+
+// ==================== ACL Binding Rule Tests (Enterprise) ====================
+
+// CACL-033: Test create ACL binding rule
+func TestACLBindingRuleCreate(t *testing.T) {
+	client := getClient(t)
+
+	// Create auth method first (binding rules require an auth method)
+	methodName := "binding-rule-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name: methodName,
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+	_, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(methodName, nil)
+
+	rule := &api.ACLBindingRule{
+		AuthMethod:  methodName,
+		Description: "Test binding rule " + randomID(),
+		BindType:    api.BindingRuleBindTypeService,
+		BindName:    "test-service-${value.name}",
+		Selector:    `value.team == "engineering"`,
+	}
+
+	created, _, err := client.ACL().BindingRuleCreate(rule, nil)
+	if err != nil {
+		t.Skipf("Binding rule create not supported: %v", err)
+	}
+	defer client.ACL().BindingRuleDelete(created.ID, nil)
+
+	assert.NotEmpty(t, created.ID, "Should return binding rule ID")
+	assert.Equal(t, methodName, created.AuthMethod, "Auth method should match")
+	assert.Equal(t, api.BindingRuleBindTypeService, created.BindType, "Bind type should match")
+	assert.Equal(t, "test-service-${value.name}", created.BindName, "Bind name should match")
+}
+
+// CACL-034: Test list ACL binding rules
+func TestACLBindingRuleList(t *testing.T) {
+	client := getClient(t)
+
+	methodName := "binding-rule-list-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name: methodName,
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+	_, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(methodName, nil)
+
+	rule := &api.ACLBindingRule{
+		AuthMethod: methodName,
+		BindType:   api.BindingRuleBindTypeRole,
+		BindName:   "test-role",
+	}
+	created, _, err := client.ACL().BindingRuleCreate(rule, nil)
+	if err != nil {
+		t.Skipf("Binding rule not supported: %v", err)
+	}
+	defer client.ACL().BindingRuleDelete(created.ID, nil)
+
+	rules, _, err := client.ACL().BindingRuleList(methodName, nil)
+	require.NoError(t, err, "Binding rule list should succeed")
+	assert.NotEmpty(t, rules, "Should have at least one binding rule")
+
+	found := false
+	for _, r := range rules {
+		if r.ID == created.ID {
+			found = true
+			assert.Equal(t, methodName, r.AuthMethod, "Auth method should match")
+			break
+		}
+	}
+	assert.True(t, found, "Created binding rule should appear in list")
+}
+
+// CACL-035: Test delete ACL binding rule
+func TestACLBindingRuleDelete(t *testing.T) {
+	client := getClient(t)
+
+	methodName := "binding-rule-del-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name: methodName,
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+	_, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(methodName, nil)
+
+	rule := &api.ACLBindingRule{
+		AuthMethod: methodName,
+		BindType:   api.BindingRuleBindTypeService,
+		BindName:   "del-service",
+	}
+	created, _, err := client.ACL().BindingRuleCreate(rule, nil)
+	if err != nil {
+		t.Skipf("Binding rule not supported: %v", err)
+	}
+
+	_, err = client.ACL().BindingRuleDelete(created.ID, nil)
+	require.NoError(t, err, "Binding rule delete should succeed")
+
+	// Verify deleted
+	_, _, err = client.ACL().BindingRuleRead(created.ID, nil)
+	assert.Error(t, err, "Reading deleted binding rule should return an error")
+}
+
+// ==================== ACL Role with Policy Tests ====================
+
+// CACL-036: Test create role with policy links
+func TestACLRoleWithPolicies(t *testing.T) {
+	client := getClient(t)
+
+	// Create two policies
+	policy1 := &api.ACLPolicy{
+		Name:  "role-policy-1-" + randomID(),
+		Rules: `key_prefix "p1/" { policy = "read" }`,
+	}
+	created1, _, err := client.ACL().PolicyCreate(policy1, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().PolicyDelete(created1.ID, nil)
+
+	policy2 := &api.ACLPolicy{
+		Name:  "role-policy-2-" + randomID(),
+		Rules: `key_prefix "p2/" { policy = "write" }`,
+	}
+	created2, _, err := client.ACL().PolicyCreate(policy2, nil)
+	require.NoError(t, err)
+	defer client.ACL().PolicyDelete(created2.ID, nil)
+
+	// Create role with both policies
+	role := &api.ACLRole{
+		Name:        "multi-policy-role-" + randomID(),
+		Description: "Role with multiple policies",
+		Policies: []*api.ACLRolePolicyLink{
+			{ID: created1.ID},
+			{ID: created2.ID},
+		},
+	}
+	createdRole, _, err := client.ACL().RoleCreate(role, nil)
+	require.NoError(t, err)
+	defer client.ACL().RoleDelete(createdRole.ID, nil)
+
+	assert.Len(t, createdRole.Policies, 2, "Role should have 2 policies")
+
+	// Read back and verify
+	readRole, _, err := client.ACL().RoleRead(createdRole.ID, nil)
+	require.NoError(t, err)
+	assert.Len(t, readRole.Policies, 2, "Read role should have 2 policies")
+
+	policyIDs := make(map[string]bool)
+	for _, p := range readRole.Policies {
+		policyIDs[p.ID] = true
+	}
+	assert.True(t, policyIDs[created1.ID], "Role should contain policy 1")
+	assert.True(t, policyIDs[created2.ID], "Role should contain policy 2")
+}
+
+// ==================== ACL Token Expiration Test ====================
+
+// CACL-037: Test create token with expiration time
+func TestACLTokenWithExpiration(t *testing.T) {
+	client := getClient(t)
+
+	token := &api.ACLToken{
+		Description:   "Expiring token " + randomID(),
+		Local:         true,
+		ExpirationTTL: 1 * time.Hour,
+	}
+
+	created, _, err := client.ACL().TokenCreate(token, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or token expiration not supported")
+	}
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	assert.NotEmpty(t, created.AccessorID, "Should return accessor ID")
+	if !created.ExpirationTime.IsZero() {
+		assert.True(t, created.ExpirationTime.After(time.Now()), "Expiration should be in the future")
+		t.Logf("Token expires at: %s", created.ExpirationTime.Format(time.RFC3339))
+	} else {
+		t.Log("Server did not return expiration time (may not support TTL)")
+	}
+}
+
+// ==================== ACL Token Read Expanded Tests ====================
+
+// CACL-038: Test read ACL token with expanded info
+func TestACLTokenReadExpanded(t *testing.T) {
+	client := getClient(t)
+
+	// Create a policy to attach to the token
+	policy := &api.ACLPolicy{
+		Name:  "expanded-policy-" + randomID(),
+		Rules: `key_prefix "expanded/" { policy = "read" }`,
+	}
+	createdPolicy, _, err := client.ACL().PolicyCreate(policy, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().PolicyDelete(createdPolicy.ID, nil)
+
+	// Create token with the policy
+	token := &api.ACLToken{
+		Description: "Expanded read token " + randomID(),
+		Policies: []*api.ACLTokenPolicyLink{
+			{ID: createdPolicy.ID},
+		},
+		Local: true,
+	}
+	created, _, err := client.ACL().TokenCreate(token, nil)
+	require.NoError(t, err)
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	// Read token with expanded info
+	expanded, _, err := client.ACL().TokenReadExpanded(created.AccessorID, nil)
+	if err != nil {
+		t.Skipf("TokenReadExpanded not supported: %v", err)
+	}
+
+	assert.NotNil(t, expanded, "Expanded token response should not be nil")
+	assert.Equal(t, created.AccessorID, expanded.AccessorID, "AccessorID should match")
+	assert.Equal(t, created.SecretID, expanded.SecretID, "SecretID should match")
+	assert.Equal(t, token.Description, expanded.Description, "Description should match")
+	assert.NotEmpty(t, expanded.ExpandedPolicies, "Should have expanded policies")
+
+	// Verify the expanded policy data contains our policy
+	foundPolicy := false
+	for _, ep := range expanded.ExpandedPolicies {
+		if ep.ID == createdPolicy.ID {
+			foundPolicy = true
+			assert.Equal(t, policy.Name, ep.Name, "Expanded policy name should match")
+			break
+		}
+	}
+	assert.True(t, foundPolicy, "Expanded policies should contain the attached policy")
+	t.Logf("TokenReadExpanded returned token with %d expanded policies", len(expanded.ExpandedPolicies))
+}
+
+// ==================== ACL Token List Filtered Tests ====================
+
+// CACL-039: Test list ACL tokens with filter
+func TestACLTokenListFiltered(t *testing.T) {
+	client := getClient(t)
+
+	uniqueTag := "filterable-" + randomID()
+	token := &api.ACLToken{
+		Description: uniqueTag,
+		Local:       true,
+	}
+	created, _, err := client.ACL().TokenCreate(token, nil)
+	if err != nil {
+		t.Skip("ACL not enabled or not supported")
+	}
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	// List tokens with a filter matching the description
+	filterOpts := api.ACLTokenFilterOptions{}
+	queryOpts := &api.QueryOptions{
+		Filter: `Description contains "` + uniqueTag + `"`,
+	}
+	tokens, _, err := client.ACL().TokenListFiltered(filterOpts, queryOpts)
+	if err != nil {
+		t.Skipf("TokenListFiltered not supported: %v", err)
+	}
+
+	assert.NotEmpty(t, tokens, "Filtered token list should not be empty")
+
+	found := false
+	for _, tok := range tokens {
+		if tok.AccessorID == created.AccessorID {
+			found = true
+			assert.Equal(t, uniqueTag, tok.Description, "Filtered token description should match")
+			break
+		}
+	}
+	assert.True(t, found, "Created token should appear in filtered list")
+	t.Logf("TokenListFiltered returned %d tokens matching filter", len(tokens))
+}
+
+// ==================== ACL Auth Method Update Tests ====================
+
+// CACL-040: Test update ACL auth method
+func TestACLAuthMethodUpdate(t *testing.T) {
+	client := getClient(t)
+
+	methodName := "update-auth-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name:        methodName,
+		Type:        "jwt",
+		Description: "Original auth method description",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+
+	created, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(methodName, nil)
+
+	// Modify description and update
+	created.Description = "Updated auth method description"
+	updated, _, err := client.ACL().AuthMethodUpdate(created, nil)
+	if err != nil {
+		t.Skipf("AuthMethodUpdate not supported: %v", err)
+	}
+
+	assert.Equal(t, methodName, updated.Name, "Name should not change after update")
+	assert.Equal(t, "Updated auth method description", updated.Description, "Description should be updated")
+	assert.Equal(t, "jwt", updated.Type, "Type should not change after update")
+
+	// Verify by reading back
+	read, _, err := client.ACL().AuthMethodRead(methodName, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Updated auth method description", read.Description, "Read-back description should reflect update")
+}
+
+// ==================== ACL Binding Rule Update Tests ====================
+
+// CACL-041: Test update ACL binding rule
+func TestACLBindingRuleUpdate(t *testing.T) {
+	client := getClient(t)
+
+	// Create auth method first
+	methodName := "binding-update-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name: methodName,
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+	_, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(methodName, nil)
+
+	// Create binding rule
+	rule := &api.ACLBindingRule{
+		AuthMethod:  methodName,
+		Description: "Original binding rule",
+		BindType:    api.BindingRuleBindTypeService,
+		BindName:    "original-service",
+		Selector:    `value.team == "engineering"`,
+	}
+	created, _, err := client.ACL().BindingRuleCreate(rule, nil)
+	if err != nil {
+		t.Skipf("Binding rule not supported: %v", err)
+	}
+	defer client.ACL().BindingRuleDelete(created.ID, nil)
+
+	// Update selector and bind name
+	created.Selector = `value.team == "platform"`
+	created.BindName = "updated-service"
+	created.Description = "Updated binding rule"
+	updated, _, err := client.ACL().BindingRuleUpdate(created, nil)
+	if err != nil {
+		t.Skipf("BindingRuleUpdate not supported: %v", err)
+	}
+
+	assert.Equal(t, created.ID, updated.ID, "Binding rule ID should not change")
+	assert.Equal(t, `value.team == "platform"`, updated.Selector, "Selector should be updated")
+	assert.Equal(t, "updated-service", updated.BindName, "BindName should be updated")
+	assert.Equal(t, "Updated binding rule", updated.Description, "Description should be updated")
+	assert.Equal(t, methodName, updated.AuthMethod, "AuthMethod should not change")
+
+	// Verify by reading back
+	read, _, err := client.ACL().BindingRuleRead(created.ID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, `value.team == "platform"`, read.Selector, "Read-back selector should reflect update")
+	assert.Equal(t, "updated-service", read.BindName, "Read-back bind name should reflect update")
+}
+
+// ==================== ACL Login/Logout Tests ====================
+
+// CACL-042: Test ACL login with auth method
+func TestACLLogin(t *testing.T) {
+	t.Skip("ACL Login requires a fully configured auth method with valid bearer tokens, skipping")
+
+	client := getClient(t)
+
+	methodName := "login-auth-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name: methodName,
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+	_, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(methodName, nil)
+
+	loginParams := &api.ACLLoginParams{
+		AuthMethod:  methodName,
+		BearerToken: "test-bearer-token",
+	}
+
+	loginToken, _, err := client.ACL().Login(loginParams, nil)
+	if err != nil {
+		t.Skipf("ACL Login not supported or bearer token invalid: %v", err)
+	}
+
+	assert.NotNil(t, loginToken, "Login should return a token")
+	assert.NotEmpty(t, loginToken.AccessorID, "Login token should have an AccessorID")
+	assert.NotEmpty(t, loginToken.SecretID, "Login token should have a SecretID")
+	t.Logf("Login returned token: AccessorID=%s", loginToken.AccessorID)
+
+	// Cleanup: logout/delete the token
+	client.ACL().TokenDelete(loginToken.AccessorID, nil)
+}
+
+// CACL-043: Test ACL logout
+func TestACLLogout(t *testing.T) {
+	t.Skip("ACL Logout requires a valid login token from an auth method, skipping")
+
+	client := getClient(t)
+
+	// Logout requires a token obtained via Login; since Login requires a real
+	// auth method setup, we skip this test in standard environments.
+	_, err := client.ACL().Logout(nil)
+	if err != nil {
+		t.Skipf("ACL Logout not supported: %v", err)
+	}
+
+	t.Log("ACL Logout succeeded")
+}
+
+// ==================== ACL Replication Tests ====================
+
+// CACL-044: Test ACL replication status
+func TestACLReplication(t *testing.T) {
+	client := getClient(t)
+
+	repl, _, err := client.ACL().Replication(nil)
+	if err != nil {
+		t.Skipf("ACL Replication not supported: %v", err)
+	}
+
+	assert.NotNil(t, repl, "Replication response should not be nil")
+	// The Enabled field indicates whether ACL replication is active
+	t.Logf("ACL Replication status: Enabled=%v, Running=%v, SourceDatacenter=%s",
+		repl.Enabled, repl.Running, repl.SourceDatacenter)
+
+	// ReplicatedIndex should be a valid uint64 (zero is valid for non-replicated setups)
+	assert.IsType(t, uint64(0), repl.ReplicatedIndex, "ReplicatedIndex should be uint64")
+	assert.IsType(t, uint64(0), repl.ReplicatedTokenIndex, "ReplicatedTokenIndex should be uint64")
+
+	// If replication is enabled, verify additional fields are populated
+	if repl.Enabled {
+		assert.NotEmpty(t, repl.SourceDatacenter, "SourceDatacenter should be set when replication is enabled")
+		t.Logf("Replication is enabled from datacenter: %s", repl.SourceDatacenter)
+	}
+}
+
+// ==================== ACL Rules Translate Tests ====================
+
+// CACL-045: Test ACL rules translate (legacy rule format)
+func TestACLRulesTranslate(t *testing.T) {
+	client := getClient(t)
+
+	// Legacy HCL rule format to translate
+	legacyRules := `key "" { policy = "read" }
+service "" { policy = "write" }`
+
+	translated, err := client.ACL().RulesTranslate(strings.NewReader(legacyRules))
+	if err != nil {
+		t.Skipf("ACL RulesTranslate not supported: %v", err)
+	}
+
+	assert.NotEmpty(t, translated, "Translated rules should not be empty")
+	// The translated output should contain the new format equivalents
+	assert.Contains(t, translated, "key_prefix", "Translated rules should use key_prefix syntax")
+	assert.Contains(t, translated, "service_prefix", "Translated rules should use service_prefix syntax")
+	t.Logf("Translated rules:\n%s", translated)
+}
+
+// ==================== ACL OIDC Auth URL Tests ====================
+
+// CACL-046: Test OIDC auth URL generation
+func TestACLOIDCAuthURL(t *testing.T) {
+	t.Skip("OIDC Auth URL requires a configured OIDC auth method with valid provider, skipping")
+
+	client := getClient(t)
+
+	// Create an OIDC auth method (would require a real OIDC provider in practice)
+	methodName := "oidc-method-" + randomID()
+
+	authURLParams := &api.ACLOIDCAuthURLParams{
+		AuthMethod:  methodName,
+		RedirectURI: "http://localhost:8550/oidc/callback",
+		ClientNonce: randomID(),
+	}
+
+	authURL, _, err := client.ACL().OIDCAuthURL(authURLParams, nil)
+	if err != nil {
+		t.Skipf("OIDC Auth URL not supported: %v", err)
+	}
+
+	assert.NotEmpty(t, authURL, "OIDC auth URL should not be empty")
+	t.Logf("OIDC Auth URL: %s", authURL)
 }

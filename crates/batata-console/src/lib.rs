@@ -43,5 +43,8 @@ pub fn configure_v3_console_routes(cfg: &mut actix_web::web::ServiceConfig) {
         .service(v3::service::routes())
         .service(v3::audit::routes())
         .service(v3::sync::routes())
-        .service(v3::tracing_api::routes());
+        .service(v3::tracing_api::routes())
+        .service(v3::control::routes())
+        .service(v3::cmdb::routes())
+        .service(v3::prometheus::routes());
 }

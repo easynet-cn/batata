@@ -212,6 +212,7 @@ pub struct CARootQueryParams {
 // ============================================================================
 
 /// In-memory Connect CA and Intentions service
+#[derive(Clone)]
 pub struct ConsulConnectCAService {
     /// CA roots
     roots: Arc<DashMap<String, CARoot>>,
@@ -222,7 +223,7 @@ pub struct ConsulConnectCAService {
     /// Intentions
     intentions: Arc<DashMap<String, Intention>>,
     /// Index counter
-    index: std::sync::atomic::AtomicU64,
+    index: Arc<std::sync::atomic::AtomicU64>,
     /// Trust domain
     trust_domain: String,
     /// Datacenter name
@@ -278,7 +279,7 @@ impl ConsulConnectCAService {
             active_root_id: Arc::new(tokio::sync::RwLock::new(root_id)),
             ca_config: Arc::new(tokio::sync::RwLock::new(config)),
             intentions: Arc::new(DashMap::new()),
-            index: std::sync::atomic::AtomicU64::new(2),
+            index: Arc::new(std::sync::atomic::AtomicU64::new(2)),
             trust_domain: "consul".to_string(),
             datacenter: "dc1".to_string(),
             ca_cert_pem,

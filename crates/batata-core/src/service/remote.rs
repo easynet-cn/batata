@@ -45,9 +45,21 @@ pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Sta
 /// Maximum idle time before a connection is considered stale (milliseconds).
 const STALE_CONNECTION_THRESHOLD_MS: u64 = 60_000;
 
+/// Connection limit checker trait for pluggable connection control.
+#[async_trait::async_trait]
+pub trait ConnectionLimitChecker: Send + Sync {
+    /// Check if a new connection should be allowed.
+    /// Returns true if allowed, false if the connection should be rejected.
+    async fn check_connection(&self, client_ip: &str, client_id: &str) -> bool;
+
+    /// Release a connection slot when a client disconnects.
+    async fn release_connection(&self, client_ip: &str, client_id: &str);
+}
+
 pub struct ConnectionManager {
     clients: Arc<DashMap<String, GrpcClient>>,
     listeners: Arc<RwLock<Vec<Arc<dyn ConnectionEventListener>>>>,
+    connection_limit_checker: std::sync::Mutex<Option<Arc<dyn ConnectionLimitChecker>>>,
 }
 
 impl Default for ConnectionManager {
@@ -61,6 +73,7 @@ impl ConnectionManager {
         Self {
             clients: Arc::new(DashMap::new()),
             listeners: Arc::new(RwLock::new(Vec::new())),
+            connection_limit_checker: std::sync::Mutex::new(None),
         }
     }
 
@@ -68,7 +81,23 @@ impl ConnectionManager {
         Self {
             clients,
             listeners: Arc::new(RwLock::new(Vec::new())),
+            connection_limit_checker: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Set the connection limit checker for controlling max connections.
+    pub fn set_connection_limit_checker(&self, checker: Arc<dyn ConnectionLimitChecker>) {
+        if let Ok(mut guard) = self.connection_limit_checker.lock() {
+            *guard = Some(checker);
+        }
+    }
+
+    /// Get the connection limit checker (clone of Arc, lock-free after extraction).
+    fn get_limit_checker(&self) -> Option<Arc<dyn ConnectionLimitChecker>> {
+        self.connection_limit_checker
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
     }
 
     /// Register a connection event listener.
@@ -100,7 +129,21 @@ impl ConnectionManager {
             return true;
         }
 
+        // Check connection limit before registering
         let meta = client.connection.meta_info.clone();
+        if let Some(checker) = self.get_limit_checker()
+            && !checker
+                .check_connection(&meta.client_ip, connection_id)
+                .await
+        {
+            tracing::warn!(
+                connection_id,
+                client_ip = %meta.client_ip,
+                "Connection rejected: server is over connection limit"
+            );
+            return false;
+        }
+
         tracing::info!(
             connection_id,
             client_ip = %meta.client_ip,
@@ -115,6 +158,12 @@ impl ConnectionManager {
 
     pub async fn unregister(&self, connection_id: &str) {
         if let Some((_, client)) = self.clients.remove(connection_id) {
+            // Release connection slot in the limiter
+            if let Some(checker) = self.get_limit_checker() {
+                checker
+                    .release_connection(&client.connection.meta_info.client_ip, connection_id)
+                    .await;
+            }
             self.fire_disconnected(connection_id, &client.connection.meta_info)
                 .await;
         }

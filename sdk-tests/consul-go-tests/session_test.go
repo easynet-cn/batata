@@ -450,3 +450,61 @@ func TestSessionMultipleOnNode(t *testing.T) {
 	assert.Equal(t, 5, foundCount, "All 5 created sessions should be found")
 	t.Logf("Found %d/%d sessions", foundCount, len(sessionIDs))
 }
+
+// CS-016: Test create session without health checks
+func TestSessionCreateNoChecks(t *testing.T) {
+	client := getClient(t)
+
+	session := &api.SessionEntry{
+		Name:     "no-checks-session-" + randomID(),
+		TTL:      "30s",
+		Behavior: api.SessionBehaviorDelete,
+	}
+
+	sessionID, _, err := client.Session().CreateNoChecks(session, nil)
+	assert.NoError(t, err, "Session CreateNoChecks should succeed")
+	assert.NotEmpty(t, sessionID, "Should return session ID")
+
+	t.Logf("Created session without checks: %s", sessionID)
+
+	// Cleanup
+	client.Session().Destroy(sessionID, nil)
+}
+
+// CS-017: Test periodic session renewal
+func TestSessionRenewPeriodic(t *testing.T) {
+	client := getClient(t)
+
+	session := &api.SessionEntry{
+		Name: "periodic-renew-session-" + randomID(),
+		TTL:  "15s",
+	}
+
+	sessionID, _, err := client.Session().Create(session, nil)
+	require.NoError(t, err)
+	defer client.Session().Destroy(sessionID, nil)
+
+	doneCh := make(chan struct{})
+	errCh := make(chan error, 1)
+
+	go func() {
+		errCh <- client.Session().RenewPeriodic("15s", sessionID, nil, doneCh)
+	}()
+
+	// Let it renew for a couple of seconds
+	time.Sleep(2 * time.Second)
+
+	// Signal to stop renewing
+	close(doneCh)
+
+	// Wait for RenewPeriodic to return
+	err = <-errCh
+	assert.NoError(t, err, "RenewPeriodic should not return error after doneCh closed")
+
+	// Verify session is still alive
+	info, _, err := client.Session().Info(sessionID, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, info, "Session should still be alive after periodic renewal")
+
+	t.Logf("Session %s survived periodic renewal", sessionID)
+}

@@ -304,3 +304,5 @@ func TestAgentFailTTL(t *testing.T) {
 	// Cleanup
 	client.Agent().CheckDeregister(checkID)
 }
+
+// Tests CA-009 through CA-024 are in agent_service_test.go and agent_check_test.go

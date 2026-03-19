@@ -578,11 +578,11 @@ public class NacosMultiTenantNamingTest {
 
     private static NamingService createNamingService(String namespace) throws NacosException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
         if (namespace != null) {
-            properties.put("namespace", namespace);
+            properties.setProperty("namespace", namespace);
         }
         return NacosFactory.createNamingService(properties);
     }

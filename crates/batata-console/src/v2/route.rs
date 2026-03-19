@@ -6,6 +6,9 @@ use super::{health, namespace};
 
 /// Create the V2 Console routes
 ///
+/// V2 Console only provides backward-compatible namespace and health endpoints.
+/// All other console operations should use V3 Console API.
+///
 /// Routes:
 /// - GET /v2/console/namespace/list - List all namespaces
 /// - GET /v2/console/namespace - Get namespace detail
@@ -14,8 +17,6 @@ use super::{health, namespace};
 /// - DELETE /v2/console/namespace - Delete namespace
 /// - GET /v2/console/health/liveness - Check if server is alive
 /// - GET /v2/console/health/readiness - Check if server is ready
-///
-/// Note: audit, sync, and tracing routes have been moved to V3 console API.
 pub fn routes() -> Scope {
     web::scope("/v2/console")
         .service(

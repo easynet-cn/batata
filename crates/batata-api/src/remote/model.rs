@@ -37,6 +37,16 @@ where
     Ok(INTERNAL_MODULE.to_string())
 }
 
+/// Deserialize a value, returning the default if the JSON value is `null`.
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
+
 /// Base trait for all request models
 pub trait RequestTrait {
     fn headers(&self) -> HashMap<String, String>;
@@ -430,6 +440,9 @@ pub struct ConnectionSetupRequest {
     pub tenant: String,
     pub labels: HashMap<String, String>,
     pub client_abilities: ClientAbilities,
+    /// Client ability table for capability negotiation (Nacos 3.x)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ability_table: Option<HashMap<String, bool>>,
 }
 
 impl ConnectionSetupRequest {
@@ -503,8 +516,10 @@ impl From<&Payload> for ServerReloadRequest {
 pub struct ServerRequest {
     #[serde(flatten)]
     pub request: Request,
+    /// Module field — skipped during serialization to prevent duplicate "module"
+    /// keys when concrete request types (e.g. NotifySubscriberRequest) define their own.
     #[serde(
-        serialize_with = "serialize_internal_module",
+        skip_serializing,
         deserialize_with = "deserialize_internal_module"
     )]
     module: String,
@@ -543,6 +558,9 @@ impl From<&Payload> for ClientDetectionRequest {
 pub struct SetupAckRequest {
     #[serde(flatten)]
     pub server_requst: ServerRequest,
+    /// Server ability table sent to client during connection setup
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ability_table: Option<std::collections::HashMap<String, bool>>,
 }
 
 impl_request_trait!(SetupAckRequest, server_requst);
@@ -770,11 +788,12 @@ impl From<MemberReportResponse> for Any {
 
 /// Lock instance for distributed locking
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct LockInstance {
     pub key: String,
     pub expired_time: i64,
     pub lock_type: String,
+    #[serde(deserialize_with = "deserialize_null_default")]
     pub params: HashMap<String, String>,
 }
 
@@ -1183,6 +1202,47 @@ mod tests {
         let parsed: LockInstance = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.key, "test-lock");
         assert_eq!(parsed.expired_time, 30000);
+    }
+
+    #[test]
+    fn test_lock_instance_null_params() {
+        // Java client may send null for params field
+        let json =
+            r#"{"key":"test-lock","expiredTime":30000,"lockType":"nacosMutexLock","params":null}"#;
+        let parsed: LockInstance = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.key, "test-lock");
+        assert_eq!(parsed.expired_time, 30000);
+        assert_eq!(parsed.lock_type, "nacosMutexLock");
+        assert!(parsed.params.is_empty());
+    }
+
+    #[test]
+    fn test_lock_instance_missing_params() {
+        // Java client may omit params field entirely
+        let json = r#"{"key":"test-lock","expiredTime":30000,"lockType":"nacosMutexLock"}"#;
+        let parsed: LockInstance = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.key, "test-lock");
+        assert!(parsed.params.is_empty());
+    }
+
+    #[test]
+    fn test_lock_operation_request_from_java_client() {
+        // Simulate the exact JSON sent by the Nacos Java SDK client
+        let json = r#"{
+            "lockInstance": {"key": "test-lock", "expiredTime": 30000, "lockType": "nacosMutexLock", "params": null},
+            "lockOperationEnum": "ACQUIRE",
+            "module": "lock",
+            "requestId": "req-123"
+        }"#;
+        let parsed: LockOperationRequest = serde_json::from_str(json).unwrap();
+        assert!(parsed.lock_instance.is_some());
+        let lock = parsed.lock_instance.unwrap();
+        assert_eq!(lock.key, "test-lock");
+        assert_eq!(lock.expired_time, 30000);
+        assert_eq!(lock.lock_type, "nacosMutexLock");
+        assert_eq!(parsed.lock_operation, "ACQUIRE");
+        assert_eq!(parsed.module, "lock");
+        assert_eq!(parsed.request.request_id, "req-123");
     }
 
     #[test]

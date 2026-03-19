@@ -192,14 +192,20 @@ impl PayloadHandler for ConfigQueryHandler {
 
         let persistence = self.app_state.persistence();
 
+        // Get encryption service for decryption
+        let enc_svc = crate::service::encryption::get_encryption_service(&self.app_state);
+
         // Check for matching gray config first
         let labels = build_client_labels(__connection);
         if let Some((content, md5, encrypted_data_key, last_modified, gray_name)) =
             find_matching_gray_config(persistence, data_id, group, tenant, &labels).await
         {
+            let decrypted = enc_svc
+                .decrypt_if_needed(data_id, &content, &encrypted_data_key)
+                .await;
             let mut response = ConfigQueryResponse::new();
             response.response.request_id = request_id;
-            response.content = content;
+            response.content = decrypted;
             response.md5 = md5;
             response.encrypted_data_key = encrypted_data_key;
             response.last_modified = last_modified;
@@ -215,9 +221,12 @@ impl PayloadHandler for ConfigQueryHandler {
         // Fall through to formal config query
         match persistence.config_find_one(data_id, group, tenant).await {
             Ok(Some(config)) => {
+                let decrypted = enc_svc
+                    .decrypt_if_needed(data_id, &config.content, &config.encrypted_data_key)
+                    .await;
                 let mut response = ConfigQueryResponse::new();
                 response.response.request_id = request_id;
-                response.content = config.content;
+                response.content = decrypted;
                 response.md5 = config.md5;
                 response.content_type = config.config_type;
                 response.encrypted_data_key = config.encrypted_data_key;
@@ -375,6 +384,17 @@ impl PayloadHandler for ConfigPublishHandler {
             "ConfigPublish: data_id={}, group={}, tenant={}, src_user={}, src_ip={}",
             data_id, group, tenant, src_user, src_ip
         );
+
+        // Encrypt content if needed (based on data_id pattern)
+        let enc_svc = crate::service::encryption::get_encryption_service(&self.app_state);
+        let (content, encrypted_data_key) = if encrypted_data_key.is_empty() {
+            let (enc_content, enc_key) = enc_svc.encrypt_if_needed(data_id, content).await;
+            (enc_content, enc_key)
+        } else {
+            (content.to_string(), encrypted_data_key.to_string())
+        };
+        let content = content.as_str();
+        let encrypted_data_key = encrypted_data_key.as_str();
 
         let persistence = self.app_state.persistence();
 

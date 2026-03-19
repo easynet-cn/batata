@@ -49,7 +49,7 @@ impl PayloadHandler for ServerCheckHandler {
         let response = ServerCheckResponse {
             response: Response::new(),
             connection_id: connection.meta_info.connection_id.clone(),
-            ..Default::default()
+            support_ability_negotiation: true,
         };
 
         Ok(response.build_payload())

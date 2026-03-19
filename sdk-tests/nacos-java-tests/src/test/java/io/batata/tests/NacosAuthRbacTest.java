@@ -4,6 +4,8 @@ import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.alibaba.nacos.api.naming.NamingService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
 
 import java.io.BufferedReader;
@@ -32,6 +34,7 @@ public class NacosAuthRbacTest {
     private static final String TEST_PASSWORD = "Test123456";
     private static final String TEST_ROLE = "rbac-role-" + UUID.randomUUID().toString().substring(0, 6);
     private static final String TEST_RESOURCE = "public:DEFAULT_GROUP:*";
+    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeAll
     static void setup() throws Exception {
@@ -40,7 +43,7 @@ public class NacosAuthRbacTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         accessToken = loginV3(username, password);
-        System.out.println("Auth RBAC Test Setup - Server: " + serverAddr);
+        assertFalse(accessToken.isEmpty(), "Admin login should return a valid access token");
     }
 
     @AfterAll
@@ -59,6 +62,36 @@ public class NacosAuthRbacTest {
         } catch (Exception ignored) {}
     }
 
+    /**
+     * Parse a Nacos API response and assert that the response code is 0 (success).
+     */
+    private static JsonNode assertSuccessResponse(String response) throws Exception {
+        assertNotNull(response, "Response should not be null");
+        assertFalse(response.isEmpty(), "Response should not be empty");
+        JsonNode json = objectMapper.readTree(response);
+        assertTrue(json.has("code"), "Response should contain 'code' field: " + response);
+        assertEquals(0, json.get("code").asInt(), "Response code should be 0 (success): " + response);
+        return json;
+    }
+
+    /**
+     * Assert that the data field in a response indicates success.
+     * Handles both boolean true and string responses like "create user ok!".
+     */
+    private static void assertDataSuccess(JsonNode json, String operation) {
+        JsonNode data = json.get("data");
+        assertNotNull(data, operation + " should return data");
+        if (data.isBoolean()) {
+            assertTrue(data.asBoolean(), operation + " should return true");
+        } else if (data.isTextual()) {
+            // String responses like "create user ok!", "update user ok!", etc.
+            assertFalse(data.asText().isEmpty(), operation + " should return a non-empty string");
+        } else {
+            // Accept any non-null data as success since code is already 0
+            assertTrue(true, operation + " returned data: " + data);
+        }
+    }
+
     // ==================== User CRUD Tests ====================
 
     /**
@@ -70,9 +103,24 @@ public class NacosAuthRbacTest {
         String body = "username=" + URLEncoder.encode(TEST_USER, "UTF-8")
                 + "&password=" + URLEncoder.encode(TEST_PASSWORD, "UTF-8");
         String response = httpPost("/nacos/v3/auth/user", body);
-        System.out.println("Create user: " + response);
-        assertTrue(response.contains("true") || response.contains("success") || response.contains("200"),
-                "User creation should succeed");
+        JsonNode json = assertSuccessResponse(response);
+        assertDataSuccess(json, "User creation");
+
+        // Verify the user exists by searching
+        String searchResponse = httpGet("/nacos/v3/auth/user/list?pageNo=1&pageSize=100");
+        JsonNode searchJson = assertSuccessResponse(searchResponse);
+        JsonNode data = searchJson.get("data");
+        JsonNode pageItems = data.has("pageItems") ? data.get("pageItems") : data;
+        boolean found = false;
+        if (pageItems.isArray()) {
+            for (JsonNode item : pageItems) {
+                if (TEST_USER.equals(item.get("username").asText())) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        assertTrue(found, "Created user '" + TEST_USER + "' should appear in user search results");
     }
 
     /**
@@ -81,9 +129,17 @@ public class NacosAuthRbacTest {
     @Test
     @Order(2)
     void testSearchUsers() throws Exception {
-        String response = httpGet("/nacos/v3/auth/user/search?pageNo=1&pageSize=100");
-        System.out.println("Search users: " + response);
-        assertNotNull(response);
+        String response = httpGet("/nacos/v3/auth/user/list?pageNo=1&pageSize=100");
+        JsonNode json = assertSuccessResponse(response);
+        JsonNode data = json.get("data");
+        assertNotNull(data, "User search should return data");
+        // Should have totalCount and pageItems
+        assertTrue(data.has("totalCount") || data.has("pageItems") || data.isArray(),
+                "User search should contain pagination fields: " + data);
+        int totalCount = data.has("totalCount") ? data.get("totalCount").asInt() : -1;
+        if (totalCount >= 0) {
+            assertTrue(totalCount >= 2, "Should have at least 2 users (admin + test user), got: " + totalCount);
+        }
     }
 
     /**
@@ -96,11 +152,17 @@ public class NacosAuthRbacTest {
         String body = "username=" + URLEncoder.encode(TEST_USER, "UTF-8")
                 + "&newPassword=" + URLEncoder.encode(newPassword, "UTF-8");
         String response = httpPut("/nacos/v3/auth/user", body);
-        System.out.println("Update user password: " + response);
+        JsonNode json = assertSuccessResponse(response);
+        assertDataSuccess(json, "Password update");
 
-        // Verify login with new password
+        // Verify login with new password succeeds
         String token = loginV3(TEST_USER, newPassword);
-        System.out.println("Login with new password: " + (token.isEmpty() ? "FAILED" : "OK"));
+        assertFalse(token.isEmpty(), "Login with new password should succeed and return a token");
+        assertTrue(token.length() > 10, "Token should be a non-trivial string, got length: " + token.length());
+
+        // Verify login with old password fails
+        String oldToken = loginV3(TEST_USER, TEST_PASSWORD);
+        assertTrue(oldToken.isEmpty(), "Login with old password should fail after password change");
 
         // Revert password for subsequent tests
         body = "username=" + URLEncoder.encode(TEST_USER, "UTF-8")
@@ -117,10 +179,18 @@ public class NacosAuthRbacTest {
         String tempUser = "temp-del-" + UUID.randomUUID().toString().substring(0, 6);
         String createBody = "username=" + URLEncoder.encode(tempUser, "UTF-8")
                 + "&password=" + URLEncoder.encode("TempPass123", "UTF-8");
-        httpPost("/nacos/v3/auth/user", createBody);
+        String createResponse = httpPost("/nacos/v3/auth/user", createBody);
+        JsonNode createJson = assertSuccessResponse(createResponse);
+        assertDataSuccess(createJson, "Temp user creation");
 
+        // Delete user
         String response = httpDelete("/nacos/v3/auth/user?username=" + URLEncoder.encode(tempUser, "UTF-8"));
-        System.out.println("Delete user: " + response);
+        JsonNode json = assertSuccessResponse(response);
+        assertDataSuccess(json, "User deletion");
+
+        // Verify user is gone
+        String token = loginV3(tempUser, "TempPass123");
+        assertTrue(token.isEmpty(), "Deleted user should not be able to login");
     }
 
     // ==================== Role CRUD Tests ====================
@@ -134,9 +204,26 @@ public class NacosAuthRbacTest {
         String body = "role=" + URLEncoder.encode(TEST_ROLE, "UTF-8")
                 + "&username=" + URLEncoder.encode(TEST_USER, "UTF-8");
         String response = httpPost("/nacos/v3/auth/role", body);
-        System.out.println("Create role: " + response);
-        assertTrue(response.contains("true") || response.contains("success") || response.contains("200"),
-                "Role creation should succeed");
+        JsonNode json = assertSuccessResponse(response);
+        assertDataSuccess(json, "Role creation");
+
+        // Verify role exists in search
+        String searchResponse = httpGet("/nacos/v3/auth/role/list?pageNo=1&pageSize=100");
+        JsonNode searchJson = assertSuccessResponse(searchResponse);
+        JsonNode data = searchJson.get("data");
+        JsonNode pageItems = data.has("pageItems") ? data.get("pageItems") : data;
+        boolean found = false;
+        if (pageItems.isArray()) {
+            for (JsonNode item : pageItems) {
+                String role = item.has("role") ? item.get("role").asText() : "";
+                String user = item.has("username") ? item.get("username").asText() : "";
+                if (TEST_ROLE.equals(role) && TEST_USER.equals(user)) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        assertTrue(found, "Created role '" + TEST_ROLE + "' for user '" + TEST_USER + "' should appear in role search");
     }
 
     /**
@@ -145,9 +232,16 @@ public class NacosAuthRbacTest {
     @Test
     @Order(6)
     void testSearchRoles() throws Exception {
-        String response = httpGet("/nacos/v3/auth/role/search?pageNo=1&pageSize=100");
-        System.out.println("Search roles: " + response);
-        assertNotNull(response);
+        String response = httpGet("/nacos/v3/auth/role/list?pageNo=1&pageSize=100");
+        JsonNode json = assertSuccessResponse(response);
+        JsonNode data = json.get("data");
+        assertNotNull(data, "Role search should return data");
+        assertTrue(data.has("totalCount") || data.has("pageItems") || data.isArray(),
+                "Role search should contain pagination fields: " + data);
+        int totalCount = data.has("totalCount") ? data.get("totalCount").asInt() : -1;
+        if (totalCount >= 0) {
+            assertTrue(totalCount >= 1, "Should have at least 1 role, got: " + totalCount);
+        }
     }
 
     /**
@@ -161,11 +255,30 @@ public class NacosAuthRbacTest {
 
         // Create temp user and role
         httpPost("/nacos/v3/auth/user", "username=" + tempUser + "&password=TempPass123");
-        httpPost("/nacos/v3/auth/role", "role=" + tempRole + "&username=" + tempUser);
+        String createResponse = httpPost("/nacos/v3/auth/role", "role=" + tempRole + "&username=" + tempUser);
+        JsonNode createJson = assertSuccessResponse(createResponse);
+        assertDataSuccess(createJson, "Role creation");
 
         // Delete role
         String response = httpDelete("/nacos/v3/auth/role?role=" + tempRole + "&username=" + tempUser);
-        System.out.println("Delete role: " + response);
+        JsonNode json = assertSuccessResponse(response);
+        assertDataSuccess(json, "Role deletion");
+
+        // Verify role is gone from search
+        String searchResponse = httpGet("/nacos/v3/auth/role/list?pageNo=1&pageSize=100");
+        JsonNode searchJson = assertSuccessResponse(searchResponse);
+        JsonNode data = searchJson.get("data");
+        JsonNode pageItems = data.has("pageItems") ? data.get("pageItems") : data;
+        boolean found = false;
+        if (pageItems.isArray()) {
+            for (JsonNode item : pageItems) {
+                if (tempRole.equals(item.has("role") ? item.get("role").asText() : "")) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        assertFalse(found, "Deleted role '" + tempRole + "' should not appear in role search");
 
         // Cleanup temp user
         httpDelete("/nacos/v3/auth/user?username=" + tempUser);
@@ -183,9 +296,27 @@ public class NacosAuthRbacTest {
                 + "&resource=" + URLEncoder.encode(TEST_RESOURCE, "UTF-8")
                 + "&action=rw";
         String response = httpPost("/nacos/v3/auth/permission", body);
-        System.out.println("Create permission: " + response);
-        assertTrue(response.contains("true") || response.contains("success") || response.contains("200"),
-                "Permission creation should succeed");
+        JsonNode json = assertSuccessResponse(response);
+        assertDataSuccess(json, "Permission creation");
+
+        // Verify permission exists in search
+        String searchResponse = httpGet("/nacos/v3/auth/permission/list?pageNo=1&pageSize=100");
+        JsonNode searchJson = assertSuccessResponse(searchResponse);
+        JsonNode data = searchJson.get("data");
+        JsonNode pageItems = data.has("pageItems") ? data.get("pageItems") : data;
+        boolean found = false;
+        if (pageItems.isArray()) {
+            for (JsonNode item : pageItems) {
+                String role = item.has("role") ? item.get("role").asText() : "";
+                String resource = item.has("resource") ? item.get("resource").asText() : "";
+                String action = item.has("action") ? item.get("action").asText() : "";
+                if (TEST_ROLE.equals(role) && TEST_RESOURCE.equals(resource) && "rw".equals(action)) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        assertTrue(found, "Created permission for role '" + TEST_ROLE + "' should appear in permission search");
     }
 
     /**
@@ -194,9 +325,16 @@ public class NacosAuthRbacTest {
     @Test
     @Order(9)
     void testSearchPermissions() throws Exception {
-        String response = httpGet("/nacos/v3/auth/permission/searchPage?pageNo=1&pageSize=100");
-        System.out.println("Search permissions: " + response);
-        assertNotNull(response);
+        String response = httpGet("/nacos/v3/auth/permission/list?pageNo=1&pageSize=100");
+        JsonNode json = assertSuccessResponse(response);
+        JsonNode data = json.get("data");
+        assertNotNull(data, "Permission search should return data");
+        assertTrue(data.has("totalCount") || data.has("pageItems") || data.isArray(),
+                "Permission search should contain pagination fields: " + data);
+        int totalCount = data.has("totalCount") ? data.get("totalCount").asInt() : -1;
+        if (totalCount >= 0) {
+            assertTrue(totalCount >= 1, "Should have at least 1 permission, got: " + totalCount);
+        }
     }
 
     /**
@@ -207,16 +345,39 @@ public class NacosAuthRbacTest {
     void testDeletePermission() throws Exception {
         String tempRole = "temp-perm-role-" + UUID.randomUUID().toString().substring(0, 6);
         String tempUser = "temp-perm-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String tempResource = "public:*:*";
 
         httpPost("/nacos/v3/auth/user", "username=" + tempUser + "&password=TempPass123");
         httpPost("/nacos/v3/auth/role", "role=" + tempRole + "&username=" + tempUser);
-        httpPost("/nacos/v3/auth/permission",
-                "role=" + tempRole + "&resource=" + URLEncoder.encode("public:*:*", "UTF-8") + "&action=r");
+        String createResponse = httpPost("/nacos/v3/auth/permission",
+                "role=" + tempRole + "&resource=" + URLEncoder.encode(tempResource, "UTF-8") + "&action=r");
+        JsonNode createJson = assertSuccessResponse(createResponse);
+        assertDataSuccess(createJson, "Permission creation");
 
+        // Delete permission
         String response = httpDelete("/nacos/v3/auth/permission?role=" + tempRole
-                + "&resource=" + URLEncoder.encode("public:*:*", "UTF-8")
+                + "&resource=" + URLEncoder.encode(tempResource, "UTF-8")
                 + "&action=r");
-        System.out.println("Delete permission: " + response);
+        JsonNode json = assertSuccessResponse(response);
+        assertDataSuccess(json, "Permission deletion");
+
+        // Verify permission is gone from search
+        String searchResponse = httpGet("/nacos/v3/auth/permission/list?pageNo=1&pageSize=100");
+        JsonNode searchJson = assertSuccessResponse(searchResponse);
+        JsonNode data = searchJson.get("data");
+        JsonNode pageItems = data.has("pageItems") ? data.get("pageItems") : data;
+        boolean found = false;
+        if (pageItems.isArray()) {
+            for (JsonNode item : pageItems) {
+                String role = item.has("role") ? item.get("role").asText() : "";
+                String resource = item.has("resource") ? item.get("resource").asText() : "";
+                if (tempRole.equals(role) && tempResource.equals(resource)) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+        assertFalse(found, "Deleted permission should not appear in permission search");
 
         // Cleanup
         httpDelete("/nacos/v3/auth/role?role=" + tempRole + "&username=" + tempUser);
@@ -241,19 +402,19 @@ public class NacosAuthRbacTest {
 
             // Publish config as admin
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
-            adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "rbac.read=allowed");
+            boolean published = adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "rbac.read=allowed");
+            assertTrue(published, "Admin should be able to publish config");
             Thread.sleep(1000);
 
             // Read config as read-only user
             ConfigService readOnlyConfig = createConfigService(readUser, TEST_PASSWORD);
             String content = readOnlyConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
-            System.out.println("Config read with read permission: " + content);
+            assertNotNull(content, "Read-only user should be able to read config");
+            assertEquals("rbac.read=allowed", content, "Config content should match what was published");
 
             readOnlyConfig.shutDown();
             adminConfig.removeConfig(dataId, "DEFAULT_GROUP");
             adminConfig.shutDown();
-        } catch (Exception e) {
-            System.out.println("Config read with read permission: " + e.getMessage());
         } finally {
             cleanupUserWithPermission(readUser, readRole);
         }
@@ -274,17 +435,17 @@ public class NacosAuthRbacTest {
             ConfigService readOnlyConfig = createConfigService(readUser, TEST_PASSWORD);
             String dataId = "rbac-write-fail-" + UUID.randomUUID().toString().substring(0, 8);
 
+            boolean writeSucceeded = false;
             try {
                 boolean result = readOnlyConfig.publishConfig(dataId, "DEFAULT_GROUP", "should.fail=true");
-                System.out.println("Config write with read-only permission result: " + result);
-                // May fail with exception or return false
+                writeSucceeded = result;
             } catch (NacosException e) {
-                System.out.println("Config write with read-only permission correctly denied: " + e.getMessage());
+                // Expected: write should be denied
+                writeSucceeded = false;
             }
+            assertFalse(writeSucceeded, "Write with read-only permission should be denied");
 
             readOnlyConfig.shutDown();
-        } catch (Exception e) {
-            System.out.println("Config write with read permission test: " + e.getMessage());
         } finally {
             cleanupUserWithPermission(readUser, readRole);
         }
@@ -305,7 +466,7 @@ public class NacosAuthRbacTest {
 
             ConfigService writeConfig = createConfigService(writeUser, TEST_PASSWORD);
             boolean result = writeConfig.publishConfig(dataId, "DEFAULT_GROUP", "rbac.write=allowed");
-            System.out.println("Config write with write permission: " + result);
+            assertTrue(result, "User with write permission should be able to publish config");
 
             writeConfig.shutDown();
 
@@ -313,8 +474,6 @@ public class NacosAuthRbacTest {
             ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
             adminConfig.removeConfig(dataId, "DEFAULT_GROUP");
             adminConfig.shutDown();
-        } catch (Exception e) {
-            System.out.println("Config write with write permission: " + e.getMessage());
         } finally {
             cleanupUserWithPermission(writeUser, writeRole);
         }
@@ -340,18 +499,20 @@ public class NacosAuthRbacTest {
 
             // Try to read as write-only user
             ConfigService writeOnlyConfig = createConfigService(writeUser, TEST_PASSWORD);
+            String content = null;
+            boolean readDenied = false;
             try {
-                String content = writeOnlyConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
-                System.out.println("Config read with write-only permission result: " + content);
+                content = writeOnlyConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
+                // If content is null or empty, it was effectively denied
+                readDenied = (content == null || content.isEmpty());
             } catch (NacosException e) {
-                System.out.println("Config read with write-only permission correctly denied: " + e.getMessage());
+                readDenied = true;
             }
+            assertTrue(readDenied, "Read with write-only permission should be denied, but got: " + content);
 
             writeOnlyConfig.shutDown();
             adminConfig.removeConfig(dataId, "DEFAULT_GROUP");
             adminConfig.shutDown();
-        } catch (Exception e) {
-            System.out.println("Config read with write permission test: " + e.getMessage());
         } finally {
             cleanupUserWithPermission(writeUser, writeRole);
         }
@@ -377,18 +538,15 @@ public class NacosAuthRbacTest {
 
             // Read instances as read-only user
             NamingService readOnlyNaming = createNamingService(readUser, TEST_PASSWORD);
-            try {
-                var instances = readOnlyNaming.getAllInstances(serviceName);
-                System.out.println("Naming read with read permission: " + instances.size() + " instances");
-            } catch (NacosException e) {
-                System.out.println("Naming read with read permission: " + e.getMessage());
-            }
+            var instances = readOnlyNaming.getAllInstances(serviceName);
+            assertNotNull(instances, "Read-only user should be able to query instances");
+            assertEquals(1, instances.size(), "Should have 1 registered instance");
+            assertEquals("192.168.1.1", instances.get(0).getIp(), "Instance IP should match");
+            assertEquals(8080, instances.get(0).getPort(), "Instance port should match");
 
             readOnlyNaming.shutDown();
             adminNaming.deregisterInstance(serviceName, "192.168.1.1", 8080);
             adminNaming.shutDown();
-        } catch (Exception e) {
-            System.out.println("Naming read with read permission test: " + e.getMessage());
         } finally {
             cleanupUserWithPermission(readUser, readRole);
         }
@@ -409,17 +567,18 @@ public class NacosAuthRbacTest {
             NamingService readOnlyNaming = createNamingService(readUser, TEST_PASSWORD);
             String serviceName = "rbac-write-fail-svc-" + UUID.randomUUID().toString().substring(0, 8);
 
+            boolean writeDenied = false;
             try {
                 readOnlyNaming.registerInstance(serviceName, "192.168.1.1", 8080);
-                System.out.println("Naming write with read-only permission: unexpectedly succeeded");
+                // If we get here, try to clean up
                 readOnlyNaming.deregisterInstance(serviceName, "192.168.1.1", 8080);
+                writeDenied = false;
             } catch (NacosException e) {
-                System.out.println("Naming write with read-only permission correctly denied: " + e.getMessage());
+                writeDenied = true;
             }
+            assertTrue(writeDenied, "Naming write with read-only permission should be denied");
 
             readOnlyNaming.shutDown();
-        } catch (Exception e) {
-            System.out.println("Naming write with read permission test: " + e.getMessage());
         } finally {
             cleanupUserWithPermission(readUser, readRole);
         }
@@ -439,13 +598,20 @@ public class NacosAuthRbacTest {
             setupUserWithPermission(writeUser, writeRole, "public:DEFAULT_GROUP:*", "w");
 
             NamingService writeNaming = createNamingService(writeUser, TEST_PASSWORD);
+            // Should not throw - write permission is sufficient
             writeNaming.registerInstance(serviceName, "192.168.1.1", 8080);
-            System.out.println("Naming write with write permission: succeeded");
             Thread.sleep(1000);
+
+            // Verify the instance was registered by querying as admin
+            NamingService adminNaming = createNamingService("nacos", System.getProperty("nacos.password", "nacos"));
+            var instances = adminNaming.getAllInstances(serviceName);
+            assertNotNull(instances, "Admin should be able to query instances");
+            assertEquals(1, instances.size(), "Should have 1 registered instance");
+            assertEquals("192.168.1.1", instances.get(0).getIp(), "Instance IP should match");
+
             writeNaming.deregisterInstance(serviceName, "192.168.1.1", 8080);
             writeNaming.shutDown();
-        } catch (Exception e) {
-            System.out.println("Naming write with write permission: " + e.getMessage());
+            adminNaming.shutDown();
         } finally {
             cleanupUserWithPermission(writeUser, writeRole);
         }
@@ -471,18 +637,20 @@ public class NacosAuthRbacTest {
 
             // Try to read as write-only user
             NamingService writeOnlyNaming = createNamingService(writeUser, TEST_PASSWORD);
+            boolean readDenied = false;
             try {
                 var instances = writeOnlyNaming.getAllInstances(serviceName);
-                System.out.println("Naming read with write-only permission result: " + instances.size() + " instances");
+                // If returned empty or null, effectively denied
+                readDenied = (instances == null || instances.isEmpty());
             } catch (NacosException e) {
-                System.out.println("Naming read with write-only permission correctly denied: " + e.getMessage());
+                readDenied = true;
             }
+            assertTrue(readDenied,
+                    "Naming read with write-only permission should be denied or return empty results");
 
             writeOnlyNaming.shutDown();
             adminNaming.deregisterInstance(serviceName, "192.168.1.1", 8080);
             adminNaming.shutDown();
-        } catch (Exception e) {
-            System.out.println("Naming read with write permission test: " + e.getMessage());
         } finally {
             cleanupUserWithPermission(writeUser, writeRole);
         }
@@ -497,6 +665,7 @@ public class NacosAuthRbacTest {
         String rwUser = "rw-user-" + UUID.randomUUID().toString().substring(0, 6);
         String rwRole = "rw-role-" + UUID.randomUUID().toString().substring(0, 6);
         String dataId = "rbac-rw-test-" + UUID.randomUUID().toString().substring(0, 8);
+        String configContent = "rbac.full=access";
 
         try {
             setupUserWithPermission(rwUser, rwRole, "public:DEFAULT_GROUP:*", "rw");
@@ -504,36 +673,102 @@ public class NacosAuthRbacTest {
             ConfigService rwConfig = createConfigService(rwUser, TEST_PASSWORD);
 
             // Write should succeed
-            boolean writeResult = rwConfig.publishConfig(dataId, "DEFAULT_GROUP", "rbac.full=access");
-            System.out.println("Full permission write: " + writeResult);
+            boolean writeResult = rwConfig.publishConfig(dataId, "DEFAULT_GROUP", configContent);
+            assertTrue(writeResult, "User with rw permission should be able to write config");
             Thread.sleep(1000);
 
             // Read should succeed
             String content = rwConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
-            System.out.println("Full permission read: " + content);
+            assertNotNull(content, "User with rw permission should be able to read config");
+            assertEquals(configContent, content, "Read content should match written content");
 
             rwConfig.removeConfig(dataId, "DEFAULT_GROUP");
             rwConfig.shutDown();
-        } catch (Exception e) {
-            System.out.println("Full permission test: " + e.getMessage());
         } finally {
             cleanupUserWithPermission(rwUser, rwRole);
+        }
+    }
+
+    /**
+     * RBAC-020: Test login returns valid JWT token structure
+     */
+    @Test
+    @Order(20)
+    void testLoginTokenStructure() throws Exception {
+        String loginUrl = String.format("http://%s/nacos/v3/auth/user/login", serverAddr);
+        URL url = new URL(loginUrl);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+
+        String body = "username=" + URLEncoder.encode("nacos", "UTF-8")
+                + "&password=" + URLEncoder.encode(System.getProperty("nacos.password", "nacos"), "UTF-8");
+        conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(200, conn.getResponseCode(), "Login should return HTTP 200");
+
+        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        JsonNode json = objectMapper.readTree(response.toString());
+
+        // Accept both wrapped format {"code":0,"data":{"accessToken":...}}
+        // and flat format {"accessToken":"...","tokenTtl":18000,...}
+        String token;
+        if (json.has("code")) {
+            assertEquals(0, json.get("code").asInt(), "Login response code should be 0");
+            JsonNode data = json.get("data");
+            assertNotNull(data, "Login response should have 'data' field");
+            token = data.has("accessToken") ? data.get("accessToken").asText() : "";
+        } else if (json.has("accessToken")) {
+            token = json.get("accessToken").asText();
+        } else {
+            fail("Login response should have either 'code' or 'accessToken' field: " + response);
+            return; // unreachable but satisfies compiler
+        }
+        assertFalse(token.isEmpty(), "Access token should not be empty");
+        // JWT tokens have 3 parts separated by dots
+        String[] parts = token.split("\\.");
+        assertEquals(3, parts.length, "JWT token should have 3 parts (header.payload.signature), got: " + parts.length);
+
+        // Check token TTL is present (check in both wrapped and flat format)
+        if (json.has("tokenTtl")) {
+            int ttl = json.get("tokenTtl").asInt();
+            assertTrue(ttl > 0, "Token TTL should be positive, got: " + ttl);
+        } else if (json.has("data") && json.get("data").has("tokenTtl")) {
+            int ttl = json.get("data").get("tokenTtl").asInt();
+            assertTrue(ttl > 0, "Token TTL should be positive, got: " + ttl);
         }
     }
 
     // ==================== Helper Methods ====================
 
     private void setupUserWithPermission(String username, String role, String resource, String action) throws Exception {
-        httpPost("/nacos/v3/auth/user",
+        String createUserResponse = httpPost("/nacos/v3/auth/user",
                 "username=" + URLEncoder.encode(username, "UTF-8")
                         + "&password=" + URLEncoder.encode(TEST_PASSWORD, "UTF-8"));
-        httpPost("/nacos/v3/auth/role",
+        JsonNode createUserJson = objectMapper.readTree(createUserResponse);
+        assertEquals(0, createUserJson.get("code").asInt(),
+                "User creation should succeed: " + createUserResponse);
+
+        String createRoleResponse = httpPost("/nacos/v3/auth/role",
                 "role=" + URLEncoder.encode(role, "UTF-8")
                         + "&username=" + URLEncoder.encode(username, "UTF-8"));
-        httpPost("/nacos/v3/auth/permission",
+        JsonNode createRoleJson = objectMapper.readTree(createRoleResponse);
+        assertEquals(0, createRoleJson.get("code").asInt(),
+                "Role creation should succeed: " + createRoleResponse);
+
+        String createPermResponse = httpPost("/nacos/v3/auth/permission",
                 "role=" + URLEncoder.encode(role, "UTF-8")
                         + "&resource=" + URLEncoder.encode(resource, "UTF-8")
                         + "&action=" + URLEncoder.encode(action, "UTF-8"));
+        JsonNode createPermJson = objectMapper.readTree(createPermResponse);
+        assertEquals(0, createPermJson.get("code").asInt(),
+                "Permission creation should succeed: " + createPermResponse);
     }
 
     private void cleanupUserWithPermission(String username, String role) {
@@ -567,17 +802,17 @@ public class NacosAuthRbacTest {
 
     private ConfigService createConfigService(String username, String password) throws NacosException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
         return NacosFactory.createConfigService(properties);
     }
 
     private NamingService createNamingService(String username, String password) throws NacosException {
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
         return NacosFactory.createNamingService(properties);
     }
 
@@ -600,11 +835,12 @@ public class NacosAuthRbacTest {
             while ((line = reader.readLine()) != null) {
                 response.append(line);
             }
-            String resp = response.toString();
-            if (resp.contains("accessToken")) {
-                int start = resp.indexOf("accessToken") + 14;
-                int end = resp.indexOf("\"", start);
-                if (end > start) return resp.substring(start, end);
+            JsonNode json = objectMapper.readTree(response.toString());
+            if (json.has("data") && json.get("data").has("accessToken")) {
+                return json.get("data").get("accessToken").asText();
+            }
+            if (json.has("accessToken")) {
+                return json.get("accessToken").asText();
             }
         }
         return "";

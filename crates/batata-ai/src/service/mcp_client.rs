@@ -92,10 +92,10 @@ async fn import_tools_inner(
     // Build HTTP client with optional auth
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(ACCEPT, "text/event-stream".parse()?);
-    if let Some(token) = auth_token {
-        if !token.is_empty() {
-            headers.insert(AUTHORIZATION, format!("Bearer {}", token).parse()?);
-        }
+    if let Some(token) = auth_token
+        && !token.is_empty()
+    {
+        headers.insert(AUTHORIZATION, format!("Bearer {}", token).parse()?);
     }
 
     let client = reqwest::Client::builder()
@@ -210,21 +210,20 @@ async fn wait_for_response(
     while let Some(event) = es.next().await {
         match event {
             Ok(reqwest_eventsource::Event::Message(msg)) => {
-                if msg.event == "message" || msg.event.is_empty() {
-                    if let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&msg.data) {
-                        if resp.id == Some(expected_id) {
-                            if let Some(err) = resp.error {
-                                return Err(anyhow::anyhow!(
-                                    "MCP server error ({}): {}",
-                                    err.code,
-                                    err.message
-                                ));
-                            }
-                            return resp
-                                .result
-                                .ok_or_else(|| anyhow::anyhow!("Empty result from MCP server"));
-                        }
+                if (msg.event == "message" || msg.event.is_empty())
+                    && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&msg.data)
+                    && resp.id == Some(expected_id)
+                {
+                    if let Some(err) = resp.error {
+                        return Err(anyhow::anyhow!(
+                            "MCP server error ({}): {}",
+                            err.code,
+                            err.message
+                        ));
                     }
+                    return resp
+                        .result
+                        .ok_or_else(|| anyhow::anyhow!("Empty result from MCP server"));
                 }
             }
             Ok(reqwest_eventsource::Event::Open) => {}
@@ -248,10 +247,10 @@ async fn post_jsonrpc(
         .header(CONTENT_TYPE, "application/json")
         .json(request);
 
-    if let Some(token) = auth_token {
-        if !token.is_empty() {
-            req = req.header(AUTHORIZATION, format!("Bearer {}", token));
-        }
+    if let Some(token) = auth_token
+        && !token.is_empty()
+    {
+        req = req.header(AUTHORIZATION, format!("Bearer {}", token));
     }
 
     let resp = req.send().await?;

@@ -35,12 +35,11 @@ public class NacosServiceSelectorTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         namingService = NacosFactory.createNamingService(properties);
-        System.out.println("Nacos Service Selector Test Setup - Server: " + serverAddr);
     }
 
     @AfterAll
@@ -76,8 +75,9 @@ public class NacosServiceSelectorTest {
         Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
         assertNotNull(selected, "Should select an instance");
         assertTrue(selected.isHealthy(), "Selected instance should be healthy");
-
-        System.out.println("Selected instance: " + selected.getIp() + ":" + selected.getPort());
+        assertTrue(selected.getIp().startsWith("192.168.30."),
+                "Selected instance IP should be from registered range");
+        assertEquals(8080, selected.getPort(), "Selected instance port should be 8080");
 
         // Cleanup
         for (int i = 0; i < 3; i++) {
@@ -109,13 +109,16 @@ public class NacosServiceSelectorTest {
         Set<String> selectedIps = new HashSet<>();
         for (int i = 0; i < 20; i++) {
             Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
-            if (selected != null) {
-                selectedIps.add(selected.getIp());
-            }
+            assertNotNull(selected, "Selection should not return null");
+            assertTrue(selected.isHealthy(), "Each selected instance should be healthy");
+            selectedIps.add(selected.getIp());
         }
 
-        System.out.println("Unique IPs selected: " + selectedIps.size());
-        assertTrue(selectedIps.size() > 1, "Should select different instances");
+        assertTrue(selectedIps.size() > 1, "Should select different instances over 20 selections");
+        for (String ip : selectedIps) {
+            assertTrue(ip.startsWith("192.168.31."),
+                    "All selected IPs should be from registered range, got: " + ip);
+        }
 
         // Cleanup
         for (int i = 0; i < 5; i++) {
@@ -155,18 +158,17 @@ public class NacosServiceSelectorTest {
         Map<String, Integer> selectionCount = new HashMap<>();
         for (int i = 0; i < 100; i++) {
             Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
-            if (selected != null) {
-                selectionCount.merge(selected.getIp(), 1, Integer::sum);
-            }
+            assertNotNull(selected, "Selection should not return null");
+            selectionCount.merge(selected.getIp(), 1, Integer::sum);
         }
 
         int highCount = selectionCount.getOrDefault("192.168.32.1", 0);
         int lowCount = selectionCount.getOrDefault("192.168.32.2", 0);
 
-        System.out.println("High weight selections: " + highCount);
-        System.out.println("Low weight selections: " + lowCount);
-
-        assertTrue(highCount > lowCount, "High weight instance should be selected more often");
+        assertTrue(highCount > lowCount,
+                "High weight instance should be selected more often, but got high=" + highCount + " low=" + lowCount);
+        assertTrue(highCount > 50,
+                "High weight (100x) instance should be selected majority of the time, got " + highCount + "/100");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, highWeight);
@@ -200,14 +202,19 @@ public class NacosServiceSelectorTest {
         Thread.sleep(1000);
 
         int zeroSelected = 0;
+        int normalSelected = 0;
         for (int i = 0; i < 50; i++) {
             Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
-            if (selected != null && selected.getIp().equals("192.168.33.1")) {
+            assertNotNull(selected, "Selection should not return null");
+            if (selected.getIp().equals("192.168.33.1")) {
                 zeroSelected++;
+            } else {
+                normalSelected++;
             }
         }
 
-        System.out.println("Zero weight selected: " + zeroSelected + " times out of 50");
+        assertTrue(zeroSelected < normalSelected,
+                "Zero weight instance should be selected less than normal weight, got zero=" + zeroSelected + " normal=" + normalSelected);
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, zeroWeight);
@@ -240,17 +247,22 @@ public class NacosServiceSelectorTest {
 
         for (int i = 0; i < totalSelections; i++) {
             Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
-            if (selected != null) {
-                distribution.merge(selected.getIp(), 1, Integer::sum);
-            }
+            assertNotNull(selected, "Selection should not return null");
+            distribution.merge(selected.getIp(), 1, Integer::sum);
         }
 
-        System.out.println("Distribution with equal weights: " + distribution);
-
-        // Check reasonable distribution (each should get at least some selections)
+        // With equal weights, each instance should get at least some selections
         for (int i = 0; i < instanceCount; i++) {
-            int count = distribution.getOrDefault("192.168.34." + i, 0);
-            System.out.println("Instance " + i + ": " + count + " selections");
+            String ip = "192.168.34." + i;
+            int count = distribution.getOrDefault(ip, 0);
+            assertTrue(count > 0,
+                    "Instance " + ip + " should be selected at least once with equal weights, but got 0 out of " + totalSelections);
+        }
+
+        // Verify all selected IPs belong to registered range
+        for (String ip : distribution.keySet()) {
+            assertTrue(ip.startsWith("192.168.34."),
+                    "Selected IP should be from registered range, got: " + ip);
         }
 
         // Cleanup
@@ -295,12 +307,16 @@ public class NacosServiceSelectorTest {
         List<Instance> clusterAInstances = namingService.selectInstances(
                 serviceName, DEFAULT_GROUP, Arrays.asList("cluster-a"), true);
 
-        for (Instance inst : clusterAInstances) {
-            assertEquals("cluster-a", inst.getClusterName());
-            assertTrue(inst.getIp().startsWith("192.168.35."));
-        }
+        assertFalse(clusterAInstances.isEmpty(), "Should find instances in cluster-a");
+        assertEquals(2, clusterAInstances.size(), "Should find exactly 2 instances in cluster-a");
 
-        System.out.println("Cluster-a instances: " + clusterAInstances.size());
+        for (Instance inst : clusterAInstances) {
+            assertEquals("cluster-a", inst.getClusterName(),
+                    "All instances should belong to cluster-a");
+            assertTrue(inst.getIp().startsWith("192.168.35."),
+                    "Cluster-a instance IP should start with 192.168.35., got: " + inst.getIp());
+            assertTrue(inst.isHealthy(), "All selected instances should be healthy");
+        }
 
         // Cleanup
         for (int i = 0; i < 2; i++) {
@@ -334,9 +350,12 @@ public class NacosServiceSelectorTest {
         Instance selected = namingService.selectOneHealthyInstance(
                 serviceName, DEFAULT_GROUP, Arrays.asList(targetCluster), true);
 
-        assertNotNull(selected);
-        assertEquals(targetCluster, selected.getClusterName());
-        System.out.println("Selected from cluster: " + selected.getIp());
+        assertNotNull(selected, "Should select an instance from the target cluster");
+        assertEquals(targetCluster, selected.getClusterName(),
+                "Selected instance should belong to target cluster");
+        assertTrue(selected.getIp().startsWith("192.168.37."),
+                "Selected IP should be from registered range, got: " + selected.getIp());
+        assertTrue(selected.isHealthy(), "Selected instance should be healthy");
 
         // Cleanup
         for (int i = 0; i < 3; i++) {
@@ -379,12 +398,13 @@ public class NacosServiceSelectorTest {
         // Select healthy only
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
 
+        assertFalse(healthyInstances.isEmpty(), "Should find healthy instances");
         for (Instance inst : healthyInstances) {
-            assertTrue(inst.isHealthy(), "All selected should be healthy");
-            assertNotEquals("192.168.38.3", inst.getIp(), "Unhealthy should not be selected");
+            assertTrue(inst.isHealthy(), "All selected instances should be healthy");
+            assertNotEquals("192.168.38.3", inst.getIp(), "Unhealthy instance should not be selected");
         }
-
-        System.out.println("Healthy instances: " + healthyInstances.size());
+        assertTrue(healthyInstances.size() >= 2,
+                "Should have at least 2 healthy instances, got: " + healthyInstances.size());
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, healthy1);
@@ -405,6 +425,7 @@ public class NacosServiceSelectorTest {
         healthy.setPort(8080);
         healthy.setHealthy(true);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, healthy);
+        Thread.sleep(1000);
 
         Instance unhealthy = new Instance();
         unhealthy.setIp("192.168.39.2");
@@ -412,12 +433,18 @@ public class NacosServiceSelectorTest {
         unhealthy.setHealthy(false);
         namingService.registerInstance(serviceName, DEFAULT_GROUP, unhealthy);
 
-        Thread.sleep(1000);
+        Thread.sleep(2000);
 
-        // Select all (including unhealthy)
-        List<Instance> allInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, false);
+        // Select all (including unhealthy) using non-subscribe query
+        List<Instance> allInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false, false);
 
-        System.out.println("All instances (including unhealthy): " + allInstances.size());
+        assertNotNull(allInstances, "Instance list should not be null");
+        assertTrue(allInstances.size() >= 2,
+                "Should have at least 2 instances (healthy + unhealthy), got: " + allInstances.size());
+
+        Set<String> ips = allInstances.stream().map(Instance::getIp).collect(Collectors.toSet());
+        assertTrue(ips.contains("192.168.39.1"), "Should include the healthy instance");
+        assertTrue(ips.contains("192.168.39.2"), "Should include the unhealthy instance");
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, healthy);
@@ -434,13 +461,14 @@ public class NacosServiceSelectorTest {
     void testSelectFromEmptyService() throws NacosException {
         String serviceName = "selector-empty-" + UUID.randomUUID().toString().substring(0, 8);
 
-        // Try to select from non-existent service
+        // Try to select from non-existent service - should return null or throw exception
         try {
             Instance selected = namingService.selectOneHealthyInstance(serviceName, DEFAULT_GROUP);
-            // May return null or throw exception
-            System.out.println("Select from empty: " + (selected == null ? "null" : selected.getIp()));
-        } catch (Exception e) {
-            System.out.println("Select from empty service: " + e.getMessage());
+            // If no exception, result should be null for a non-existent service
+            assertNull(selected, "Select from empty service should return null");
+        } catch (NacosException e) {
+            // An exception is also acceptable for empty services
+            assertNotNull(e.getMessage(), "Exception should have a message");
         }
     }
 
@@ -463,9 +491,11 @@ public class NacosServiceSelectorTest {
 
         Thread.sleep(1000);
 
-        // Try to select healthy
+        // Try to select healthy - should return empty list
         List<Instance> healthyInstances = namingService.selectInstances(serviceName, DEFAULT_GROUP, true);
-        System.out.println("Healthy instances when all unhealthy: " + healthyInstances.size());
+        assertNotNull(healthyInstances, "Instance list should not be null");
+        assertEquals(0, healthyInstances.size(),
+                "Should find no healthy instances when all are unhealthy");
 
         // Cleanup
         for (int i = 0; i < 3; i++) {
@@ -515,10 +545,17 @@ public class NacosServiceSelectorTest {
         }
 
         boolean completed = latch.await(30, TimeUnit.SECONDS);
-        assertTrue(completed, "All threads should complete");
+        assertTrue(completed, "All threads should complete within timeout");
+        assertTrue(errors.isEmpty(),
+                "No errors should occur during concurrent selections, but got " + errors.size() + " errors");
+        assertFalse(selections.isEmpty(),
+                "Should have successful selections from concurrent threads");
 
-        System.out.println("Concurrent selections: " + selections.size());
-        System.out.println("Concurrent errors: " + errors.size());
+        for (Instance selected : selections) {
+            assertTrue(selected.isHealthy(), "All concurrently selected instances should be healthy");
+            assertTrue(selected.getIp().startsWith("192.168.41."),
+                    "All selected IPs should be from registered range");
+        }
 
         // Cleanup
         for (int i = 0; i < 5; i++) {
@@ -548,6 +585,7 @@ public class NacosServiceSelectorTest {
         // Concurrent selection and registration
         CountDownLatch latch = new CountDownLatch(10);
         List<Instance> selections = new CopyOnWriteArrayList<>();
+        List<Exception> selectionErrors = new CopyOnWriteArrayList<>();
 
         // Selection threads
         for (int i = 0; i < 5; i++) {
@@ -561,7 +599,7 @@ public class NacosServiceSelectorTest {
                         Thread.sleep(50);
                     }
                 } catch (Exception e) {
-                    System.out.println("Selection error: " + e.getMessage());
+                    selectionErrors.add(e);
                 } finally {
                     latch.countDown();
                 }
@@ -581,16 +619,22 @@ public class NacosServiceSelectorTest {
                     Thread.sleep(100);
                     namingService.deregisterInstance(serviceName, "192.168.43." + idx, 8080);
                 } catch (Exception e) {
-                    System.out.println("Registration error: " + e.getMessage());
+                    // Registration errors during concurrent changes are expected
                 } finally {
                     latch.countDown();
                 }
             }).start();
         }
 
-        latch.await(60, TimeUnit.SECONDS);
+        boolean completed = latch.await(60, TimeUnit.SECONDS);
+        assertTrue(completed, "All threads should complete within timeout");
+        assertFalse(selections.isEmpty(),
+                "Should have successful selections even during concurrent registration changes");
 
-        System.out.println("Selections during changes: " + selections.size());
+        for (Instance selected : selections) {
+            assertNotNull(selected.getIp(), "Selected instance should have an IP");
+            assertTrue(selected.isHealthy(), "Selected instances should be healthy");
+        }
 
         // Cleanup
         for (int i = 0; i < 3; i++) {
@@ -631,20 +675,29 @@ public class NacosServiceSelectorTest {
 
         // Get all and filter by metadata
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
+        assertEquals(4, allInstances.size(), "Should have 4 total instances");
 
         // Filter v1 instances
         List<Instance> v1Instances = allInstances.stream()
                 .filter(i -> "v1".equals(i.getMetadata().get("version")))
                 .collect(Collectors.toList());
 
-        System.out.println("V1 instances: " + v1Instances.size());
+        assertEquals(2, v1Instances.size(), "Should have 2 v1 instances");
+        for (Instance inst : v1Instances) {
+            assertEquals("v1", inst.getMetadata().get("version"),
+                    "Filtered instance should have version=v1");
+        }
 
         // Filter east region
         List<Instance> eastInstances = allInstances.stream()
                 .filter(i -> "east".equals(i.getMetadata().get("region")))
                 .collect(Collectors.toList());
 
-        System.out.println("East region instances: " + eastInstances.size());
+        assertEquals(2, eastInstances.size(), "Should have 2 east region instances");
+        for (Instance inst : eastInstances) {
+            assertEquals("east", inst.getMetadata().get("region"),
+                    "Filtered instance should have region=east");
+        }
 
         // Cleanup
         for (int i = 0; i < 4; i++) {
@@ -686,10 +739,16 @@ public class NacosServiceSelectorTest {
                 .filter(i -> "prod".equals(i.getMetadata().get("env")))
                 .collect(Collectors.toList());
 
-        System.out.println("Combined filter results: " + filtered.size());
+        assertNotNull(filtered, "Filtered list should not be null");
+        assertFalse(filtered.isEmpty(), "Should find instances matching combined filters");
+
         for (Instance inst : filtered) {
-            System.out.println("  " + inst.getIp() + " - " + inst.getClusterName() +
-                             " - " + inst.getMetadata().get("env"));
+            assertEquals(cluster, inst.getClusterName(),
+                    "All instances should belong to prod-cluster");
+            assertTrue(inst.isHealthy(),
+                    "All instances should be healthy");
+            assertEquals("prod", inst.getMetadata().get("env"),
+                    "All instances should have env=prod metadata");
         }
 
         // Cleanup

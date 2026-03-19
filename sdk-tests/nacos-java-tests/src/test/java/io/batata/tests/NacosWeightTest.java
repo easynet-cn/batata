@@ -40,9 +40,9 @@ public class NacosWeightTest {
         String password = System.getProperty("nacos.password", "nacos");
 
         Properties properties = new Properties();
-        properties.put("serverAddr", serverAddr);
-        properties.put("username", username);
-        properties.put("password", password);
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
 
         namingService = NacosFactory.createNamingService(properties);
         System.out.println("Nacos Weight Test Setup - Server: " + serverAddr);
@@ -225,10 +225,10 @@ public class NacosWeightTest {
         // Update weight
         instance.setWeight(8.0);
         namingService.registerInstance(serviceName, instance);
-        Thread.sleep(1000);
+        Thread.sleep(3000);
 
-        // Verify updated weight
-        instances = namingService.getAllInstances(serviceName);
+        // Verify updated weight (subscribe=false to force server query instead of using cache)
+        instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
         assertEquals(8.0, instances.get(0).getWeight(), 0.001, "Updated weight should be 8.0");
 
         System.out.println("Weight updated from 1.0 to 8.0");
@@ -544,7 +544,14 @@ public class NacosWeightTest {
         // Increase weight of instance1
         instance1.setWeight(9.0);
         namingService.registerInstance(serviceName, instance1);
-        Thread.sleep(1000);
+        Thread.sleep(3000);
+
+        // Verify updated weight (subscribe=false to force server query instead of using cache)
+        List<Instance> updatedInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP, new ArrayList<>(), false);
+        System.out.println("Updated instances: " + updatedInstances.size());
+        for (Instance inst : updatedInstances) {
+            System.out.println("  " + inst.getIp() + " weight=" + inst.getWeight());
+        }
 
         // New selection should favor instance1
         Map<String, Integer> newCounts = new HashMap<>();

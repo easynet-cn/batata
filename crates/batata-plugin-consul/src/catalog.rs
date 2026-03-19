@@ -13,6 +13,14 @@ use batata_naming::service::NamingService;
 use crate::acl::{AclService, ResourceType};
 use crate::config_entry::ConsulConfigEntryService;
 use crate::index_provider::ConsulIndexProvider;
+
+/// Handle blocking query wait if `index` query parameter is set.
+async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, wait: Option<&str>) {
+    if let Some(target_index) = index {
+        let timeout = wait.and_then(ConsulIndexProvider::parse_wait_duration);
+        index_provider.wait_for_index(target_index, timeout).await;
+    }
+}
 use crate::model::{AgentService, ConsulDatacenterConfig, ConsulError, Weights};
 
 // ============================================================================
@@ -418,6 +426,12 @@ pub struct CatalogQueryParams {
 
     /// Near node for sorting
     pub near: Option<String>,
+
+    /// Blocking query: minimum index to wait for (X-Consul-Index)
+    pub index: Option<u64>,
+
+    /// Blocking query: maximum wait time (e.g. "5m", "30s")
+    pub wait: Option<String>,
 }
 
 // ============================================================================
@@ -1192,6 +1206,10 @@ pub async fn list_services(
 
     let dc = dc_config.resolve_dc(&query.dc);
     let namespace = dc_config.resolve_ns(&query.ns);
+
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
+
     let services = catalog.get_services(&namespace);
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
@@ -1220,6 +1238,9 @@ pub async fn get_service(
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
+
+    // Handle blocking query wait
+    maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
     let mut services = catalog.get_service_instances(&namespace, &service_name, tag_filter);
 

@@ -276,6 +276,7 @@ pub struct ServiceVisibilityQueryParams {
 // ============================================================================
 
 /// In-memory connect service for discovery chain and service visibility
+#[derive(Clone)]
 pub struct ConsulConnectService {
     /// Exported services configuration
     exported_services: Arc<DashMap<String, ResolvedExportedService>>,

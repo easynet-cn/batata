@@ -30,6 +30,7 @@ base64 = { workspace = true }
 # Async
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+futures = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
