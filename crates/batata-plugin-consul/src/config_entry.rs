@@ -87,6 +87,7 @@ pub struct ConfigEntryDeleteParams {
 #[serde(rename_all = "PascalCase")]
 pub struct ConfigEntryRequest {
     pub kind: String,
+    #[serde(default)]
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,

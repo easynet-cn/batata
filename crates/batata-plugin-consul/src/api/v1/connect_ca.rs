@@ -1,6 +1,9 @@
-//! Consul Connect CA & Intentions API handlers with full-path route macros.
+//! Consul Connect CA & Intentions API handlers with scope-relative route macros.
+//!
+//! CA and intentions handlers use scope "/connect".
+//! Agent connect routes (leaf cert, authorize) use a separate scope for /agent/connect.
 
-use actix_web::{delete, get, post, put, web, HttpRequest, Responder};
+use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Scope};
 
 use crate::acl::AclService;
 use crate::connect_ca::{
@@ -13,173 +16,151 @@ use crate::index_provider::ConsulIndexProvider;
 // In-memory handlers
 // ============================================================================
 
-#[get("/v1/connect/ca/roots")]
-pub async fn get_ca_roots(
+#[get("/ca/roots")]
+async fn get_ca_roots(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     _query: web::Query<CARootQueryParams>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::get_ca_roots(req, acl_service, ca_service, index_provider, _query).await
 }
 
-#[get("/v1/connect/ca/configuration")]
-pub async fn get_ca_configuration(
+#[get("/ca/configuration")]
+async fn get_ca_configuration(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::get_ca_configuration(req, acl_service, ca_service, index_provider).await
 }
 
-#[put("/v1/connect/ca/configuration")]
-pub async fn set_ca_configuration(
+#[put("/ca/configuration")]
+async fn set_ca_configuration(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<CAConfig>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::set_ca_configuration(req, acl_service, ca_service, index_provider, body)
         .await
 }
 
-#[get("/v1/agent/connect/ca/leaf/{service}")]
-pub async fn get_leaf_cert(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    ca_service: web::Data<ConsulConnectCAService>,
-    index_provider: web::Data<ConsulIndexProvider>,
-    path: web::Path<String>,
-) -> impl Responder {
-    crate::connect_ca::get_leaf_cert(req, acl_service, ca_service, index_provider, path).await
-}
-
-#[post("/v1/agent/connect/authorize")]
-pub async fn connect_authorize(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    ca_service: web::Data<ConsulConnectCAService>,
-    index_provider: web::Data<ConsulIndexProvider>,
-    body: web::Json<AgentAuthorizeRequest>,
-) -> impl Responder {
-    crate::connect_ca::connect_authorize(req, acl_service, ca_service, index_provider, body).await
-}
-
-#[get("/v1/connect/intentions/check")]
-pub async fn check_intention(
+#[get("/intentions/check")]
+async fn check_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionQueryParams>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::check_intention(req, acl_service, ca_service, index_provider, query).await
 }
 
-#[get("/v1/connect/intentions/match")]
-pub async fn match_intentions(
+#[get("/intentions/match")]
+async fn match_intentions(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionMatchQuery>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::match_intentions(req, acl_service, ca_service, index_provider, query).await
 }
 
-#[get("/v1/connect/intentions/exact")]
-pub async fn get_intention_exact(
+#[get("/intentions/exact")]
+async fn get_intention_exact(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionExactQuery>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::get_intention_exact(req, acl_service, ca_service, index_provider, query)
         .await
 }
 
-#[put("/v1/connect/intentions/exact")]
-pub async fn upsert_intention_exact(
+#[put("/intentions/exact")]
+async fn upsert_intention_exact(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<IntentionRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::upsert_intention_exact(req, acl_service, ca_service, index_provider, body)
         .await
 }
 
-#[delete("/v1/connect/intentions/exact")]
-pub async fn delete_intention_exact(
+#[delete("/intentions/exact")]
+async fn delete_intention_exact(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionExactQuery>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::delete_intention_exact(req, acl_service, ca_service, index_provider, query)
         .await
 }
 
-#[get("/v1/connect/intentions")]
-pub async fn list_intentions(
+#[get("/intentions")]
+async fn list_intentions(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     _query: web::Query<IntentionQueryParams>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::list_intentions(req, acl_service, ca_service, index_provider, _query).await
 }
 
-#[post("/v1/connect/intentions")]
-pub async fn create_intention(
+#[post("/intentions")]
+async fn create_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<IntentionRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::create_intention(req, acl_service, ca_service, index_provider, body).await
 }
 
-#[get("/v1/connect/intentions/{id}")]
-pub async fn get_intention(
+#[get("/intentions/{id}")]
+async fn get_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::get_intention(req, acl_service, ca_service, index_provider, path).await
 }
 
-#[put("/v1/connect/intentions/{id}")]
-pub async fn update_intention(
+#[put("/intentions/{id}")]
+async fn update_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
     body: web::Json<IntentionRequest>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::update_intention(req, acl_service, ca_service, index_provider, path, body)
         .await
 }
 
-#[delete("/v1/connect/intentions/{id}")]
-pub async fn delete_intention(
+#[delete("/intentions/{id}")]
+async fn delete_intention(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::connect_ca::delete_intention(req, acl_service, ca_service, index_provider, path).await
 }
 
@@ -187,167 +168,319 @@ pub async fn delete_intention(
 // Persistent handlers
 // ============================================================================
 
-#[get("/v1/connect/ca/roots")]
-pub async fn get_ca_roots_persistent(
+#[get("/ca/roots")]
+async fn get_ca_roots_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     _query: web::Query<CARootQueryParams>,
-) -> impl Responder {
-    crate::connect_ca::get_ca_roots_persistent(req, acl_service, ca_service, index_provider, _query).await
+) -> HttpResponse {
+    crate::connect_ca::get_ca_roots_persistent(req, acl_service, ca_service, index_provider, _query)
+        .await
 }
 
-#[get("/v1/connect/ca/configuration")]
-pub async fn get_ca_configuration_persistent(
+#[get("/ca/configuration")]
+async fn get_ca_configuration_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
-) -> impl Responder {
-    crate::connect_ca::get_ca_configuration_persistent(req, acl_service, ca_service, index_provider).await
+) -> HttpResponse {
+    crate::connect_ca::get_ca_configuration_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+    )
+    .await
 }
 
-#[put("/v1/connect/ca/configuration")]
-pub async fn set_ca_configuration_persistent(
+#[put("/ca/configuration")]
+async fn set_ca_configuration_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<CAConfig>,
-) -> impl Responder {
-    crate::connect_ca::set_ca_configuration_persistent(req, acl_service, ca_service, index_provider, body).await
+) -> HttpResponse {
+    crate::connect_ca::set_ca_configuration_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        body,
+    )
+    .await
 }
 
-#[get("/v1/agent/connect/ca/leaf/{service}")]
-pub async fn get_leaf_cert_persistent(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    ca_service: web::Data<ConsulConnectCAService>,
-    index_provider: web::Data<ConsulIndexProvider>,
-    path: web::Path<String>,
-) -> impl Responder {
-    crate::connect_ca::get_leaf_cert_persistent(req, acl_service, ca_service, index_provider, path).await
-}
-
-#[post("/v1/agent/connect/authorize")]
-pub async fn connect_authorize_persistent(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    ca_service: web::Data<ConsulConnectCAService>,
-    index_provider: web::Data<ConsulIndexProvider>,
-    body: web::Json<AgentAuthorizeRequest>,
-) -> impl Responder {
-    crate::connect_ca::connect_authorize_persistent(req, acl_service, ca_service, index_provider, body).await
-}
-
-#[get("/v1/connect/intentions/check")]
-pub async fn check_intention_persistent(
+#[get("/intentions/check")]
+async fn check_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionQueryParams>,
-) -> impl Responder {
-    crate::connect_ca::check_intention_persistent(req, acl_service, ca_service, index_provider, query).await
+) -> HttpResponse {
+    crate::connect_ca::check_intention_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        query,
+    )
+    .await
 }
 
-#[get("/v1/connect/intentions/match")]
-pub async fn match_intentions_persistent(
+#[get("/intentions/match")]
+async fn match_intentions_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionMatchQuery>,
-) -> impl Responder {
-    crate::connect_ca::match_intentions_persistent(req, acl_service, ca_service, index_provider, query).await
+) -> HttpResponse {
+    crate::connect_ca::match_intentions_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        query,
+    )
+    .await
 }
 
-#[get("/v1/connect/intentions/exact")]
-pub async fn get_intention_exact_persistent(
+#[get("/intentions/exact")]
+async fn get_intention_exact_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionExactQuery>,
-) -> impl Responder {
-    crate::connect_ca::get_intention_exact_persistent(req, acl_service, ca_service, index_provider, query).await
+) -> HttpResponse {
+    crate::connect_ca::get_intention_exact_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        query,
+    )
+    .await
 }
 
-#[put("/v1/connect/intentions/exact")]
-pub async fn upsert_intention_exact_persistent(
+#[put("/intentions/exact")]
+async fn upsert_intention_exact_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<IntentionRequest>,
-) -> impl Responder {
-    crate::connect_ca::upsert_intention_exact_persistent(req, acl_service, ca_service, index_provider, body).await
+) -> HttpResponse {
+    crate::connect_ca::upsert_intention_exact_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        body,
+    )
+    .await
 }
 
-#[delete("/v1/connect/intentions/exact")]
-pub async fn delete_intention_exact_persistent(
+#[delete("/intentions/exact")]
+async fn delete_intention_exact_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     query: web::Query<IntentionExactQuery>,
-) -> impl Responder {
-    crate::connect_ca::delete_intention_exact_persistent(req, acl_service, ca_service, index_provider, query).await
+) -> HttpResponse {
+    crate::connect_ca::delete_intention_exact_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        query,
+    )
+    .await
 }
 
-#[get("/v1/connect/intentions")]
-pub async fn list_intentions_persistent(
+#[get("/intentions")]
+async fn list_intentions_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     _query: web::Query<IntentionQueryParams>,
-) -> impl Responder {
-    crate::connect_ca::list_intentions_persistent(req, acl_service, ca_service, index_provider, _query).await
+) -> HttpResponse {
+    crate::connect_ca::list_intentions_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        _query,
+    )
+    .await
 }
 
-#[post("/v1/connect/intentions")]
-pub async fn create_intention_persistent(
+#[post("/intentions")]
+async fn create_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     body: web::Json<IntentionRequest>,
-) -> impl Responder {
-    crate::connect_ca::create_intention_persistent(req, acl_service, ca_service, index_provider, body).await
+) -> HttpResponse {
+    crate::connect_ca::create_intention_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        body,
+    )
+    .await
 }
 
-#[get("/v1/connect/intentions/{id}")]
-pub async fn get_intention_persistent(
+#[get("/intentions/{id}")]
+async fn get_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
-) -> impl Responder {
-    crate::connect_ca::get_intention_persistent(req, acl_service, ca_service, index_provider, path).await
+) -> HttpResponse {
+    crate::connect_ca::get_intention_persistent(req, acl_service, ca_service, index_provider, path)
+        .await
 }
 
-#[put("/v1/connect/intentions/{id}")]
-pub async fn update_intention_persistent(
+#[put("/intentions/{id}")]
+async fn update_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
     body: web::Json<IntentionRequest>,
-) -> impl Responder {
-    crate::connect_ca::update_intention_persistent(req, acl_service, ca_service, index_provider, path, body).await
+) -> HttpResponse {
+    crate::connect_ca::update_intention_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        path,
+        body,
+    )
+    .await
 }
 
-#[delete("/v1/connect/intentions/{id}")]
-pub async fn delete_intention_persistent(
+#[delete("/intentions/{id}")]
+async fn delete_intention_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
-) -> impl Responder {
-    crate::connect_ca::delete_intention_persistent(req, acl_service, ca_service, index_provider, path).await
+) -> HttpResponse {
+    crate::connect_ca::delete_intention_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        path,
+    )
+    .await
+}
+
+// ============================================================================
+// Agent connect routes (registered under /agent/connect)
+// ============================================================================
+
+#[get("/ca/leaf/{service}")]
+async fn get_leaf_cert(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    crate::connect_ca::get_leaf_cert(req, acl_service, ca_service, index_provider, path).await
+}
+
+#[post("/authorize")]
+async fn connect_authorize(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    body: web::Json<AgentAuthorizeRequest>,
+) -> HttpResponse {
+    crate::connect_ca::connect_authorize(req, acl_service, ca_service, index_provider, body).await
+}
+
+#[get("/ca/leaf/{service}")]
+async fn get_leaf_cert_persistent(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    crate::connect_ca::get_leaf_cert_persistent(req, acl_service, ca_service, index_provider, path)
+        .await
+}
+
+#[post("/authorize")]
+async fn connect_authorize_persistent(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    body: web::Json<AgentAuthorizeRequest>,
+) -> HttpResponse {
+    crate::connect_ca::connect_authorize_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        body,
+    )
+    .await
+}
+
+pub fn routes() -> Scope {
+    web::scope("/connect")
+        .service(get_ca_roots)
+        .service(get_ca_configuration)
+        .service(set_ca_configuration)
+        .service(check_intention)
+        .service(match_intentions)
+        .service(get_intention_exact)
+        .service(upsert_intention_exact)
+        .service(delete_intention_exact)
+        .service(list_intentions)
+        .service(create_intention)
+        .service(get_intention)
+        .service(update_intention)
+        .service(delete_intention)
+        .service(get_ca_roots_persistent)
+        .service(get_ca_configuration_persistent)
+        .service(set_ca_configuration_persistent)
+        .service(check_intention_persistent)
+        .service(match_intentions_persistent)
+        .service(get_intention_exact_persistent)
+        .service(upsert_intention_exact_persistent)
+        .service(delete_intention_exact_persistent)
+        .service(list_intentions_persistent)
+        .service(create_intention_persistent)
+        .service(get_intention_persistent)
+        .service(update_intention_persistent)
+        .service(delete_intention_persistent)
+}
+
+/// Agent connect routes to be registered under /agent/connect scope
+pub fn agent_connect_routes() -> Scope {
+    web::scope("/connect")
+        .service(get_leaf_cert)
+        .service(connect_authorize)
+        .service(get_leaf_cert_persistent)
+        .service(connect_authorize_persistent)
 }

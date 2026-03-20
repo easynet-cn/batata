@@ -48,44 +48,7 @@ pub mod snapshot;
 pub mod status;
 
 // Re-export route functions for easy integration
-pub use route::{
-    // Individual route scopes (in-memory)
-    consul_acl_routes,
-    consul_agent_routes,
-    consul_agent_routes_persistent,
-    // Individual route scopes (real cluster)
-    consul_agent_routes_real,
-    consul_catalog_routes,
-    consul_config_entry_routes,
-    consul_config_entry_routes_persistent,
-    consul_connect_ca_routes,
-    consul_connect_ca_routes_persistent,
-    consul_connect_routes,
-    consul_connect_routes_persistent,
-    consul_coordinate_routes,
-    consul_coordinate_routes_persistent,
-    consul_event_routes,
-    consul_event_routes_persistent,
-    consul_health_routes,
-    consul_internal_routes,
-    consul_kv_routes,
-    consul_lock_routes,
-    consul_operator_routes,
-    consul_operator_routes_real,
-    consul_peering_routes,
-    consul_peering_routes_persistent,
-    consul_query_routes,
-    // Combined route scopes
-    consul_routes,            // In-memory (for development/testing)
-    consul_routes_full,       // Persistent + real cluster (recommended for production)
-    consul_routes_persistent, // Persistent only
-    consul_session_routes,
-    consul_snapshot_routes,
-    consul_snapshot_routes_persistent,
-    consul_status_routes,
-    consul_status_routes_real,
-    consul_ui_routes,
-};
+pub use route::routes;
 
 // Re-export key services
 pub use acl::AclService;

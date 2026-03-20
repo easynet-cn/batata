@@ -1,68 +1,77 @@
-//! Consul KV API handlers with full-path route macros.
+//! Consul KV API handlers with scope-relative route macros.
+//!
+//! These use `#[get("/{key:.*}")]` style macros under a "/kv" scope.
 
-use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Scope};
 
 use crate::acl::AclService;
 use crate::index_provider::ConsulIndexProvider;
-use crate::kv::{ConsulKVService, KVPair, KVQueryParams, TxnOp};
+use crate::kv::{ConsulKVService, KVPair, KVQueryParams};
 
-#[get("/v1/kv/{key:.*}")]
-pub async fn get_kv(
+// ============================================================================
+// In-memory handlers
+// ============================================================================
+
+#[get("/export")]
+async fn export_kv(
+    kv_service: web::Data<ConsulKVService>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+) -> HttpResponse {
+    crate::kv::export_kv(kv_service, acl_service, req).await
+}
+
+#[post("/import")]
+async fn import_kv(
+    kv_service: web::Data<ConsulKVService>,
+    acl_service: web::Data<AclService>,
+    req: HttpRequest,
+    body: web::Json<Vec<KVPair>>,
+) -> HttpResponse {
+    crate::kv::import_kv(kv_service, acl_service, req, body).await
+}
+
+#[get("/{key:.*}")]
+async fn get_kv(
     kv_service: web::Data<ConsulKVService>,
     acl_service: web::Data<AclService>,
     req: HttpRequest,
     query: web::Query<KVQueryParams>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::kv::get_kv(kv_service, acl_service, req, query).await
 }
 
-#[put("/v1/kv/{key:.*}")]
-pub async fn put_kv(
+#[put("/{key:.*}")]
+async fn put_kv(
     kv_service: web::Data<ConsulKVService>,
     acl_service: web::Data<AclService>,
     req: HttpRequest,
     query: web::Query<KVQueryParams>,
     body: web::Bytes,
     index_provider: web::Data<ConsulIndexProvider>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::kv::put_kv(kv_service, acl_service, req, query, body, index_provider).await
 }
 
-#[delete("/v1/kv/{key:.*}")]
-pub async fn delete_kv(
+#[delete("/{key:.*}")]
+async fn delete_kv(
     kv_service: web::Data<ConsulKVService>,
     acl_service: web::Data<AclService>,
     req: HttpRequest,
     query: web::Query<KVQueryParams>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::kv::delete_kv(kv_service, acl_service, req, query).await
 }
 
-#[put("/v1/txn")]
-pub async fn txn(
-    kv_service: web::Data<ConsulKVService>,
-    acl_service: web::Data<AclService>,
-    req: HttpRequest,
-    body: web::Json<Vec<TxnOp>>,
-) -> impl Responder {
-    crate::kv::txn(kv_service, acl_service, req, body).await
+pub fn routes() -> Scope {
+    web::scope("/kv")
+        .service(export_kv)
+        .service(import_kv)
+        .service(get_kv)
+        .service(put_kv)
+        .service(delete_kv)
 }
 
-#[get("/v1/kv/export")]
-pub async fn export_kv(
-    kv_service: web::Data<ConsulKVService>,
-    acl_service: web::Data<AclService>,
-    req: HttpRequest,
-) -> impl Responder {
-    crate::kv::export_kv(kv_service, acl_service, req).await
-}
-
-#[post("/v1/kv/import")]
-pub async fn import_kv(
-    kv_service: web::Data<ConsulKVService>,
-    acl_service: web::Data<AclService>,
-    req: HttpRequest,
-    body: web::Json<Vec<KVPair>>,
-) -> impl Responder {
-    crate::kv::import_kv(kv_service, acl_service, req, body).await
+pub fn txn_resource() -> actix_web::Resource {
+    web::resource("/txn").route(web::put().to(crate::kv::txn))
 }

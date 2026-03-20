@@ -1411,6 +1411,17 @@ pub async fn delete_kv(
 
     let recurse = query.recurse.unwrap_or(false);
 
+    // CAS delete: only delete if ModifyIndex matches
+    if let Some(cas_index) = query.cas {
+        if let Some(existing) = kv_service.get(&key) {
+            if existing.modify_index != cas_index {
+                return HttpResponse::Ok().json(false);
+            }
+        } else if cas_index != 0 {
+            return HttpResponse::Ok().json(false);
+        }
+    }
+
     if recurse {
         kv_service.delete_prefix(&key).await;
     } else {

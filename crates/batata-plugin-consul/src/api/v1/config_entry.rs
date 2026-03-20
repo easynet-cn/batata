@@ -3,7 +3,7 @@
 //! These use `#[put("/v1/config")]` style macros to avoid actix-web scope
 //! conflicts with other `/v1` scoped routes (KV, lock, snapshot, etc.).
 
-use actix_web::{HttpRequest, HttpResponse, delete, get, put, web};
+use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, put, web};
 
 use crate::acl::{AclService, ResourceType};
 use crate::config_entry::{
@@ -17,8 +17,8 @@ use crate::model::ConsulError;
 // In-memory handlers
 // ============================================================================
 
-#[put("/v1/config")]
-pub async fn apply_config_entry(
+#[put("")]
+async fn apply_config_entry(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
@@ -64,8 +64,8 @@ pub async fn apply_config_entry(
     }
 }
 
-#[get("/v1/config/{kind}/{name}")]
-pub async fn get_config_entry(
+#[get("/{kind}/{name}")]
+async fn get_config_entry(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
@@ -80,15 +80,19 @@ pub async fn get_config_entry(
 
     let (kind, name) = path.into_inner();
     match config_service.get_entry(&kind, &name) {
-        Some(entry) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-            .json(entry),
+        Some(entry) => {
+            // Use entry's ModifyIndex as X-Consul-Index so CAS works correctly
+            let idx = entry.modify_index;
+            HttpResponse::Ok()
+                .insert_header(("X-Consul-Index", idx.to_string()))
+                .json(entry)
+        }
         None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
     }
 }
 
-#[delete("/v1/config/{kind}/{name}")]
-pub async fn delete_config_entry(
+#[delete("/{kind}/{name}")]
+async fn delete_config_entry(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
@@ -106,17 +110,11 @@ pub async fn delete_config_entry(
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider.current_index().to_string(),
-                    ))
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
                     .json(success)
             } else {
                 HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider.current_index().to_string(),
-                    ))
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
                     .json(serde_json::json!({}))
             }
         }
@@ -124,8 +122,8 @@ pub async fn delete_config_entry(
     }
 }
 
-#[get("/v1/config/{kind}")]
-pub async fn list_config_entries(
+#[get("/{kind}")]
+async fn list_config_entries(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
@@ -156,8 +154,8 @@ pub async fn list_config_entries(
 // Persistent handlers
 // ============================================================================
 
-#[put("/v1/config")]
-pub async fn apply_config_entry_persistent(
+#[put("")]
+async fn apply_config_entry_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
@@ -203,8 +201,8 @@ pub async fn apply_config_entry_persistent(
     }
 }
 
-#[get("/v1/config/{kind}/{name}")]
-pub async fn get_config_entry_persistent(
+#[get("/{kind}/{name}")]
+async fn get_config_entry_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
@@ -219,15 +217,18 @@ pub async fn get_config_entry_persistent(
 
     let (kind, name) = path.into_inner();
     match config_service.get_entry(&kind, &name).await {
-        Some(entry) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-            .json(entry),
+        Some(entry) => {
+            let idx = entry.modify_index;
+            HttpResponse::Ok()
+                .insert_header(("X-Consul-Index", idx.to_string()))
+                .json(entry)
+        }
         None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
     }
 }
 
-#[delete("/v1/config/{kind}/{name}")]
-pub async fn delete_config_entry_persistent(
+#[delete("/{kind}/{name}")]
+async fn delete_config_entry_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
@@ -245,17 +246,11 @@ pub async fn delete_config_entry_persistent(
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider.current_index().to_string(),
-                    ))
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
                     .json(success)
             } else {
                 HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider.current_index().to_string(),
-                    ))
+                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
                     .json(serde_json::json!({}))
             }
         }
@@ -263,8 +258,8 @@ pub async fn delete_config_entry_persistent(
     }
 }
 
-#[get("/v1/config/{kind}")]
-pub async fn list_config_entries_persistent(
+#[get("/{kind}")]
+async fn list_config_entries_persistent(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
@@ -289,4 +284,16 @@ pub async fn list_config_entries_persistent(
     HttpResponse::Ok()
         .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
         .json(entries)
+}
+
+pub fn routes() -> Scope {
+    web::scope("/config")
+        .service(apply_config_entry)
+        .service(get_config_entry)
+        .service(delete_config_entry)
+        .service(list_config_entries)
+        .service(apply_config_entry_persistent)
+        .service(get_config_entry_persistent)
+        .service(delete_config_entry_persistent)
+        .service(list_config_entries_persistent)
 }

@@ -522,12 +522,13 @@ func TestConfigEntryListByKind(t *testing.T) {
 	for _, kind := range kinds {
 		entries, _, err := configEntries.List(kind, nil)
 		require.NoError(t, err, "Listing %s should not return an error", kind)
-		assert.NotNil(t, entries, "Entries list for %s should not be nil", kind)
 
 		// Service defaults should have at least our entry
 		if kind == api.ServiceDefaults {
+			require.NotNil(t, entries, "service-defaults list should not be nil")
 			assert.GreaterOrEqual(t, len(entries), 1, "service-defaults should have at least 1 entry")
 		}
+		// Other kinds may return nil (Go SDK returns nil for empty JSON array [])
 	}
 
 	// Cleanup

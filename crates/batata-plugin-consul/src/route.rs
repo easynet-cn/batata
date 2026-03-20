@@ -4,14 +4,22 @@
 use actix_web::web;
 
 use crate::{
-    acl, agent, catalog, config_entry, connect, connect_ca, coordinate, event, health, internal,
-    kv, lock, operator, peering, query, session, snapshot, status,
+    acl, agent, api, catalog, config_entry, connect, connect_ca, coordinate, event, health,
+    internal, kv, lock, operator, peering, query, session, snapshot, status,
 };
+
+/// Unified Consul API v1 routes.
+///
+/// All routes are under a single `/v1` scope to avoid actix-web scope shadowing.
+/// Each sub-module uses a unique prefix (e.g., `/agent`, `/health`, `/kv`).
+pub fn routes() -> actix_web::Scope {
+    api::v1::routes()
+}
 
 /// Configure Consul Agent API routes (in-memory storage)
 /// Returns a scope configured with all agent service endpoints
 pub fn consul_agent_routes() -> actix_web::Scope {
-    web::scope("/v1/agent")
+    web::scope("/agent")
         // Agent core endpoints
         .route("/self", web::get().to(agent::get_agent_self))
         .route("/members", web::get().to(agent::get_agent_members))
@@ -74,12 +82,14 @@ pub fn consul_agent_routes() -> actix_web::Scope {
             "/health/service/name/{service_name}",
             web::get().to(agent::agent_health_service_by_name),
         )
+        // Agent connect routes (leaf cert, authorize)
+        .service(api::v1::connect_ca::agent_connect_routes())
 }
 
 /// Configure Consul Agent API routes (persistent database storage for checks)
 /// Returns a scope configured with all agent service endpoints using database persistence for checks
 pub fn consul_agent_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1/agent")
+    web::scope("/agent")
         // Agent core endpoints (same as non-persistent)
         .route("/self", web::get().to(agent::get_agent_self))
         .route("/members", web::get().to(agent::get_agent_members))
@@ -138,12 +148,13 @@ pub fn consul_agent_routes_persistent() -> actix_web::Scope {
             "/health/service/name/{service_name}",
             web::get().to(agent::agent_health_service_by_name),
         )
+        .service(api::v1::connect_ca::agent_connect_routes())
 }
 
 /// Configure Consul Agent API routes (real cluster version)
 /// Returns a scope configured with agent endpoints using real ServerMemberManager data
 pub fn consul_agent_routes_real() -> actix_web::Scope {
-    web::scope("/v1/agent")
+    web::scope("/agent")
         // Agent core endpoints - real cluster versions
         .route("/self", web::get().to(agent::get_agent_self_real))
         .route("/members", web::get().to(agent::get_agent_members_real))
@@ -202,11 +213,12 @@ pub fn consul_agent_routes_real() -> actix_web::Scope {
             "/health/service/name/{service_name}",
             web::get().to(agent::agent_health_service_by_name),
         )
+        .service(api::v1::connect_ca::agent_connect_routes())
 }
 
 /// Configure Consul Health API routes (in-memory storage)
 pub fn consul_health_routes() -> actix_web::Scope {
-    web::scope("/v1/health")
+    web::scope("/health")
         .route(
             "/service/{service}",
             web::get().to(health::get_service_health),
@@ -240,7 +252,7 @@ pub fn consul_kv_routes() -> actix_web::Scope {
 
 /// Configure Consul Catalog API routes
 pub fn consul_catalog_routes() -> actix_web::Scope {
-    web::scope("/v1/catalog")
+    web::scope("/catalog")
         .route("/datacenters", web::get().to(catalog::list_datacenters))
         .route("/services", web::get().to(catalog::list_services))
         .route("/service/{service}", web::get().to(catalog::get_service))
@@ -264,12 +276,12 @@ pub fn consul_catalog_routes() -> actix_web::Scope {
 
 /// Configure Consul UI API routes (existing, kept for backwards compatibility)
 pub fn consul_ui_routes() -> actix_web::Scope {
-    web::scope("/v1/internal/ui").route("/services", web::get().to(catalog::ui_services))
+    web::scope("/internal/ui").route("/services", web::get().to(catalog::ui_services))
 }
 
 /// Configure all Consul Internal API routes (UI, Federation, VIP, ACL Authorize)
 pub fn consul_internal_routes() -> actix_web::Scope {
-    web::scope("/v1/internal")
+    web::scope("/internal")
         // UI endpoints
         .route("/ui/services", web::get().to(catalog::ui_services))
         .route("/ui/nodes", web::get().to(internal::ui_nodes))
@@ -322,7 +334,7 @@ pub fn consul_internal_routes() -> actix_web::Scope {
 
 /// Configure Consul ACL API routes (in-memory)
 pub fn consul_acl_routes() -> actix_web::Scope {
-    web::scope("/v1/acl")
+    web::scope("/acl")
         // Bootstrap and auth endpoints
         .route("/bootstrap", web::put().to(acl::acl_bootstrap))
         .route("/login", web::post().to(acl::acl_login))
@@ -400,7 +412,7 @@ pub fn consul_acl_routes() -> actix_web::Scope {
 
 /// Configure Consul Session API routes
 pub fn consul_session_routes() -> actix_web::Scope {
-    web::scope("/v1/session")
+    web::scope("/session")
         .route("/create", web::put().to(session::create_session))
         .route("/destroy/{uuid}", web::put().to(session::destroy_session))
         .route("/info/{uuid}", web::get().to(session::get_session_info))
@@ -411,35 +423,35 @@ pub fn consul_session_routes() -> actix_web::Scope {
 
 /// Configure Consul Status API routes (fixed/fallback version)
 pub fn consul_status_routes() -> actix_web::Scope {
-    web::scope("/v1/status")
+    web::scope("/status")
         .route("/leader", web::get().to(status::get_leader))
         .route("/peers", web::get().to(status::get_peers))
 }
 
 /// Configure Consul Status API routes (real cluster version)
 pub fn consul_status_routes_real() -> actix_web::Scope {
-    web::scope("/v1/status")
+    web::scope("/status")
         .route("/leader", web::get().to(status::get_leader_real))
         .route("/peers", web::get().to(status::get_peers_real))
 }
 
 /// Configure Consul Event API routes
 pub fn consul_event_routes() -> actix_web::Scope {
-    web::scope("/v1/event")
+    web::scope("/event")
         .route("/fire/{name}", web::put().to(event::fire_event))
         .route("/list", web::get().to(event::list_events))
 }
 
 /// Configure Consul Event API routes (persistent database storage)
 pub fn consul_event_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1/event")
+    web::scope("/event")
         .route("/fire/{name}", web::put().to(event::fire_event_persistent))
         .route("/list", web::get().to(event::list_events_persistent))
 }
 
 /// Configure Consul Prepared Query API routes
 pub fn consul_query_routes() -> actix_web::Scope {
-    web::scope("/v1/query")
+    web::scope("/query")
         .route("", web::post().to(query::create_query))
         .route("", web::get().to(query::list_queries))
         .route("/{uuid}", web::get().to(query::get_query))
@@ -494,7 +506,7 @@ pub fn consul_snapshot_routes_persistent() -> actix_web::Scope {
 
 /// Configure Consul Operator API routes (in-memory)
 pub fn consul_operator_routes() -> actix_web::Scope {
-    web::scope("/v1/operator")
+    web::scope("/operator")
         // Raft
         .route(
             "/raft/configuration",
@@ -537,7 +549,7 @@ pub fn consul_operator_routes() -> actix_web::Scope {
 
 /// Configure Consul Operator API routes (real cluster)
 pub fn consul_operator_routes_real() -> actix_web::Scope {
-    web::scope("/v1/operator")
+    web::scope("/operator")
         // Raft
         .route(
             "/raft/configuration",
@@ -628,7 +640,7 @@ pub fn consul_config_entry_routes_persistent() -> actix_web::Scope {
 
 /// Configure Consul Coordinate API routes (in-memory)
 pub fn consul_coordinate_routes() -> actix_web::Scope {
-    web::scope("/v1/coordinate")
+    web::scope("/coordinate")
         .route(
             "/datacenters",
             web::get().to(coordinate::get_coordinate_datacenters),
@@ -643,7 +655,7 @@ pub fn consul_coordinate_routes() -> actix_web::Scope {
 
 /// Configure Consul Coordinate API routes (persistent)
 pub fn consul_coordinate_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1/coordinate")
+    web::scope("/coordinate")
         .route(
             "/datacenters",
             web::get().to(coordinate::get_coordinate_datacenters_persistent),
@@ -914,10 +926,7 @@ pub fn consul_v1_misc_routes() -> actix_web::Scope {
         .route("/snapshot", web::put().to(snapshot::restore_snapshot))
         // Lock and semaphore routes
         .route("/lock/acquire", web::post().to(lock::acquire_lock))
-        .route(
-            "/lock/release/{key:.*}",
-            web::put().to(lock::release_lock),
-        )
+        .route("/lock/release/{key:.*}", web::put().to(lock::release_lock))
         .route("/lock/{key:.*}", web::get().to(lock::get_lock))
         .route("/lock/{key:.*}", web::delete().to(lock::destroy_lock))
         .route("/lock/renew/{key:.*}", web::put().to(lock::renew_lock))
@@ -929,10 +938,7 @@ pub fn consul_v1_misc_routes() -> actix_web::Scope {
             "/semaphore/release/{prefix:.*}",
             web::put().to(lock::release_semaphore),
         )
-        .route(
-            "/semaphore/{prefix:.*}",
-            web::get().to(lock::get_semaphore),
-        )
+        .route("/semaphore/{prefix:.*}", web::get().to(lock::get_semaphore))
         // Transaction
         .route("/txn", web::put().to(kv::txn))
         // KV routes (last — {key:.*} is a catch-all)
@@ -947,14 +953,15 @@ pub fn consul_v1_misc_routes() -> actix_web::Scope {
 // Combined Route Scopes
 // ============================================================================
 
-/// Configure all Consul API routes (in-memory storage)
-/// Note: Data is lost on server restart. For production use, use `consul_routes_persistent()`.
-/// Scope-based routes only (specific prefixes like /v1/agent, /v1/health, etc.)
-///
-/// Routes that use broad `/v1` prefix are registered separately via `api::v1::*`
-/// modules with full-path macros to avoid actix-web scope shadowing conflicts.
+/// **DEPRECATED**: Use `routes()` instead. Kept for backward compatibility with tests.
 pub fn consul_routes() -> actix_web::Scope {
     web::scope("")
+        // TEST: put test scope FIRST
+        .service(web::scope("/v1/testroute").route(
+            "",
+            web::get().to(|| async { actix_web::HttpResponse::Ok().body("test works") }),
+        ))
+        // Existing unique-prefix scopes
         .service(consul_agent_routes())
         .service(consul_health_routes())
         .service(consul_catalog_routes())
@@ -966,6 +973,130 @@ pub fn consul_routes() -> actix_web::Scope {
         .service(consul_operator_routes())
         .service(consul_coordinate_routes())
         .service(consul_internal_routes())
+        // TEST: minimal new scope
+        .service(web::scope("/v1/testroute").route(
+            "",
+            web::get().to(|| async { actix_web::HttpResponse::Ok().body("test works") }),
+        ))
+        // KV: unique scope /v1/kv
+        .service(
+            web::scope("/v1/kv")
+                .route("/export", web::get().to(kv::export_kv))
+                .route("/import", web::post().to(kv::import_kv))
+                .route("/{key:.*}", web::get().to(kv::get_kv))
+                .route("/{key:.*}", web::put().to(kv::put_kv))
+                .route("/{key:.*}", web::delete().to(kv::delete_kv)),
+        )
+        // Txn: standalone resource
+        .service(web::resource("/v1/txn").route(web::put().to(kv::txn)))
+        // Lock: unique scope /v1/lock
+        .service(
+            web::scope("/v1/lock")
+                .route("/acquire", web::post().to(lock::acquire_lock))
+                .route("/release/{key:.*}", web::put().to(lock::release_lock))
+                .route("/renew/{key:.*}", web::put().to(lock::renew_lock))
+                .route("/{key:.*}", web::get().to(lock::get_lock))
+                .route("/{key:.*}", web::delete().to(lock::destroy_lock)),
+        )
+        // Semaphore: unique scope /v1/semaphore
+        .service(
+            web::scope("/v1/semaphore")
+                .route("/acquire", web::post().to(lock::acquire_semaphore))
+                .route(
+                    "/release/{prefix:.*}",
+                    web::put().to(lock::release_semaphore),
+                )
+                .route("/{prefix:.*}", web::get().to(lock::get_semaphore)),
+        )
+        // Config Entry: unique scope /v1/config
+        .service(
+            web::scope("/v1/config")
+                .route("", web::put().to(config_entry::apply_config_entry))
+                .route(
+                    "/{kind}/{name}",
+                    web::get().to(config_entry::get_config_entry),
+                )
+                .route(
+                    "/{kind}/{name}",
+                    web::delete().to(config_entry::delete_config_entry),
+                )
+                .route("/{kind}", web::get().to(config_entry::list_config_entries)),
+        )
+        // Snapshot: resource with GET+PUT on same path
+        .service(
+            web::resource("/v1/snapshot")
+                .route(web::get().to(snapshot::save_snapshot))
+                .route(web::put().to(snapshot::restore_snapshot)),
+        )
+        // Peering: unique scope /v1/peering
+        .service(
+            web::scope("/v1/peering")
+                .route("/token", web::post().to(peering::generate_peering_token))
+                .route("/establish", web::post().to(peering::establish_peering))
+                .route("/{name}", web::get().to(peering::get_peering))
+                .route("/{name}", web::delete().to(peering::delete_peering)),
+        )
+        // Peerings list: standalone resource (plural)
+        .service(web::resource("/v1/peerings").route(web::get().to(peering::list_peerings)))
+        // Discovery Chain: unique scope /v1/discovery-chain
+        .service(
+            web::scope("/v1/discovery-chain")
+                .route("/{service}", web::get().to(connect::get_discovery_chain))
+                .route("/{service}", web::post().to(connect::post_discovery_chain)),
+        )
+        // Exported/Imported services: standalone resources
+        .service(
+            web::resource("/v1/exported-services")
+                .route(web::get().to(connect::list_exported_services)),
+        )
+        .service(
+            web::resource("/v1/imported-services")
+                .route(web::get().to(connect::list_imported_services)),
+        )
+        // Connect CA & Intentions: unique scope /v1/connect
+        .service(
+            web::scope("/v1/connect")
+                .route("/ca/roots", web::get().to(connect_ca::get_ca_roots))
+                .route(
+                    "/ca/configuration",
+                    web::get().to(connect_ca::get_ca_configuration),
+                )
+                .route(
+                    "/ca/configuration",
+                    web::put().to(connect_ca::set_ca_configuration),
+                )
+                .route(
+                    "/intentions/check",
+                    web::get().to(connect_ca::check_intention),
+                )
+                .route(
+                    "/intentions/match",
+                    web::get().to(connect_ca::match_intentions),
+                )
+                .route(
+                    "/intentions/exact",
+                    web::get().to(connect_ca::get_intention_exact),
+                )
+                .route(
+                    "/intentions/exact",
+                    web::put().to(connect_ca::upsert_intention_exact),
+                )
+                .route(
+                    "/intentions/exact",
+                    web::delete().to(connect_ca::delete_intention_exact),
+                )
+                .route("/intentions", web::get().to(connect_ca::list_intentions))
+                .route("/intentions", web::post().to(connect_ca::create_intention))
+                .route("/intentions/{id}", web::get().to(connect_ca::get_intention))
+                .route(
+                    "/intentions/{id}",
+                    web::put().to(connect_ca::update_intention),
+                )
+                .route(
+                    "/intentions/{id}",
+                    web::delete().to(connect_ca::delete_intention),
+                ),
+        )
 }
 
 /// Configure all Consul API routes with database persistence
@@ -973,7 +1104,17 @@ pub fn consul_routes() -> actix_web::Scope {
 /// via the unified service types (no separate persistent route functions needed).
 pub fn consul_routes_persistent() -> actix_web::Scope {
     web::scope("")
-        .service(consul_agent_routes_persistent())
+        .service(
+            consul_agent_routes_persistent()
+                .route(
+                    "/connect/ca/leaf/{service}",
+                    web::get().to(connect_ca::get_leaf_cert_persistent),
+                )
+                .route(
+                    "/connect/authorize",
+                    web::post().to(connect_ca::connect_authorize_persistent),
+                ),
+        )
         .service(consul_health_routes())
         .service(consul_catalog_routes())
         .service(consul_acl_routes())
@@ -984,6 +1125,149 @@ pub fn consul_routes_persistent() -> actix_web::Scope {
         .service(consul_operator_routes())
         .service(consul_coordinate_routes_persistent())
         .service(consul_internal_routes())
+        .service(
+            web::scope("/v1/kv")
+                .route("/export", web::get().to(kv::export_kv))
+                .route("/import", web::post().to(kv::import_kv))
+                .route("/{key:.*}", web::get().to(kv::get_kv))
+                .route("/{key:.*}", web::put().to(kv::put_kv))
+                .route("/{key:.*}", web::delete().to(kv::delete_kv)),
+        )
+        .service(web::resource("/v1/txn").route(web::put().to(kv::txn)))
+        .service(
+            web::scope("/v1/lock")
+                .route("/acquire", web::post().to(lock::acquire_lock))
+                .route("/release/{key:.*}", web::put().to(lock::release_lock))
+                .route("/renew/{key:.*}", web::put().to(lock::renew_lock))
+                .route("/{key:.*}", web::get().to(lock::get_lock))
+                .route("/{key:.*}", web::delete().to(lock::destroy_lock)),
+        )
+        .service(
+            web::scope("/v1/semaphore")
+                .route("/acquire", web::post().to(lock::acquire_semaphore))
+                .route(
+                    "/release/{prefix:.*}",
+                    web::put().to(lock::release_semaphore),
+                )
+                .route("/{prefix:.*}", web::get().to(lock::get_semaphore)),
+        )
+        .service(
+            web::scope("/v1/config")
+                .route(
+                    "",
+                    web::put().to(config_entry::apply_config_entry_persistent),
+                )
+                .route(
+                    "/{kind}/{name}",
+                    web::get().to(config_entry::get_config_entry_persistent),
+                )
+                .route(
+                    "/{kind}/{name}",
+                    web::delete().to(config_entry::delete_config_entry_persistent),
+                )
+                .route(
+                    "/{kind}",
+                    web::get().to(config_entry::list_config_entries_persistent),
+                ),
+        )
+        .service(
+            web::resource("/v1/snapshot")
+                .route(web::get().to(snapshot::save_snapshot_persistent))
+                .route(web::put().to(snapshot::restore_snapshot_persistent)),
+        )
+        .service(
+            web::scope("/v1/peering")
+                .route(
+                    "/token",
+                    web::post().to(peering::generate_peering_token_persistent),
+                )
+                .route(
+                    "/establish",
+                    web::post().to(peering::establish_peering_persistent),
+                )
+                .route("/{name}", web::get().to(peering::get_peering_persistent))
+                .route(
+                    "/{name}",
+                    web::delete().to(peering::delete_peering_persistent),
+                ),
+        )
+        .service(
+            web::resource("/v1/peerings").route(web::get().to(peering::list_peerings_persistent)),
+        )
+        .service(
+            web::scope("/v1/discovery-chain")
+                .route(
+                    "/{service}",
+                    web::get().to(connect::get_discovery_chain_persistent),
+                )
+                .route(
+                    "/{service}",
+                    web::post().to(connect::post_discovery_chain_persistent),
+                ),
+        )
+        .service(
+            web::resource("/v1/exported-services")
+                .route(web::get().to(connect::list_exported_services_persistent)),
+        )
+        .service(
+            web::resource("/v1/imported-services")
+                .route(web::get().to(connect::list_imported_services_persistent)),
+        )
+        .service(
+            web::scope("/v1/connect")
+                .route(
+                    "/ca/roots",
+                    web::get().to(connect_ca::get_ca_roots_persistent),
+                )
+                .route(
+                    "/ca/configuration",
+                    web::get().to(connect_ca::get_ca_configuration_persistent),
+                )
+                .route(
+                    "/ca/configuration",
+                    web::put().to(connect_ca::set_ca_configuration_persistent),
+                )
+                .route(
+                    "/intentions/check",
+                    web::get().to(connect_ca::check_intention_persistent),
+                )
+                .route(
+                    "/intentions/match",
+                    web::get().to(connect_ca::match_intentions_persistent),
+                )
+                .route(
+                    "/intentions/exact",
+                    web::get().to(connect_ca::get_intention_exact_persistent),
+                )
+                .route(
+                    "/intentions/exact",
+                    web::put().to(connect_ca::upsert_intention_exact_persistent),
+                )
+                .route(
+                    "/intentions/exact",
+                    web::delete().to(connect_ca::delete_intention_exact_persistent),
+                )
+                .route(
+                    "/intentions",
+                    web::get().to(connect_ca::list_intentions_persistent),
+                )
+                .route(
+                    "/intentions",
+                    web::post().to(connect_ca::create_intention_persistent),
+                )
+                .route(
+                    "/intentions/{id}",
+                    web::get().to(connect_ca::get_intention_persistent),
+                )
+                .route(
+                    "/intentions/{id}",
+                    web::put().to(connect_ca::update_intention_persistent),
+                )
+                .route(
+                    "/intentions/{id}",
+                    web::delete().to(connect_ca::delete_intention_persistent),
+                ),
+        )
 }
 
 /// Configure a subset of Consul API routes for testing with the given data dependencies

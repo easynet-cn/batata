@@ -1,91 +1,117 @@
-//! Consul Lock & Semaphore API handlers with full-path route macros.
+//! Consul Lock & Semaphore API handlers with scope-relative route macros.
+//!
+//! Lock handlers use scope "/lock", semaphore handlers use scope "/semaphore".
 
-use actix_web::{delete, get, post, put, web, HttpRequest, Responder};
+use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Scope};
 
 use crate::acl::AclService;
 use crate::lock::{
     ConsulLockService, ConsulSemaphoreService, LockOptions, LockReleaseQuery, SemaphoreOptions,
 };
 
-#[post("/v1/lock/acquire")]
-pub async fn acquire_lock(
+// ============================================================================
+// Lock handlers
+// ============================================================================
+
+#[post("/acquire")]
+async fn acquire_lock(
     req: HttpRequest,
     lock_service: web::Data<ConsulLockService>,
     acl_service: web::Data<AclService>,
     body: web::Json<LockOptions>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::lock::acquire_lock(req, lock_service, acl_service, body).await
 }
 
-#[put("/v1/lock/release/{key:.*}")]
-pub async fn release_lock(
+#[put("/release/{key:.*}")]
+async fn release_lock(
     req: HttpRequest,
     lock_service: web::Data<ConsulLockService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<LockReleaseQuery>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::lock::release_lock(req, lock_service, acl_service, path, query).await
 }
 
-#[get("/v1/lock/{key:.*}")]
-pub async fn get_lock(
-    req: HttpRequest,
-    lock_service: web::Data<ConsulLockService>,
-    acl_service: web::Data<AclService>,
-    path: web::Path<String>,
-) -> impl Responder {
-    crate::lock::get_lock(req, lock_service, acl_service, path).await
-}
-
-#[delete("/v1/lock/{key:.*}")]
-pub async fn destroy_lock(
-    req: HttpRequest,
-    lock_service: web::Data<ConsulLockService>,
-    acl_service: web::Data<AclService>,
-    path: web::Path<String>,
-) -> impl Responder {
-    crate::lock::destroy_lock(req, lock_service, acl_service, path).await
-}
-
-#[put("/v1/lock/renew/{key:.*}")]
-pub async fn renew_lock(
+#[put("/renew/{key:.*}")]
+async fn renew_lock(
     req: HttpRequest,
     lock_service: web::Data<ConsulLockService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<LockReleaseQuery>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::lock::renew_lock(req, lock_service, acl_service, path, query).await
 }
 
-#[post("/v1/semaphore/acquire")]
-pub async fn acquire_semaphore(
+#[get("/{key:.*}")]
+async fn get_lock(
+    req: HttpRequest,
+    lock_service: web::Data<ConsulLockService>,
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    crate::lock::get_lock(req, lock_service, acl_service, path).await
+}
+
+#[delete("/{key:.*}")]
+async fn destroy_lock(
+    req: HttpRequest,
+    lock_service: web::Data<ConsulLockService>,
+    acl_service: web::Data<AclService>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    crate::lock::destroy_lock(req, lock_service, acl_service, path).await
+}
+
+pub fn routes() -> Scope {
+    web::scope("/lock")
+        .service(acquire_lock)
+        .service(release_lock)
+        .service(renew_lock)
+        .service(get_lock)
+        .service(destroy_lock)
+}
+
+// ============================================================================
+// Semaphore handlers
+// ============================================================================
+
+#[post("/acquire")]
+async fn acquire_semaphore(
     req: HttpRequest,
     semaphore_service: web::Data<ConsulSemaphoreService>,
     acl_service: web::Data<AclService>,
     body: web::Json<SemaphoreOptions>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::lock::acquire_semaphore(req, semaphore_service, acl_service, body).await
 }
 
-#[put("/v1/semaphore/release/{prefix:.*}")]
-pub async fn release_semaphore(
+#[put("/release/{prefix:.*}")]
+async fn release_semaphore(
     req: HttpRequest,
     semaphore_service: web::Data<ConsulSemaphoreService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     query: web::Query<LockReleaseQuery>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::lock::release_semaphore(req, semaphore_service, acl_service, path, query).await
 }
 
-#[get("/v1/semaphore/{prefix:.*}")]
-pub async fn get_semaphore(
+#[get("/{prefix:.*}")]
+async fn get_semaphore(
     req: HttpRequest,
     semaphore_service: web::Data<ConsulSemaphoreService>,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
-) -> impl Responder {
+) -> HttpResponse {
     crate::lock::get_semaphore(req, semaphore_service, acl_service, path).await
+}
+
+pub fn semaphore_routes() -> Scope {
+    web::scope("/semaphore")
+        .service(acquire_semaphore)
+        .service(release_semaphore)
+        .service(get_semaphore)
 }
