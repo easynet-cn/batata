@@ -405,9 +405,6 @@ func TestWatchEvent(t *testing.T) {
 
 // TestWatchConnectRoots tests watching Connect CA roots
 func TestWatchConnectRoots(t *testing.T) {
-	// Batata does not have a built-in Connect CA; skip this test
-	t.Skip("Connect CA roots not supported by Batata")
-
 	client := getTestClient(t)
 
 	params := map[string]interface{}{
@@ -446,9 +443,6 @@ func TestWatchConnectRoots(t *testing.T) {
 
 // TestWatchConnectLeaf tests watching Connect leaf certificate
 func TestWatchConnectLeaf(t *testing.T) {
-	// Batata does not have a built-in Connect CA; skip this test
-	t.Skip("Connect CA leaf not supported by Batata")
-
 	client := getTestClient(t)
 
 	agent := client.Agent()

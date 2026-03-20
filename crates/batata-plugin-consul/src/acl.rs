@@ -1139,7 +1139,7 @@ pub struct CreateTokenRequest {
     pub roles: Option<Vec<RoleLink>>,
     pub local: Option<bool>,
     #[serde(default, rename = "ExpirationTTL")]
-    pub expiration_ttl: Option<String>,
+    pub expiration_ttl: Option<serde_json::Value>,
 }
 
 /// PUT /v1/acl/token
@@ -1185,12 +1185,22 @@ pub async fn create_token(
 
     let local = body.local.unwrap_or(false);
 
+    // ExpirationTTL can be a number (nanoseconds from Go SDK) or string ("1h")
+    let expiration_ttl_str: Option<String> = body.expiration_ttl.as_ref().and_then(|v| match v {
+        serde_json::Value::Number(n) => {
+            // Go's time.Duration serializes as nanoseconds
+            n.as_u64().map(|ns| format!("{}s", ns / 1_000_000_000))
+        }
+        serde_json::Value::String(s) => Some(s.clone()),
+        _ => None,
+    });
+
     let token = acl_service.create_token(
         body.description.as_deref().unwrap_or(""),
         policies,
         roles,
         local,
-        body.expiration_ttl.as_deref(),
+        expiration_ttl_str.as_deref(),
     );
 
     HttpResponse::Ok()
@@ -1407,33 +1417,50 @@ pub async fn acl_logout(
     }
 }
 
-/// Helper function to parse duration strings like "1h", "30m", "24h"
+/// Helper function to parse duration strings in Go format.
+/// Supports simple formats like "1h", "30m", "24h" and compound formats like "1h0m0s", "2h30m15s".
 fn parse_duration(s: &str) -> Option<std::time::Duration> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
 
-    let (num_str, unit) = if s.ends_with('h') || s.ends_with('H') {
-        (&s[..s.len() - 1], 'h')
-    } else if s.ends_with('m') || s.ends_with('M') {
-        (&s[..s.len() - 1], 'm')
-    } else if s.ends_with('s') || s.ends_with('S') {
-        (&s[..s.len() - 1], 's')
+    // Try compound Go duration format: e.g. "1h0m0s", "2h30m", "45s", "1h30s"
+    let mut total_secs: u64 = 0;
+    let mut current_num = String::new();
+    let mut matched_any = false;
+
+    for ch in s.chars() {
+        if ch.is_ascii_digit() || ch == '.' {
+            current_num.push(ch);
+        } else {
+            if current_num.is_empty() {
+                return None;
+            }
+            let num: f64 = current_num.parse().ok()?;
+            current_num.clear();
+            matched_any = true;
+            match ch {
+                'h' | 'H' => total_secs += (num * 3600.0) as u64,
+                'm' | 'M' => total_secs += (num * 60.0) as u64,
+                's' | 'S' => total_secs += num as u64,
+                _ => return None,
+            }
+        }
+    }
+
+    // If there is a trailing number with no unit, treat it as seconds
+    if !current_num.is_empty() {
+        let num: u64 = current_num.parse().ok()?;
+        total_secs += num;
+        matched_any = true;
+    }
+
+    if matched_any {
+        Some(std::time::Duration::from_secs(total_secs))
     } else {
-        // Default to seconds
-        (s, 's')
-    };
-
-    let num: u64 = num_str.parse().ok()?;
-    let secs = match unit {
-        'h' => num * 3600,
-        'm' => num * 60,
-        's' => num,
-        _ => num,
-    };
-
-    Some(std::time::Duration::from_secs(secs))
+        None
+    }
 }
 
 /// GET /v1/acl/policies

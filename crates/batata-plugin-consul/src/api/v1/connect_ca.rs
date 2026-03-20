@@ -476,11 +476,38 @@ pub fn routes() -> Scope {
         .service(delete_intention_persistent)
 }
 
+// Agent connect CA roots handlers (delegates to same logic as /connect/ca/roots)
+
+#[get("/ca/roots")]
+async fn agent_get_ca_roots(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    _query: web::Query<CARootQueryParams>,
+) -> HttpResponse {
+    crate::connect_ca::get_ca_roots(req, acl_service, ca_service, index_provider, _query).await
+}
+
+#[get("/ca/roots")]
+async fn agent_get_ca_roots_persistent(
+    req: HttpRequest,
+    acl_service: web::Data<AclService>,
+    ca_service: web::Data<ConsulConnectCAService>,
+    index_provider: web::Data<ConsulIndexProvider>,
+    _query: web::Query<CARootQueryParams>,
+) -> HttpResponse {
+    crate::connect_ca::get_ca_roots_persistent(req, acl_service, ca_service, index_provider, _query)
+        .await
+}
+
 /// Agent connect routes to be registered under /agent/connect scope
 pub fn agent_connect_routes() -> Scope {
     web::scope("/connect")
+        .service(agent_get_ca_roots)
         .service(get_leaf_cert)
         .service(connect_authorize)
+        .service(agent_get_ca_roots_persistent)
         .service(get_leaf_cert_persistent)
         .service(connect_authorize_persistent)
 }

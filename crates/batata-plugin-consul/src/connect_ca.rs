@@ -40,18 +40,37 @@ pub struct CARootList {
     pub roots: Vec<CARoot>,
 }
 
+/// Helper to deserialize a map that may be null in JSON
+fn deserialize_map_or_null<'de, D, K, V>(
+    deserializer: D,
+) -> Result<std::collections::HashMap<K, V>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    K: serde::Deserialize<'de> + std::cmp::Eq + std::hash::Hash,
+    V: serde::Deserialize<'de>,
+{
+    let opt = Option::<std::collections::HashMap<K, V>>::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
+
 /// CA configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct CAConfig {
     pub provider: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_map_or_null")]
     pub config: std::collections::HashMap<String, serde_json::Value>,
-    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_map_or_null",
+        skip_serializing_if = "std::collections::HashMap::is_empty"
+    )]
     pub state: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub force_without_cross_signing: bool,
+    #[serde(default)]
     pub create_index: u64,
+    #[serde(default)]
     pub modify_index: u64,
 }
 

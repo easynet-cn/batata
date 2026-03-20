@@ -660,7 +660,7 @@ pub struct ServiceUsage {
     pub nodes: i64,
     pub services: i64,
     pub service_instances: i64,
-    pub connect_service_instances: i64,
+    pub connect_service_instances: HashMap<String, i64>,
 }
 
 /// Operator usage response
@@ -909,7 +909,7 @@ pub async fn get_operator_usage(
             nodes: node_count,
             services: service_count,
             service_instances: instance_count,
-            connect_service_instances: 0,
+            connect_service_instances: HashMap::new(),
         },
     );
 
@@ -1166,7 +1166,7 @@ pub async fn get_operator_usage_real(
             nodes: members.len() as i64,
             services: service_count,
             service_instances: instance_count,
-            connect_service_instances: 0,
+            connect_service_instances: HashMap::new(),
         },
     );
 
