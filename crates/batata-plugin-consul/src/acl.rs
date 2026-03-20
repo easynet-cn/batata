@@ -48,6 +48,11 @@ pub struct AclToken {
     pub local: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expiration_time: Option<String>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "ExpirationTTL"
+    )]
+    pub expiration_ttl: Option<u64>,
     pub create_time: String,
     pub modify_time: String,
 }
@@ -56,8 +61,9 @@ pub struct AclToken {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PolicyLink {
-    #[serde(rename = "ID")]
+    #[serde(rename = "ID", default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
 }
 
@@ -65,8 +71,9 @@ pub struct PolicyLink {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct RoleLink {
-    #[serde(rename = "ID")]
+    #[serde(rename = "ID", default)]
     pub id: String,
+    #[serde(default)]
     pub name: String,
 }
 
@@ -435,6 +442,7 @@ query_prefix "" { policy = "write" }
             roles: vec![],
             local: false,
             expiration_time: None,
+            expiration_ttl: None,
             create_time: chrono::Utc::now().to_rfc3339(),
             modify_time: chrono::Utc::now().to_rfc3339(),
         };
@@ -484,8 +492,10 @@ query_prefix "" { policy = "write" }
         policies: Vec<String>,
         roles: Vec<String>,
         local: bool,
+        expiration_ttl: Option<&str>,
     ) -> AclToken {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now();
+        let now_str = now.to_rfc3339();
         let accessor_id = uuid::Uuid::new_v4().to_string();
         let secret_id = uuid::Uuid::new_v4().to_string();
 
@@ -509,6 +519,23 @@ query_prefix "" { policy = "write" }
             })
             .collect();
 
+        // Parse expiration TTL (Go duration format: "1h", "30m", "24h", etc.)
+        let (expiration_time, expiration_ttl_nanos) =
+            if let Some(ttl_str) = expiration_ttl.filter(|s| !s.is_empty()) {
+                if let Some(std_dur) = parse_duration(ttl_str) {
+                    let chrono_dur = chrono::Duration::from_std(std_dur).unwrap_or_default();
+                    let exp = now + chrono_dur;
+                    (
+                        Some(exp.to_rfc3339()),
+                        Some(std_dur.as_nanos() as u64),
+                    )
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
+
         let token = AclToken {
             accessor_id,
             secret_id: Some(secret_id.clone()),
@@ -516,9 +543,10 @@ query_prefix "" { policy = "write" }
             policies: policy_links,
             roles: role_links,
             local,
-            expiration_time: None,
-            create_time: now.clone(),
-            modify_time: now,
+            expiration_time,
+            expiration_ttl: expiration_ttl_nanos,
+            create_time: now_str.clone(),
+            modify_time: now_str,
         };
 
         MEMORY_TOKENS.insert(secret_id.clone(), token.clone());
@@ -1097,7 +1125,7 @@ pub async fn get_token(
         Some(t) => HttpResponse::Ok()
             .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
             .json(t),
-        None => HttpResponse::NotFound().json(serde_json::Value::Null),
+        None => HttpResponse::NotFound().json(AclError::new("ACL not found")),
     }
 }
 
@@ -1109,6 +1137,8 @@ pub struct CreateTokenRequest {
     pub policies: Option<Vec<PolicyLink>>,
     pub roles: Option<Vec<RoleLink>>,
     pub local: Option<bool>,
+    #[serde(default, rename = "ExpirationTTL")]
+    pub expiration_ttl: Option<String>,
 }
 
 /// PUT /v1/acl/token
@@ -1159,6 +1189,7 @@ pub async fn create_token(
         policies,
         roles,
         local,
+        body.expiration_ttl.as_deref(),
     );
 
     HttpResponse::Ok()
@@ -1231,7 +1262,7 @@ pub async fn clone_token(
                 .clone()
                 .unwrap_or_else(|| format!("Clone of {}", source.description));
             let roles: Vec<String> = source.roles.iter().map(|r| r.name.clone()).collect();
-            let new_token = acl_service.create_token(&description, policies, roles, source.local);
+            let new_token = acl_service.create_token(&description, policies, roles, source.local, None);
             HttpResponse::Ok()
                 .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
                 .json(new_token)
@@ -1246,24 +1277,10 @@ pub async fn acl_bootstrap(
     _acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    // Check if already bootstrapped
-    if let Some(existing) = MEMORY_TOKENS.get("root") {
-        // If bootstrap token exists, return it (for development/testing)
-        // In production, this should return an error if already bootstrapped
-        let token = existing.clone();
-        let response = BootstrapResponse {
-            id: token.accessor_id.clone(),
-            accessor_id: token.accessor_id,
-            secret_id: token.secret_id.unwrap_or_default(),
-            description: token.description,
-            policies: token.policies,
-            local: token.local,
-            create_time: token.create_time,
-            hash: "bootstrap".to_string(),
-        };
-        return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-            .json(response);
+    // Check if already bootstrapped - return 403 error like Consul does
+    if MEMORY_TOKENS.get("root").is_some() {
+        return HttpResponse::Forbidden()
+            .json(AclError::new("ACL bootstrap no longer allowed (reset index: 0)"));
     }
 
     // Re-initialize bootstrap (this will create the token)
@@ -1329,6 +1346,7 @@ pub async fn acl_login(
         roles: vec![],
         local: auth_method.token_locality.as_deref() == Some("local"),
         expiration_time: expiration_time.clone(),
+        expiration_ttl: None,
         create_time: now.clone(),
         modify_time: now.clone(),
     };
@@ -1528,7 +1546,17 @@ pub async fn create_role(
     let policies: Vec<String> = body
         .policies
         .as_ref()
-        .map(|p| p.iter().map(|pl| pl.name.clone()).collect())
+        .map(|p| {
+            p.iter()
+                .map(|pl| {
+                    if !pl.id.is_empty() {
+                        pl.id.clone()
+                    } else {
+                        pl.name.clone()
+                    }
+                })
+                .collect()
+        })
         .unwrap_or_default();
 
     let role = acl_service.create_role(
@@ -2366,6 +2394,7 @@ mod tests {
             vec!["global-management".to_string()],
             vec![],
             false,
+            None,
         );
 
         assert!(!token.accessor_id.is_empty());
@@ -2411,6 +2440,7 @@ mod tests {
             vec!["global-management".to_string()],
             vec![],
             false,
+            None,
         );
         assert!(service.delete_token(&token.accessor_id));
         // Deleting again should return false
@@ -2533,7 +2563,7 @@ mod tests {
 
         // Create token with this policy
         let token =
-            service.create_token("readonly-token", vec![policy.name.clone()], vec![], false);
+            service.create_token("readonly-token", vec![policy.name.clone()], vec![], false, None);
 
         // Read should be allowed
         let result = service.authorize(&token, ResourceType::Service, "web", false);
@@ -2555,7 +2585,7 @@ mod tests {
             None,
         );
 
-        let token = service.create_token("deny-token", vec![policy.name.clone()], vec![], false);
+        let token = service.create_token("deny-token", vec![policy.name.clone()], vec![], false, None);
 
         // Should be denied for both read and write on secret/
         let result = service.authorize(&token, ResourceType::Key, "secret/data", false);

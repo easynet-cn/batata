@@ -23,6 +23,8 @@
 //! - `coordinate`: Network coordinate/RTT endpoints
 //! - `peering`: Cluster peering for cross-datacenter service discovery
 
+pub mod api;
+
 pub mod acl;
 pub mod agent;
 pub mod catalog;

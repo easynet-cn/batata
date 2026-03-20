@@ -429,16 +429,22 @@ pub async fn apply_config_entry(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     config_service: web::Data<ConsulConfigEntryService>,
-    query: web::Query<ConfigEntryApplyParams>,
-    body: web::Json<ConfigEntryRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
+    body: web::Bytes,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let entry_req = body.into_inner();
+    let entry_req: ConfigEntryRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => {
+            return HttpResponse::BadRequest()
+                .json(ConsulError::new(format!("Invalid request body: {}", e)));
+        }
+    };
+
     if !SUPPORTED_KINDS.contains(&entry_req.kind.as_str()) {
         return HttpResponse::BadRequest().json(ConsulError::new(format!(
             "Unsupported config entry kind: {}",
@@ -446,7 +452,23 @@ pub async fn apply_config_entry(
         )));
     }
 
-    match config_service.apply_entry(entry_req, query.cas) {
+    // Parse optional CAS parameter from query string
+    let cas: Option<u64> = req
+        .uri()
+        .query()
+        .and_then(|q| {
+            q.split('&')
+                .find_map(|pair| {
+                    let mut kv = pair.splitn(2, '=');
+                    if kv.next() == Some("cas") {
+                        kv.next().and_then(|v| v.parse().ok())
+                    } else {
+                        None
+                    }
+                })
+        });
+
+    match config_service.apply_entry(entry_req, cas) {
         Ok(success) => HttpResponse::Ok()
             .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
             .json(success),

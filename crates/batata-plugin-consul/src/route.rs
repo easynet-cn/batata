@@ -583,36 +583,41 @@ pub fn consul_operator_routes_real() -> actix_web::Scope {
 
 /// Configure Consul Config Entry API routes (in-memory)
 pub fn consul_config_entry_routes() -> actix_web::Scope {
-    web::scope("/v1/config")
-        .route("", web::put().to(config_entry::apply_config_entry))
+    // Use /v1 scope with /config prefix in routes to avoid actix-web scope ordering
+    // conflicts with other /v1 scopes (kv, lock, snapshot).
+    web::scope("/v1")
+        .route("/config", web::put().to(config_entry::apply_config_entry))
         .route(
-            "/{kind}/{name}",
+            "/config/{kind}/{name}",
             web::get().to(config_entry::get_config_entry),
         )
         .route(
-            "/{kind}/{name}",
+            "/config/{kind}/{name}",
             web::delete().to(config_entry::delete_config_entry),
         )
-        .route("/{kind}", web::get().to(config_entry::list_config_entries))
+        .route(
+            "/config/{kind}",
+            web::get().to(config_entry::list_config_entries),
+        )
 }
 
 /// Configure Consul Config Entry API routes (persistent)
 pub fn consul_config_entry_routes_persistent() -> actix_web::Scope {
-    web::scope("/v1/config")
+    web::scope("/v1")
         .route(
-            "",
+            "/config",
             web::put().to(config_entry::apply_config_entry_persistent),
         )
         .route(
-            "/{kind}/{name}",
+            "/config/{kind}/{name}",
             web::get().to(config_entry::get_config_entry_persistent),
         )
         .route(
-            "/{kind}/{name}",
+            "/config/{kind}/{name}",
             web::delete().to(config_entry::delete_config_entry_persistent),
         )
         .route(
-            "/{kind}",
+            "/config/{kind}",
             web::get().to(config_entry::list_config_entries_persistent),
         )
 }
@@ -883,31 +888,83 @@ pub fn consul_connect_ca_routes_persistent() -> actix_web::Scope {
         )
 }
 
+/// Merged /v1 scope routes — KV, lock, semaphore, snapshot, config entry, txn.
+///
+/// actix-web matches the first scope whose prefix matches the request path.
+/// If these were registered as separate `web::scope("/v1")` services, the first
+/// one would shadow all others. Merging them into one scope avoids this.
+pub fn consul_v1_misc_routes() -> actix_web::Scope {
+    web::scope("/v1")
+        // Config entry routes (PUT /config, GET /config/{kind}/{name}, etc.)
+        .route("/config", web::put().to(config_entry::apply_config_entry))
+        .route(
+            "/config/{kind}/{name}",
+            web::get().to(config_entry::get_config_entry),
+        )
+        .route(
+            "/config/{kind}/{name}",
+            web::delete().to(config_entry::delete_config_entry),
+        )
+        .route(
+            "/config/{kind}",
+            web::get().to(config_entry::list_config_entries),
+        )
+        // Snapshot routes
+        .route("/snapshot", web::get().to(snapshot::save_snapshot))
+        .route("/snapshot", web::put().to(snapshot::restore_snapshot))
+        // Lock and semaphore routes
+        .route("/lock/acquire", web::post().to(lock::acquire_lock))
+        .route(
+            "/lock/release/{key:.*}",
+            web::put().to(lock::release_lock),
+        )
+        .route("/lock/{key:.*}", web::get().to(lock::get_lock))
+        .route("/lock/{key:.*}", web::delete().to(lock::destroy_lock))
+        .route("/lock/renew/{key:.*}", web::put().to(lock::renew_lock))
+        .route(
+            "/semaphore/acquire",
+            web::post().to(lock::acquire_semaphore),
+        )
+        .route(
+            "/semaphore/release/{prefix:.*}",
+            web::put().to(lock::release_semaphore),
+        )
+        .route(
+            "/semaphore/{prefix:.*}",
+            web::get().to(lock::get_semaphore),
+        )
+        // Transaction
+        .route("/txn", web::put().to(kv::txn))
+        // KV routes (last — {key:.*} is a catch-all)
+        .route("/kv/export", web::get().to(kv::export_kv))
+        .route("/kv/import", web::post().to(kv::import_kv))
+        .route("/kv/{key:.*}", web::get().to(kv::get_kv))
+        .route("/kv/{key:.*}", web::put().to(kv::put_kv))
+        .route("/kv/{key:.*}", web::delete().to(kv::delete_kv))
+}
+
 // ============================================================================
 // Combined Route Scopes
 // ============================================================================
 
 /// Configure all Consul API routes (in-memory storage)
 /// Note: Data is lost on server restart. For production use, use `consul_routes_persistent()`.
+/// Scope-based routes only (specific prefixes like /v1/agent, /v1/health, etc.)
+///
+/// Routes that use broad `/v1` prefix are registered separately via `api::v1::*`
+/// modules with full-path macros to avoid actix-web scope shadowing conflicts.
 pub fn consul_routes() -> actix_web::Scope {
     web::scope("")
         .service(consul_agent_routes())
         .service(consul_health_routes())
-        .service(consul_kv_routes())
         .service(consul_catalog_routes())
         .service(consul_acl_routes())
         .service(consul_session_routes())
         .service(consul_status_routes())
         .service(consul_event_routes())
         .service(consul_query_routes())
-        .service(consul_lock_routes())
-        .service(consul_snapshot_routes())
         .service(consul_operator_routes())
-        .service(consul_config_entry_routes())
         .service(consul_coordinate_routes())
-        .service(consul_peering_routes())
-        .service(consul_connect_routes())
-        .service(consul_connect_ca_routes())
         .service(consul_internal_routes())
 }
 
@@ -918,20 +975,14 @@ pub fn consul_routes_persistent() -> actix_web::Scope {
     web::scope("")
         .service(consul_agent_routes_persistent())
         .service(consul_health_routes())
-        .service(consul_kv_routes())
         .service(consul_catalog_routes())
         .service(consul_acl_routes())
         .service(consul_session_routes())
         .service(consul_status_routes())
         .service(consul_event_routes_persistent())
         .service(consul_query_routes())
-        .service(consul_snapshot_routes_persistent())
         .service(consul_operator_routes())
-        .service(consul_config_entry_routes_persistent())
         .service(consul_coordinate_routes_persistent())
-        .service(consul_peering_routes_persistent())
-        .service(consul_connect_routes_persistent())
-        .service(consul_connect_ca_routes_persistent())
         .service(consul_internal_routes())
 }
 

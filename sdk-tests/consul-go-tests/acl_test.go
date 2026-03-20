@@ -609,9 +609,10 @@ func TestACLRoleDeleteVerify(t *testing.T) {
 	_, err = client.ACL().RoleDelete(created.ID, nil)
 	require.NoError(t, err, "Role delete should succeed")
 
-	// Verify deleted
-	_, _, err = client.ACL().RoleRead(created.ID, nil)
-	assert.Error(t, err, "Reading deleted role should return an error")
+	// Verify deleted — RoleRead uses requireNotFoundOrOK, returns (nil, qm, nil) for 404
+	readRole, _, err := client.ACL().RoleRead(created.ID, nil)
+	assert.NoError(t, err, "RoleRead returns nil error for 404")
+	assert.Nil(t, readRole, "Reading deleted role should return nil")
 }
 
 // ==================== ACL Bootstrap Test ====================
@@ -851,9 +852,10 @@ func TestACLAuthMethodDelete(t *testing.T) {
 	_, err = client.ACL().AuthMethodDelete(methodName, nil)
 	require.NoError(t, err, "Auth method delete should succeed")
 
-	// Verify deleted
-	_, _, err = client.ACL().AuthMethodRead(methodName, nil)
-	assert.Error(t, err, "Reading deleted auth method should return an error")
+	// Verify deleted — AuthMethodRead uses requireNotFoundOrOK, returns (nil, qm, nil) for 404
+	readMethod, _, err := client.ACL().AuthMethodRead(methodName, nil)
+	assert.NoError(t, err, "AuthMethodRead returns nil error for 404")
+	assert.Nil(t, readMethod, "Reading deleted auth method should return nil")
 }
 
 // ==================== ACL Binding Rule Tests (Enterprise) ====================
@@ -972,9 +974,10 @@ func TestACLBindingRuleDelete(t *testing.T) {
 	_, err = client.ACL().BindingRuleDelete(created.ID, nil)
 	require.NoError(t, err, "Binding rule delete should succeed")
 
-	// Verify deleted
-	_, _, err = client.ACL().BindingRuleRead(created.ID, nil)
-	assert.Error(t, err, "Reading deleted binding rule should return an error")
+	// Verify deleted — BindingRuleRead uses requireNotFoundOrOK, returns (nil, qm, nil) for 404
+	readRule, _, err := client.ACL().BindingRuleRead(created.ID, nil)
+	assert.NoError(t, err, "BindingRuleRead returns nil error for 404")
+	assert.Nil(t, readRule, "Reading deleted binding rule should return nil")
 }
 
 // ==================== ACL Role with Policy Tests ====================
