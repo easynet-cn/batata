@@ -570,6 +570,9 @@ impl ConsulCatalogService {
             );
 
             for instance in instances {
+                if instance.ip.is_empty() {
+                    continue;
+                }
                 let node_key = instance.ip.clone();
                 if let std::collections::hash_map::Entry::Vacant(e) = nodes.entry(node_key) {
                     e.insert(CatalogNode {

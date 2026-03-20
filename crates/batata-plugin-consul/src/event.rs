@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 
 use actix_web::{HttpRequest, HttpResponse, web};
+use base64::Engine;
 use dashmap::DashMap;
 use sea_orm::DatabaseConnection;
 
@@ -364,7 +365,7 @@ pub async fn fire_event(
     req: HttpRequest,
     path: web::Path<String>,
     query: web::Query<EventFireParams>,
-    body: Option<web::Json<EventFireRequest>>,
+    body: web::Bytes,
     acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -376,7 +377,12 @@ pub async fn fire_event(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let payload = body.and_then(|b| b.payload.clone());
+    // Payload is sent as raw bytes, base64-encode for JSON response
+    let payload = if body.is_empty() {
+        None
+    } else {
+        Some(base64::engine::general_purpose::STANDARD.encode(&body))
+    };
     let node_filter = query.node.clone().unwrap_or_default();
     let service_filter = query.service.clone().unwrap_or_default();
     let tag_filter = query.tag.clone().unwrap_or_default();
@@ -426,7 +432,7 @@ pub async fn fire_event_persistent(
     req: HttpRequest,
     path: web::Path<String>,
     query: web::Query<EventFireParams>,
-    body: Option<web::Json<EventFireRequest>>,
+    body: web::Bytes,
     acl_service: web::Data<AclService>,
     event_service: web::Data<ConsulEventServicePersistent>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -439,7 +445,11 @@ pub async fn fire_event_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let payload = body.and_then(|b| b.payload.clone());
+    let payload = if body.is_empty() {
+        None
+    } else {
+        Some(base64::engine::general_purpose::STANDARD.encode(&body))
+    };
     let node_filter = query.node.clone().unwrap_or_default();
     let service_filter = query.service.clone().unwrap_or_default();
     let tag_filter = query.tag.clone().unwrap_or_default();

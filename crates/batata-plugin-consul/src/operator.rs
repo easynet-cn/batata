@@ -18,6 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use base64::Engine;
+
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
 use crate::model::ConsulError;
@@ -238,6 +240,15 @@ impl ConsulOperatorService {
             last_index: 1,
         };
         service.servers.insert(server.id.clone(), server);
+
+        // Initialize keyring with a default primary key
+        let default_key = base64::engine::general_purpose::STANDARD
+            .encode(uuid::Uuid::new_v4().as_bytes());
+        service.keyring.insert(default_key.clone(), 1);
+        // Set primary key synchronously via try_write
+        if let Ok(mut pk) = service.primary_key.try_write() {
+            *pk = Some(default_key);
+        }
 
         service
     }

@@ -321,7 +321,9 @@ func TestOperatorKeyringRemove(t *testing.T) {
 
 	operator := client.Operator()
 
-	testKey := "cg8BpnCK7Nm+bxqkJ7fNBQ=="
+	// Use a different key from TestOperatorKeyringUse (which may have set
+	// "cg8BpnCK7Nm+bxqkJ7fNBQ==" as primary — can't remove primary)
+	testKey := "pUqJrVyVRj5jYyMvsBkiHg=="
 
 	// First install the key so we have something to remove
 	err := operator.KeyringInstall(testKey, nil)
@@ -329,9 +331,9 @@ func TestOperatorKeyringRemove(t *testing.T) {
 		t.Skipf("Keyring not available (encryption may be disabled): %v", err)
 	}
 
-	// Remove the key
+	// Remove the key (not primary, should succeed)
 	err = operator.KeyringRemove(testKey, nil)
-	require.NoError(t, err, "KeyringRemove should succeed for an installed key")
+	require.NoError(t, err, "KeyringRemove should succeed for a non-primary installed key")
 
 	// Verify the key was removed
 	keys, err := operator.KeyringList(nil)

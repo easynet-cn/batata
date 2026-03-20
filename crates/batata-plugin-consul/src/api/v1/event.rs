@@ -19,7 +19,7 @@ async fn fire_event(
     req: HttpRequest,
     path: web::Path<String>,
     query: web::Query<EventFireParams>,
-    body: Option<web::Json<EventFireRequest>>,
+    body: web::Bytes,
     acl_service: web::Data<AclService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -45,7 +45,7 @@ async fn fire_event_persistent(
     req: HttpRequest,
     path: web::Path<String>,
     query: web::Query<EventFireParams>,
-    body: Option<web::Json<EventFireRequest>>,
+    body: web::Bytes,
     acl_service: web::Data<AclService>,
     event_service: web::Data<ConsulEventServicePersistent>,
     index_provider: web::Data<ConsulIndexProvider>,

@@ -138,7 +138,11 @@ impl ConsulConfigEntryService {
         self.entries.get(&key).map(|r| r.value().clone())
     }
 
-    pub fn apply_entry(&self, req: ConfigEntryRequest, cas: Option<u64>) -> Result<bool, String> {
+    pub fn apply_entry(&self, mut req: ConfigEntryRequest, cas: Option<u64>) -> Result<bool, String> {
+        // Global entries (mesh, proxy-defaults) use kind as name if name is empty
+        if req.name.is_empty() {
+            req.name = req.kind.clone();
+        }
         let key = Self::entry_key(&req.kind, &req.name);
 
         if let Some(cas_index) = cas {
@@ -271,9 +275,12 @@ impl ConsulConfigEntryServicePersistent {
 
     pub async fn apply_entry(
         &self,
-        req: ConfigEntryRequest,
+        mut req: ConfigEntryRequest,
         cas: Option<u64>,
     ) -> Result<bool, String> {
+        if req.name.is_empty() {
+            req.name = req.kind.clone();
+        }
         let key = Self::entry_key(&req.kind, &req.name);
 
         if let Some(cas_index) = cas {

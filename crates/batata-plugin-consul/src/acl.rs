@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 
 use actix_web::{HttpRequest, HttpResponse, web};
+use base64::Engine;
 use dashmap::DashMap;
 use moka::sync::Cache;
 use rocksdb::DB;
@@ -1296,7 +1297,7 @@ pub async fn acl_bootstrap(
             policies: token.policies,
             local: token.local,
             create_time: token.create_time,
-            hash: "bootstrap".to_string(),
+            hash: base64::engine::general_purpose::STANDARD.encode("bootstrap"),
         };
         HttpResponse::Ok()
             .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
