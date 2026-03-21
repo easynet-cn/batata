@@ -495,16 +495,17 @@ func TestSessionRenewPeriodic(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Signal to stop renewing
+	// Note: RenewPeriodic destroys the session when doneCh is closed (by design)
 	close(doneCh)
 
 	// Wait for RenewPeriodic to return
 	err = <-errCh
 	assert.NoError(t, err, "RenewPeriodic should not return error after doneCh closed")
 
-	// Verify session is still alive
+	// After doneCh closes, RenewPeriodic calls Session.Destroy() — session should be gone
 	info, _, err := client.Session().Info(sessionID, nil)
 	assert.NoError(t, err)
-	assert.NotNil(t, info, "Session should still be alive after periodic renewal")
+	assert.Nil(t, info, "Session should be destroyed after RenewPeriodic stops")
 
-	t.Logf("Session %s survived periodic renewal", sessionID)
+	t.Logf("Session %s correctly destroyed after periodic renewal stopped", sessionID)
 }

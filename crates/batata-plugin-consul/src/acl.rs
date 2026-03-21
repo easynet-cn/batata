@@ -36,6 +36,16 @@ static TOKEN_CACHE: LazyLock<Cache<String, AclToken>> = LazyLock::new(|| {
 static MEMORY_TOKENS: LazyLock<DashMap<String, AclToken>> = LazyLock::new(DashMap::new);
 static MEMORY_POLICIES: LazyLock<DashMap<String, AclPolicy>> = LazyLock::new(DashMap::new);
 
+/// Expanded ACL token with resolved policies and roles
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AclTokenExpanded {
+    pub expanded_policies: Vec<AclPolicy>,
+    pub expanded_roles: Vec<AclRole>,
+    #[serde(flatten)]
+    pub token: AclToken,
+}
+
 /// ACL Token structure
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -1107,11 +1117,19 @@ pub async fn list_tokens(
 
 /// GET /v1/acl/token/{accessor_id}
 pub async fn get_token(
+    req: HttpRequest,
     _acl_service: web::Data<AclService>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let accessor_id = path.into_inner();
+
+    // Check if expanded=true is in query string
+    let expanded = req
+        .uri()
+        .query()
+        .map(|q| q.contains("expanded=true"))
+        .unwrap_or(false);
 
     // Find token by accessor_id
     let token = MEMORY_TOKENS.iter().find_map(|entry| {
@@ -1123,9 +1141,42 @@ pub async fn get_token(
     });
 
     match token {
-        Some(t) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-            .json(t),
+        Some(t) => {
+            let idx = index_provider.current_index().to_string();
+            if expanded {
+                // Resolve policies and roles for expanded response
+                let expanded_policies: Vec<AclPolicy> = t
+                    .policies
+                    .iter()
+                    .filter_map(|pl| {
+                        let key = if !pl.id.is_empty() { &pl.id } else { &pl.name };
+                        MEMORY_POLICIES.get(key).map(|p| p.clone())
+                    })
+                    .collect();
+
+                let expanded_roles: Vec<AclRole> = t
+                    .roles
+                    .iter()
+                    .filter_map(|rl| {
+                        let key = if !rl.id.is_empty() { &rl.id } else { &rl.name };
+                        MEMORY_ROLES.get(key).map(|r| r.clone())
+                    })
+                    .collect();
+
+                let response = AclTokenExpanded {
+                    expanded_policies,
+                    expanded_roles,
+                    token: t,
+                };
+                HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", idx))
+                    .json(response)
+            } else {
+                HttpResponse::Ok()
+                    .insert_header(("X-Consul-Index", idx))
+                    .json(t)
+            }
+        }
         None => HttpResponse::NotFound().json(AclError::new("ACL not found")),
     }
 }

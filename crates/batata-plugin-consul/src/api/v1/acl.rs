@@ -112,11 +112,12 @@ async fn clone_token(
 
 #[get("/token/{accessor_id}")]
 async fn get_token(
+    req: HttpRequest,
     acl_service: web::Data<AclService>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::acl::get_token(acl_service, path, index_provider).await
+    crate::acl::get_token(req, acl_service, path, index_provider).await
 }
 
 #[put("/token/{accessor_id}")]

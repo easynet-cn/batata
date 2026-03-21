@@ -1166,6 +1166,7 @@ mod tests {
             timeout: None,
             deregister_critical_service_after: None,
             status: None,
+            ..Default::default()
         };
 
         assert_eq!(reg.effective_check_id(), "service:web-1");
@@ -1193,6 +1194,7 @@ mod tests {
             timeout: None,
             deregister_critical_service_after: None,
             status: Some("passing".to_string()),
+            ..Default::default()
         };
 
         health_service.register_check(reg).await.unwrap();
@@ -1237,6 +1239,7 @@ mod tests {
             timeout: None,
             deregister_critical_service_after: None,
             status: None,
+            ..Default::default()
         }
     }
 
@@ -1264,6 +1267,7 @@ mod tests {
             timeout: None,
             deregister_critical_service_after: None,
             status: None,
+            ..Default::default()
         };
         assert_eq!(reg.effective_check_id(), "check:my-check");
     }
@@ -1496,6 +1500,7 @@ mod tests {
             timeout: None,
             deregister_critical_service_after: Some("5m".to_string()),
             status: None,
+            ..Default::default()
         };
         service.register_check(reg).await.unwrap();
 
