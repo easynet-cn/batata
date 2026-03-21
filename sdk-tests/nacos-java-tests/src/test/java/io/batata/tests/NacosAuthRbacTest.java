@@ -745,6 +745,177 @@ public class NacosAuthRbacTest {
         }
     }
 
+    // ==================== Cross-Namespace Isolation Tests ====================
+
+    /**
+     * RBAC-021: Cross-namespace isolation - user can only access authorized namespace
+     */
+    @Test
+    @Order(21)
+    void testCrossNamespaceConfigIsolation() throws Exception {
+        String nsUser = "ns-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String nsRole = "ns-role-" + UUID.randomUUID().toString().substring(0, 6);
+        String isolatedNs = "test-ns-isolated-" + UUID.randomUUID().toString().substring(0, 6);
+        String isolatedDataId = "isolated-cfg-" + UUID.randomUUID().toString().substring(0, 8);
+        String publicDataId = "public-cfg-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try {
+            // Create namespace via admin HTTP API
+            String nsBody = "namespaceId=" + URLEncoder.encode(isolatedNs, "UTF-8")
+                    + "&namespaceName=" + URLEncoder.encode(isolatedNs, "UTF-8")
+                    + "&namespaceDesc=Test+isolated+namespace";
+            httpPost("/nacos/v2/console/namespace", nsBody);
+            Thread.sleep(500);
+
+            // Create user with permission only on the isolated namespace
+            String nsResource = isolatedNs + ":DEFAULT_GROUP:*";
+            setupUserWithPermission(nsUser, nsRole, nsResource, "rw");
+
+            // As admin: publish config in isolated namespace
+            ConfigService adminConfigIsolated = createConfigServiceWithNamespace("nacos",
+                    System.getProperty("nacos.password", "nacos"), isolatedNs);
+            boolean published = adminConfigIsolated.publishConfig(isolatedDataId, "DEFAULT_GROUP", "isolated.data=secret");
+            assertTrue(published, "Admin should publish config in isolated namespace");
+            Thread.sleep(1000);
+
+            // As admin: publish config in public namespace
+            ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
+            boolean publishedPublic = adminConfig.publishConfig(publicDataId, "DEFAULT_GROUP", "public.data=visible");
+            assertTrue(publishedPublic, "Admin should publish config in public namespace");
+            Thread.sleep(1000);
+
+            // As ns-user: should be able to read "isolated-cfg" in the isolated namespace
+            ConfigService nsConfig = createConfigServiceWithNamespace(nsUser, TEST_PASSWORD, isolatedNs);
+            String isolatedContent = nsConfig.getConfig(isolatedDataId, "DEFAULT_GROUP", 5000);
+            assertNotNull(isolatedContent, "NS user should be able to read config in authorized namespace");
+            assertEquals("isolated.data=secret", isolatedContent, "Config content should match");
+
+            // As ns-user: should NOT be able to read "public-cfg" in public namespace
+            ConfigService nsConfigPublic = createConfigService(nsUser, TEST_PASSWORD);
+            String publicContent = null;
+            boolean readDenied = false;
+            try {
+                publicContent = nsConfigPublic.getConfig(publicDataId, "DEFAULT_GROUP", 5000);
+                readDenied = (publicContent == null || publicContent.isEmpty());
+            } catch (NacosException e) {
+                readDenied = true;
+            }
+            assertTrue(readDenied,
+                    "NS user should NOT be able to read config in public namespace, but got: " + publicContent);
+
+            // As ns-user: should be able to write config in isolated namespace
+            String writeDataId = "ns-write-test-" + UUID.randomUUID().toString().substring(0, 8);
+            boolean writeResult = nsConfig.publishConfig(writeDataId, "DEFAULT_GROUP", "ns.write=ok");
+            assertTrue(writeResult, "NS user should be able to write config in authorized namespace");
+
+            // As ns-user: should NOT be able to write config in public namespace
+            boolean writePublicSucceeded = false;
+            try {
+                writePublicSucceeded = nsConfigPublic.publishConfig(
+                        "ns-write-fail-" + UUID.randomUUID().toString().substring(0, 8),
+                        "DEFAULT_GROUP", "should.fail=true");
+            } catch (NacosException e) {
+                writePublicSucceeded = false;
+            }
+            assertFalse(writePublicSucceeded,
+                    "NS user should NOT be able to write config in public namespace");
+
+            // Cleanup configs
+            nsConfig.removeConfig(writeDataId, "DEFAULT_GROUP");
+            nsConfig.shutDown();
+            nsConfigPublic.shutDown();
+            adminConfigIsolated.removeConfig(isolatedDataId, "DEFAULT_GROUP");
+            adminConfigIsolated.shutDown();
+            adminConfig.removeConfig(publicDataId, "DEFAULT_GROUP");
+            adminConfig.shutDown();
+        } finally {
+            // Cleanup: delete permission, role, user, namespace
+            cleanupUserWithPermissionForNamespace(nsUser, nsRole, isolatedNs);
+            try {
+                httpDelete("/nacos/v2/console/namespace?namespaceId=" + URLEncoder.encode(isolatedNs, "UTF-8"));
+            } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * RBAC-022: Cross-namespace isolation for naming service
+     */
+    @Test
+    @Order(22)
+    void testCrossNamespaceNamingIsolation() throws Exception {
+        String nsUser = "ns-naming-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String nsRole = "ns-naming-role-" + UUID.randomUUID().toString().substring(0, 6);
+        String namingNs = "test-ns-naming-" + UUID.randomUUID().toString().substring(0, 6);
+        String serviceName = "ns-isolation-svc-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try {
+            // Create namespace
+            String nsBody = "namespaceId=" + URLEncoder.encode(namingNs, "UTF-8")
+                    + "&namespaceName=" + URLEncoder.encode(namingNs, "UTF-8")
+                    + "&namespaceDesc=Test+naming+namespace";
+            httpPost("/nacos/v2/console/namespace", nsBody);
+            Thread.sleep(500);
+
+            // Create user with permission only on the naming namespace
+            String nsResource = namingNs + ":DEFAULT_GROUP:*";
+            setupUserWithPermission(nsUser, nsRole, nsResource, "rw");
+
+            // As admin: register instance in the naming namespace
+            NamingService adminNaming = createNamingServiceWithNamespace("nacos",
+                    System.getProperty("nacos.password", "nacos"), namingNs);
+            adminNaming.registerInstance(serviceName, "10.0.0.1", 8080);
+            Thread.sleep(1000);
+
+            // As admin: register instance in public namespace
+            NamingService adminNamingPublic = createNamingService("nacos",
+                    System.getProperty("nacos.password", "nacos"));
+            adminNamingPublic.registerInstance(serviceName, "10.0.0.2", 8080);
+            Thread.sleep(1000);
+
+            // As restricted user: should be able to list instances in the naming namespace
+            NamingService nsNaming = createNamingServiceWithNamespace(nsUser, TEST_PASSWORD, namingNs);
+            var instances = nsNaming.getAllInstances(serviceName);
+            assertNotNull(instances, "NS user should be able to query instances in authorized namespace");
+            assertFalse(instances.isEmpty(),
+                    "NS user should see instances in authorized namespace");
+            boolean foundExpected = false;
+            for (var inst : instances) {
+                if ("10.0.0.1".equals(inst.getIp()) && inst.getPort() == 8080) {
+                    foundExpected = true;
+                    break;
+                }
+            }
+            assertTrue(foundExpected, "Should find the instance registered in the naming namespace");
+
+            // As restricted user: should NOT be able to register instance in public namespace
+            NamingService nsNamingPublic = createNamingService(nsUser, TEST_PASSWORD);
+            boolean writeDenied = false;
+            try {
+                nsNamingPublic.registerInstance("denied-svc-" + UUID.randomUUID().toString().substring(0, 8),
+                        "10.0.0.99", 9999);
+                writeDenied = false;
+            } catch (NacosException e) {
+                writeDenied = true;
+            }
+            assertTrue(writeDenied,
+                    "NS user should NOT be able to register instance in public namespace");
+
+            // Cleanup
+            nsNaming.shutDown();
+            nsNamingPublic.shutDown();
+            adminNaming.deregisterInstance(serviceName, "10.0.0.1", 8080);
+            adminNaming.shutDown();
+            adminNamingPublic.deregisterInstance(serviceName, "10.0.0.2", 8080);
+            adminNamingPublic.shutDown();
+        } finally {
+            // Cleanup: delete permission, role, user, namespace
+            cleanupUserWithPermissionForNamespace(nsUser, nsRole, namingNs);
+            try {
+                httpDelete("/nacos/v2/console/namespace?namespaceId=" + URLEncoder.encode(namingNs, "UTF-8"));
+            } catch (Exception ignored) {}
+        }
+    }
+
     // ==================== Helper Methods ====================
 
     private void setupUserWithPermission(String username, String role, String resource, String action) throws Exception {
@@ -814,6 +985,49 @@ public class NacosAuthRbacTest {
         properties.setProperty("username", username);
         properties.setProperty("password", password);
         return NacosFactory.createNamingService(properties);
+    }
+
+    private ConfigService createConfigServiceWithNamespace(String username, String password, String namespace) throws NacosException {
+        Properties properties = new Properties();
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
+        properties.setProperty("namespace", namespace);
+        return NacosFactory.createConfigService(properties);
+    }
+
+    private NamingService createNamingServiceWithNamespace(String username, String password, String namespace) throws NacosException {
+        Properties properties = new Properties();
+        properties.setProperty("serverAddr", serverAddr);
+        properties.setProperty("username", username);
+        properties.setProperty("password", password);
+        properties.setProperty("namespace", namespace);
+        return NacosFactory.createNamingService(properties);
+    }
+
+    private void cleanupUserWithPermissionForNamespace(String username, String role, String namespace) {
+        String nsResource = namespace + ":DEFAULT_GROUP:*";
+        try {
+            httpDelete("/nacos/v3/auth/permission?role=" + URLEncoder.encode(role, "UTF-8")
+                    + "&resource=" + URLEncoder.encode(nsResource, "UTF-8")
+                    + "&action=rw");
+        } catch (Exception ignored) {}
+        try {
+            httpDelete("/nacos/v3/auth/permission?role=" + URLEncoder.encode(role, "UTF-8")
+                    + "&resource=" + URLEncoder.encode(nsResource, "UTF-8")
+                    + "&action=r");
+        } catch (Exception ignored) {}
+        try {
+            httpDelete("/nacos/v3/auth/permission?role=" + URLEncoder.encode(role, "UTF-8")
+                    + "&resource=" + URLEncoder.encode(nsResource, "UTF-8")
+                    + "&action=w");
+        } catch (Exception ignored) {}
+        try {
+            httpDelete("/nacos/v3/auth/role?role=" + role + "&username=" + username);
+        } catch (Exception ignored) {}
+        try {
+            httpDelete("/nacos/v3/auth/user?username=" + username);
+        } catch (Exception ignored) {}
     }
 
     private static String loginV3(String username, String password) throws Exception {

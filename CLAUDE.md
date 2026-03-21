@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 3. **Code Quality**: Follow Rust best practices, run `cargo fmt` and `cargo clippy` before considering a task complete.
 
-4. **Testing**: Write tests for new functionality. A feature is not complete without tests.
+4. **Testing**: Write tests for new functionality. A feature is not complete without tests. All tests MUST follow the **Test Quality Rules** below.
 
 5. **API Compatibility**: Batata follows **Nacos 3.x direction**, which focuses on **V2 and V3 APIs**. **V1 API is NOT supported**. Do not implement V1 endpoints or heartbeat-based HTTP APIs. Modern clients should use V2 HTTP APIs or gRPC for service discovery and configuration management.
 
@@ -97,6 +97,59 @@ In embedded mode, no default user is created. Initialize the admin user:
 # or manually:
 curl -X POST http://localhost:8848/nacos/v3/auth/user/admin -d "username=nacos&password=nacos"
 ```
+
+## Test Quality Rules
+
+**Every test MUST have meaningful assertions.** Tests without assertions always pass and provide zero value.
+
+### Mandatory Rules
+
+1. **Every test MUST contain at least one `assert` statement** that validates actual behavior, not just absence of errors.
+
+2. **Validate return values, not just error absence**:
+   ```rust
+   // BAD - only checks no error
+   let result = service.get("key").unwrap();
+
+   // GOOD - validates the actual value
+   let result = service.get("key").unwrap();
+   assert_eq!(result.value, "expected_value");
+   assert_eq!(result.flags, 0);
+   ```
+
+3. **Assert content, not just collection length**:
+   ```rust
+   // BAD - only checks length
+   assert_eq!(nodes.len(), 2);
+
+   // GOOD - checks content
+   assert_eq!(nodes.len(), 2);
+   assert_eq!(nodes[0].name, "node-1");
+   assert!(nodes[0].address.contains("127.0.0.1"));
+   ```
+
+4. **No logging-only tests** — `println!`, `t.Log()`, `System.out.println()` are supplementary, never a replacement for assertions:
+   ```go
+   // BAD - logs but never asserts
+   t.Logf("Leader: %s", leader)
+
+   // GOOD - asserts then optionally logs
+   assert.NotEmpty(t, leader, "Leader should not be empty")
+   assert.Contains(t, leader, ":", "Leader should be host:port format")
+   t.Logf("Leader: %s", leader)
+   ```
+
+5. **After create → verify exists with correct properties. After delete → verify gone.**
+
+6. **Use `t.Skip()` only for genuinely unsupported features** (e.g., Enterprise-only, requires external dependencies). Never skip to hide failures.
+
+### Language-Specific Patterns
+
+**Rust tests**: Use `assert!`, `assert_eq!`, `assert_ne!`, `assert!(matches!(...))`. For async: `#[tokio::test]`.
+
+**Go tests**: Use `assert.*` and `require.*` from `testify`. Use `require` for preconditions (test should stop), `assert` for validations (test continues).
+
+**Java tests**: Use JUnit 5 `assertEquals`, `assertNotNull`, `assertTrue`, `assertThrows`.
 
 ## Build Commands
 

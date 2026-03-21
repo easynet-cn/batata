@@ -1316,7 +1316,9 @@ mod tests {
 
         let result = service.deregister_check("nonexistent").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Check not found"));
+        let err = result.unwrap_err();
+        assert!(err.contains("Check not found"), "Expected 'Check not found' error, got: {}", err);
+        assert!(err.contains("nonexistent"), "Error should mention the check ID, got: {}", err);
     }
 
     #[tokio::test]
@@ -1356,6 +1358,17 @@ mod tests {
         let ids: Vec<&str> = checks.iter().map(|c| c.check_id.as_str()).collect();
         assert!(ids.contains(&"svc-chk-a"));
         assert!(ids.contains(&"svc-chk-b"));
+
+        // Verify statuses and names
+        let chk_a = checks.iter().find(|c| c.check_id == "svc-chk-a").unwrap();
+        assert_eq!(chk_a.name, "check-a");
+        assert_eq!(chk_a.status, "passing");
+        assert_eq!(chk_a.service_id, "svc-mapping");
+
+        let chk_b = checks.iter().find(|c| c.check_id == "svc-chk-b").unwrap();
+        assert_eq!(chk_b.name, "check-b");
+        assert_eq!(chk_b.status, "warning");
+        assert_eq!(chk_b.service_id, "svc-mapping");
     }
 
     #[tokio::test]
@@ -1394,6 +1407,15 @@ mod tests {
         let ids: Vec<&str> = all.iter().map(|c| c.check_id.as_str()).collect();
         assert!(ids.contains(&"all-chk-1"));
         assert!(ids.contains(&"all-chk-2"));
+
+        // Verify check names and default status
+        let chk1 = all.iter().find(|c| c.check_id == "all-chk-1").unwrap();
+        assert_eq!(chk1.name, "all-a");
+        assert_eq!(chk1.status, "critical"); // default status is critical
+
+        let chk2 = all.iter().find(|c| c.check_id == "all-chk-2").unwrap();
+        assert_eq!(chk2.name, "all-b");
+        assert_eq!(chk2.status, "critical");
     }
 
     #[tokio::test]
@@ -1479,6 +1501,9 @@ mod tests {
 
         let check = service.get_check("noted-chk").await.unwrap();
         assert!(check.output.is_empty()); // output starts empty
+        assert_eq!(check.notes, "Important check");
+        assert_eq!(check.name, "noted");
+        assert_eq!(check.status, "passing");
     }
 
     #[tokio::test]

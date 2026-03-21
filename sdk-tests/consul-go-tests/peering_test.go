@@ -15,8 +15,11 @@ func TestPeeringDeleteNonExistent(t *testing.T) {
 	client := getClient(t)
 
 	_, err := client.Peerings().Delete(nil, "nonexistent-peer-"+randomID(), nil)
+	// Consul returns 200 for idempotent delete, batata returns 404
+	// Both behaviors are acceptable — the peering does not exist after the call
 	if err != nil {
-		t.Logf("Delete non-existent peering: %v", err)
+		assert.Contains(t, err.Error(), "404", "If error, should be 404 not found")
+		t.Logf("Delete non-existent peering returned expected 404: %v", err)
 	} else {
 		t.Log("Delete non-existent peering succeeded (idempotent)")
 	}
@@ -76,11 +79,8 @@ func TestPeeringGenerateTokenInList(t *testing.T) {
 		}
 	}
 
-	if found {
-		t.Logf("Peering %s found in list", peerName)
-	} else {
-		t.Logf("Peering %s not found in list (may need time to propagate)", peerName)
-	}
+	assert.True(t, found, "Peering %s should be found in list after token generation", peerName)
+	t.Logf("Peering %s found in list: %v", peerName, found)
 }
 
 // CP-007: Test delete peering lifecycle

@@ -1262,7 +1262,11 @@ mod tests {
         let service = ConsulConnectCAService::new();
         let roots = service.get_roots().await;
         assert_eq!(roots.roots.len(), 1);
-        assert!(roots.roots[0].active);
+        let root = &roots.roots[0];
+        assert!(root.active);
+        assert!(!root.id.is_empty());
+        assert!(!root.name.is_empty());
+        assert!(root.root_cert.contains("CERTIFICATE"));
         assert_eq!(roots.trust_domain, "consul");
     }
 
@@ -1271,6 +1275,8 @@ mod tests {
         let service = ConsulConnectCAService::new();
         let config = service.get_ca_config().await;
         assert_eq!(config.provider, "consul");
+        assert!(config.create_index > 0);
+        assert!(config.modify_index > 0);
     }
 
     #[tokio::test]
@@ -1377,6 +1383,11 @@ mod tests {
         assert_eq!(intentions.len(), 2);
         // Higher precedence first
         assert!(intentions[0].precedence >= intentions[1].precedence);
+        // Verify specific intention is first (precedence 4 > 1)
+        assert_eq!(intentions[0].source_name, "a");
+        assert_eq!(intentions[0].destination_name, "b");
+        assert_eq!(intentions[1].source_name, "*");
+        assert_eq!(intentions[1].destination_name, "*");
     }
 
     #[test]
@@ -1430,9 +1441,12 @@ mod tests {
 
         let matched = service.match_intentions("source", "web");
         assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].source_name, "web");
+        assert_eq!(matched[0].destination_name, "api");
 
         let matched = service.match_intentions("destination", "api");
         assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].destination_name, "api");
     }
 
     #[test]

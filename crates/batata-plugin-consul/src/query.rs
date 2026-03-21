@@ -581,7 +581,12 @@ mod tests {
         let fetched = service.get_query(&created.id);
 
         assert!(fetched.is_some());
-        assert_eq!(fetched.unwrap().id, created.id);
+        let fetched = fetched.unwrap();
+        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.name, "test-query");
+        assert_eq!(fetched.service.service, "api");
+        assert!(!fetched.service.only_passing);
+        assert!(fetched.service.tags.is_none());
     }
 
     #[test]
@@ -647,6 +652,13 @@ mod tests {
         // All created queries should appear in the list
         for id in &created_ids {
             assert!(all.iter().any(|q| &q.id == id));
+        }
+
+        // Verify each created query has the correct service name
+        for i in 0..3 {
+            let q = all.iter().find(|q| q.id == created_ids[i]).unwrap();
+            assert_eq!(q.service.service, format!("list-svc-{}", i));
+            assert!(q.name.starts_with("list-query-"));
         }
     }
 
@@ -756,5 +768,12 @@ mod tests {
         deduped.sort();
         deduped.dedup();
         assert_eq!(ids.len(), deduped.len());
+
+        // Verify each query can be retrieved with correct name
+        for i in 0..5 {
+            let q = service.get_query(&ids[i]).unwrap();
+            assert_eq!(q.name, format!("q-{}", i));
+            assert_eq!(q.service.service, "s");
+        }
     }
 }

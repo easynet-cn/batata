@@ -16,7 +16,8 @@ func TestStatusLeader(t *testing.T) {
 	assert.NoError(t, err, "Status leader should succeed")
 
 	t.Logf("Cluster leader: %s", leader)
-	// Leader may be empty in single-node setup
+	assert.NotEmpty(t, leader, "Leader should not be empty")
+	assert.Contains(t, leader, ":", "Leader should be in host:port format")
 }
 
 // CST-002: Test get peers
@@ -27,7 +28,8 @@ func TestStatusPeers(t *testing.T) {
 	assert.NoError(t, err, "Status peers should succeed")
 
 	t.Logf("Cluster peers: %v", peers)
-	// Peers may be empty in single-node setup
+	assert.NotNil(t, peers, "Peers list should not be nil")
+	assert.True(t, len(peers) > 0, "Should have at least one peer")
 }
 
 // CST-003: Test leader returns valid address format
@@ -71,6 +73,9 @@ func TestStatusLeaderInPeers(t *testing.T) {
 	peers, err := client.Status().Peers()
 	assert.NoError(t, err)
 
+	assert.NotEmpty(t, leader, "Leader should not be empty")
+	assert.NotEmpty(t, peers, "Peers should not be empty")
+
 	if leader != "" && len(peers) > 0 {
 		found := false
 		for _, peer := range peers {
@@ -111,12 +116,10 @@ func TestStatusPeersSingleNode(t *testing.T) {
 	assert.NoError(t, err)
 
 	// In a single node cluster, there should be at least one peer (itself)
-	if len(peers) > 0 {
-		t.Logf("Peers in cluster: %v", peers)
-		for _, peer := range peers {
-			assert.NotEmpty(t, peer, "Peer address should not be empty")
-		}
-	} else {
-		t.Log("No peers found (may be expected in test environment)")
+	assert.NotEmpty(t, peers, "Should have at least one peer in the cluster")
+	for _, peer := range peers {
+		assert.NotEmpty(t, peer, "Peer address should not be empty")
+		assert.Contains(t, peer, ":", "Peer should be in host:port format")
 	}
+	t.Logf("Peers in cluster: %v", peers)
 }

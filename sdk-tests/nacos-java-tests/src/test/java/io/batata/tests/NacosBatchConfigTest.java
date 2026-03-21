@@ -150,6 +150,9 @@ public class NacosBatchConfigTest {
         boolean completed = latch.await(30, TimeUnit.SECONDS);
         assertTrue(completed, "All threads should complete");
 
+        assertTrue(errors.isEmpty(), "Should have no errors during concurrent publish, got: " + errors.size());
+        assertEquals(threadCount, dataIds.size(), "All threads should have published configs");
+
         System.out.println("Concurrent publish errors: " + errors.size());
         System.out.println("Configs published: " + dataIds.size());
 
@@ -239,6 +242,8 @@ public class NacosBatchConfigTest {
 
         boolean completed = latch.await(30, TimeUnit.SECONDS);
         assertTrue(completed);
+        assertEquals(threadCount, results.size(), "All concurrent get operations should return results");
+
         System.out.println("Concurrent get results: " + results.size());
 
         // Cleanup
@@ -302,6 +307,7 @@ public class NacosBatchConfigTest {
             if (success) successCount++;
         }
 
+        assertTrue(successCount >= 2, "Should successfully delete at least the 2 existing configs, got: " + successCount);
         System.out.println("Delete success count: " + successCount);
     }
 
@@ -396,6 +402,8 @@ public class NacosBatchConfigTest {
         }
 
         long duration = System.currentTimeMillis() - startTime;
+        assertEquals(configCount, successCount, "All large batch configs should be published successfully");
+
         System.out.println("Large batch: " + successCount + " configs in " + duration + "ms");
 
         // Cleanup
@@ -520,6 +528,8 @@ public class NacosBatchConfigTest {
         }
 
         long duration = System.currentTimeMillis() - startTime;
+        assertEquals(5, nullCount, "All non-existent configs should return null");
+
         System.out.println("Batch timeout test: " + nullCount + " nulls in " + duration + "ms");
     }
 
@@ -570,6 +580,10 @@ public class NacosBatchConfigTest {
 
         boolean completed = latch.await(60, TimeUnit.SECONDS);
         assertTrue(completed, "All operations should complete");
+
+        // Allow some transient errors in a mixed concurrent scenario, but most should succeed
+        assertTrue(errors.size() <= operationCount / 2,
+                "Should have fewer than 50% errors in resilience test, got: " + errors.size());
 
         System.out.println("Resilience test errors: " + errors.size());
         System.out.println("Created configs: " + createdConfigs.size());

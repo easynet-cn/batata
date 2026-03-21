@@ -1686,6 +1686,17 @@ mod tests {
         // Get nodes
         let nodes = catalog.get_nodes("public");
         assert_eq!(nodes.len(), 2);
+
+        // Verify node names (generated as "node-{ip with dots replaced by dashes}") and addresses
+        let node_names: Vec<&str> = nodes.iter().map(|n| n.node.as_str()).collect();
+        assert!(node_names.contains(&"node-192-168-1-100"));
+        assert!(node_names.contains(&"node-192-168-1-101"));
+
+        let node1 = nodes.iter().find(|n| n.node == "node-192-168-1-100").unwrap();
+        assert_eq!(node1.address, "192.168.1.100");
+
+        let node2 = nodes.iter().find(|n| n.node == "node-192-168-1-101").unwrap();
+        assert_eq!(node2.address, "192.168.1.101");
     }
 
     #[test]

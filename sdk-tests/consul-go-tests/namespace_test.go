@@ -19,12 +19,13 @@ func TestNamespaceList(t *testing.T) {
 
 	list, _, err := namespaces.List(nil)
 	if err != nil {
-		t.Logf("Namespace list not available (Enterprise feature): %v", err)
-		return
+		t.Skipf("Namespace list not available (Enterprise feature): %v", err)
 	}
 
+	assert.NotNil(t, list, "Namespace list should not be nil")
 	t.Logf("Found %d namespaces", len(list))
 	for _, ns := range list {
+		assert.NotEmpty(t, ns.Name, "Namespace name should not be empty")
 		t.Logf("  - %s: %s", ns.Name, ns.Description)
 	}
 }
@@ -38,14 +39,14 @@ func TestNamespaceRead(t *testing.T) {
 	// Try to read default namespace
 	ns, _, err := namespaces.Read("default", nil)
 	if err != nil {
-		t.Logf("Namespace read not available (Enterprise feature): %v", err)
-		return
+		t.Skipf("Namespace read not available (Enterprise feature): %v", err)
+	}
+	if ns == nil {
+		t.Skip("Namespace read returned nil (Enterprise feature not available)")
 	}
 
-	if ns == nil {
-		t.Log("Namespace read returned nil (not supported)")
-		return
-	}
+	assert.NotEmpty(t, ns.Name, "Namespace name should not be empty")
+	assert.Equal(t, "default", ns.Name, "Should read the default namespace")
 	t.Logf("Namespace: %s, Description: %s", ns.Name, ns.Description)
 }
 
@@ -134,15 +135,14 @@ func TestNamespaceDelete(t *testing.T) {
 
 	// Delete namespace
 	_, err = namespaces.Delete(nsName, nil)
-	if err != nil {
-		t.Logf("Namespace delete: %v", err)
-		return
-	}
+	require.NoError(t, err, "Namespace delete should succeed")
 
 	// Verify deleted
-	_, _, err = namespaces.Read(nsName, nil)
+	deleted, _, err := namespaces.Read(nsName, nil)
 	if err != nil {
-		t.Log("Namespace deleted successfully")
+		t.Logf("Namespace deleted successfully (read returns error: %v)", err)
+	} else {
+		assert.Nil(t, deleted, "Deleted namespace should not be readable")
 	}
 }
 
@@ -156,12 +156,13 @@ func TestPartitionList(t *testing.T) {
 
 	list, _, err := partitions.List(nil, nil)
 	if err != nil {
-		t.Logf("Partition list not available (Enterprise feature): %v", err)
-		return
+		t.Skipf("Partition list not available (Enterprise feature): %v", err)
 	}
 
+	assert.NotNil(t, list, "Partition list should not be nil")
 	t.Logf("Found %d partitions", len(list))
 	for _, p := range list {
+		assert.NotEmpty(t, p.Name, "Partition name should not be empty")
 		t.Logf("  - %s: %s", p.Name, p.Description)
 	}
 }
@@ -175,14 +176,14 @@ func TestPartitionRead(t *testing.T) {
 	// Try to read default partition
 	p, _, err := partitions.Read(nil, "default", nil)
 	if err != nil {
-		t.Logf("Partition read not available (Enterprise feature): %v", err)
-		return
+		t.Skipf("Partition read not available (Enterprise feature): %v", err)
+	}
+	if p == nil {
+		t.Skip("Partition read returned nil (Enterprise feature not available)")
 	}
 
-	if p == nil {
-		t.Log("Partition read returned nil (not supported)")
-		return
-	}
+	assert.NotEmpty(t, p.Name, "Partition name should not be empty")
+	assert.Equal(t, "default", p.Name, "Should read the default partition")
 	t.Logf("Partition: %s, Description: %s", p.Name, p.Description)
 }
 
@@ -245,7 +246,10 @@ func TestServiceInNamespace(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
-	if svc, ok := services[serviceName]; ok {
+	svc, ok := services[serviceName]
+	assert.True(t, ok, "Service should be found in agent services")
+	if ok {
+		assert.Equal(t, serviceName, svc.ID, "Service ID should match")
 		t.Logf("Service %s registered in namespace: %s", svc.ID, svc.Namespace)
 	}
 }
@@ -275,10 +279,10 @@ func TestKVInNamespace(t *testing.T) {
 
 	pair, _, err := kv.Get(key, nil)
 	require.NoError(t, err)
-
-	if pair != nil {
-		t.Logf("KV %s in namespace: %s", pair.Key, pair.Namespace)
-	}
+	require.NotNil(t, pair, "KV pair should not be nil")
+	assert.Equal(t, key, pair.Key, "Key should match")
+	assert.Equal(t, "namespace test value", string(pair.Value), "Value should match")
+	t.Logf("KV %s in namespace: %s", pair.Key, pair.Namespace)
 }
 
 // ==================== Peering Tests (1.13+) ====================
@@ -291,12 +295,13 @@ func TestPeeringList(t *testing.T) {
 
 	list, _, err := peerings.List(nil, nil)
 	if err != nil {
-		t.Logf("Peering list not available: %v", err)
-		return
+		t.Skipf("Peering list not available: %v", err)
 	}
 
+	assert.NotNil(t, list, "Peering list should not be nil")
 	t.Logf("Found %d peerings", len(list))
 	for _, p := range list {
+		assert.NotEmpty(t, p.Name, "Peering name should not be empty")
 		t.Logf("  - %s: %s", p.Name, p.State)
 	}
 }
@@ -310,15 +315,12 @@ func TestPeeringRead(t *testing.T) {
 	// Try to read non-existent peering
 	p, _, err := peerings.Read(nil, "non-existent-peering", nil)
 	if err != nil {
-		t.Logf("Peering read: %v", err)
-		return
+		t.Skipf("Peering read not available: %v", err)
 	}
 
-	if p != nil {
-		t.Logf("Peering: %s, State: %s", p.Name, p.State)
-	} else {
-		t.Log("Peering not found (expected)")
-	}
+	// Non-existent peering should return nil
+	assert.Nil(t, p, "Non-existent peering should return nil")
+	t.Log("Peering not found (expected for non-existent peering)")
 }
 
 // TestPeeringGenerateToken tests generating a peering token
@@ -371,15 +373,14 @@ func TestCrossDatacenterQuery(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, dc := range dcs {
+		assert.NotEmpty(t, dc, "Datacenter name should not be empty")
 		opts := &api.QueryOptions{
 			Datacenter: dc,
 		}
 
 		services, _, err := catalog.Services(opts)
-		if err != nil {
-			t.Logf("Query DC %s: %v", dc, err)
-			continue
-		}
+		require.NoError(t, err, "Services query in DC %s should succeed", dc)
+		assert.NotNil(t, services, "Services map should not be nil for DC %s", dc)
 
 		t.Logf("DC %s has %d services", dc, len(services))
 	}

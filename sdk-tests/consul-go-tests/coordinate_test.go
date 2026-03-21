@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 	serfcoord "github.com/hashicorp/serf/coordinate"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,12 +20,13 @@ func TestCoordinateDatacenters(t *testing.T) {
 
 	dcs, err := coordinate.Datacenters()
 	if err != nil {
-		t.Logf("Coordinate datacenters: %v", err)
-		return
+		t.Skipf("Coordinate datacenters not available: %v", err)
 	}
 
+	assert.NotNil(t, dcs, "Datacenter coordinates should not be nil")
 	t.Logf("Found %d datacenter coordinates", len(dcs))
 	for _, dc := range dcs {
+		assert.NotEmpty(t, dc.Datacenter, "Datacenter name should not be empty")
 		t.Logf("  DC: %s, Coordinates: %d", dc.Datacenter, len(dc.Coordinates))
 	}
 }
@@ -37,12 +39,14 @@ func TestCoordinateNodes(t *testing.T) {
 
 	coords, _, err := coordinate.Nodes(nil)
 	if err != nil {
-		t.Logf("Coordinate nodes: %v", err)
-		return
+		t.Skipf("Coordinate nodes not available: %v", err)
 	}
 
+	assert.NotNil(t, coords, "Node coordinates should not be nil")
 	t.Logf("Found %d node coordinates", len(coords))
 	for _, coord := range coords {
+		assert.NotEmpty(t, coord.Node, "Node name should not be empty")
+		assert.NotNil(t, coord.Coord, "Coordinate should not be nil")
 		t.Logf("  Node: %s, Segment: %s", coord.Node, coord.Segment)
 	}
 }
@@ -65,10 +69,10 @@ func TestCoordinateNode(t *testing.T) {
 
 	coords, _, err := coordinate.Node(nodeName, nil)
 	if err != nil {
-		t.Logf("Coordinate node: %v", err)
-		return
+		t.Skipf("Coordinate node not available: %v", err)
 	}
 
+	assert.NotNil(t, coords, "Node coordinates should not be nil")
 	t.Logf("Node %s has %d coordinates", nodeName, len(coords))
 }
 
@@ -101,11 +105,14 @@ func TestCoordinateUpdate(t *testing.T) {
 
 	_, err = coordinate.Update(coord, nil)
 	if err != nil {
-		t.Logf("Coordinate update: %v", err)
-		return
+		t.Skipf("Coordinate update not available: %v", err)
 	}
 
 	t.Log("Coordinate updated successfully")
+	// Verify the update took effect by reading it back
+	updatedCoords, _, err := coordinate.Node(nodeName, nil)
+	assert.NoError(t, err, "Should be able to read coordinate after update")
+	assert.NotNil(t, updatedCoords, "Updated coordinates should not be nil")
 }
 
 // ==================== Discovery Chain Tests ====================
@@ -136,17 +143,18 @@ func TestDiscoveryChain(t *testing.T) {
 	// Get discovery chain
 	chain, _, err := discoveryChain.Get(serviceName, nil, nil)
 	if err != nil {
-		t.Logf("Discovery chain: %v", err)
-		return
+		t.Skipf("Discovery chain not available: %v", err)
 	}
 
-	if chain != nil && chain.Chain != nil {
-		t.Logf("Discovery chain for %s:", serviceName)
-		t.Logf("  Protocol: %s", chain.Chain.Protocol)
-		t.Logf("  Start Node: %s", chain.Chain.StartNode)
-		t.Logf("  Nodes: %d", len(chain.Chain.Nodes))
-		t.Logf("  Targets: %d", len(chain.Chain.Targets))
-	}
+	require.NotNil(t, chain, "Discovery chain response should not be nil")
+	require.NotNil(t, chain.Chain, "Discovery chain should not be nil")
+	assert.NotEmpty(t, chain.Chain.Protocol, "Protocol should not be empty")
+	assert.NotEmpty(t, chain.Chain.StartNode, "StartNode should not be empty")
+	t.Logf("Discovery chain for %s:", serviceName)
+	t.Logf("  Protocol: %s", chain.Chain.Protocol)
+	t.Logf("  Start Node: %s", chain.Chain.StartNode)
+	t.Logf("  Nodes: %d", len(chain.Chain.Nodes))
+	t.Logf("  Targets: %d", len(chain.Chain.Targets))
 }
 
 // TestDiscoveryChainWithOptions tests discovery chain with options
@@ -179,13 +187,13 @@ func TestDiscoveryChainWithOptions(t *testing.T) {
 
 	chain, _, err := discoveryChain.Get(serviceName, opts, nil)
 	if err != nil {
-		t.Logf("Discovery chain with options: %v", err)
-		return
+		t.Skipf("Discovery chain with options not available: %v", err)
 	}
 
-	if chain != nil && chain.Chain != nil {
-		t.Logf("Discovery chain with options - Protocol: %s", chain.Chain.Protocol)
-	}
+	require.NotNil(t, chain, "Discovery chain response should not be nil")
+	require.NotNil(t, chain.Chain, "Discovery chain should not be nil")
+	assert.NotEmpty(t, chain.Chain.Protocol, "Protocol should not be empty")
+	t.Logf("Discovery chain with options - Protocol: %s", chain.Chain.Protocol)
 }
 
 // ==================== Debug Tests ====================
@@ -198,10 +206,10 @@ func TestDebugHeap(t *testing.T) {
 
 	heap, err := debug.Heap()
 	if err != nil {
-		t.Logf("Debug heap: %v", err)
-		return
+		t.Skipf("Debug heap not available: %v", err)
 	}
 
+	assert.NotEmpty(t, heap, "Heap profile should not be empty")
 	t.Logf("Heap profile size: %d bytes", len(heap))
 }
 
@@ -214,10 +222,10 @@ func TestDebugProfile(t *testing.T) {
 	// Short profile (1 second)
 	profile, err := debug.Profile(1)
 	if err != nil {
-		t.Logf("Debug profile: %v", err)
-		return
+		t.Skipf("Debug profile not available: %v", err)
 	}
 
+	assert.NotEmpty(t, profile, "CPU profile should not be empty")
 	t.Logf("CPU profile size: %d bytes", len(profile))
 }
 
@@ -229,10 +237,10 @@ func TestDebugGoroutine(t *testing.T) {
 
 	goroutines, err := debug.Goroutine()
 	if err != nil {
-		t.Logf("Debug goroutine: %v", err)
-		return
+		t.Skipf("Debug goroutine not available: %v", err)
 	}
 
+	assert.NotEmpty(t, goroutines, "Goroutine profile should not be empty")
 	t.Logf("Goroutine profile size: %d bytes", len(goroutines))
 }
 
@@ -245,10 +253,10 @@ func TestDebugTrace(t *testing.T) {
 	// Short trace (1 second)
 	trace, err := debug.Trace(1)
 	if err != nil {
-		t.Logf("Debug trace: %v", err)
-		return
+		t.Skipf("Debug trace not available: %v", err)
 	}
 
+	assert.NotEmpty(t, trace, "Trace should not be empty")
 	t.Logf("Trace size: %d bytes", len(trace))
 }
 
@@ -264,10 +272,10 @@ func TestRawQuery(t *testing.T) {
 	var out map[string]interface{}
 	_, err := raw.Query("/v1/agent/self", &out, nil)
 	if err != nil {
-		t.Logf("Raw query: %v", err)
-		return
+		t.Skipf("Raw query not available: %v", err)
 	}
 
+	assert.NotEmpty(t, out, "Raw query should return data")
 	t.Logf("Raw query returned %d top-level keys", len(out))
 }
 
@@ -282,10 +290,10 @@ func TestRawWrite(t *testing.T) {
 	var out interface{}
 	_, err := raw.Write("/v1/kv/"+key, []byte("raw test value"), &out, nil)
 	if err != nil {
-		t.Logf("Raw write: %v", err)
-		return
+		t.Skipf("Raw write not available: %v", err)
 	}
 
+	assert.NotNil(t, out, "Raw write response should not be nil")
 	t.Log("Raw write successful")
 
 	// Cleanup
@@ -305,11 +313,7 @@ func TestRawDelete(t *testing.T) {
 
 	// Delete
 	_, err := raw.Delete("/v1/kv/"+key, nil)
-	if err != nil {
-		t.Logf("Raw delete: %v", err)
-		return
-	}
-
+	assert.NoError(t, err, "Raw delete should succeed")
 	t.Log("Raw delete successful")
 }
 
@@ -345,8 +349,13 @@ func TestConnectProxyConfig(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
+	_, hasMain := services[serviceName]
+	assert.True(t, hasMain, "Main service should be registered")
+
 	if proxy, ok := services[serviceName+"-sidecar-proxy"]; ok {
+		assert.Equal(t, api.ServiceKindConnectProxy, proxy.Kind, "Sidecar should be a connect proxy")
 		if proxy.Proxy != nil {
+			assert.Equal(t, serviceName, proxy.Proxy.DestinationServiceName, "Proxy destination should match service")
 			t.Logf("Proxy config - Destination: %s, LocalPort: %d",
 				proxy.Proxy.DestinationServiceName, proxy.Proxy.LocalServicePort)
 		} else {
@@ -370,10 +379,11 @@ func TestConnectAuthorizeAdvanced(t *testing.T) {
 
 	result, err := agent.ConnectAuthorize(auth)
 	if err != nil {
-		t.Logf("Connect authorize: %v", err)
-		return
+		t.Skipf("Connect authorize not available: %v", err)
 	}
 
+	assert.NotNil(t, result, "Authorization result should not be nil")
+	assert.NotEmpty(t, result.Reason, "Authorization reason should not be empty")
 	t.Logf("Authorization result: Authorized=%v, Reason=%s", result.Authorized, result.Reason)
 }
 
@@ -420,10 +430,10 @@ func TestFilterExpression(t *testing.T) {
 
 	catalogServices, _, err := catalog.Services(opts)
 	if err != nil {
-		t.Logf("Filter query: %v", err)
-		return
+		t.Skipf("Filter query not supported: %v", err)
 	}
 
+	assert.NotNil(t, catalogServices, "Filtered services should not be nil")
 	t.Logf("Services matching filter: %d", len(catalogServices))
 }
 
@@ -440,12 +450,13 @@ func TestFilterNodes(t *testing.T) {
 
 	nodes, _, err := catalog.Nodes(opts)
 	if err != nil {
-		t.Logf("Filter nodes: %v", err)
-		return
+		t.Skipf("Filter nodes not supported: %v", err)
 	}
 
+	assert.NotNil(t, nodes, "Filtered nodes should not be nil")
 	t.Logf("Nodes matching filter: %d", len(nodes))
 	for _, node := range nodes {
+		assert.NotEmpty(t, node.Node, "Node name should not be empty")
 		t.Logf("  - %s", node.Node)
 	}
 }

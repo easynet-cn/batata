@@ -20,13 +20,11 @@ func TestConnectCARootsEmpty(t *testing.T) {
 	// This may return an error or empty roots if Connect is not enabled
 	roots, _, err := connect.CARoots(nil)
 	if err != nil {
-		t.Logf("CA roots not available (Connect may not be enabled): %v", err)
-		return
+		t.Skipf("CA roots not available (Connect may not be enabled): %v", err)
 	}
 
-	if roots != nil {
-		t.Logf("CA roots available: %d roots", len(roots.Roots))
-	}
+	assert.NotNil(t, roots, "CA roots response should not be nil")
+	t.Logf("CA roots available: %d roots", len(roots.Roots))
 }
 
 // TestConnectCARootsList tests listing CA roots
@@ -160,12 +158,14 @@ func TestConnectIntentionGetInvalidId(t *testing.T) {
 
 	connect := client.Connect()
 
-	// Try to get non-existent intention
-	_, _, err := connect.IntentionGet("non-existent-id", nil)
-	if err == nil {
-		t.Log("No error for non-existent intention (may return nil)")
-	} else {
+	// Try to get non-existent intention - should return error or nil intention
+	intention, _, err := connect.IntentionGet("non-existent-id", nil)
+	if err != nil {
 		t.Logf("Expected error for non-existent intention: %v", err)
+		// Getting a non-existent intention should return an error
+		assert.Error(t, err, "Non-existent intention ID should return an error")
+	} else {
+		assert.Nil(t, intention, "Non-existent intention should return nil")
 	}
 }
 
@@ -381,10 +381,11 @@ func TestConnectAuthorize(t *testing.T) {
 
 	auth, err := client.Agent().ConnectAuthorize(authReq)
 	if err != nil {
-		t.Logf("Connect authorize not available: %v", err)
-		return
+		t.Skipf("Connect authorize not available: %v", err)
 	}
 
+	assert.NotNil(t, auth, "Authorization result should not be nil")
+	assert.NotEmpty(t, auth.Reason, "Authorization reason should not be empty")
 	t.Logf("Authorization result: Authorized=%v, Reason=%s", auth.Authorized, auth.Reason)
 }
 

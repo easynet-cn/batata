@@ -612,6 +612,7 @@ public class NacosConfigTypeTest {
 
         boolean completed = latch.await(30, TimeUnit.SECONDS);
         assertTrue(completed);
+        assertEquals(threadCount, dataIds.size(), "All concurrent format operations should succeed");
 
         System.out.println("Concurrent format operations: " + dataIds.size() + " configs created");
 

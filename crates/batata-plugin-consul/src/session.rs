@@ -691,14 +691,24 @@ mod tests {
         let session = service.create_session(req).await;
         assert!(!session.id.is_empty());
         assert_eq!(session.name, "test-session");
+        assert_eq!(session.ttl, "60s");
+        assert_eq!(session.behavior, "release");
+        assert!(!session.node.is_empty());
 
         // Get session
         let retrieved = service.get_session(&session.id);
         assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.id, session.id);
+        assert_eq!(retrieved.name, "test-session");
+        assert_eq!(retrieved.ttl, "60s");
 
         // Renew session
         let renewed = service.renew_session(&session.id).await;
         assert!(renewed.is_some());
+        let renewed = renewed.unwrap();
+        assert_eq!(renewed.id, session.id);
+        assert_eq!(renewed.name, "test-session");
 
         // Destroy session
         let destroyed = service.destroy_session(&session.id).await;
@@ -744,11 +754,16 @@ mod tests {
             ttl: Some("60s".to_string()),
             ..Default::default()
         };
-        service.create_session(req1).await;
-        service.create_session(req2).await;
+        let s1 = service.create_session(req1).await;
+        let s2 = service.create_session(req2).await;
 
         let sessions = service.list_sessions();
         assert_eq!(sessions.len(), 2);
+        let names: Vec<&str> = sessions.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"session-1"));
+        assert!(names.contains(&"session-2"));
+        // Verify IDs are distinct
+        assert_ne!(s1.id, s2.id);
     }
 
     #[tokio::test]
@@ -766,6 +781,9 @@ mod tests {
 
         let node_sessions = service.list_node_sessions(node_name);
         assert_eq!(node_sessions.len(), 1);
+        assert_eq!(node_sessions[0].name, "node-session");
+        assert_eq!(node_sessions[0].node, *node_name);
+        assert_eq!(node_sessions[0].ttl, "60s");
 
         let other = service.list_node_sessions("other-node");
         assert!(other.is_empty());

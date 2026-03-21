@@ -507,8 +507,12 @@ func TestTxnEmptyOperations(t *testing.T) {
 
 	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	if err != nil {
-		t.Logf("Empty transaction error: %v", err)
+		// Empty transactions may return an error
+		assert.Error(t, err, "Empty transaction should return an error")
+		t.Logf("Empty transaction error (expected): %v", err)
 	} else {
+		assert.True(t, ok, "Empty transaction should succeed if accepted")
+		assert.NotNil(t, resp, "Response should not be nil")
 		t.Logf("Empty transaction: ok=%v, results=%d", ok, len(resp.Results))
 	}
 }
@@ -530,9 +534,14 @@ func TestTxnInvalidKey(t *testing.T) {
 
 	ok, resp, _, err := txn.Txn(kvOpsToTxnOps(ops), nil)
 	if err != nil {
+		// Invalid key may return an error at the API level
 		t.Logf("Invalid key error: %v", err)
-	} else if !ok && len(resp.Errors) > 0 {
-		t.Logf("Transaction failed with %d errors", len(resp.Errors))
+	} else if !ok {
+		assert.NotEmpty(t, resp.Errors, "Failed transaction should have errors")
+		t.Logf("Transaction failed with %d errors (expected)", len(resp.Errors))
+	} else {
+		// Some implementations accept leading slash keys
+		t.Log("Transaction accepted key with leading slash")
 	}
 }
 

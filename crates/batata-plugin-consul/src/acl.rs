@@ -2505,6 +2505,11 @@ mod tests {
         assert!(token.secret_id.is_some());
         assert_eq!(token.description, "Test token");
         assert!(!token.policies.is_empty());
+        assert_eq!(token.policies[0].name, "global-management");
+        assert!(!token.local);
+        assert!(token.roles.is_empty());
+        assert!(!token.create_time.is_empty());
+        assert!(!token.modify_time.is_empty());
     }
 
     #[test]
@@ -2519,10 +2524,18 @@ mod tests {
 
         assert!(!policy.id.is_empty());
         assert_eq!(policy.name, "test-policy");
+        assert_eq!(policy.description, "A test policy");
+        assert!(policy.rules.contains("service_prefix"));
+        assert!(policy.rules.contains("test-"));
+        assert!(!policy.create_time.is_empty());
+        assert!(!policy.modify_time.is_empty());
 
         // Verify we can retrieve it
         let retrieved = service.get_policy("test-policy");
         assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.name, "test-policy");
+        assert_eq!(retrieved.description, "A test policy");
     }
 
     #[test]
@@ -2549,15 +2562,23 @@ mod tests {
         assert!(service.delete_token(&token.accessor_id));
         // Deleting again should return false
         assert!(!service.delete_token(&token.accessor_id));
+        // Verify token is no longer retrievable by looking up in list
+        let tokens = service.list_tokens();
+        assert!(
+            !tokens.iter().any(|t| t.accessor_id == token.accessor_id),
+            "Deleted token should not appear in list"
+        );
     }
 
     #[test]
     fn test_list_tokens_hides_secret() {
         let service = AclService::new();
         let tokens = service.list_tokens();
+        assert!(!tokens.is_empty(), "Should have at least the bootstrap token");
         // All tokens in list should have secret_id = None
         for t in &tokens {
             assert!(t.secret_id.is_none());
+            assert!(!t.accessor_id.is_empty());
         }
     }
 
@@ -2571,9 +2592,13 @@ mod tests {
             None,
         );
 
-        assert!(service.get_policy(&policy.id).is_some());
+        let fetched = service.get_policy(&policy.id);
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().description, "For deletion test");
         assert!(service.delete_policy(&policy.id));
         assert!(service.get_policy(&policy.id).is_none());
+        // Also verify get by name returns None after deletion
+        assert!(service.get_policy("acl-test-del-policy").is_none());
     }
 
     #[test]
@@ -2597,7 +2622,12 @@ mod tests {
         // Create role
         let role = service.create_role("acl-test-role", "Test role", vec![policy.name.clone()]);
         assert_eq!(role.name, "acl-test-role");
+        assert_eq!(role.description, "Test role");
+        assert!(!role.id.is_empty());
         assert!(!role.policies.is_empty());
+        assert_eq!(role.policies[0].name, policy.name);
+        assert!(!role.create_time.is_empty());
+        assert!(!role.modify_time.is_empty());
 
         // Get by ID
         let fetched = service.get_role(&role.id);
@@ -2644,10 +2674,15 @@ mod tests {
         );
         assert_eq!(method.name, "acl-test-kubernetes");
         assert_eq!(method.method_type, "kubernetes");
+        assert_eq!(method.display_name.as_deref(), Some("K8s Auth"));
+        assert_eq!(method.description.as_deref(), Some("Kubernetes auth method"));
 
         // Get
         let fetched = service.get_auth_method("acl-test-kubernetes");
         assert!(fetched.is_some());
+        let fetched = fetched.unwrap();
+        assert_eq!(fetched.name, "acl-test-kubernetes");
+        assert_eq!(fetched.method_type, "kubernetes");
 
         // Get nonexistent
         assert!(service.get_auth_method("nonexistent-method").is_none());

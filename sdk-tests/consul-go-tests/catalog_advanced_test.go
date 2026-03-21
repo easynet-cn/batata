@@ -47,12 +47,14 @@ func TestCatalogNodesFilterExpression(t *testing.T) {
 
 	nodes, _, err := catalog.Nodes(opts)
 	if err != nil {
-		t.Logf("Filter expression not supported: %v", err)
-		return
+		t.Skipf("Filter expression not supported: %v", err)
 	}
 
+	assert.NotNil(t, nodes, "Filtered nodes should not be nil")
 	t.Logf("Nodes matching filter: %d", len(nodes))
 	for _, node := range nodes {
+		assert.NotEmpty(t, node.Node, "Node name should not be empty")
+		assert.NotEmpty(t, node.Address, "Node address should not be empty")
 		t.Logf("  Node: %s, Address: %s", node.Node, node.Address)
 	}
 }
@@ -126,10 +128,10 @@ func TestCatalogServicesFilterExpression(t *testing.T) {
 
 	services, _, err := catalog.Services(opts)
 	if err != nil {
-		t.Logf("Filter expression not supported: %v", err)
-		return
+		t.Skipf("Filter expression not supported: %v", err)
 	}
 
+	assert.NotNil(t, services, "Services should not be nil")
 	t.Logf("Services matching filter: %v", services)
 }
 
@@ -264,10 +266,10 @@ func TestCatalogConnect(t *testing.T) {
 	catalog := client.Catalog()
 	services, _, err := catalog.Connect(serviceName, "", nil)
 	if err != nil {
-		t.Logf("Connect catalog query not available: %v", err)
-		return
+		t.Skipf("Connect catalog query not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Connect services should not be nil")
 	t.Logf("Connect services for %s: %d", serviceName, len(services))
 }
 
@@ -304,10 +306,10 @@ func TestCatalogConnectNative(t *testing.T) {
 
 	services, _, err := catalog.Connect(serviceName, "", opts)
 	if err != nil {
-		t.Logf("Connect native query not available: %v", err)
-		return
+		t.Skipf("Connect native query not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Native Connect services should not be nil")
 	t.Logf("Native Connect services: %d", len(services))
 }
 
@@ -428,10 +430,10 @@ func TestCatalogNodeServiceListFilter(t *testing.T) {
 
 	services, _, err := catalog.NodeServiceList(nodeName, opts)
 	if err != nil {
-		t.Logf("Node service list filter not available: %v", err)
-		return
+		t.Skipf("Node service list filter not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Node service list should not be nil")
 	t.Logf("Filtered services on node: %d", len(services.Services))
 }
 
@@ -461,10 +463,10 @@ func TestCatalogGatewayServicesTerminating(t *testing.T) {
 	catalog := client.Catalog()
 	services, _, err := catalog.GatewayServices(gatewayName, nil)
 	if err != nil {
-		t.Logf("Gateway services query not available: %v", err)
-		return
+		t.Skipf("Gateway services query not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Gateway services should not be nil")
 	t.Logf("Terminating gateway %s linked services: %d", gatewayName, len(services))
 }
 
@@ -492,10 +494,10 @@ func TestCatalogGatewayServicesIngress(t *testing.T) {
 	catalog := client.Catalog()
 	services, _, err := catalog.GatewayServices(gatewayName, nil)
 	if err != nil {
-		t.Logf("Gateway services query not available: %v", err)
-		return
+		t.Skipf("Gateway services query not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Gateway services should not be nil")
 	t.Logf("Ingress gateway %s services: %d", gatewayName, len(services))
 }
 

@@ -44,10 +44,11 @@ func TestCatalogFilterByTag(t *testing.T) {
 	// Filter by tag
 	services, _, err := catalog.Service(serviceName, "primary", nil)
 	if err != nil {
-		t.Logf("Catalog service by tag: %v", err)
-		return
+		t.Skipf("Catalog service by tag not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Services should not be nil")
+	assert.True(t, len(services) >= 1, "Should find at least one service with primary tag")
 	t.Logf("Services with 'primary' tag: %d", len(services))
 	for _, svc := range services {
 		assert.Contains(t, svc.ServiceTags, "primary")
@@ -86,18 +87,16 @@ func TestCatalogFilterByMultipleTags(t *testing.T) {
 
 	// Filter by v1 tag
 	v1Services, _, err := catalog.Service(serviceName, "v1", nil)
-	if err != nil {
-		t.Logf("Catalog service by v1: %v", err)
-		return
-	}
+	require.NoError(t, err, "Catalog service by v1 tag should succeed")
+	assert.NotNil(t, v1Services, "v1 services should not be nil")
+	assert.True(t, len(v1Services) >= 1, "Should find at least one service with v1 tag")
 	t.Logf("Services with 'v1' tag: %d", len(v1Services))
 
 	// Filter by prod tag
 	prodServices, _, err := catalog.Service(serviceName, "prod", nil)
-	if err != nil {
-		t.Logf("Catalog service by prod: %v", err)
-		return
-	}
+	require.NoError(t, err, "Catalog service by prod tag should succeed")
+	assert.NotNil(t, prodServices, "prod services should not be nil")
+	assert.True(t, len(prodServices) >= 1, "Should find at least one service with prod tag")
 	t.Logf("Services with 'prod' tag: %d", len(prodServices))
 }
 
@@ -134,10 +133,10 @@ func TestCatalogFilterExpression(t *testing.T) {
 
 	services, _, err := catalog.Service(serviceName, "", opts)
 	if err != nil {
-		t.Logf("Catalog service with filter: %v", err)
-		return
+		t.Skipf("Catalog service filter not supported: %v", err)
 	}
 
+	assert.NotNil(t, services, "Filtered services should not be nil")
 	t.Logf("Services with production env: %d", len(services))
 }
 
@@ -156,12 +155,13 @@ func TestCatalogFilterNodeMeta(t *testing.T) {
 
 	nodes, _, err := catalog.Nodes(opts)
 	if err != nil {
-		t.Logf("Catalog nodes with meta: %v", err)
-		return
+		t.Skipf("Catalog nodes with meta not available: %v", err)
 	}
 
+	assert.NotNil(t, nodes, "Nodes should not be nil")
 	t.Logf("Nodes matching meta filter: %d", len(nodes))
 	for _, node := range nodes {
+		assert.NotEmpty(t, node.Node, "Node name should not be empty")
 		t.Logf("  Node: %s, Meta: %v", node.Node, node.Meta)
 	}
 }
@@ -192,11 +192,9 @@ func TestCatalogServicePagination(t *testing.T) {
 
 	// Get all services
 	allServices, _, err := catalog.Service(serviceName, "", nil)
-	if err != nil {
-		t.Logf("Catalog service: %v", err)
-		return
-	}
-
+	require.NoError(t, err, "Catalog service query should succeed")
+	assert.NotNil(t, allServices, "Services should not be nil")
+	assert.True(t, len(allServices) >= 1, "Should find at least one service instance")
 	t.Logf("Total services: %d", len(allServices))
 }
 
@@ -207,13 +205,11 @@ func TestCatalogNodesPagination(t *testing.T) {
 	catalog := client.Catalog()
 
 	nodes, _, err := catalog.Nodes(nil)
-	if err != nil {
-		t.Logf("Catalog nodes: %v", err)
-		return
-	}
-
+	require.NoError(t, err, "Catalog nodes query should succeed")
+	assert.NotEmpty(t, nodes, "Should have at least one node")
 	t.Logf("Total nodes: %d", len(nodes))
 	for _, node := range nodes {
+		assert.NotEmpty(t, node.Node, "Node name should not be empty")
 		t.Logf("  Node: %s at %s", node.Node, node.Address)
 	}
 }
@@ -246,10 +242,11 @@ func TestCatalogConsistentRead(t *testing.T) {
 
 	services, meta, err := catalog.Service(serviceName, "", opts)
 	if err != nil {
-		t.Logf("Consistent read: %v", err)
-		return
+		t.Skipf("Consistent read not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Services should not be nil")
+	assert.NotNil(t, meta, "Query meta should not be nil")
 	t.Logf("Consistent read - Services: %d, KnownLeader: %v", len(services), meta.KnownLeader)
 }
 
@@ -279,10 +276,11 @@ func TestCatalogStaleRead(t *testing.T) {
 
 	services, meta, err := catalog.Service(serviceName, "", opts)
 	if err != nil {
-		t.Logf("Stale read: %v", err)
-		return
+		t.Skipf("Stale read not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Services should not be nil")
+	assert.NotNil(t, meta, "Query meta should not be nil")
 	t.Logf("Stale read - Services: %d, LastContact: %v", len(services), meta.LastContact)
 }
 
@@ -319,10 +317,12 @@ func TestCatalogNodeServicesDetailed(t *testing.T) {
 	// Get services on node
 	nodeServices, _, err := catalog.Node(nodeName, nil)
 	if err != nil {
-		t.Logf("Catalog node: %v", err)
-		return
+		t.Skipf("Catalog node not available: %v", err)
 	}
 
+	require.NotNil(t, nodeServices, "Node services should not be nil")
+	assert.NotNil(t, nodeServices.Node, "Node info should not be nil")
+	assert.NotEmpty(t, nodeServices.Services, "Node should have at least one service")
 	t.Logf("Services on node %s: %d", nodeName, len(nodeServices.Services))
 	for id, svc := range nodeServices.Services {
 		t.Logf("  %s: %s:%d", id, svc.Service, svc.Port)
@@ -347,13 +347,13 @@ func TestCatalogNodeServiceListDetailed(t *testing.T) {
 	// Use NodeServiceList for detailed info
 	nodeServices, _, err := catalog.NodeServiceList(nodeName, nil)
 	if err != nil {
-		t.Logf("Catalog node service list: %v", err)
-		return
+		t.Skipf("Catalog node service list not available: %v", err)
 	}
 
-	if nodeServices != nil {
-		t.Logf("Node: %s, Services: %d", nodeServices.Node.Node, len(nodeServices.Services))
-	}
+	require.NotNil(t, nodeServices, "Node service list should not be nil")
+	assert.NotNil(t, nodeServices.Node, "Node info should not be nil")
+	assert.Equal(t, nodeName, nodeServices.Node.Node, "Node name should match")
+	t.Logf("Node: %s, Services: %d", nodeServices.Node.Node, len(nodeServices.Services))
 }
 
 // ==================== Catalog Gateway Tests ====================
@@ -367,12 +367,14 @@ func TestCatalogGatewayServices(t *testing.T) {
 	// Try to get gateway services
 	gateways, _, err := catalog.GatewayServices("ingress-gateway", nil)
 	if err != nil {
-		t.Logf("Catalog gateway services: %v", err)
-		return
+		t.Skipf("Catalog gateway services not available: %v", err)
 	}
 
+	assert.NotNil(t, gateways, "Gateway services should not be nil")
 	t.Logf("Gateway services: %d", len(gateways))
 	for _, gw := range gateways {
+		assert.NotNil(t, gw.Gateway, "Gateway should not be nil")
+		assert.NotNil(t, gw.Service, "Service should not be nil")
 		t.Logf("  Gateway: %s -> %s", gw.Gateway.Name, gw.Service.Name)
 	}
 }
@@ -411,10 +413,10 @@ func TestCatalogConnectServices(t *testing.T) {
 	// Get Connect services
 	services, _, err := catalog.Connect(serviceName, "", nil)
 	if err != nil {
-		t.Logf("Catalog connect: %v", err)
-		return
+		t.Skipf("Catalog connect not available: %v", err)
 	}
 
+	assert.NotNil(t, services, "Connect services should not be nil")
 	t.Logf("Connect services: %d", len(services))
 }
 
@@ -444,15 +446,8 @@ func TestCatalogCrossDatacenter(t *testing.T) {
 
 	// Get datacenters first
 	dcs, err := catalog.Datacenters()
-	if err != nil {
-		t.Logf("Catalog datacenters: %v", err)
-		return
-	}
-
-	if len(dcs) == 0 {
-		t.Log("No datacenters available")
-		return
-	}
+	require.NoError(t, err, "Catalog datacenters should succeed")
+	assert.NotEmpty(t, dcs, "Should have at least one datacenter")
 
 	// Query specific datacenter
 	opts := &api.QueryOptions{
@@ -460,10 +455,8 @@ func TestCatalogCrossDatacenter(t *testing.T) {
 	}
 
 	services, _, err := catalog.Services(opts)
-	if err != nil {
-		t.Logf("Catalog services in DC %s: %v", dcs[0], err)
-		return
-	}
+	require.NoError(t, err, "Catalog services in DC should succeed")
+	assert.NotNil(t, services, "Services should not be nil")
 
 	t.Logf("Services in DC %s: %d", dcs[0], len(services))
 }

@@ -246,8 +246,14 @@ mod tests {
     #[test]
     fn test_make_cache_key_empty() {
         let roles: Vec<String> = vec![];
-        // Should not panic
-        let _ = make_cache_key(&roles);
+        // Should not panic and should produce a deterministic value
+        let key = make_cache_key(&roles);
+        // Calling again with the same empty input should produce the same key
+        let key2 = make_cache_key(&roles);
+        assert_eq!(key, key2);
+        // Empty roles should produce a different key than a single-element role
+        let non_empty_key = make_cache_key(&["admin".to_string()]);
+        assert_ne!(key, non_empty_key);
     }
 
     #[test]

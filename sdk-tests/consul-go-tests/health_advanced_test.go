@@ -34,8 +34,11 @@ func TestHealthNodeFilter(t *testing.T) {
 	}
 	filteredChecks, _, err := health.Node(nodeName, opts)
 	if err != nil {
-		t.Logf("Health filter not supported: %v", err)
-		return
+		t.Skipf("Health filter not supported: %v", err)
+	}
+	assert.NotNil(t, filteredChecks, "Filtered checks should not be nil")
+	for _, check := range filteredChecks {
+		assert.Equal(t, api.HealthPassing, check.Status, "All filtered checks should be passing")
 	}
 	t.Logf("Passing checks on node: %d", len(filteredChecks))
 }
@@ -212,9 +215,9 @@ func TestHealthServiceFilter(t *testing.T) {
 	}
 	services, _, err := health.Service(serviceName, "", true, opts)
 	if err != nil {
-		t.Logf("Health filter not supported: %v", err)
-		return
+		t.Skipf("Health filter not supported: %v", err)
 	}
+	assert.NotNil(t, services, "Filtered services should not be nil")
 	t.Logf("Services matching filter: %d", len(services))
 }
 
@@ -251,9 +254,9 @@ func TestHealthConnect(t *testing.T) {
 	// Query Connect services
 	services, _, err := health.Connect(serviceName, "", true, nil)
 	if err != nil {
-		t.Logf("Health Connect query not available: %v", err)
-		return
+		t.Skipf("Health Connect query not available: %v", err)
 	}
+	assert.NotNil(t, services, "Connect services should not be nil")
 	t.Logf("Connect services for %s: %d", serviceName, len(services))
 }
 
@@ -289,9 +292,9 @@ func TestHealthConnectFilter(t *testing.T) {
 	}
 	services, _, err := health.Connect(serviceName, "", true, opts)
 	if err != nil {
-		t.Logf("Health Connect filter not available: %v", err)
-		return
+		t.Skipf("Health Connect filter not available: %v", err)
 	}
+	assert.NotNil(t, services, "Filtered Connect services should not be nil")
 	t.Logf("Filtered Connect services: %d", len(services))
 }
 
@@ -322,9 +325,9 @@ func TestHealthIngress(t *testing.T) {
 	// Query ingress gateway health
 	services, _, err := health.Ingress(gatewayName, true, nil)
 	if err != nil {
-		t.Logf("Health Ingress query not available: %v", err)
-		return
+		t.Skipf("Health Ingress query not available: %v", err)
 	}
+	assert.NotNil(t, services, "Ingress services should not be nil")
 	t.Logf("Ingress gateway %s services: %d", gatewayName, len(services))
 }
 
@@ -471,8 +474,11 @@ func TestHealthStateFilter(t *testing.T) {
 
 	checks, _, err := health.State("any", opts)
 	if err != nil {
-		t.Logf("Health state filter not supported: %v", err)
-		return
+		t.Skipf("Health state filter not supported: %v", err)
+	}
+	assert.NotNil(t, checks, "Filtered health checks should not be nil")
+	for _, check := range checks {
+		assert.Contains(t, check.Name, "serfHealth", "Filtered check name should contain serfHealth")
 	}
 	t.Logf("Checks matching filter: %d", len(checks))
 }
@@ -557,8 +563,11 @@ func TestHealthChecksFilter(t *testing.T) {
 
 	checks, _, err := health.Checks(serviceName, opts)
 	if err != nil {
-		t.Logf("Health checks filter not supported: %v", err)
-		return
+		t.Skipf("Health checks filter not supported: %v", err)
+	}
+	assert.NotNil(t, checks, "Filtered checks should not be nil")
+	for _, check := range checks {
+		assert.Contains(t, check.Name, "TTL", "Filtered check should contain TTL in name")
 	}
 	t.Logf("Checks matching filter: %d", len(checks))
 }

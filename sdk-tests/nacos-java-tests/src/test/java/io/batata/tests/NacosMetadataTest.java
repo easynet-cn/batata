@@ -117,7 +117,11 @@ public class NacosMetadataTest {
         Thread.sleep(1000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
+        assertFalse(instances.isEmpty(), "Should have registered instance after update");
+
         Instance found = instances.get(0);
+        assertEquals("2.0.0", found.getMetadata().get("version"), "Version should be updated to 2.0.0");
+        assertEquals("true", found.getMetadata().get("updated"), "Should have new 'updated' metadata key");
 
         System.out.println("Updated metadata: " + found.getMetadata());
 
@@ -245,12 +249,20 @@ public class NacosMetadataTest {
         Thread.sleep(1000);
 
         List<Instance> allInstances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
-        System.out.println("Total instances: " + allInstances.size());
+        assertEquals(3, allInstances.size(), "Should have 3 registered instances");
 
         // Filter by metadata (client-side)
         long v1Count = allInstances.stream()
                 .filter(i -> "v1".equals(i.getMetadata().get("version")))
                 .count();
+        assertEquals(2, v1Count, "Should have 2 instances with version=v1");
+
+        long v2Count = allInstances.stream()
+                .filter(i -> "v2".equals(i.getMetadata().get("version")))
+                .count();
+        assertEquals(1, v2Count, "Should have 1 instance with version=v2");
+
+        System.out.println("Total instances: " + allInstances.size());
         System.out.println("V1 instances: " + v1Count);
 
         // Cleanup
@@ -467,8 +479,17 @@ public class NacosMetadataTest {
         Thread.sleep(1000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
-        System.out.println("Final metadata: " + instances.get(0).getMetadata());
-        System.out.println("Concurrent update errors: " + errors.size());
+        assertFalse(instances.isEmpty(), "Instance should still exist after concurrent updates");
+        assertEquals(1, instances.size(), "Should have exactly 1 instance after concurrent updates");
+
+        Instance found = instances.get(0);
+        assertNotNull(found.getMetadata(), "Metadata should not be null after concurrent updates");
+        assertNotNull(found.getMetadata().get("counter"), "Metadata should contain 'counter' key");
+        assertNotNull(found.getMetadata().get("thread"), "Metadata should contain 'thread' key");
+
+        assertTrue(errors.isEmpty(), "Should have no errors during concurrent metadata updates, got: " + errors);
+
+        System.out.println("Final metadata: " + found.getMetadata());
 
         // Cleanup
         namingService.deregisterInstance(serviceName, DEFAULT_GROUP, instance);
@@ -546,6 +567,10 @@ public class NacosMetadataTest {
         assertFalse(instances.isEmpty());
 
         Instance found = instances.get(0);
+        assertEquals("12345", found.getMetadata().get("customId"), "Custom ID metadata should be preserved");
+        assertEquals("192.168.20.60", found.getIp(), "Instance IP should match");
+        assertEquals(8080, found.getPort(), "Instance port should match");
+
         System.out.println("Instance ID: " + found.getInstanceId());
         System.out.println("Custom ID in metadata: " + found.getMetadata().get("customId"));
 
@@ -616,7 +641,15 @@ public class NacosMetadataTest {
         Thread.sleep(1000);
 
         List<Instance> instances = namingService.getAllInstances(serviceName, DEFAULT_GROUP);
+        assertFalse(instances.isEmpty(), "Instance should still exist after clearing metadata");
+
         Instance found = instances.get(0);
+        assertNotNull(found.getMetadata(), "Metadata map should not be null");
+        assertEquals(0, found.getMetadata().size(), "Metadata should be empty after clearing");
+        assertNull(found.getMetadata().get("key1"), "key1 should no longer exist in metadata");
+        assertNull(found.getMetadata().get("key2"), "key2 should no longer exist in metadata");
+        assertEquals("192.168.20.62", found.getIp(), "Instance IP should still match after clearing metadata");
+        assertEquals(8080, found.getPort(), "Instance port should still match after clearing metadata");
 
         System.out.println("Cleared metadata size: " + found.getMetadata().size());
 

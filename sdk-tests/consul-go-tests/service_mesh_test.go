@@ -238,7 +238,12 @@ func TestServiceMeshLocalBindAddress(t *testing.T) {
 	services, err := agent.Services()
 	require.NoError(t, err)
 
+	_, hasMain := services[serviceName]
+	assert.True(t, hasMain, "Main service should be registered")
+
 	if sidecar, ok := services[serviceName+"-sidecar-proxy"]; ok {
+		assert.Equal(t, api.ServiceKindConnectProxy, sidecar.Kind, "Sidecar should be connect proxy")
+		assert.NotEmpty(t, sidecar.ID, "Sidecar ID should not be empty")
 		t.Logf("Sidecar with local bind: %s, Address: %s", sidecar.ID, sidecar.Address)
 	}
 }
@@ -633,12 +638,17 @@ func TestServiceMeshServiceRouter(t *testing.T) {
 
 	_, _, err := configEntries.Set(router, nil)
 	if err != nil {
-		t.Logf("Service router not available: %v", err)
-		return
+		t.Skipf("Service router not available: %v", err)
 	}
 	defer configEntries.Delete(api.ServiceRouter, serviceName, nil)
 
-	t.Logf("Service router created with %d routes for %s", len(router.Routes), serviceName)
+	// Verify the router was created
+	gotEntry, _, err := configEntries.Get(api.ServiceRouter, serviceName, nil)
+	require.NoError(t, err, "Should be able to read back the service router")
+	routerEntry := gotEntry.(*api.ServiceRouterConfigEntry)
+	assert.Equal(t, serviceName, routerEntry.Name, "Router name should match")
+	assert.Equal(t, 3, len(routerEntry.Routes), "Router should have 3 routes")
+	t.Logf("Service router created with %d routes for %s", len(routerEntry.Routes), serviceName)
 }
 
 // ==================== Service Splitter Tests ====================
@@ -697,11 +707,16 @@ func TestServiceMeshServiceSplitter(t *testing.T) {
 
 	_, _, err := configEntries.Set(splitter, nil)
 	if err != nil {
-		t.Logf("Service splitter not available: %v", err)
-		return
+		t.Skipf("Service splitter not available: %v", err)
 	}
 	defer configEntries.Delete(api.ServiceSplitter, serviceName, nil)
 
+	// Verify the splitter was created
+	gotEntry, _, err := configEntries.Get(api.ServiceSplitter, serviceName, nil)
+	require.NoError(t, err, "Should be able to read back the service splitter")
+	splitterEntry := gotEntry.(*api.ServiceSplitterConfigEntry)
+	assert.Equal(t, serviceName, splitterEntry.Name, "Splitter name should match")
+	assert.Equal(t, 3, len(splitterEntry.Splits), "Splitter should have 3 splits")
 	t.Logf("Service splitter created: 80%% stable, 15%% canary, 5%% experimental")
 }
 
@@ -750,13 +765,19 @@ func TestServiceMeshServiceResolver(t *testing.T) {
 
 	_, _, err := configEntries.Set(resolver, nil)
 	if err != nil {
-		t.Logf("Service resolver not available: %v", err)
-		return
+		t.Skipf("Service resolver not available: %v", err)
 	}
 	defer configEntries.Delete(api.ServiceResolver, serviceName, nil)
 
+	// Verify the resolver was created
+	gotEntry, _, err := configEntries.Get(api.ServiceResolver, serviceName, nil)
+	require.NoError(t, err, "Should be able to read back the service resolver")
+	resolverEntry := gotEntry.(*api.ServiceResolverConfigEntry)
+	assert.Equal(t, serviceName, resolverEntry.Name, "Resolver name should match")
+	assert.Equal(t, "stable", resolverEntry.DefaultSubset, "Default subset should be stable")
+	assert.Equal(t, 3, len(resolverEntry.Subsets), "Resolver should have 3 subsets")
 	t.Logf("Service resolver created with %d subsets and failover configuration",
-		len(resolver.Subsets))
+		len(resolverEntry.Subsets))
 }
 
 // ==================== Retry Policy Tests ====================
@@ -811,11 +832,15 @@ func TestServiceMeshRetryPolicy(t *testing.T) {
 
 	_, _, err := configEntries.Set(router, nil)
 	if err != nil {
-		t.Logf("Retry policy configuration not available: %v", err)
-		return
+		t.Skipf("Retry policy configuration not available: %v", err)
 	}
 	defer configEntries.Delete(api.ServiceRouter, serviceName, nil)
 
+	// Verify the router was created with retry config
+	gotEntry, _, err := configEntries.Get(api.ServiceRouter, serviceName, nil)
+	require.NoError(t, err, "Should be able to read back the router")
+	routerEntry := gotEntry.(*api.ServiceRouterConfigEntry)
+	assert.Equal(t, 2, len(routerEntry.Routes), "Router should have 2 routes")
 	t.Logf("Retry policy configured: 5 retries on connect failure and status codes 502, 503, 504")
 }
 
@@ -880,11 +905,15 @@ func TestServiceMeshTimeoutPolicy(t *testing.T) {
 
 	_, _, err = configEntries.Set(router, nil)
 	if err != nil {
-		t.Logf("Timeout policy configuration not available: %v", err)
-		return
+		t.Skipf("Timeout policy configuration not available: %v", err)
 	}
 	defer configEntries.Delete(api.ServiceRouter, serviceName, nil)
 
+	// Verify the router was created
+	gotEntry, _, err := configEntries.Get(api.ServiceRouter, serviceName, nil)
+	require.NoError(t, err, "Should be able to read back the router")
+	routerEntry := gotEntry.(*api.ServiceRouterConfigEntry)
+	assert.Equal(t, 2, len(routerEntry.Routes), "Router should have 2 routes")
 	t.Logf("Timeout policy configured: 60s for slow, 5s for fast endpoints")
 }
 
@@ -935,12 +964,15 @@ func TestServiceMeshCircuitBreaker(t *testing.T) {
 	}
 
 	serviceEntry := gotEntry.(*api.ServiceConfigEntry)
-	if serviceEntry.UpstreamConfig != nil && serviceEntry.UpstreamConfig.Defaults != nil {
-		limits := serviceEntry.UpstreamConfig.Defaults.Limits
-		if limits != nil {
-			t.Logf("Circuit breaker configured: max connections=%d, max pending=%d",
-				*limits.MaxConnections, *limits.MaxPendingRequests)
-		}
+	assert.NotNil(t, serviceEntry.UpstreamConfig, "UpstreamConfig should not be nil")
+	assert.NotNil(t, serviceEntry.UpstreamConfig.Defaults, "Upstream defaults should not be nil")
+	limits := serviceEntry.UpstreamConfig.Defaults.Limits
+	assert.NotNil(t, limits, "Upstream limits should not be nil")
+	if limits != nil {
+		assert.NotNil(t, limits.MaxConnections, "MaxConnections should be set")
+		assert.NotNil(t, limits.MaxPendingRequests, "MaxPendingRequests should be set")
+		t.Logf("Circuit breaker configured: max connections=%d, max pending=%d",
+			*limits.MaxConnections, *limits.MaxPendingRequests)
 	}
 }
 
@@ -977,11 +1009,15 @@ func TestServiceMeshRateLimiting(t *testing.T) {
 
 	_, _, err := configEntries.Set(defaults, nil)
 	if err != nil {
-		t.Logf("Rate limiting configuration not available: %v", err)
-		return
+		t.Skipf("Rate limiting configuration not available: %v", err)
 	}
 	defer configEntries.Delete(api.ServiceDefaults, serviceName, nil)
 
+	// Verify the config was created
+	gotEntry, _, err := configEntries.Get(api.ServiceDefaults, serviceName, nil)
+	require.NoError(t, err, "Should be able to read back the service defaults")
+	serviceEntry := gotEntry.(*api.ServiceConfigEntry)
+	assert.Equal(t, "http", serviceEntry.Protocol, "Protocol should be http")
 	t.Logf("Rate limiting configured: 100 req/s with burst of 200")
 }
 
@@ -1001,9 +1037,12 @@ func TestServiceMeshMTLS(t *testing.T) {
 		return
 	}
 
+	assert.NotNil(t, roots, "CA roots should not be nil")
 	if roots != nil && len(roots.Roots) > 0 {
+		assert.True(t, len(roots.Roots) > 0, "Should have at least one CA root")
 		t.Logf("CA roots available: %d roots found", len(roots.Roots))
 		for _, root := range roots.Roots {
+			assert.NotEmpty(t, root.ID, "Root ID should not be empty")
 			t.Logf("  Root ID: %s, Active: %v", root.ID, root.Active)
 		}
 	}
@@ -1011,9 +1050,10 @@ func TestServiceMeshMTLS(t *testing.T) {
 	// Check CA configuration
 	caConfig, _, err := connect.CAGetConfig(nil)
 	if err != nil {
-		t.Logf("CA config not available: %v", err)
-		return
+		t.Skipf("CA config not available: %v", err)
 	}
+	assert.NotNil(t, caConfig, "CA config should not be nil")
+	assert.NotEmpty(t, caConfig.Provider, "CA provider should not be empty")
 	t.Logf("CA Provider: %s", caConfig.Provider)
 
 	// Create mesh config with mTLS mode
@@ -1050,11 +1090,15 @@ func TestServiceMeshMTLS(t *testing.T) {
 
 	_, _, err = configEntries.Set(serviceDefaults, nil)
 	if err != nil {
-		t.Logf("Service mTLS defaults not available: %v", err)
-		return
+		t.Skipf("Service mTLS defaults not available: %v", err)
 	}
 	defer configEntries.Delete(api.ServiceDefaults, serviceName, nil)
 
+	// Verify the service defaults were created
+	gotServiceEntry, _, err := configEntries.Get(api.ServiceDefaults, serviceName, nil)
+	require.NoError(t, err, "Should be able to read back service defaults")
+	svcEntry := gotServiceEntry.(*api.ServiceConfigEntry)
+	assert.Equal(t, api.MutualTLSModeStrict, svcEntry.MutualTLSMode, "mTLS mode should be strict")
 	t.Logf("mTLS configured: strict mode with TLS 1.2 minimum")
 }
 

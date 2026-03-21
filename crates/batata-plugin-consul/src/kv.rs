@@ -1608,6 +1608,17 @@ mod tests {
 
         let results = service.get_prefix("config/db/");
         assert_eq!(results.len(), 2);
+
+        // Verify actual key-value content
+        let keys: Vec<&str> = results.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"config/db/host"));
+        assert!(keys.contains(&"config/db/port"));
+
+        let host = results.iter().find(|r| r.key == "config/db/host").unwrap();
+        assert_eq!(host.decoded_value(), Some("localhost".to_string()));
+
+        let port = results.iter().find(|r| r.key == "config/db/port").unwrap();
+        assert_eq!(port.decoded_value(), Some("3306".to_string()));
     }
 
     #[tokio::test]
@@ -1721,9 +1732,20 @@ mod tests {
         assert!(result.errors.is_none());
         assert_eq!(result.results.as_ref().unwrap().len(), 3);
 
-        // Verify the keys exist
-        assert!(service.get("txn/key1").is_some());
-        assert!(service.get("txn/key2").is_some());
+        // Verify the keys exist and have correct values
+        let kv1 = service.get("txn/key1").unwrap();
+        assert_eq!(kv1.decoded_value(), Some("value1".to_string()));
+        assert_eq!(kv1.key, "txn/key1");
+
+        let kv2 = service.get("txn/key2").unwrap();
+        assert_eq!(kv2.decoded_value(), Some("value2".to_string()));
+        assert_eq!(kv2.key, "txn/key2");
+
+        // Verify the "get" operation in the transaction returned the correct value
+        let txn_results = result.results.unwrap();
+        let get_result = &txn_results[2];
+        assert_eq!(get_result.kv.key, "txn/key1");
+        assert_eq!(get_result.kv.decoded_value(), Some("value1".to_string()));
     }
 
     #[test]
@@ -1926,6 +1948,10 @@ mod tests {
         let result = service.transaction(ops).await;
         assert!(result.errors.is_none());
 
+        // Verify the value was actually updated
+        let updated = service.get("txn/checked").unwrap();
+        assert_eq!(updated.decoded_value(), Some("updated".to_string()));
+
         // Transaction with wrong check-index should fail
         let ops_fail = vec![TxnOp {
             kv: Some(KVTxnOp {
@@ -2034,7 +2060,19 @@ mod tests {
         }];
         let result = service.transaction(ops).await;
         assert!(result.errors.is_none());
-        assert_eq!(result.results.as_ref().unwrap().len(), 2);
+        let items = result.results.unwrap();
+        assert_eq!(items.len(), 2);
+
+        // Verify the returned keys and values
+        let keys: Vec<&str> = items.iter().map(|i| i.kv.key.as_str()).collect();
+        assert!(keys.contains(&"prefix/a"));
+        assert!(keys.contains(&"prefix/b"));
+
+        let item_a = items.iter().find(|i| i.kv.key == "prefix/a").unwrap();
+        assert_eq!(item_a.kv.decoded_value(), Some("1".to_string()));
+
+        let item_b = items.iter().find(|i| i.kv.key == "prefix/b").unwrap();
+        assert_eq!(item_b.kv.decoded_value(), Some("2".to_string()));
     }
 
     #[tokio::test]

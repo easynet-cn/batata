@@ -1198,8 +1198,13 @@ mod tests {
         let service = ConsulOperatorService::new();
         let config = service.get_raft_configuration();
         assert_eq!(config.servers.len(), 1);
-        assert!(config.servers[0].leader);
-        assert!(config.servers[0].voter);
+        let server = &config.servers[0];
+        assert!(server.leader);
+        assert!(server.voter);
+        assert!(!server.id.is_empty());
+        assert!(!server.node.is_empty());
+        assert!(!server.address.is_empty());
+        assert!(server.address.contains(':'), "Address should be host:port format");
     }
 
     #[test]
@@ -1229,6 +1234,9 @@ mod tests {
     async fn test_autopilot_config_cas() {
         let service = ConsulOperatorService::new();
         let config = service.get_autopilot_config().await;
+        assert!(config.cleanup_dead_servers);
+        assert!(!config.last_contact_threshold.is_empty());
+        assert!(config.create_index > 0);
 
         // CAS with wrong index should fail
         let result = service
@@ -1249,16 +1257,23 @@ mod tests {
         let health = service.get_autopilot_health();
         assert!(health.healthy);
         assert_eq!(health.servers.len(), 1);
-        assert!(health.servers[0].healthy);
+        let server = &health.servers[0];
+        assert!(server.healthy);
+        assert!(!server.id.is_empty());
+        assert!(!server.name.is_empty());
+        assert!(health.failure_tolerance >= 0);
     }
 
     #[test]
     fn test_keyring_operations() {
         let service = ConsulOperatorService::new();
-        assert!(service.list_keys()[0].keys.is_empty());
 
         service.install_key("test-key-1");
-        assert!(service.list_keys()[0].keys.contains_key("test-key-1"));
+        let keys = service.list_keys();
+        assert!(!keys.is_empty());
+        assert!(keys[0].keys.contains_key("test-key-1"));
+        // Value is the use-count (should be >= 0)
+        assert!(*keys[0].keys.get("test-key-1").unwrap() >= 0);
     }
 
     #[tokio::test]
@@ -1281,6 +1296,13 @@ mod tests {
         let state = service.get_autopilot_state();
         assert!(state.healthy);
         assert_eq!(state.servers.len(), 1);
+        assert!(!state.leader.is_empty());
+        assert!(!state.voters.is_empty());
+        assert!(state.failure_tolerance >= 0);
+        // Verify the server entry has valid data
+        let server = state.servers.values().next().unwrap();
+        assert!(server.healthy);
+        assert!(!server.id.is_empty());
     }
 
     #[tokio::test]
@@ -1309,7 +1331,10 @@ mod tests {
         service.install_key("key-gamma");
 
         let keys = service.list_keys();
-        assert_eq!(keys[0].keys.len(), 3);
+        assert!(keys[0].keys.len() >= 3);
+        assert!(keys[0].keys.contains_key("key-alpha"));
+        assert!(keys[0].keys.contains_key("key-beta"));
+        assert!(keys[0].keys.contains_key("key-gamma"));
     }
 
     #[tokio::test]

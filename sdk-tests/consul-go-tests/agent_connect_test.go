@@ -211,9 +211,10 @@ func TestAgentUpdateACLToken(t *testing.T) {
 	token := "test-token-" + randomString(8)
 	_, err := agent.UpdateAgentACLToken(token, nil)
 	if err != nil {
-		t.Logf("Token update not available (ACL may be disabled): %v", err)
-		return
+		t.Skipf("Token update not available (ACL may be disabled): %v", err)
 	}
+	// If no error, the update succeeded
+	assert.NoError(t, err, "Agent token update should succeed")
 	t.Log("Agent token updated successfully")
 }
 
@@ -226,6 +227,8 @@ func TestAgentTokenFilePriority(t *testing.T) {
 	config.Token = "direct-token"
 
 	// Token priority: CLI > Env File > Env Var > Config
+	assert.NotNil(t, config, "Default config should not be nil")
+	assert.Equal(t, "direct-token", config.Token, "Token should be set to direct-token")
 	t.Logf("Token configuration priority test")
 	t.Logf("Direct token configured: %v", config.Token != "")
 }
@@ -241,9 +244,10 @@ func TestAgentMonitor(t *testing.T) {
 	// Start monitoring with debug level
 	logCh, err := agent.Monitor("debug", nil, nil)
 	if err != nil {
-		t.Logf("Agent monitor not available: %v", err)
-		return
+		t.Skipf("Agent monitor not available: %v", err)
 	}
+
+	assert.NotNil(t, logCh, "Log channel should not be nil")
 
 	// Collect a few log lines
 	timeout := time.After(2 * time.Second)
@@ -252,9 +256,14 @@ func TestAgentMonitor(t *testing.T) {
 	for {
 		select {
 		case log := <-logCh:
+			if log == "" {
+				continue // skip keepalive empty lines
+			}
+			assert.NotEmpty(t, log, "Log line should not be empty")
 			t.Logf("Log: %s", log)
 			count++
 			if count >= 3 {
+				assert.True(t, count >= 3, "Should receive at least 3 log lines")
 				return
 			}
 		case <-timeout:
@@ -272,9 +281,10 @@ func TestAgentMonitorJSON(t *testing.T) {
 
 	logCh, err := agent.MonitorJSON("info", nil, nil)
 	if err != nil {
-		t.Logf("Agent monitor JSON not available: %v", err)
-		return
+		t.Skipf("Agent monitor JSON not available: %v", err)
 	}
+
+	assert.NotNil(t, logCh, "JSON log channel should not be nil")
 
 	timeout := time.After(2 * time.Second)
 	count := 0
@@ -282,6 +292,10 @@ func TestAgentMonitorJSON(t *testing.T) {
 	for {
 		select {
 		case log := <-logCh:
+			if log == "" {
+				continue // skip keepalive empty lines
+			}
+			assert.NotEmpty(t, log, "JSON log line should not be empty")
 			t.Logf("JSON Log: %s", log)
 			count++
 			if count >= 2 {

@@ -536,6 +536,10 @@ mod tests {
             },
         });
         assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Coordinate must have exactly 8 dimensions"
+        );
     }
 
     #[test]
@@ -552,6 +556,10 @@ mod tests {
             },
         });
         assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Coordinate contains invalid values"
+        );
     }
 
     #[test]
@@ -637,6 +645,10 @@ mod tests {
             },
         });
         assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Coordinate contains invalid values"
+        );
     }
 
     #[test]
@@ -653,6 +665,10 @@ mod tests {
             },
         });
         assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Coordinate contains invalid values"
+        );
     }
 
     #[test]
@@ -694,9 +710,12 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(persistent.get_nodes(None).len(), 1);
+        let nodes = persistent.get_nodes(None);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node, "persistent-node");
 
         let dcs = persistent.get_datacenters();
+        assert_eq!(dcs.len(), 1);
         assert_eq!(dcs[0].datacenter, "dc1");
     }
 
@@ -721,5 +740,15 @@ mod tests {
 
         let entries = service.get_node("multi-seg").unwrap();
         assert_eq!(entries.len(), 2);
+
+        // Verify both segments are present
+        let segments: Vec<&str> = entries.iter().map(|e| e.segment.as_str()).collect();
+        assert!(segments.contains(&"lan"));
+        assert!(segments.contains(&"wan"));
+
+        // Verify node name on all entries
+        for entry in &entries {
+            assert_eq!(entry.node, "multi-seg");
+        }
     }
 }

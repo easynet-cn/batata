@@ -103,12 +103,13 @@ func TestPreparedQueryList(t *testing.T) {
 
 	queries, _, err := query.List(nil)
 	if err != nil {
-		t.Logf("Prepared query list: %v", err)
-		return
+		t.Skipf("Prepared query list not available: %v", err)
 	}
 
+	assert.NotNil(t, queries, "Query list should not be nil")
 	t.Logf("Found %d prepared queries", len(queries))
 	for _, q := range queries {
+		assert.NotEmpty(t, q.Service.Service, "Query service name should not be empty")
 		t.Logf("  Query: %s (Service: %s)", q.Name, q.Service.Service)
 	}
 }
@@ -251,12 +252,16 @@ func TestPreparedQueryExecute(t *testing.T) {
 	// Execute the query
 	result, _, err := query.Execute(id, nil)
 	if err != nil {
-		t.Logf("Prepared query execute: %v", err)
-		return
+		t.Skipf("Prepared query execute not available: %v", err)
 	}
 
+	assert.NotNil(t, result, "Query result should not be nil")
+	assert.NotEmpty(t, result.Service, "Query result service should not be empty")
+	assert.True(t, len(result.Nodes) >= 1, "Query should return at least one node")
 	t.Logf("Query result - Service: %s, Nodes: %d", result.Service, len(result.Nodes))
 	for _, node := range result.Nodes {
+		assert.NotNil(t, node.Node, "Node should not be nil")
+		assert.NotNil(t, node.Service, "Service should not be nil")
 		t.Logf("  Node: %s, Service: %s:%d",
 			node.Node.Node, node.Service.Service, node.Service.Port)
 	}
@@ -605,11 +610,8 @@ func TestPreparedQueryNotFound(t *testing.T) {
 	query := client.PreparedQuery()
 
 	_, _, err := query.Get("non-existent-query-id", nil)
-	if err != nil {
-		t.Logf("Query not found (expected): %v", err)
-	} else {
-		t.Log("Query not found did not return error")
-	}
+	assert.Error(t, err, "Getting non-existent query should return an error")
+	t.Logf("Query not found (expected): %v", err)
 }
 
 // TestPreparedQueryExecuteNotFound tests executing non-existent query
@@ -619,11 +621,8 @@ func TestPreparedQueryExecuteNotFound(t *testing.T) {
 	query := client.PreparedQuery()
 
 	_, _, err := query.Execute("non-existent-query", nil)
-	if err != nil {
-		t.Logf("Execute not found (expected): %v", err)
-	} else {
-		t.Log("Execute not found did not return error")
-	}
+	assert.Error(t, err, "Executing non-existent query should return an error")
+	t.Logf("Execute not found (expected): %v", err)
 }
 
 // ==================== Prepared Query Concurrent Tests ====================

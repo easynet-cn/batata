@@ -820,7 +820,10 @@ mod tests {
         let chain = service.get_discovery_chain("web");
         assert_eq!(chain.chain.service_name, "web");
         assert_eq!(chain.chain.protocol, "tcp");
+        assert_eq!(chain.chain.namespace, "default");
+        assert_eq!(chain.chain.datacenter, "dc1");
         assert!(!chain.chain.start_node.is_empty());
+        assert!(chain.chain.start_node.contains("resolver:"));
         assert_eq!(chain.chain.nodes.len(), 1);
         assert_eq!(chain.chain.targets.len(), 1);
     }
@@ -857,6 +860,8 @@ mod tests {
         assert_eq!(exported.len(), 2);
         assert_eq!(exported[0].service, "api"); // sorted
         assert_eq!(exported[1].service, "web");
+        assert_eq!(exported[0].consumers.peers, vec!["west"]);
+        assert_eq!(exported[1].consumers.peers, vec!["east"]);
     }
 
     #[test]

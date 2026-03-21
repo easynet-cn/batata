@@ -1274,7 +1274,7 @@ pub fn consul_routes_persistent() -> actix_web::Scope {
 /// Merges KV and snapshot routes into a single /v1 scope to avoid actix-web scope conflicts.
 #[cfg(test)]
 fn consul_test_routes() -> actix_web::Scope {
-    web::scope("")
+    web::scope("/v1")
         .service(consul_agent_routes())
         .service(consul_health_routes())
         .service(consul_session_routes())
@@ -1282,18 +1282,26 @@ fn consul_test_routes() -> actix_web::Scope {
         .service(consul_status_routes())
         .service(consul_catalog_routes())
         .service(consul_internal_routes())
-        .service(consul_config_entry_routes())
-        // Merge KV and snapshot into a single /v1 scope (actix-web cannot have
-        // two scopes with the same path prefix)
-        .service(
-            web::scope("/v1")
-                .route("/kv/{key:.*}", web::get().to(kv::get_kv))
-                .route("/kv/{key:.*}", web::put().to(kv::put_kv))
-                .route("/kv/{key:.*}", web::delete().to(kv::delete_kv))
-                .route("/txn", web::put().to(kv::txn))
-                .route("/snapshot", web::get().to(snapshot::save_snapshot))
-                .route("/snapshot", web::put().to(snapshot::restore_snapshot)),
+        // Config entry routes inline (consul_config_entry_routes has its own /v1 scope)
+        .route("/config", web::put().to(config_entry::apply_config_entry))
+        .route(
+            "/config/{kind}/{name}",
+            web::get().to(config_entry::get_config_entry),
         )
+        .route(
+            "/config/{kind}",
+            web::get().to(config_entry::list_config_entries),
+        )
+        .route(
+            "/config/{kind}/{name}",
+            web::delete().to(config_entry::delete_config_entry),
+        )
+        .route("/kv/{key:.*}", web::get().to(kv::get_kv))
+        .route("/kv/{key:.*}", web::put().to(kv::put_kv))
+        .route("/kv/{key:.*}", web::delete().to(kv::delete_kv))
+        .route("/txn", web::put().to(kv::txn))
+        .route("/snapshot", web::get().to(snapshot::save_snapshot))
+        .route("/snapshot", web::put().to(snapshot::restore_snapshot))
 }
 
 /// Configure all Consul API routes with full features

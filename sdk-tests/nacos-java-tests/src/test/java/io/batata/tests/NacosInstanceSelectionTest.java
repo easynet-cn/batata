@@ -397,8 +397,13 @@ public class NacosInstanceSelectionTest {
             selectionCount.merge(selected.getIp(), 1, Integer::sum);
         }
 
+        int highWeightCount = selectionCount.getOrDefault("192.168.11.1", 0);
+        int lowWeightCount = selectionCount.getOrDefault("192.168.11.2", 0);
+        assertTrue(highWeightCount > lowWeightCount,
+                "High weight instance (10.0) should be selected more often than low weight (1.0), got high="
+                        + highWeightCount + " low=" + lowWeightCount);
+
         System.out.println("Weight-based selection distribution: " + selectionCount);
-        // High weight instance should be selected more often (but not guaranteed in all implementations)
 
         // Cleanup
         namingService.deregisterInstance(serviceName, "192.168.11.1", 8080);
@@ -457,5 +462,159 @@ public class NacosInstanceSelectionTest {
 
         // Cleanup
         namingService.deregisterInstance(serviceName, groupName, "192.168.13.1", 8080);
+    }
+
+    /**
+     * NIS-014: Test selectInstances with empty cluster list returns all instances
+     */
+    @Test
+    @Order(14)
+    void testSelectInstancesEmptyClusterReturnsAll() throws NacosException, InterruptedException {
+        String serviceName = "cluster-all-" + UUID.randomUUID().toString().substring(0, 8);
+
+        // Register instances in different clusters
+        Instance instA = new Instance();
+        instA.setIp("192.168.14.1");
+        instA.setPort(8080);
+        instA.setClusterName("cluster-X");
+        namingService.registerInstance(serviceName, instA);
+
+        Instance instB = new Instance();
+        instB.setIp("192.168.14.2");
+        instB.setPort(8080);
+        instB.setClusterName("cluster-Y");
+        namingService.registerInstance(serviceName, instB);
+
+        Instance instC = new Instance();
+        instC.setIp("192.168.14.3");
+        instC.setPort(8080);
+        instC.setClusterName("cluster-Z");
+        namingService.registerInstance(serviceName, instC);
+
+        Thread.sleep(2000);
+
+        // Empty cluster list should return ALL instances
+        List<Instance> all = namingService.selectInstances(serviceName, new ArrayList<>(), true, false);
+        assertNotNull(all, "Should return instances");
+        assertTrue(all.size() >= 3,
+                "Empty cluster list should return all instances, got: " + all.size());
+
+        // Verify instances from different clusters are present
+        Set<String> ips = new HashSet<>();
+        for (Instance inst : all) {
+            ips.add(inst.getIp());
+        }
+        assertTrue(ips.contains("192.168.14.1"), "Should contain cluster-X instance");
+        assertTrue(ips.contains("192.168.14.2"), "Should contain cluster-Y instance");
+        assertTrue(ips.contains("192.168.14.3"), "Should contain cluster-Z instance");
+
+        // Cleanup
+        namingService.deregisterInstance(serviceName, "192.168.14.1", 8080);
+        namingService.deregisterInstance(serviceName, "192.168.14.2", 8080);
+        namingService.deregisterInstance(serviceName, "192.168.14.3", 8080);
+    }
+
+    /**
+     * NIS-015: Test selectInstances with multiple clusters returns union
+     */
+    @Test
+    @Order(15)
+    void testSelectInstancesMultipleClusters() throws NacosException, InterruptedException {
+        String serviceName = "cluster-multi-" + UUID.randomUUID().toString().substring(0, 8);
+
+        // Register instances in 3 clusters
+        Instance instA = new Instance();
+        instA.setIp("192.168.15.1");
+        instA.setPort(8080);
+        instA.setClusterName("alpha");
+        namingService.registerInstance(serviceName, instA);
+
+        Instance instB = new Instance();
+        instB.setIp("192.168.15.2");
+        instB.setPort(8080);
+        instB.setClusterName("beta");
+        namingService.registerInstance(serviceName, instB);
+
+        Instance instC = new Instance();
+        instC.setIp("192.168.15.3");
+        instC.setPort(8080);
+        instC.setClusterName("gamma");
+        namingService.registerInstance(serviceName, instC);
+
+        Thread.sleep(2000);
+
+        // Query with multiple clusters (alpha + gamma) should return their union
+        List<String> clusters = Arrays.asList("alpha", "gamma");
+        List<Instance> filtered = namingService.selectInstances(serviceName, clusters, true, false);
+        assertNotNull(filtered, "Should return instances");
+        assertEquals(2, filtered.size(),
+                "Should return 2 instances from alpha + gamma, got: " + filtered.size());
+
+        Set<String> ips = new HashSet<>();
+        for (Instance inst : filtered) {
+            ips.add(inst.getIp());
+        }
+        assertTrue(ips.contains("192.168.15.1"), "Should contain alpha instance");
+        assertTrue(ips.contains("192.168.15.3"), "Should contain gamma instance");
+        assertFalse(ips.contains("192.168.15.2"), "Should NOT contain beta instance");
+
+        // Cleanup
+        namingService.deregisterInstance(serviceName, "192.168.15.1", 8080);
+        namingService.deregisterInstance(serviceName, "192.168.15.2", 8080);
+        namingService.deregisterInstance(serviceName, "192.168.15.3", 8080);
+    }
+
+    /**
+     * NIS-016: Test DEFAULT cluster behavior — instances without explicit cluster
+     * should be in "DEFAULT" cluster
+     */
+    @Test
+    @Order(16)
+    void testDefaultClusterBehavior() throws NacosException, InterruptedException {
+        String serviceName = "cluster-default-" + UUID.randomUUID().toString().substring(0, 8);
+
+        // Register instance WITHOUT setting clusterName (should default to "DEFAULT")
+        Instance instDefault = new Instance();
+        instDefault.setIp("192.168.16.1");
+        instDefault.setPort(8080);
+        // No setClusterName — should use DEFAULT
+        namingService.registerInstance(serviceName, instDefault);
+
+        // Register instance WITH explicit cluster
+        Instance instExplicit = new Instance();
+        instExplicit.setIp("192.168.16.2");
+        instExplicit.setPort(8080);
+        instExplicit.setClusterName("custom-cluster");
+        namingService.registerInstance(serviceName, instExplicit);
+
+        Thread.sleep(2000);
+
+        // Query for "DEFAULT" cluster should return the instance without explicit cluster
+        List<String> defaultCluster = Arrays.asList("DEFAULT");
+        List<Instance> defaultInstances = namingService.selectInstances(serviceName, defaultCluster, true, false);
+        assertNotNull(defaultInstances, "Should return DEFAULT cluster instances");
+        assertEquals(1, defaultInstances.size(),
+                "DEFAULT cluster should have 1 instance, got: " + defaultInstances.size());
+        assertEquals("192.168.16.1", defaultInstances.get(0).getIp(),
+                "DEFAULT cluster should contain the instance without explicit cluster");
+
+        // Query for "custom-cluster" should return the explicit cluster instance
+        List<String> customCluster = Arrays.asList("custom-cluster");
+        List<Instance> customInstances = namingService.selectInstances(serviceName, customCluster, true, false);
+        assertNotNull(customInstances, "Should return custom-cluster instances");
+        assertEquals(1, customInstances.size(),
+                "custom-cluster should have 1 instance, got: " + customInstances.size());
+        assertEquals("192.168.16.2", customInstances.get(0).getIp(),
+                "custom-cluster should contain the explicit cluster instance");
+
+        // Query all (empty cluster) should return both
+        List<Instance> allInstances = namingService.selectInstances(serviceName, new ArrayList<>(), true, false);
+        assertNotNull(allInstances, "Should return all instances");
+        assertTrue(allInstances.size() >= 2,
+                "Should have at least 2 instances, got: " + allInstances.size());
+
+        // Cleanup
+        namingService.deregisterInstance(serviceName, "192.168.16.1", 8080);
+        namingService.deregisterInstance(serviceName, "192.168.16.2", 8080);
     }
 }

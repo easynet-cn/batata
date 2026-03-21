@@ -146,13 +146,23 @@ public class NacosAdvancedNamingTest {
         }
 
         namingService.batchRegisterInstance(serviceName, DEFAULT_GROUP, instances);
-        Thread.sleep(1000);
+        Thread.sleep(2000);
 
-        // Query by cluster
+        // Verify all instances registered
+        List<Instance> allInstances = namingService.getAllInstances(serviceName);
+        assertTrue(allInstances.size() >= 4,
+                "Should have at least 4 instances registered, got: " + allInstances.size());
+
+        // Query by cluster using non-subscribe mode to avoid SDK cache mutation issue
+        // (subscribe mode's doSelectInstance modifies cached hosts in-place)
         List<Instance> clusterA = namingService.selectInstances(serviceName,
-                Arrays.asList("cluster-A"), true);
+                Arrays.asList("cluster-A"), true, false);
         List<Instance> clusterB = namingService.selectInstances(serviceName,
-                Arrays.asList("cluster-B"), true);
+                Arrays.asList("cluster-B"), true, false);
+
+        // Verify cluster filtering
+        assertEquals(2, clusterA.size(), "cluster-A should have 2 instances");
+        assertEquals(2, clusterB.size(), "cluster-B should have 2 instances");
 
         System.out.println("Cluster-A instances: " + clusterA.size());
         System.out.println("Cluster-B instances: " + clusterB.size());
@@ -305,7 +315,8 @@ public class NacosAdvancedNamingTest {
         namingService.registerInstance(serviceName, "192.168.106.1", 8080);
         Thread.sleep(2000);
 
-        // Should not receive duplicate notifications
+        // Should not receive duplicate notifications (SDK deduplicates same listener)
+        assertTrue(notifyCount.get() >= 1, "Should receive at least one notification");
         System.out.println("Notification count after duplicate subscribe: " + notifyCount.get());
 
         // Cleanup
@@ -388,10 +399,15 @@ public class NacosAdvancedNamingTest {
         // Test pagination
         ListView<String> page1 = namingService.getServicesOfServer(1, 2);
         assertNotNull(page1);
-        System.out.println("Page 1 count: " + page1.getCount() + ", data: " + page1.getData());
+        assertTrue(page1.getCount() >= 5, "Total count should be at least 5, got: " + page1.getCount());
+        assertNotNull(page1.getData(), "Page 1 data should not be null");
+        assertEquals(2, page1.getData().size(), "Page 1 should have 2 items (pageSize=2)");
 
         ListView<String> page2 = namingService.getServicesOfServer(2, 2);
         assertNotNull(page2);
+        assertNotNull(page2.getData(), "Page 2 data should not be null");
+
+        System.out.println("Page 1 count: " + page1.getCount() + ", data: " + page1.getData());
         System.out.println("Page 2 count: " + page2.getCount() + ", data: " + page2.getData());
 
         // Cleanup
@@ -421,6 +437,10 @@ public class NacosAdvancedNamingTest {
         // Get services in group
         ListView<String> services = namingService.getServicesOfServer(1, 10, groupName);
         assertNotNull(services);
+        assertTrue(services.getCount() >= 3, "Should have at least 3 services in group, got: " + services.getCount());
+        assertNotNull(services.getData(), "Services data should not be null");
+        assertTrue(services.getData().size() >= 3, "Should have at least 3 services in data, got: " + services.getData().size());
+
         System.out.println("Services in group: " + services.getCount() + ", data: " + services.getData());
 
         // Cleanup
@@ -450,6 +470,8 @@ public class NacosAdvancedNamingTest {
         // Get subscribed services
         List<ServiceInfo> subscribed = namingService.getSubscribeServices();
         assertNotNull(subscribed);
+        assertTrue(subscribed.size() >= 2, "Should have at least 2 subscribed services, got: " + subscribed.size());
+
         System.out.println("Subscribed services count: " + subscribed.size());
 
         // Cleanup

@@ -377,6 +377,12 @@ impl PayloadHandler for BatchInstanceRequestHandler {
             service_name,
             instances.len()
         );
+        for (idx, inst) in instances.iter().enumerate() {
+            debug!(
+                "  BatchInstance[{}]: ip={}, port={}, cluster='{}', healthy={}, weight={}",
+                idx, inst.ip, inst.port, inst.cluster_name, inst.healthy, inst.weight
+            );
+        }
 
         let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
 
@@ -567,7 +573,11 @@ impl PayloadHandler for ServiceListRequestHandler {
         let namespace = &request.naming_request.namespace;
         let group_name = &request.naming_request.group_name;
         let page_no = request.page_no.max(1);
-        let page_size = request.page_size.max(10);
+        let page_size = if request.page_size <= 0 {
+            10
+        } else {
+            request.page_size
+        };
 
         let (count, service_names) = self
             .naming_service

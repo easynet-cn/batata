@@ -250,10 +250,9 @@ func TestSnapshotRestoreInvalidData(t *testing.T) {
 	invalidData := []byte("this is not a valid snapshot")
 
 	err := snapshot.Restore(nil, bytes.NewReader(invalidData))
+	assert.Error(t, err, "Restoring invalid snapshot data should return an error")
 	if err != nil {
 		t.Logf("Expected error for invalid snapshot: %v", err)
-	} else {
-		t.Log("Restore accepted invalid data (may need server-side validation)")
 	}
 }
 
@@ -265,9 +264,8 @@ func TestSnapshotRestoreEmptyData(t *testing.T) {
 
 	// Try to restore empty data
 	err := snapshot.Restore(nil, bytes.NewReader([]byte{}))
+	assert.Error(t, err, "Restoring empty snapshot data should return an error")
 	if err != nil {
 		t.Logf("Expected error for empty snapshot: %v", err)
-	} else {
-		t.Log("Restore accepted empty data (may need server-side validation)")
 	}
 }
