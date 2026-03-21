@@ -242,8 +242,8 @@ impl ConsulOperatorService {
         service.servers.insert(server.id.clone(), server);
 
         // Initialize keyring with a default primary key
-        let default_key = base64::engine::general_purpose::STANDARD
-            .encode(uuid::Uuid::new_v4().as_bytes());
+        let default_key =
+            base64::engine::general_purpose::STANDARD.encode(uuid::Uuid::new_v4().as_bytes());
         service.keyring.insert(default_key.clone(), 1);
         // Set primary key synchronously via try_write
         if let Ok(mut pk) = service.primary_key.try_write() {
@@ -1204,7 +1204,10 @@ mod tests {
         assert!(!server.id.is_empty());
         assert!(!server.node.is_empty());
         assert!(!server.address.is_empty());
-        assert!(server.address.contains(':'), "Address should be host:port format");
+        assert!(
+            server.address.contains(':'),
+            "Address should be host:port format"
+        );
     }
 
     #[test]

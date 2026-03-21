@@ -556,10 +556,7 @@ mod tests {
             },
         });
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "Coordinate contains invalid values"
-        );
+        assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
 
     #[test]
@@ -645,10 +642,7 @@ mod tests {
             },
         });
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "Coordinate contains invalid values"
-        );
+        assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
 
     #[test]
@@ -665,10 +659,7 @@ mod tests {
             },
         });
         assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err(),
-            "Coordinate contains invalid values"
-        );
+        assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
 
     #[test]

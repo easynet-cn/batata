@@ -226,8 +226,16 @@ async fn get_service(
     query: web::Query<ServiceQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::get_service(req, agent, acl_service, dc_config, path, query, index_provider)
-        .await
+    crate::agent::get_service(
+        req,
+        agent,
+        acl_service,
+        dc_config,
+        path,
+        query,
+        index_provider,
+    )
+    .await
 }
 
 #[put("/service/maintenance/{service_id}")]
@@ -328,8 +336,7 @@ async fn list_agent_checks(
     _query: web::Query<ServiceQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::health::list_agent_checks(req, health_service, acl_service, _query, index_provider)
-        .await
+    crate::health::list_agent_checks(req, health_service, acl_service, _query, index_provider).await
 }
 
 // ============================================================================

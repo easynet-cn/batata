@@ -135,7 +135,10 @@ impl ConsulHealthService {
                 .clone()
                 .or_else(|| registration.service_id.clone())
                 .unwrap_or_default(),
-            ip: registration.ip.clone().unwrap_or_else(|| "0.0.0.0".to_string()),
+            ip: registration
+                .ip
+                .clone()
+                .unwrap_or_else(|| "0.0.0.0".to_string()),
             port: registration.port.unwrap_or(0),
             cluster_name: "DEFAULT".to_string(),
             http_url: registration.http.clone(),
@@ -1317,8 +1320,16 @@ mod tests {
         let result = service.deregister_check("nonexistent").await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Check not found"), "Expected 'Check not found' error, got: {}", err);
-        assert!(err.contains("nonexistent"), "Error should mention the check ID, got: {}", err);
+        assert!(
+            err.contains("Check not found"),
+            "Expected 'Check not found' error, got: {}",
+            err
+        );
+        assert!(
+            err.contains("nonexistent"),
+            "Error should mention the check ID, got: {}",
+            err
+        );
     }
 
     #[tokio::test]

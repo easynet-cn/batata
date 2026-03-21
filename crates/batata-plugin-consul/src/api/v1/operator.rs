@@ -2,14 +2,14 @@
 //!
 //! These use `#[get("/raft/configuration")]` style macros under an "/operator" scope.
 
-use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Scope};
+use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use crate::acl::AclService;
 use crate::catalog::ConsulCatalogService;
 use crate::operator::{
     AutopilotConfigParams, AutopilotConfiguration, ConsulOperatorService,
-    ConsulOperatorServiceReal, KeyringParams, KeyringRequest, OperatorQueryParams,
-    RaftPeerParams, TransferLeaderParams,
+    ConsulOperatorServiceReal, KeyringParams, KeyringRequest, OperatorQueryParams, RaftPeerParams,
+    TransferLeaderParams,
 };
 
 // ============================================================================
@@ -136,14 +136,8 @@ async fn get_operator_usage(
     catalog_service: web::Data<ConsulCatalogService>,
     _query: web::Query<OperatorQueryParams>,
 ) -> HttpResponse {
-    crate::operator::get_operator_usage(
-        req,
-        acl_service,
-        operator_service,
-        catalog_service,
-        _query,
-    )
-    .await
+    crate::operator::get_operator_usage(req, acl_service, operator_service, catalog_service, _query)
+        .await
 }
 
 #[get("/utilization")]

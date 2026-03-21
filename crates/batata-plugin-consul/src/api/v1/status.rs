@@ -64,9 +64,7 @@ async fn get_peers_real(
 
 /// Fixed/fallback status routes
 pub fn routes() -> Scope {
-    web::scope("/status")
-        .service(get_leader)
-        .service(get_peers)
+    web::scope("/status").service(get_leader).service(get_peers)
 }
 
 /// Real cluster status routes (using ServerMemberManager)

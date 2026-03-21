@@ -72,10 +72,7 @@ async fn list_history(
 
     let mut namespace_id = params.tenant.clone().unwrap_or_default();
     if namespace_id.is_empty() {
-        namespace_id = params
-            .namespace_id
-            .clone()
-            .unwrap_or_default();
+        namespace_id = params.namespace_id.clone().unwrap_or_default();
     }
     if namespace_id.is_empty() {
         namespace_id = DEFAULT_NAMESPACE_ID.to_string();

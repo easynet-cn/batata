@@ -109,10 +109,9 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             })
             .collect();
 
-        if ephemeral_instances.is_empty() {
-            return None;
-        }
-
+        // Always return data even when instances list is empty.
+        // An empty list signals to remote nodes that all ephemeral instances
+        // have been deregistered and should be removed on their side.
         let data = DistroInstanceData {
             namespace,
             group_name,
@@ -137,9 +136,14 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
         let instance_data: DistroInstanceData =
             serde_json::from_slice(&data.content).map_err(|e| format!("Failed to parse: {}", e))?;
 
-        // Register all instances from the sync data
-        for inst in instance_data.instances {
-            let instance = crate::Instance {
+        // Use reconciliation model: replace ALL ephemeral instances for this service
+        // with the synced data. This correctly handles deregistration -- when the
+        // responsible node removes an instance, the sync data will not contain it,
+        // so it will be removed from the local store as well.
+        let instances: Vec<crate::Instance> = instance_data
+            .instances
+            .into_iter()
+            .map(|inst| crate::Instance {
                 instance_id: inst.instance_id,
                 ip: inst.ip,
                 port: inst.port,
@@ -150,19 +154,20 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
                 cluster_name: inst.cluster_name,
                 service_name: instance_data.service_name.clone(),
                 metadata: inst.metadata,
-            };
+            })
+            .collect();
 
-            self.naming_service.register_instance(
-                &instance_data.namespace,
-                &instance_data.group_name,
-                &instance_data.service_name,
-                instance,
-            );
-        }
+        let count = instances.len();
+        self.naming_service.replace_ephemeral_instances(
+            &instance_data.namespace,
+            &instance_data.group_name,
+            &instance_data.service_name,
+            instances,
+        );
 
         info!(
-            "Synced instances for service {}//{}/{}",
-            instance_data.namespace, instance_data.group_name, instance_data.service_name
+            "Synced {} instances for service {}//{}/{} (reconciliation)",
+            count, instance_data.namespace, instance_data.group_name, instance_data.service_name
         );
         Ok(())
     }

@@ -53,9 +53,7 @@ impl ConsulSnapshotService {
 
         if let Some(ref db) = self.rocks_db {
             // Include KV data from RocksDB
-            if let Some(cf) = db.cf_handle(
-                batata_consistency::raft::state_machine::CF_CONSUL_KV,
-            ) {
+            if let Some(cf) = db.cf_handle(batata_consistency::raft::state_machine::CF_CONSUL_KV) {
                 let mut kv_data = HashMap::new();
                 let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
                 for item in iter.flatten() {
@@ -78,9 +76,9 @@ impl ConsulSnapshotService {
             }
 
             // Include session data from RocksDB
-            if let Some(cf) = db.cf_handle(
-                batata_consistency::raft::state_machine::CF_CONSUL_SESSIONS,
-            ) {
+            if let Some(cf) =
+                db.cf_handle(batata_consistency::raft::state_machine::CF_CONSUL_SESSIONS)
+            {
                 let mut session_data = HashMap::new();
                 let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
                 for item in iter.flatten() {
@@ -102,9 +100,7 @@ impl ConsulSnapshotService {
             }
 
             // Include ACL data from RocksDB
-            if let Some(cf) = db.cf_handle(
-                batata_consistency::raft::state_machine::CF_CONSUL_ACL,
-            ) {
+            if let Some(cf) = db.cf_handle(batata_consistency::raft::state_machine::CF_CONSUL_ACL) {
                 let mut acl_data = HashMap::new();
                 let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
                 for item in iter.flatten() {

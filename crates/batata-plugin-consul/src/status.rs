@@ -158,10 +158,7 @@ mod tests {
             "192.168.1.1:8500"
         );
         assert_eq!(to_consul_address("10.0.0.1:9848", 8500), "10.0.0.1:8500");
-        assert_eq!(
-            to_consul_address("127.0.0.1:8848", 8500),
-            "127.0.0.1:8500"
-        );
+        assert_eq!(to_consul_address("127.0.0.1:8848", 8500), "127.0.0.1:8500");
         // IPv6 address
         assert_eq!(to_consul_address("[::1]:8848", 8500), "[::1]:8500");
         // Custom port

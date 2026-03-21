@@ -56,8 +56,11 @@ impl NamingService {
         };
 
         if let Some(instances) = self.services.get(&service_key) {
-            instances.remove(&instance_key);
-            return true;
+            if instances.remove(&instance_key).is_some() {
+                // Increment service revision for change detection
+                self.increment_service_revision(&service_key);
+                return true;
+            }
         }
         false
     }
@@ -349,6 +352,48 @@ impl NamingService {
         let entry = self.services.entry(service_key.clone()).or_default();
         entry.clear();
 
+        for instance in instances {
+            let mut instance = instance;
+            instance.weight = batata_api::naming::model::clamp_weight(instance.weight);
+            if instance.cluster_name.is_empty() {
+                instance.cluster_name = "DEFAULT".to_string();
+            }
+            instance.service_name = service_name.to_string();
+            let instance_key = build_instance_key(&instance);
+            entry.insert(instance_key, Arc::new(instance));
+        }
+
+        // Increment service revision for change detection
+        self.increment_service_revision(&service_key);
+        true
+    }
+
+    /// Replace all ephemeral instances for a service with the provided list.
+    ///
+    /// This is used by the Distro protocol to reconcile ephemeral instance state
+    /// from the responsible node. Persistent (non-ephemeral) instances are preserved.
+    pub fn replace_ephemeral_instances(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        instances: Vec<Instance>,
+    ) -> bool {
+        let service_key = build_service_key(namespace, group_name, service_name);
+
+        let entry = self.services.entry(service_key.clone()).or_default();
+
+        // Remove all existing ephemeral instances
+        let keys_to_remove: Vec<String> = entry
+            .iter()
+            .filter(|e| e.value().ephemeral)
+            .map(|e| e.key().clone())
+            .collect();
+        for key in keys_to_remove {
+            entry.remove(&key);
+        }
+
+        // Insert the new ephemeral instances
         for instance in instances {
             let mut instance = instance;
             instance.weight = batata_api::naming::model::clamp_weight(instance.weight);

@@ -2,7 +2,7 @@
 //!
 //! Lock handlers use scope "/lock", semaphore handlers use scope "/semaphore".
 
-use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Scope};
+use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use crate::acl::AclService;
 use crate::lock::{

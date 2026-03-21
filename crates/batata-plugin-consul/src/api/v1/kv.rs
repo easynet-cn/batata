@@ -2,7 +2,7 @@
 //!
 //! These use `#[get("/{key:.*}")]` style macros under a "/kv" scope.
 
-use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Scope};
+use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use crate::acl::AclService;
 use crate::index_provider::ConsulIndexProvider;

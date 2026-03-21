@@ -8,8 +8,8 @@ use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use crate::acl::{
     AclService, AuthMethodRequest, BindingRuleRequest, CloneTokenRequest, CreatePolicyRequest,
-    CreateTokenRequest, LoginRequest, PolicyUpdateRequest, RoleRequest, TemplatedPolicyPreviewRequest,
-    TokenUpdateRequest,
+    CreateTokenRequest, LoginRequest, PolicyUpdateRequest, RoleRequest,
+    TemplatedPolicyPreviewRequest, TokenUpdateRequest,
 };
 use crate::index_provider::ConsulIndexProvider;
 use crate::model::ConsulDatacenterConfig;
@@ -358,9 +358,7 @@ async fn delete_auth_method(
 // ============================================================================
 
 #[get("/templated-policies")]
-async fn list_templated_policies(
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
+async fn list_templated_policies(index_provider: web::Data<ConsulIndexProvider>) -> HttpResponse {
     crate::acl::list_templated_policies(index_provider).await
 }
 

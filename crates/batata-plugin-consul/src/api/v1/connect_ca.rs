@@ -3,7 +3,7 @@
 //! CA and intentions handlers use scope "/connect".
 //! Agent connect routes (leaf cert, authorize) use a separate scope for /agent/connect.
 
-use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Scope};
+use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use crate::acl::AclService;
 use crate::connect_ca::{
@@ -187,13 +187,8 @@ async fn get_ca_configuration_persistent(
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::connect_ca::get_ca_configuration_persistent(
-        req,
-        acl_service,
-        ca_service,
-        index_provider,
-    )
-    .await
+    crate::connect_ca::get_ca_configuration_persistent(req, acl_service, ca_service, index_provider)
+        .await
 }
 
 #[put("/ca/configuration")]

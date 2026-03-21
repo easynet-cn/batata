@@ -2,7 +2,7 @@
 //!
 //! These use `#[get("/datacenters")]` style macros under a "/coordinate" scope.
 
-use actix_web::{get, put, web, HttpRequest, HttpResponse, Scope};
+use actix_web::{HttpRequest, HttpResponse, Scope, get, put, web};
 
 use crate::acl::AclService;
 use crate::coordinate::{

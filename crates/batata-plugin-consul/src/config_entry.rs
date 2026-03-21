@@ -138,7 +138,11 @@ impl ConsulConfigEntryService {
         self.entries.get(&key).map(|r| r.value().clone())
     }
 
-    pub fn apply_entry(&self, mut req: ConfigEntryRequest, cas: Option<u64>) -> Result<bool, String> {
+    pub fn apply_entry(
+        &self,
+        mut req: ConfigEntryRequest,
+        cas: Option<u64>,
+    ) -> Result<bool, String> {
         // Global entries (mesh, proxy-defaults) use kind as name if name is empty
         if req.name.is_empty() {
             req.name = req.kind.clone();
@@ -461,20 +465,16 @@ pub async fn apply_config_entry(
     }
 
     // Parse optional CAS parameter from query string
-    let cas: Option<u64> = req
-        .uri()
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|pair| {
-                    let mut kv = pair.splitn(2, '=');
-                    if kv.next() == Some("cas") {
-                        kv.next().and_then(|v| v.parse().ok())
-                    } else {
-                        None
-                    }
-                })
-        });
+    let cas: Option<u64> = req.uri().query().and_then(|q| {
+        q.split('&').find_map(|pair| {
+            let mut kv = pair.splitn(2, '=');
+            if kv.next() == Some("cas") {
+                kv.next().and_then(|v| v.parse().ok())
+            } else {
+                None
+            }
+        })
+    });
 
     match config_service.apply_entry(entry_req, cas) {
         Ok(success) => HttpResponse::Ok()

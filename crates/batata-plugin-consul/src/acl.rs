@@ -61,10 +61,7 @@ pub struct AclToken {
     pub local: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expiration_time: Option<String>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        rename = "ExpirationTTL"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "ExpirationTTL")]
     pub expiration_ttl: Option<u64>,
     pub create_time: String,
     pub modify_time: String,
@@ -555,10 +552,7 @@ query_prefix "" { policy = "write" }
                 if let Some(std_dur) = parse_duration(ttl_str) {
                     let chrono_dur = chrono::Duration::from_std(std_dur).unwrap_or_default();
                     let exp = now + chrono_dur;
-                    (
-                        Some(exp.to_rfc3339()),
-                        Some(std_dur.as_nanos() as u64),
-                    )
+                    (Some(exp.to_rfc3339()), Some(std_dur.as_nanos() as u64))
                 } else {
                     (None, None)
                 }
@@ -1343,7 +1337,8 @@ pub async fn clone_token(
                 .clone()
                 .unwrap_or_else(|| format!("Clone of {}", source.description));
             let roles: Vec<String> = source.roles.iter().map(|r| r.name.clone()).collect();
-            let new_token = acl_service.create_token(&description, policies, roles, source.local, None);
+            let new_token =
+                acl_service.create_token(&description, policies, roles, source.local, None);
             HttpResponse::Ok()
                 .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
                 .json(new_token)
@@ -1360,8 +1355,9 @@ pub async fn acl_bootstrap(
 ) -> HttpResponse {
     // Check if already bootstrapped - return 403 error like Consul does
     if AclService::is_bootstrapped() {
-        return HttpResponse::Forbidden()
-            .json(AclError::new("ACL bootstrap no longer allowed (reset index: 0)"));
+        return HttpResponse::Forbidden().json(AclError::new(
+            "ACL bootstrap no longer allowed (reset index: 0)",
+        ));
     }
 
     // Re-initialize bootstrap (this will create the token)
@@ -1465,8 +1461,7 @@ pub async fn acl_logout(
     // Don't allow logging out the bootstrap token
     if let Some(token) = acl_service.get_token(&secret_id) {
         if token.accessor_id == BOOTSTRAP_ACCESSOR_ID {
-            return HttpResponse::Forbidden()
-                .json(AclError::new("Cannot logout bootstrap token"));
+            return HttpResponse::Forbidden().json(AclError::new("Cannot logout bootstrap token"));
         }
     }
 
@@ -2574,7 +2569,10 @@ mod tests {
     fn test_list_tokens_hides_secret() {
         let service = AclService::new();
         let tokens = service.list_tokens();
-        assert!(!tokens.is_empty(), "Should have at least the bootstrap token");
+        assert!(
+            !tokens.is_empty(),
+            "Should have at least the bootstrap token"
+        );
         // All tokens in list should have secret_id = None
         for t in &tokens {
             assert!(t.secret_id.is_none());
@@ -2675,7 +2673,10 @@ mod tests {
         assert_eq!(method.name, "acl-test-kubernetes");
         assert_eq!(method.method_type, "kubernetes");
         assert_eq!(method.display_name.as_deref(), Some("K8s Auth"));
-        assert_eq!(method.description.as_deref(), Some("Kubernetes auth method"));
+        assert_eq!(
+            method.description.as_deref(),
+            Some("Kubernetes auth method")
+        );
 
         // Get
         let fetched = service.get_auth_method("acl-test-kubernetes");
@@ -2701,8 +2702,13 @@ mod tests {
         );
 
         // Create token with this policy
-        let token =
-            service.create_token("readonly-token", vec![policy.name.clone()], vec![], false, None);
+        let token = service.create_token(
+            "readonly-token",
+            vec![policy.name.clone()],
+            vec![],
+            false,
+            None,
+        );
 
         // Read should be allowed
         let result = service.authorize(&token, ResourceType::Service, "web", false);
@@ -2724,7 +2730,8 @@ mod tests {
             None,
         );
 
-        let token = service.create_token("deny-token", vec![policy.name.clone()], vec![], false, None);
+        let token =
+            service.create_token("deny-token", vec![policy.name.clone()], vec![], false, None);
 
         // Should be denied for both read and write on secret/
         let result = service.authorize(&token, ResourceType::Key, "secret/data", false);

@@ -4,14 +4,14 @@
 
 use std::sync::Arc;
 
-use actix_web::{delete, get, post, put, web, HttpRequest, HttpResponse, Scope};
+use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use batata_naming::service::NamingService;
 
+use crate::acl::AclService;
 use crate::index_provider::ConsulIndexProvider;
 use crate::model::{ConsulDatacenterConfig, PreparedQueryCreateRequest, PreparedQueryParams};
 use crate::query::ConsulQueryService;
-use crate::acl::AclService;
 
 // ============================================================================
 // Handlers

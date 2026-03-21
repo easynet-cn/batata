@@ -3,7 +3,7 @@
 //! Discovery chain handlers use scope "/discovery-chain".
 //! Exported/imported services use standalone resources.
 
-use actix_web::{get, post, web, HttpRequest, HttpResponse, Scope};
+use actix_web::{HttpRequest, HttpResponse, Scope, get, post, web};
 
 use crate::acl::AclService;
 use crate::connect::{

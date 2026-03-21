@@ -71,8 +71,15 @@ async fn get_checks_by_state(
     _query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::health::get_checks_by_state(req, health_service, acl_service, path, _query, index_provider)
-        .await
+    crate::health::get_checks_by_state(
+        req,
+        health_service,
+        acl_service,
+        path,
+        _query,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/node/{node}")]
@@ -84,8 +91,15 @@ async fn get_node_checks(
     _query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::health::get_node_checks(req, health_service, acl_service, path, _query, index_provider)
-        .await
+    crate::health::get_node_checks(
+        req,
+        health_service,
+        acl_service,
+        path,
+        _query,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/connect/{service}")]

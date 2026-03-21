@@ -227,7 +227,11 @@ pub async fn register_service(
             if old_ip != instance_ip || old_port != instance_port {
                 tracing::info!(
                     "Re-registration detected for consul_service_id={}: old={}:{}, new={}:{}. Deregistering old instance.",
-                    service_id, old_ip, old_port, instance_ip, instance_port
+                    service_id,
+                    old_ip,
+                    old_port,
+                    instance_ip,
+                    instance_port
                 );
                 let old_instance = Instance {
                     instance_id: service_id.clone(),
@@ -243,7 +247,9 @@ pub async fn register_service(
                     old_svc_name,
                     &old_instance,
                 );
-                agent.registry.deregister_all_instance_checks(&old_instance_key);
+                agent
+                    .registry
+                    .deregister_all_instance_checks(&old_instance_key);
             }
         }
         agent.registry.remove_consul_service_id(&service_id);
@@ -272,7 +278,9 @@ pub async fn register_service(
             "{}#{}#{}",
             namespace, dc_config.default_group, registration.name
         );
-        agent.registry.register_consul_service_id(&service_id, &service_key, &instance_key);
+        agent
+            .registry
+            .register_consul_service_id(&service_id, &service_key, &instance_key);
 
         // Register validated checks with health service
         for check_reg in embedded_checks {

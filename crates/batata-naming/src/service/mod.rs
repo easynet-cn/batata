@@ -503,8 +503,8 @@ mod tests {
         // Try to deregister instance that was never registered
         let result =
             naming.deregister_instance("public", "DEFAULT_GROUP", "test-service", &instance2);
-        // Should still return true because the service exists, even if the instance doesn't
-        assert!(result);
+        // Should return false because the specific instance was not found
+        assert!(!result);
     }
 
     #[test]

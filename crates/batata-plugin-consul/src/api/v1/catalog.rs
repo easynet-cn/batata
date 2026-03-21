@@ -32,8 +32,7 @@ async fn list_services(
     query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::catalog::list_services(req, catalog, acl_service, dc_config, query, index_provider)
-        .await
+    crate::catalog::list_services(req, catalog, acl_service, dc_config, query, index_provider).await
 }
 
 #[get("/service/{service}")]
@@ -46,8 +45,16 @@ async fn get_service(
     query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::catalog::get_service(req, catalog, acl_service, dc_config, path, query, index_provider)
-        .await
+    crate::catalog::get_service(
+        req,
+        catalog,
+        acl_service,
+        dc_config,
+        path,
+        query,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/nodes")]
@@ -72,8 +79,16 @@ async fn get_node(
     query: web::Query<CatalogQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::catalog::get_node(req, catalog, acl_service, dc_config, path, query, index_provider)
-        .await
+    crate::catalog::get_node(
+        req,
+        catalog,
+        acl_service,
+        dc_config,
+        path,
+        query,
+        index_provider,
+    )
+    .await
 }
 
 #[put("/register")]
@@ -86,8 +101,16 @@ async fn register(
     body: web::Json<CatalogRegistration>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::catalog::register(req, catalog, acl_service, dc_config, query, body, index_provider)
-        .await
+    crate::catalog::register(
+        req,
+        catalog,
+        acl_service,
+        dc_config,
+        query,
+        body,
+        index_provider,
+    )
+    .await
 }
 
 #[put("/deregister")]
@@ -100,8 +123,16 @@ async fn deregister(
     body: web::Json<CatalogDeregistration>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::catalog::deregister(req, catalog, acl_service, dc_config, query, body, index_provider)
-        .await
+    crate::catalog::deregister(
+        req,
+        catalog,
+        acl_service,
+        dc_config,
+        query,
+        body,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/connect/{service}")]

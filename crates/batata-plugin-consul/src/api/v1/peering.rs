@@ -2,7 +2,7 @@
 //!
 //! Peering handlers use scope "/peering", list uses standalone resource "/peerings".
 
-use actix_web::{delete, get, post, web, HttpRequest, HttpResponse, Scope};
+use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, web};
 
 use crate::acl::AclService;
 use crate::index_provider::ConsulIndexProvider;
@@ -46,8 +46,15 @@ async fn get_peering(
     _query: web::Query<PeeringQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::peering::get_peering(req, acl_service, peering_service, path, _query, index_provider)
-        .await
+    crate::peering::get_peering(
+        req,
+        acl_service,
+        peering_service,
+        path,
+        _query,
+        index_provider,
+    )
+    .await
 }
 
 #[delete("/{name}")]
@@ -59,8 +66,15 @@ async fn delete_peering(
     _query: web::Query<PeeringQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::peering::delete_peering(req, acl_service, peering_service, path, _query, index_provider)
-        .await
+    crate::peering::delete_peering(
+        req,
+        acl_service,
+        peering_service,
+        path,
+        _query,
+        index_provider,
+    )
+    .await
 }
 
 // ============================================================================

@@ -1692,10 +1692,16 @@ mod tests {
         assert!(node_names.contains(&"node-192-168-1-100"));
         assert!(node_names.contains(&"node-192-168-1-101"));
 
-        let node1 = nodes.iter().find(|n| n.node == "node-192-168-1-100").unwrap();
+        let node1 = nodes
+            .iter()
+            .find(|n| n.node == "node-192-168-1-100")
+            .unwrap();
         assert_eq!(node1.address, "192.168.1.100");
 
-        let node2 = nodes.iter().find(|n| n.node == "node-192-168-1-101").unwrap();
+        let node2 = nodes
+            .iter()
+            .find(|n| n.node == "node-192-168-1-101")
+            .unwrap();
         assert_eq!(node2.address, "192.168.1.101");
     }
 

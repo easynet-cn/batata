@@ -2,10 +2,12 @@
 //!
 //! Uses a resource (not scope) since GET and PUT share the same "/snapshot" path.
 
-use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, web};
 
 use crate::acl::AclService;
-use crate::snapshot::{ConsulSnapshotService, ConsulSnapshotServicePersistent, SnapshotQueryParams};
+use crate::snapshot::{
+    ConsulSnapshotService, ConsulSnapshotServicePersistent, SnapshotQueryParams,
+};
 
 // ============================================================================
 // In-memory handlers

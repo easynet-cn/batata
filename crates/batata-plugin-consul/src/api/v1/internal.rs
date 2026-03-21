@@ -48,8 +48,15 @@ async fn ui_nodes(
     query: web::Query<UINodeQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::internal::ui_nodes(req, naming_service, acl_service, dc_config, query, index_provider)
-        .await
+    crate::internal::ui_nodes(
+        req,
+        naming_service,
+        acl_service,
+        dc_config,
+        query,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/ui/node/{node}")]
@@ -61,8 +68,15 @@ async fn ui_node_info(
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::internal::ui_node_info(req, naming_service, acl_service, dc_config, path, index_provider)
-        .await
+    crate::internal::ui_node_info(
+        req,
+        naming_service,
+        acl_service,
+        dc_config,
+        path,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/ui/exported-services")]
@@ -73,14 +87,8 @@ async fn ui_exported_services(
     _query: web::Query<UIExportedServicesQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::internal::ui_exported_services(
-        req,
-        acl_service,
-        connect_service,
-        _query,
-        index_provider,
-    )
-    .await
+    crate::internal::ui_exported_services(req, acl_service, connect_service, _query, index_provider)
+        .await
 }
 
 #[get("/ui/catalog-overview")]
@@ -133,8 +141,7 @@ async fn ui_gateway_intentions(
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::internal::ui_gateway_intentions(req, acl_service, ca_service, path, index_provider)
-        .await
+    crate::internal::ui_gateway_intentions(req, acl_service, ca_service, path, index_provider).await
 }
 
 #[get("/ui/service-topology/{service}")]
@@ -162,10 +169,7 @@ async fn ui_service_topology(
 }
 
 #[get("/ui/metrics-proxy/{path:.*}")]
-async fn ui_metrics_proxy(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-) -> HttpResponse {
+async fn ui_metrics_proxy(req: HttpRequest, acl_service: web::Data<AclService>) -> HttpResponse {
     crate::internal::ui_metrics_proxy(req, acl_service).await
 }
 
