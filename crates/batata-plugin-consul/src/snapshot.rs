@@ -16,13 +16,16 @@ use crate::model::ConsulError;
 // Snapshot Service (In-Memory)
 // ============================================================================
 
-/// In-memory snapshot service that stores snapshots as binary blobs
+/// In-memory snapshot service that stores snapshots as binary blobs.
+/// When backed by RocksDB, includes KV data in snapshots.
 #[derive(Clone)]
 pub struct ConsulSnapshotService {
     /// Stored snapshot data (only keeps latest)
     snapshot_data: Arc<tokio::sync::RwLock<Option<Vec<u8>>>>,
     /// Current index
     index: Arc<AtomicU64>,
+    /// Optional RocksDB for reading KV data into snapshots
+    rocks_db: Option<Arc<rocksdb::DB>>,
 }
 
 impl ConsulSnapshotService {
@@ -30,17 +33,104 @@ impl ConsulSnapshotService {
         Self {
             snapshot_data: Arc::new(tokio::sync::RwLock::new(None)),
             index: Arc::new(AtomicU64::new(1)),
+            rocks_db: None,
         }
     }
 
-    /// Save current state as a snapshot
+    /// Create a snapshot service backed by RocksDB for KV data inclusion
+    pub fn with_rocks(db: Arc<rocksdb::DB>) -> Self {
+        Self {
+            snapshot_data: Arc::new(tokio::sync::RwLock::new(None)),
+            index: Arc::new(AtomicU64::new(1)),
+            rocks_db: Some(db),
+        }
+    }
+
+    /// Save current state as a snapshot.
+    /// When RocksDB is available, includes KV, session, and ACL data.
     pub async fn save_snapshot(&self) -> Vec<u8> {
-        // Build a snapshot of all in-memory state as JSON
+        let mut data = HashMap::new();
+
+        if let Some(ref db) = self.rocks_db {
+            // Include KV data from RocksDB
+            if let Some(cf) = db.cf_handle(
+                batata_consistency::raft::state_machine::CF_CONSUL_KV,
+            ) {
+                let mut kv_data = HashMap::new();
+                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                for item in iter.flatten() {
+                    let (key_bytes, value_bytes) = item;
+                    if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                        // Store raw value as base64-encoded string
+                        let value_b64 = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &value_bytes,
+                        );
+                        kv_data.insert(key, serde_json::Value::String(value_b64));
+                    }
+                }
+                if !kv_data.is_empty() {
+                    data.insert(
+                        "kv".to_string(),
+                        serde_json::to_value(kv_data).unwrap_or_default(),
+                    );
+                }
+            }
+
+            // Include session data from RocksDB
+            if let Some(cf) = db.cf_handle(
+                batata_consistency::raft::state_machine::CF_CONSUL_SESSIONS,
+            ) {
+                let mut session_data = HashMap::new();
+                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                for item in iter.flatten() {
+                    let (key_bytes, value_bytes) = item;
+                    if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                        let value_b64 = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &value_bytes,
+                        );
+                        session_data.insert(key, serde_json::Value::String(value_b64));
+                    }
+                }
+                if !session_data.is_empty() {
+                    data.insert(
+                        "sessions".to_string(),
+                        serde_json::to_value(session_data).unwrap_or_default(),
+                    );
+                }
+            }
+
+            // Include ACL data from RocksDB
+            if let Some(cf) = db.cf_handle(
+                batata_consistency::raft::state_machine::CF_CONSUL_ACL,
+            ) {
+                let mut acl_data = HashMap::new();
+                let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                for item in iter.flatten() {
+                    let (key_bytes, value_bytes) = item;
+                    if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                        let value_b64 = base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &value_bytes,
+                        );
+                        acl_data.insert(key, serde_json::Value::String(value_b64));
+                    }
+                }
+                if !acl_data.is_empty() {
+                    data.insert(
+                        "acl".to_string(),
+                        serde_json::to_value(acl_data).unwrap_or_default(),
+                    );
+                }
+            }
+        }
+
         let snapshot = SnapshotData {
             index: self.index.load(Ordering::SeqCst),
             timestamp: chrono::Utc::now().to_rfc3339(),
             version: "1".to_string(),
-            data: HashMap::new(),
+            data,
         };
         serde_json::to_vec(&snapshot).unwrap_or_default()
     }
@@ -292,5 +382,14 @@ mod tests {
         let service = ConsulSnapshotService::default();
         let data = service.save_snapshot().await;
         assert!(!data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_without_rocks_has_empty_data() {
+        let service = ConsulSnapshotService::new();
+        let data = service.save_snapshot().await;
+        let snapshot: SnapshotData = serde_json::from_slice(&data).unwrap();
+        // Without RocksDB, data should be empty
+        assert!(snapshot.data.is_empty());
     }
 }

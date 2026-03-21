@@ -131,6 +131,8 @@ pub struct InstanceCheckConfig {
     pub http_url: Option<String>,
     pub tcp_addr: Option<String>,
     pub grpc_addr: Option<String>,
+    /// Database connection URL for database health check (MySQL/PostgreSQL/SQLite)
+    pub db_url: Option<String>,
     pub interval: Duration,
     pub timeout: Duration,
     // TTL params
@@ -752,6 +754,7 @@ mod tests {
             http_url: None,
             tcp_addr: None,
             grpc_addr: None,
+            db_url: None,
             interval: Duration::from_secs(10),
             timeout: Duration::from_secs(5),
             ttl: None,
@@ -1025,6 +1028,7 @@ mod tests {
             http_url: None,
             tcp_addr: None,
             grpc_addr: None,
+            db_url: None,
             interval: Duration::from_secs(10),
             timeout: Duration::from_secs(5),
             ttl: Some(Duration::from_secs(30)),

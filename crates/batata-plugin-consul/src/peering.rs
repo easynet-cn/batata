@@ -162,6 +162,8 @@ pub struct ConsulPeeringService {
     index: std::sync::atomic::AtomicU64,
     /// Datacenter name
     datacenter: String,
+    /// Consul compatibility HTTP port (default 8500)
+    consul_port: u16,
 }
 
 impl ConsulPeeringService {
@@ -174,7 +176,13 @@ impl ConsulPeeringService {
             peerings: Arc::new(DashMap::new()),
             index: std::sync::atomic::AtomicU64::new(1),
             datacenter,
+            consul_port: 8500,
         }
+    }
+
+    pub fn with_consul_port(mut self, port: u16) -> Self {
+        self.consul_port = port;
+        self
     }
 
     pub fn generate_token(
@@ -212,7 +220,10 @@ impl ConsulPeeringService {
         let token = PeeringToken {
             ca: Vec::new(),
             server_addresses: if req.server_external_addresses.is_empty() {
-                vec!["127.0.0.1:8300".to_string()]
+                let hostname = hostname::get()
+                    .map(|h| h.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "127.0.0.1".to_string());
+                vec![format!("{}:{}", hostname, self.consul_port)]
             } else {
                 req.server_external_addresses
             },

@@ -141,6 +141,7 @@ impl ConsulHealthService {
             http_url: registration.http.clone(),
             tcp_addr: registration.tcp.clone(),
             grpc_addr: registration.grpc.clone(),
+            db_url: None, // Consul doesn't use database health checks
             interval,
             timeout,
             ttl,

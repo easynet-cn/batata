@@ -624,14 +624,9 @@ impl Default for ConsulConnectCAService {
     }
 }
 
-/// Generate a pseudo-random byte for serial numbers
+/// Generate a random byte for serial numbers
 fn rand_byte() -> u8 {
-    // Use a simple method since we don't need cryptographic randomness for placeholders
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .subsec_nanos();
-    (now & 0xFF) as u8
+    rand::random::<u8>()
 }
 
 // ============================================================================

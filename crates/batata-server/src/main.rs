@@ -120,7 +120,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_consul_version(configuration.consul_version())
             .with_batata_version(configuration.batata_version())
             .with_default_namespace(configuration.consul_default_namespace())
-            .with_default_group(configuration.consul_default_group());
+            .with_default_group(configuration.consul_default_group())
+            .with_consul_port(consul_server_port);
     let mcp_registry_enabled = configuration.mcp_registry_enabled()
         || deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP;
     let mcp_registry_port = configuration.mcp_registry_port();

@@ -847,7 +847,7 @@ pub async fn get_agent_self(
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
-    tags.insert("port".to_string(), "8300".to_string());
+    tags.insert("port".to_string(), dc_config.consul_port.to_string());
     tags.insert("build".to_string(), dc_config.batata_version.clone());
 
     let member = AgentMember {
@@ -915,7 +915,7 @@ pub async fn get_agent_members(
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
-    tags.insert("port".to_string(), "8300".to_string());
+    tags.insert("port".to_string(), dc_config.consul_port.to_string());
     tags.insert("vsn".to_string(), "2".to_string());
     tags.insert("vsn_min".to_string(), "1".to_string());
     tags.insert("vsn_max".to_string(), "3".to_string());
@@ -975,7 +975,7 @@ pub async fn get_agent_members_real(
             let mut tags = HashMap::new();
             tags.insert("role".to_string(), "consul".to_string());
             tags.insert("dc".to_string(), dc_config.datacenter.clone());
-            tags.insert("port".to_string(), "8300".to_string());
+            tags.insert("port".to_string(), dc_config.consul_port.to_string());
             tags.insert("vsn".to_string(), "2".to_string());
             tags.insert("vsn_min".to_string(), "1".to_string());
             tags.insert("vsn_max".to_string(), "3".to_string());
@@ -1052,7 +1052,7 @@ pub async fn get_agent_self_real(
     let mut tags = HashMap::new();
     tags.insert("role".to_string(), "consul".to_string());
     tags.insert("dc".to_string(), dc_config.datacenter.clone());
-    tags.insert("port".to_string(), "8300".to_string());
+    tags.insert("port".to_string(), dc_config.consul_port.to_string());
     tags.insert("build".to_string(), dc_config.batata_version.clone());
 
     // Parse self_member address

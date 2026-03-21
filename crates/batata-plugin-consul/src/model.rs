@@ -22,6 +22,8 @@ pub struct ConsulDatacenterConfig {
     pub default_namespace: String,
     /// Default Nacos group for Consul API mapping (e.g., "DEFAULT_GROUP")
     pub default_group: String,
+    /// The Consul compatibility HTTP port (default 8500)
+    pub consul_port: u16,
 }
 
 impl ConsulDatacenterConfig {
@@ -33,6 +35,7 @@ impl ConsulDatacenterConfig {
             batata_version: env!("CARGO_PKG_VERSION").to_string(),
             default_namespace: "public".to_string(),
             default_group: "DEFAULT_GROUP".to_string(),
+            consul_port: 8500,
         }
     }
 
@@ -48,6 +51,11 @@ impl ConsulDatacenterConfig {
 
     pub fn with_batata_version(mut self, version: String) -> Self {
         self.batata_version = version;
+        self
+    }
+
+    pub fn with_consul_port(mut self, port: u16) -> Self {
+        self.consul_port = port;
         self
     }
 

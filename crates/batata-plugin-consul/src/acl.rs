@@ -23,6 +23,8 @@ use crate::model::ConsulDatacenterConfig;
 // ACL Token header name
 pub const X_CONSUL_TOKEN: &str = "X-Consul-Token";
 pub const CONSUL_TOKEN_QUERY: &str = "token";
+/// Well-known accessor ID for the bootstrap management token
+pub const BOOTSTRAP_ACCESSOR_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 // Cache for validated tokens (5 minute TTL)
 static TOKEN_CACHE: LazyLock<Cache<String, AclToken>> = LazyLock::new(|| {
@@ -303,7 +305,7 @@ impl AclService {
                 if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
                     if let Some(secret_id) = key.strip_prefix("token::") {
                         if let Ok(token) = serde_json::from_slice::<AclToken>(&value_bytes) {
-                            if secret_id == "root" {
+                            if token.accessor_id == BOOTSTRAP_ACCESSOR_ID {
                                 loaded_bootstrap = true;
                             }
                             MEMORY_TOKENS.insert(secret_id.to_string(), token);
@@ -441,10 +443,11 @@ query_prefix "" { policy = "write" }
         MEMORY_POLICIES.insert(mgmt_policy.id.clone(), mgmt_policy.clone());
         MEMORY_POLICIES.insert(mgmt_policy.name.clone(), mgmt_policy);
 
-        // Create bootstrap token
+        // Create bootstrap token with a generated UUID as the secret_id
+        let bootstrap_secret = uuid::Uuid::new_v4().to_string();
         let bootstrap_token = AclToken {
-            accessor_id: "00000000-0000-0000-0000-000000000001".to_string(),
-            secret_id: Some("root".to_string()),
+            accessor_id: BOOTSTRAP_ACCESSOR_ID.to_string(),
+            secret_id: Some(bootstrap_secret.clone()),
             description: "Bootstrap Token (Management)".to_string(),
             policies: vec![PolicyLink {
                 id: "00000000-0000-0000-0000-000000000001".to_string(),
@@ -457,7 +460,23 @@ query_prefix "" { policy = "write" }
             create_time: chrono::Utc::now().to_rfc3339(),
             modify_time: chrono::Utc::now().to_rfc3339(),
         };
-        MEMORY_TOKENS.insert("root".to_string(), bootstrap_token);
+        MEMORY_TOKENS.insert(bootstrap_secret, bootstrap_token);
+    }
+
+    /// Find the bootstrap token by its well-known accessor ID.
+    /// Returns the token if it exists in MEMORY_TOKENS.
+    fn find_bootstrap_token() -> Option<AclToken> {
+        MEMORY_TOKENS
+            .iter()
+            .find(|entry| entry.value().accessor_id == BOOTSTRAP_ACCESSOR_ID)
+            .map(|entry| entry.value().clone())
+    }
+
+    /// Check if the bootstrap token has already been created.
+    fn is_bootstrapped() -> bool {
+        MEMORY_TOKENS
+            .iter()
+            .any(|entry| entry.value().accessor_id == BOOTSTRAP_ACCESSOR_ID)
     }
 
     /// Check if ACL is enabled
@@ -1340,7 +1359,7 @@ pub async fn acl_bootstrap(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check if already bootstrapped - return 403 error like Consul does
-    if MEMORY_TOKENS.get("root").is_some() {
+    if AclService::is_bootstrapped() {
         return HttpResponse::Forbidden()
             .json(AclError::new("ACL bootstrap no longer allowed (reset index: 0)"));
     }
@@ -1348,8 +1367,7 @@ pub async fn acl_bootstrap(
     // Re-initialize bootstrap (this will create the token)
     AclService::init_bootstrap();
 
-    if let Some(token) = MEMORY_TOKENS.get("root") {
-        let token = token.clone();
+    if let Some(token) = AclService::find_bootstrap_token() {
         let response = BootstrapResponse {
             id: token.accessor_id.clone(),
             accessor_id: token.accessor_id,
@@ -1445,8 +1463,11 @@ pub async fn acl_logout(
     };
 
     // Don't allow logging out the bootstrap token
-    if secret_id == "root" {
-        return HttpResponse::Forbidden().json(AclError::new("Cannot logout bootstrap token"));
+    if let Some(token) = acl_service.get_token(&secret_id) {
+        if token.accessor_id == BOOTSTRAP_ACCESSOR_ID {
+            return HttpResponse::Forbidden()
+                .json(AclError::new("Cannot logout bootstrap token"));
+        }
     }
 
     // Find and delete the token
@@ -2409,12 +2430,16 @@ mod tests {
 
     #[test]
     fn test_bootstrap_token() {
-        let service = AclService::new();
-        let token = service.get_token("root");
+        let _service = AclService::new();
+        let token = AclService::find_bootstrap_token();
         assert!(token.is_some());
         let token = token.unwrap();
         assert_eq!(token.description, "Bootstrap Token (Management)");
         assert!(!token.policies.is_empty());
+        // Secret ID should be a UUID, not "root"
+        let secret_id = token.secret_id.unwrap();
+        assert_ne!(secret_id, "root");
+        assert!(uuid::Uuid::parse_str(&secret_id).is_ok());
     }
 
     #[test]
@@ -2455,7 +2480,7 @@ mod tests {
     #[test]
     fn test_authorize_with_bootstrap_token() {
         let service = AclService::new();
-        let token = service.get_token("root").unwrap();
+        let token = AclService::find_bootstrap_token().unwrap();
 
         // Bootstrap token should have full access
         let result = service.authorize(&token, ResourceType::Service, "any-service", true);
@@ -2699,7 +2724,7 @@ mod tests {
     fn test_resource_type_coverage() {
         // Ensure all resource types can be used in authorization
         let service = AclService::new();
-        let token = service.get_token("root").unwrap();
+        let token = AclService::find_bootstrap_token().unwrap();
 
         let types = vec![
             ResourceType::Service,

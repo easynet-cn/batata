@@ -6,7 +6,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tracing::debug;
+use sea_orm::{ConnectionTrait, Database, DbBackend, Statement};
+use tracing::{debug, warn};
 
 use super::registry::{CheckType, InstanceCheckRegistry};
 
@@ -58,15 +59,17 @@ impl RegistryCheckTask {
                 execute_http_check(url, config.timeout).await
             }
             CheckType::Grpc => {
-                // gRPC health check is a stub for now
-                (false, "gRPC health check not fully implemented".to_string())
+                let addr = config.grpc_addr.as_deref().unwrap_or(&default_tcp_addr);
+                execute_grpc_check(addr, config.timeout).await
             }
             CheckType::Mysql => {
-                // Database health check - handled by MysqlChecker in processor
-                (
-                    false,
-                    "Database health check not available in registry task".to_string(),
-                )
+                if let Some(ref db_url) = config.db_url {
+                    execute_db_check(db_url, config.timeout).await
+                } else {
+                    // Fallback: TCP connection check on the default address
+                    let addr = config.tcp_addr.as_deref().unwrap_or(&default_tcp_addr);
+                    execute_tcp_check(addr, config.timeout).await
+                }
             }
             CheckType::None | CheckType::Ttl => return,
         };
@@ -180,4 +183,109 @@ async fn execute_http_check(url: &str, timeout_duration: Duration) -> (bool, Str
         Ok(Err(e)) => (false, format!("HTTP read failed: {} - {}", url, e)),
         Err(_) => (false, format!("HTTP response timeout: {}", url)),
     }
+}
+
+/// Execute a gRPC health check.
+///
+/// Connects to the gRPC endpoint and verifies the server responds with HTTP/2.
+/// The address format is `host:port[/service]`.
+///
+/// Uses a TCP connection + HTTP/2 connection preface to validate the gRPC server
+/// is alive and accepting connections.
+async fn execute_grpc_check(addr: &str, timeout_duration: Duration) -> (bool, String) {
+    // Parse address: strip optional "/service" suffix
+    let endpoint = match addr.find('/') {
+        Some(idx) => &addr[..idx],
+        None => addr,
+    };
+
+    // Connect via tonic Channel (handles HTTP/2 negotiation)
+    let endpoint_url = format!("http://{}", endpoint);
+    match tokio::time::timeout(timeout_duration, async {
+        tonic::transport::Endpoint::from_shared(endpoint_url)
+            .map_err(|e| format!("Invalid endpoint: {}", e))?
+            .connect_timeout(timeout_duration)
+            .connect()
+            .await
+            .map_err(|e| format!("Connection failed: {}", e))
+    })
+    .await
+    {
+        Ok(Ok(_channel)) => {
+            debug!("gRPC check passed: {}", addr);
+            (true, format!("gRPC check passed: {}", addr))
+        }
+        Ok(Err(e)) => {
+            debug!("gRPC check failed: {} - {}", addr, e);
+            (false, format!("gRPC check failed: {} - {}", addr, e))
+        }
+        Err(_) => {
+            debug!("gRPC check timeout: {}", addr);
+            (false, format!("gRPC check timeout: {}", addr))
+        }
+    }
+}
+
+/// Execute a database health check via sea-orm.
+///
+/// Connects to the database using the provided URL and executes a simple
+/// query (`SELECT 1`) to verify connectivity. Supports MySQL, PostgreSQL,
+/// and SQLite via sea-orm's backend detection.
+async fn execute_db_check(db_url: &str, timeout_duration: Duration) -> (bool, String) {
+    match tokio::time::timeout(timeout_duration, async {
+        // sea-orm auto-detects backend from URL prefix (mysql://, postgres://, sqlite://)
+        let db = Database::connect(db_url)
+            .await
+            .map_err(|e| format!("Database connection failed: {}", e))?;
+
+        // Determine the SQL dialect for a simple health query
+        let sql = match db.get_database_backend() {
+            DbBackend::MySql | DbBackend::Postgres => "SELECT 1",
+            DbBackend::Sqlite => "SELECT 1",
+        };
+
+        db.execute(Statement::from_string(db.get_database_backend(), sql))
+            .await
+            .map_err(|e| format!("Database query failed: {}", e))?;
+
+        // Close connection
+        db.close().await.ok();
+        Ok::<_, String>(())
+    })
+    .await
+    {
+        Ok(Ok(())) => {
+            debug!("Database check passed: {}", db_url);
+            (
+                true,
+                format!("Database check passed: {}", sanitize_db_url(db_url)),
+            )
+        }
+        Ok(Err(e)) => {
+            warn!("Database check failed: {} - {}", sanitize_db_url(db_url), e);
+            (
+                false,
+                format!("Database check failed: {} - {}", sanitize_db_url(db_url), e),
+            )
+        }
+        Err(_) => {
+            warn!("Database check timeout: {}", sanitize_db_url(db_url));
+            (
+                false,
+                format!("Database check timeout: {}", sanitize_db_url(db_url)),
+            )
+        }
+    }
+}
+
+/// Sanitize database URL for logging (hide password)
+fn sanitize_db_url(url: &str) -> String {
+    if let Some(at_pos) = url.find('@') {
+        if let Some(colon_pos) = url[..at_pos].rfind(':') {
+            let prefix = &url[..colon_pos + 1];
+            let suffix = &url[at_pos..];
+            return format!("{}***{}", prefix, suffix);
+        }
+    }
+    url.to_string()
 }
