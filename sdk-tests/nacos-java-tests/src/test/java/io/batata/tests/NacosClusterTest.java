@@ -52,11 +52,25 @@ public class NacosClusterTest {
         node2Addr = System.getProperty("nacos.cluster.node2", "127.0.0.1:8858");
         node3Addr = System.getProperty("nacos.cluster.node3", "127.0.0.1:8868");
 
-        // Skip if cluster is not running
+        // Skip unless explicitly configured via system properties
+        // (prevents accidental execution against single-node deployment)
+        String explicitNode2 = System.getProperty("nacos.cluster.node2");
+        String explicitNode3 = System.getProperty("nacos.cluster.node3");
+        if (explicitNode2 == null || explicitNode3 == null) {
+            Assumptions.assumeTrue(false,
+                    "Cluster tests require -Dnacos.cluster.node2 and -Dnacos.cluster.node3");
+        }
+
         try {
             configNode1 = createConfigService(node1Addr);
             configNode2 = createConfigService(node2Addr);
             configNode3 = createConfigService(node3Addr);
+
+            // Verify all 3 nodes are actually reachable by doing a real request
+            configNode1.getConfig("__cluster_probe__", DEFAULT_GROUP, 3000);
+            configNode2.getConfig("__cluster_probe__", DEFAULT_GROUP, 3000);
+            configNode3.getConfig("__cluster_probe__", DEFAULT_GROUP, 3000);
+
             namingNode1 = createNamingService(node1Addr);
             namingNode2 = createNamingService(node2Addr);
             namingNode3 = createNamingService(node3Addr);
@@ -305,14 +319,10 @@ public class NacosClusterTest {
         Thread.sleep(5000);
 
         // Verify gone on Node 3 using non-subscribe mode to bypass SDK cache
-        // Known issue: Distro deregister sync across nodes is delayed
         List<Instance> after = namingNode3.selectInstances(serviceName,
                 new java.util.ArrayList<>(), true, false);
-        assertTrue(after.size() <= 1,
-                "Node 3 should see 0 or 1 instances after deregister (distro sync pending), got: " + after.size());
-        if (after.size() > 0) {
-            System.out.println("WARNING: Distro deregister sync still pending after 5s — known issue");
-        }
+        assertEquals(0, after.size(),
+                "Node 3 should see 0 instances after deregister via distro sync, got: " + after.size());
     }
 
     /**

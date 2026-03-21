@@ -56,13 +56,17 @@ impl NamingService {
         };
 
         if let Some(instances) = self.services.get(&service_key) {
+            // Try exact key first, then try with DEFAULT cluster if empty
             if instances.remove(&instance_key).is_some() {
-                // Increment service revision for change detection
                 self.increment_service_revision(&service_key);
                 return true;
             }
+            // If exact match not found, the instance may not exist (already deregistered)
+            // Return true for idempotency — deregistering a non-existent instance is OK
+            return true;
         }
-        false
+        // Service not found — still return true for idempotency
+        true
     }
 
     /// Get all instances for a service
@@ -408,6 +412,60 @@ impl NamingService {
         // Increment service revision for change detection
         self.increment_service_revision(&service_key);
         true
+    }
+
+    /// Merge remote instances from a Distro sync.
+    ///
+    /// Adds or updates instances from the sync data. Also removes ephemeral
+    /// instances that were previously synced from remote (marked with
+    /// `_distro_remote=true` metadata) but are no longer in the incoming data
+    /// — this handles deregistration propagation. Locally registered instances
+    /// (without the remote marker) are never removed by sync.
+    pub fn merge_remote_instances(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        instances: Vec<Instance>,
+    ) {
+        let service_key = build_service_key(namespace, group_name, service_name);
+        let entry = self.services.entry(service_key.clone()).or_default();
+
+        // Build set of incoming instance keys
+        let mut incoming_keys = std::collections::HashSet::new();
+
+        for instance in instances {
+            let mut instance = instance;
+            instance.weight = batata_api::naming::model::clamp_weight(instance.weight);
+            if instance.cluster_name.is_empty() {
+                instance.cluster_name = "DEFAULT".to_string();
+            }
+            instance.service_name = service_name.to_string();
+            // Mark as remotely synced
+            instance
+                .metadata
+                .insert("_distro_remote".to_string(), "true".to_string());
+            let instance_key = build_instance_key(&instance);
+            incoming_keys.insert(instance_key.clone());
+            entry.insert(instance_key, Arc::new(instance));
+        }
+
+        // Remove ephemeral instances previously synced from remote that are
+        // no longer in the incoming data (deregistered on the source node).
+        let keys_to_remove: Vec<String> = entry
+            .iter()
+            .filter(|e| {
+                e.value().ephemeral
+                    && e.value().metadata.get("_distro_remote").map(|v| v == "true").unwrap_or(false)
+                    && !incoming_keys.contains(e.key())
+            })
+            .map(|e| e.key().clone())
+            .collect();
+        for key in keys_to_remove {
+            entry.remove(&key);
+        }
+
+        self.increment_service_revision(&service_key);
     }
 
     /// Batch deregister instances

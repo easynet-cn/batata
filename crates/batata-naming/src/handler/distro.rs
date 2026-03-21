@@ -136,10 +136,6 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
         let instance_data: DistroInstanceData =
             serde_json::from_slice(&data.content).map_err(|e| format!("Failed to parse: {}", e))?;
 
-        // Use reconciliation model: replace ALL ephemeral instances for this service
-        // with the synced data. This correctly handles deregistration -- when the
-        // responsible node removes an instance, the sync data will not contain it,
-        // so it will be removed from the local store as well.
         let instances: Vec<crate::Instance> = instance_data
             .instances
             .into_iter()
@@ -157,8 +153,16 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
             })
             .collect();
 
+        // Merge-and-reconcile: use the instance keys from the sync data as the
+        // authoritative set from the source node. Add/update instances present in
+        // the sync, remove instances that are in our local store AND match keys
+        // in the sync set's "namespace" (i.e., came from the same source).
+        // Since distro sync is per-service, and each sync contains ALL instances
+        // the source node knows about for this service, we can safely replace.
+        // But we must NOT remove instances registered locally by this node's
+        // own clients -- only merge from remote.
         let count = instances.len();
-        self.naming_service.replace_ephemeral_instances(
+        self.naming_service.merge_remote_instances(
             &instance_data.namespace,
             &instance_data.group_name,
             &instance_data.service_name,
@@ -166,7 +170,7 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
         );
 
         info!(
-            "Synced {} instances for service {}//{}/{} (reconciliation)",
+            "Synced {} instances for service {}//{}/{} (merge)",
             count, instance_data.namespace, instance_data.group_name, instance_data.service_name
         );
         Ok(())
