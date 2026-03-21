@@ -382,6 +382,8 @@ impl ValidatedCheck {
             timeout: self.timeout.clone(),
             deregister_critical_service_after: self.deregister_critical_service_after.clone(),
             status: self.status.clone(),
+            ip: None,
+            port: None,
         }
     }
 
@@ -839,6 +841,14 @@ pub struct CheckRegistration {
 
     #[serde(rename = "Status", default)]
     pub status: Option<String>,
+
+    /// IP address of the service instance (populated internally, not from JSON)
+    #[serde(skip)]
+    pub ip: Option<String>,
+
+    /// Port of the service instance (populated internally, not from JSON)
+    #[serde(skip)]
+    pub port: Option<i32>,
 }
 
 impl CheckRegistration {
@@ -876,6 +886,28 @@ pub struct CheckStatusUpdate {
     pub status: Option<String>,
     #[serde(rename = "Output", default)]
     pub output: Option<String>,
+}
+
+/// Health check definition details (matches Consul's HealthCheckDefinition)
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct HealthCheckDefinition {
+    #[serde(rename = "HTTP", skip_serializing_if = "Option::is_none")]
+    pub http: Option<String>,
+    #[serde(rename = "TCP", skip_serializing_if = "Option::is_none")]
+    pub tcp: Option<String>,
+    #[serde(rename = "GRPC", skip_serializing_if = "Option::is_none")]
+    pub grpc: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<HashMap<String, Vec<String>>>,
+    #[serde(rename = "IntervalDuration")]
+    pub interval_duration: u64,
+    #[serde(rename = "TimeoutDuration")]
+    pub timeout_duration: u64,
+    #[serde(rename = "DeregisterCriticalServiceAfterDuration")]
+    pub deregister_critical_service_after_duration: u64,
 }
 
 /// Health check information in responses
@@ -922,6 +954,9 @@ pub struct HealthCheck {
 
     #[serde(rename = "ModifyIndex", skip_serializing_if = "Option::is_none")]
     pub modify_index: Option<u64>,
+
+    #[serde(rename = "Definition", skip_serializing_if = "Option::is_none")]
+    pub definition: Option<HealthCheckDefinition>,
 }
 
 impl Default for HealthCheck {
@@ -941,6 +976,7 @@ impl Default for HealthCheck {
             timeout: None,
             create_index: None,
             modify_index: None,
+            definition: None,
         }
     }
 }

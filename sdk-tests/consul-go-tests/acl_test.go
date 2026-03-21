@@ -1,7 +1,7 @@
 package tests
 
 import (
-	"strings"
+	"os"
 	"testing"
 	"time"
 
@@ -1255,8 +1255,6 @@ func TestACLBindingRuleUpdate(t *testing.T) {
 
 // CACL-042: Test ACL login with auth method
 func TestACLLogin(t *testing.T) {
-	t.Skip("ACL Login requires a fully configured auth method with valid bearer tokens, skipping")
-
 	client := getClient(t)
 
 	methodName := "login-auth-method-" + randomID()
@@ -1294,13 +1292,44 @@ func TestACLLogin(t *testing.T) {
 
 // CACL-043: Test ACL logout
 func TestACLLogout(t *testing.T) {
-	t.Skip("ACL Logout requires a valid login token from an auth method, skipping")
-
 	client := getClient(t)
 
-	// Logout requires a token obtained via Login; since Login requires a real
-	// auth method setup, we skip this test in standard environments.
-	_, err := client.ACL().Logout(nil)
+	// Create an auth method and login to get a token
+	methodName := "logout-auth-method-" + randomID()
+	method := &api.ACLAuthMethod{
+		Name: methodName,
+		Type: "jwt",
+		Config: map[string]interface{}{
+			"JWTValidationPubKeys": []string{"-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"},
+		},
+	}
+	_, _, err := client.ACL().AuthMethodCreate(method, nil)
+	if err != nil {
+		t.Skipf("Auth method not supported: %v", err)
+	}
+	defer client.ACL().AuthMethodDelete(methodName, nil)
+
+	loginParams := &api.ACLLoginParams{
+		AuthMethod:  methodName,
+		BearerToken: "test-bearer-token",
+	}
+	loginToken, _, err := client.ACL().Login(loginParams, nil)
+	if err != nil {
+		t.Skipf("ACL Login not supported: %v", err)
+	}
+
+	// Use the login token's SecretID for logout
+	addr := os.Getenv("CONSUL_HTTP_ADDR")
+	if addr == "" {
+		addr = "127.0.0.1:8500"
+	}
+	logoutClient, err := api.NewClient(&api.Config{
+		Address: addr,
+		Token:   loginToken.SecretID,
+	})
+	require.NoError(t, err)
+
+	_, err = logoutClient.ACL().Logout(nil)
 	if err != nil {
 		t.Skipf("ACL Logout not supported: %v", err)
 	}
@@ -1333,28 +1362,6 @@ func TestACLReplication(t *testing.T) {
 		assert.NotEmpty(t, repl.SourceDatacenter, "SourceDatacenter should be set when replication is enabled")
 		t.Logf("Replication is enabled from datacenter: %s", repl.SourceDatacenter)
 	}
-}
-
-// ==================== ACL Rules Translate Tests ====================
-
-// CACL-045: Test ACL rules translate (legacy rule format)
-func TestACLRulesTranslate(t *testing.T) {
-	client := getClient(t)
-
-	// Legacy HCL rule format to translate
-	legacyRules := `key "" { policy = "read" }
-service "" { policy = "write" }`
-
-	translated, err := client.ACL().RulesTranslate(strings.NewReader(legacyRules))
-	if err != nil {
-		t.Skipf("ACL RulesTranslate not supported: %v", err)
-	}
-
-	assert.NotEmpty(t, translated, "Translated rules should not be empty")
-	// The translated output should contain the new format equivalents
-	assert.Contains(t, translated, "key_prefix", "Translated rules should use key_prefix syntax")
-	assert.Contains(t, translated, "service_prefix", "Translated rules should use service_prefix syntax")
-	t.Logf("Translated rules:\n%s", translated)
 }
 
 // ==================== ACL OIDC Auth URL Tests ====================

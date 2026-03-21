@@ -135,8 +135,8 @@ impl ConsulHealthService {
                 .clone()
                 .or_else(|| registration.service_id.clone())
                 .unwrap_or_default(),
-            ip: "0.0.0.0".to_string(),
-            port: 0,
+            ip: registration.ip.clone().unwrap_or_else(|| "0.0.0.0".to_string()),
+            port: registration.port.unwrap_or(0),
             cluster_name: "DEFAULT".to_string(),
             http_url: registration.http.clone(),
             tcp_addr: registration.tcp.clone(),
@@ -230,6 +230,7 @@ impl ConsulHealthService {
             timeout: None,
             create_index: Some(1),
             modify_index: Some(1),
+            definition: None,
         }
     }
 
@@ -251,6 +252,20 @@ impl ConsulHealthService {
             None
         };
 
+        let definition = crate::model::HealthCheckDefinition {
+            http: config.http_url.clone(),
+            tcp: config.tcp_addr.clone(),
+            grpc: config.grpc_addr.clone(),
+            method: None,
+            header: None,
+            interval_duration: config.interval.as_nanos() as u64,
+            timeout_duration: config.timeout.as_nanos() as u64,
+            deregister_critical_service_after_duration: config
+                .deregister_critical_after
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0),
+        };
+
         HealthCheck {
             node: self.node_name.clone(),
             check_id: config.check_id.clone(),
@@ -266,6 +281,7 @@ impl ConsulHealthService {
             timeout: timeout_str,
             create_index: Some(1),
             modify_index: Some(1),
+            definition: Some(definition),
         }
     }
 }

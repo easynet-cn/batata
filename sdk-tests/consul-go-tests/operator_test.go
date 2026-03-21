@@ -254,8 +254,8 @@ func TestOperatorKeyringInstall(t *testing.T) {
 
 	operator := client.Operator()
 
-	// Valid 16-byte key base64 encoded
-	testKey := "cg8BpnCK7Nm+bxqkJ7fNBQ=="
+	// Use a unique key (different from TestOperatorKeyringUse which may set its key as primary)
+	testKey := "X4EVZrHKLcbQpCkwJoSHnA=="
 
 	err := operator.KeyringInstall(testKey, nil)
 	if err != nil {

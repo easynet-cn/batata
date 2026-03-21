@@ -455,6 +455,7 @@ pub async fn execute_query(
                     timeout: None,
                     create_index: None,
                     modify_index: None,
+                    definition: None,
                 }],
             }
         })

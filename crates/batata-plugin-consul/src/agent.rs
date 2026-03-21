@@ -181,12 +181,6 @@ pub async fn register_service(
     // Get service ID
     let service_id = registration.service_id();
 
-    // Convert validated checks to CheckRegistration
-    let embedded_checks: Vec<CheckRegistration> = validated_checks
-        .iter()
-        .map(|vc| vc.to_check_registration())
-        .collect();
-
     // Convert Consul registration to Nacos Instance
     let mut nacos_instance: Instance = (&registration).into();
 
@@ -196,6 +190,21 @@ pub async fn register_service(
         dc_config.datacenter.clone(),
     );
 
+    // Get the actual IP and port for health check registration
+    let instance_ip = nacos_instance.ip.clone();
+    let instance_port = nacos_instance.port;
+
+    // Convert validated checks to CheckRegistration, populating IP and port
+    let embedded_checks: Vec<CheckRegistration> = validated_checks
+        .iter()
+        .map(|vc| {
+            let mut cr = vc.to_check_registration();
+            cr.ip = Some(instance_ip.clone());
+            cr.port = Some(instance_port);
+            cr
+        })
+        .collect();
+
     tracing::info!(
         "Registering service: name={}, id={}, address={}, port={}, checks={}",
         registration.name,
@@ -204,6 +213,41 @@ pub async fn register_service(
         registration.port.unwrap_or(0),
         validated_checks.len()
     );
+
+    // Bug #2 fix: If the same consul_service_id was previously registered with
+    // different IP/port, deregister the old instance first to avoid orphans.
+    if let Some((_, old_instance_key)) = agent.registry.lookup_consul_service_id(&service_id) {
+        let parts: Vec<&str> = old_instance_key.splitn(6, '#').collect();
+        if parts.len() >= 6 {
+            let old_ip = parts[3];
+            let old_port: i32 = parts[4].parse().unwrap_or(0);
+            let old_cluster = parts[5];
+            let old_svc_name = parts[2];
+            // Only deregister if the instance key actually changed
+            if old_ip != instance_ip || old_port != instance_port {
+                tracing::info!(
+                    "Re-registration detected for consul_service_id={}: old={}:{}, new={}:{}. Deregistering old instance.",
+                    service_id, old_ip, old_port, instance_ip, instance_port
+                );
+                let old_instance = Instance {
+                    instance_id: service_id.clone(),
+                    ip: old_ip.to_string(),
+                    port: old_port,
+                    cluster_name: old_cluster.to_string(),
+                    ephemeral: false,
+                    ..Default::default()
+                };
+                agent.naming_service.deregister_instance(
+                    &namespace,
+                    &dc_config.default_group,
+                    old_svc_name,
+                    &old_instance,
+                );
+                agent.registry.deregister_all_instance_checks(&old_instance_key);
+            }
+        }
+        agent.registry.remove_consul_service_id(&service_id);
+    }
 
     // Register with naming service
     // Consul doesn't have a concept of group, use default group
@@ -218,6 +262,18 @@ pub async fn register_service(
 
     if success {
         index_provider.increment();
+
+        // Register the consul_service_id → instance mapping for O(1) lookup
+        let instance_key = format!(
+            "{}#{}#{}#{}#{}#DEFAULT",
+            namespace, dc_config.default_group, registration.name, instance_ip, instance_port
+        );
+        let service_key = format!(
+            "{}#{}#{}",
+            namespace, dc_config.default_group, registration.name
+        );
+        agent.registry.register_consul_service_id(&service_id, &service_key, &instance_key);
+
         // Register validated checks with health service
         for check_reg in embedded_checks {
             let check_id = check_reg
@@ -319,7 +375,13 @@ pub async fn deregister_service(
                 );
 
                 for instance in instances {
-                    if instance.instance_id == service_id {
+                    let matches = instance.instance_id == service_id
+                        || instance
+                            .metadata
+                            .get("consul_service_id")
+                            .map(|v| v == &service_id)
+                            .unwrap_or(false);
+                    if matches {
                         let success = agent.naming_service.deregister_instance(
                             &namespace,
                             &dc_config.default_group,
@@ -327,6 +389,18 @@ pub async fn deregister_service(
                             &instance,
                         );
                         if success {
+                            // Clean up health checks for this instance
+                            let instance_key = format!(
+                                "{}#{}#{}#{}#{}#{}",
+                                namespace,
+                                dc_config.default_group,
+                                service_name,
+                                instance.ip,
+                                instance.port,
+                                instance.cluster_name
+                            );
+                            agent.registry.deregister_all_instance_checks(&instance_key);
+                            agent.registry.remove_consul_service_id(&service_id);
                             found = true;
                             break;
                         }
