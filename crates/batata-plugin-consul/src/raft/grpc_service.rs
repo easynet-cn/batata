@@ -229,13 +229,14 @@ impl ConsulRaftManagementService for ConsulRaftManagementGrpcService {
             .map_err(|e| Status::invalid_argument(format!("Invalid request: {}", e)))?;
 
         match raft.write_with_index(consul_req).await {
-            Ok((resp, _log_index)) => {
+            Ok((resp, log_index)) => {
                 let resp_data = serde_json::to_vec(&resp).unwrap_or_default();
                 Ok(Response::new(ClientWriteResponse {
                     success: resp.success,
                     data: resp_data,
                     message: resp.message.unwrap_or_default(),
-                    leader_id: None,
+                    // Reuse leader_id field to pass back the Raft log index
+                    leader_id: Some(log_index),
                     leader_addr: None,
                 }))
             }

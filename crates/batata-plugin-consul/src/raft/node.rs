@@ -195,8 +195,23 @@ impl ConsulRaftNode {
         if resp.success {
             let consul_resp: ConsulRaftResponse =
                 serde_json::from_slice(&resp.data).unwrap_or_else(|_| ConsulRaftResponse::success());
-            // Use last_applied as proxy for log_index when forwarding
-            let idx = self.last_applied_index().unwrap_or(1);
+            // The leader returns the log_index in the leader_id field
+            let leader_log_index = resp.leader_id.unwrap_or(1);
+
+            // Wait for our local state machine to apply up to the leader's log index.
+            // This ensures read-after-write consistency on this follower.
+            if let Some(local_idx) = self.last_applied_index() {
+                if local_idx < leader_log_index {
+                    // Wait up to 2 seconds for replication to catch up
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        self.wait_for_applied(leader_log_index),
+                    )
+                    .await;
+                }
+            }
+
+            let idx = self.last_applied_index().unwrap_or(leader_log_index);
             Ok((consul_resp, idx))
         } else {
             let msg = if resp.message.is_empty() { "Leader write failed".to_string() } else { resp.message };
@@ -212,6 +227,24 @@ impl ConsulRaftNode {
     /// Get the last applied log index.
     pub fn last_applied_index(&self) -> Option<u64> {
         self.raft.metrics().borrow().last_applied.map(|l| l.index)
+    }
+
+    /// Wait until the local state machine has applied at least `target_index`.
+    /// Used to ensure read-after-write consistency on followers after forwarding.
+    async fn wait_for_applied(&self, target_index: u64) {
+        let mut rx = self.raft.metrics();
+        loop {
+            let m = rx.borrow().clone();
+            if let Some(applied) = m.last_applied {
+                if applied.index >= target_index {
+                    return;
+                }
+            }
+            // Wait for metrics change
+            if rx.changed().await.is_err() {
+                return; // Raft shut down
+            }
+        }
     }
 
     /// Get Raft metrics for monitoring.
