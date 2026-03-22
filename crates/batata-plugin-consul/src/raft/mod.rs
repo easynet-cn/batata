@@ -13,7 +13,7 @@
 /// ├── State: data/raft/state/     ├── State: {consul_dir}/raft/state/
 /// └── gRPC: port 9849             └── gRPC: port 9850
 /// ```
-pub mod http_handler;
+pub mod grpc_service;
 pub mod log_store;
 pub mod network;
 pub mod node;

@@ -47,6 +47,7 @@ rocksdb = { workspace = true }
 # Raft consensus (Consul-dedicated Raft group)
 openraft = { workspace = true }
 byteorder = { workspace = true }
+tonic = { workspace = true }
 
 # Caching
 moka = { workspace = true }

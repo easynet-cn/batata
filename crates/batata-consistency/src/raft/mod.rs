@@ -6,6 +6,7 @@ pub mod grpc_service;
 pub mod log_store;
 pub mod network;
 pub mod node;
+pub mod proto_convert;
 pub mod reader;
 pub mod request;
 pub mod state_machine;

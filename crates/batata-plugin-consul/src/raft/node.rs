@@ -125,21 +125,13 @@ impl ConsulRaftNode {
                 Ok((result.data, log_index))
             }
             Err(e) => {
-                // Check if we need to forward to the leader
-                if let Some(leader_id) = self.leader_id() {
-                    if leader_id != self.node_id {
-                        warn!(
-                            "Consul Raft: not leader, forwarding to node {}",
-                            leader_id
-                        );
-                        // TODO: Implement leader forwarding via gRPC
-                        // For now, return error
-                        return Err(format!(
-                            "Not leader. Leader is node {}. Forwarding not yet implemented.",
-                            leader_id
-                        )
-                        .into());
-                    }
+                // Forward to leader if known
+                if let Some(leader_addr) = self.leader_addr() {
+                    debug!(
+                        "Consul Raft: forwarding write to leader at {}",
+                        leader_addr
+                    );
+                    return self.forward_to_leader(&leader_addr, request).await;
                 }
                 Err(Box::new(e))
             }
@@ -159,6 +151,54 @@ impl ConsulRaftNode {
     pub fn leader_id(&self) -> Option<NodeId> {
         let metrics = self.raft.metrics().borrow().clone();
         metrics.current_leader
+    }
+
+    /// Get the leader's network address from the Raft membership.
+    pub fn leader_addr(&self) -> Option<String> {
+        let metrics = self.raft.metrics().borrow().clone();
+        let leader_id = metrics.current_leader?;
+        if leader_id == self.node_id {
+            return None; // We are the leader
+        }
+        metrics
+            .membership_config
+            .membership()
+            .get_node(&leader_id)
+            .map(|n| n.addr.clone())
+    }
+
+    /// Forward a write request to the Consul Raft leader via gRPC.
+    async fn forward_to_leader(
+        &self,
+        leader_addr: &str,
+        request: ConsulRaftRequest,
+    ) -> Result<(ConsulRaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
+        let endpoint = format!("http://{}", leader_addr);
+        let channel = tonic::transport::Channel::from_shared(endpoint)?
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
+            .connect()
+            .await?;
+
+        let mut client =
+            batata_api::raft::consul_raft_management_service_client::ConsulRaftManagementServiceClient::new(channel);
+
+        let data = serde_json::to_vec(&request)?;
+        let resp = client
+            .write(batata_api::raft::ClientWriteRequest { data })
+            .await?
+            .into_inner();
+
+        if resp.success {
+            let consul_resp: ConsulRaftResponse =
+                serde_json::from_slice(&resp.data).unwrap_or_else(|_| ConsulRaftResponse::success());
+            // Use last_applied as proxy for log_index when forwarding
+            let idx = self.last_applied_index().unwrap_or(1);
+            Ok((consul_resp, idx))
+        } else {
+            let msg = if resp.message.is_empty() { "Leader write failed".to_string() } else { resp.message };
+            Err(msg.into())
+        }
     }
 
     /// Check if this node is the leader.

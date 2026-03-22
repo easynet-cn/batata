@@ -1,8 +1,9 @@
-/// Consul Raft network factory and connection.
+/// Consul Raft network layer using gRPC.
 ///
-/// Handles inter-node Raft communication for the Consul Raft group.
-/// Uses HTTP-based JSON transport for simplicity. Can be upgraded to
-/// gRPC for better performance in the future.
+/// Sends Raft protocol messages (AppendEntries, Vote, InstallSnapshot)
+/// to other cluster nodes via the `ConsulRaftService` gRPC service
+/// on the cluster port (9849).
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use openraft::error::{InstallSnapshotError, RPCError, RaftError, Unreachable};
@@ -13,20 +14,24 @@ use openraft::raft::{
 };
 use openraft::BasicNode;
 use tokio::sync::RwLock;
+use tonic::transport::Channel;
 use tracing::{debug, warn};
+
+use batata_api::raft::{
+    self as proto, consul_raft_service_client::ConsulRaftServiceClient,
+};
+use batata_consistency::raft::proto_convert;
 
 use super::types::*;
 
-/// Factory that creates Consul Raft network connections to other nodes.
 pub struct ConsulRaftNetworkFactory {
-    /// HTTP client cache: node_id -> base_url
-    clients: Arc<RwLock<std::collections::HashMap<NodeId, reqwest::Client>>>,
+    channels: Arc<RwLock<HashMap<NodeId, Channel>>>,
 }
 
 impl ConsulRaftNetworkFactory {
     pub fn new() -> Self {
         Self {
-            clients: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            channels: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -44,11 +49,7 @@ impl RaftNetworkFactory<ConsulTypeConfig> for ConsulRaftNetworkFactory {
         ConsulRaftNetworkConnection {
             target,
             target_addr: node.addr.clone(),
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(10))
-                .connect_timeout(std::time::Duration::from_secs(5))
-                .build()
-                .unwrap_or_default(),
+            channels: self.channels.clone(),
         }
     }
 }
@@ -56,44 +57,64 @@ impl RaftNetworkFactory<ConsulTypeConfig> for ConsulRaftNetworkFactory {
 pub struct ConsulRaftNetworkConnection {
     target: NodeId,
     target_addr: String,
-    client: reqwest::Client,
+    channels: Arc<RwLock<HashMap<NodeId, Channel>>>,
 }
 
 impl ConsulRaftNetworkConnection {
-    /// Derive the Consul Raft HTTP endpoint from the target node address.
-    /// Uses the Consul HTTP port with a raft API path.
-    fn raft_url(&self, path: &str) -> String {
-        // Target addr is the main server addr (e.g., 127.0.0.1:8848)
-        // Consul HTTP port = main port - 348 (8848 -> 8500) — but we need
-        // a dedicated consul raft endpoint. For simplicity, use the main
-        // server port with a dedicated path prefix.
-        format!("http://{}/consul-raft/{}", self.target_addr, path)
-    }
+    /// Get or create a gRPC channel to the target node's cluster port.
+    async fn get_channel(&self) -> Result<Channel, Unreachable> {
+        if let Some(ch) = self.channels.read().await.get(&self.target) {
+            return Ok(ch.clone());
+        }
 
-    async fn post_json<T: serde::Serialize, R: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &T,
-    ) -> Result<R, Unreachable> {
-        let url = self.raft_url(path);
-        debug!("Consul Raft RPC to {}: {}", self.target, url);
+        // Derive cluster gRPC port: main_port + 1001 (same as Nacos Raft)
+        let grpc_addr = raft_grpc_addr(&self.target_addr);
+        let endpoint = format!("http://{}", grpc_addr);
 
-        let resp = self
-            .client
-            .post(&url)
-            .json(body)
-            .send()
+        debug!("Consul Raft: connecting to node {} at {}", self.target, endpoint);
+
+        let channel = Channel::from_shared(endpoint)
+            .map_err(|e| Unreachable::new(&e))?
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
+            .connect()
             .await
             .map_err(|e| {
-                warn!("Consul Raft RPC failed to {}: {}", self.target, e);
+                warn!("Consul Raft: failed to connect to node {}: {}", self.target, e);
                 Unreachable::new(&e)
             })?;
 
-        resp.json::<R>().await.map_err(|e| {
-            warn!("Consul Raft RPC response parse failed: {}", e);
-            Unreachable::new(&e)
-        })
+        self.channels.write().await.insert(self.target, channel.clone());
+        Ok(channel)
     }
+
+    /// Convert openraft Entry to proto Entry.
+    fn entry_to_proto(entry: &openraft::Entry<ConsulTypeConfig>) -> proto::Entry {
+        let (payload_type, payload) = match &entry.payload {
+            openraft::EntryPayload::Blank => (0u32, vec![]),
+            openraft::EntryPayload::Normal(req) => {
+                (1, serde_json::to_vec(req).unwrap_or_default())
+            }
+            openraft::EntryPayload::Membership(m) => {
+                (2, serde_json::to_vec(m).unwrap_or_default())
+            }
+        };
+
+        proto::Entry {
+            log_id: proto_convert::to_proto_log_id(Some(entry.log_id)),
+            payload_type,
+            payload,
+        }
+    }
+}
+
+/// Get the gRPC address for Consul Raft communication.
+///
+/// The ConsulRaftService is registered on the same Raft gRPC port as
+/// the Nacos RaftService. Member addresses in the Raft membership
+/// already contain the correct Raft port (e.g., 127.0.0.1:7848).
+fn raft_grpc_addr(member_addr: &str) -> String {
+    member_addr.to_string()
 }
 
 impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
@@ -102,22 +123,48 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
         rpc: AppendEntriesRequest<ConsulTypeConfig>,
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCError<NodeId, BasicNode, RaftError<NodeId>>> {
-        self.post_json("append-entries", &rpc)
+        let channel = self.get_channel().await.map_err(RPCError::Unreachable)?;
+        let mut client = ConsulRaftServiceClient::new(channel);
+
+        let vote_proto = proto_convert::to_proto_vote(&rpc.vote);
+        let entries: Vec<proto::Entry> = rpc.entries.iter().map(Self::entry_to_proto).collect();
+
+        let req = proto::AppendEntriesRequest {
+            term: rpc.vote.leader_id().term,
+            leader_id: rpc.vote.leader_id().node_id,
+            prev_log_id: proto_convert::to_proto_log_id(rpc.prev_log_id),
+            entries,
+            leader_commit: proto_convert::to_proto_log_id(rpc.leader_commit),
+            vote: Some(vote_proto),
+        };
+
+        let resp = client
+            .append_entries(req)
             .await
-            .map_err(RPCError::Unreachable)
+            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
+            .into_inner();
+
+        if resp.success {
+            Ok(AppendEntriesResponse::Success)
+        } else if resp.conflict.is_some() {
+            Ok(AppendEntriesResponse::Conflict)
+        } else {
+            Ok(AppendEntriesResponse::Conflict)
+        }
     }
 
     async fn install_snapshot(
         &mut self,
-        rpc: InstallSnapshotRequest<ConsulTypeConfig>,
+        _rpc: InstallSnapshotRequest<ConsulTypeConfig>,
         _option: RPCOption,
     ) -> Result<
         InstallSnapshotResponse<NodeId>,
         RPCError<NodeId, BasicNode, RaftError<NodeId, InstallSnapshotError>>,
     > {
-        self.post_json("install-snapshot", &rpc)
-            .await
-            .map_err(RPCError::Unreachable)
+        // TODO: Implement snapshot transfer
+        Err(RPCError::Unreachable(Unreachable::new(
+            &std::io::Error::new(std::io::ErrorKind::Unsupported, "Consul Raft snapshot not yet implemented"),
+        )))
     }
 
     async fn vote(
@@ -125,21 +172,32 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
         rpc: VoteRequest<NodeId>,
         _option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RPCError<NodeId, BasicNode, RaftError<NodeId>>> {
-        self.post_json("vote", &rpc)
-            .await
-            .map_err(RPCError::Unreachable)
-    }
-}
+        let channel = self.get_channel().await.map_err(RPCError::Unreachable)?;
+        let mut client = ConsulRaftServiceClient::new(channel);
 
-/// Derive the Consul Raft port from the main server address.
-/// Convention: consul_raft_port = main_port + 1002 (e.g., 8848 → 9850)
-pub fn derive_consul_raft_addr(main_addr: &str) -> String {
-    if let Some((host, port_str)) = main_addr.rsplit_once(':') {
-        if let Ok(port) = port_str.parse::<u16>() {
-            return format!("{}:{}", host, port + 1002);
-        }
+        let vote_proto = proto_convert::to_proto_vote(&rpc.vote);
+        let req = proto::VoteRequest {
+            term: rpc.vote.leader_id().term,
+            candidate_id: rpc.vote.leader_id().node_id,
+            last_log_id: proto_convert::to_proto_log_id(rpc.last_log_id),
+            vote: Some(vote_proto),
+        };
+
+        let resp = client
+            .vote(req)
+            .await
+            .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
+            .into_inner();
+
+        let vote = proto_convert::from_proto_vote(resp.vote)
+            .unwrap_or_else(|| openraft::Vote::new(resp.term, 0));
+
+        Ok(VoteResponse {
+            vote,
+            vote_granted: resp.vote_granted,
+            last_log_id: proto_convert::from_proto_log_id(resp.last_log_id),
+        })
     }
-    format!("{}:9850", main_addr)
 }
 
 #[cfg(test)]
@@ -147,8 +205,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_derive_consul_raft_addr() {
-        assert_eq!(derive_consul_raft_addr("127.0.0.1:8848"), "127.0.0.1:9850");
-        assert_eq!(derive_consul_raft_addr("10.0.0.1:8858"), "10.0.0.1:9860");
+    fn test_raft_grpc_addr() {
+        assert_eq!(raft_grpc_addr("127.0.0.1:7848"), "127.0.0.1:7848");
+        assert_eq!(raft_grpc_addr("10.0.0.1:7858"), "10.0.0.1:7858");
     }
 }

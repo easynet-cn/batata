@@ -41,44 +41,11 @@ impl RaftGrpcService {
             .ok_or_else(|| Status::unavailable("Raft node not initialized"))
     }
 
-    /// Convert proto LogId to openraft LogId
-    fn from_proto_log_id(log_id: Option<ProtoLogId>) -> Option<openraft::LogId<NodeId>> {
-        log_id.map(|l| openraft::LogId::new(openraft::CommittedLeaderId::new(l.term, 0), l.index))
-    }
-
-    /// Convert openraft LogId to proto LogId
-    fn to_proto_log_id(log_id: Option<openraft::LogId<NodeId>>) -> Option<ProtoLogId> {
-        log_id.map(|l| ProtoLogId {
-            term: l.leader_id.term,
-            index: l.index,
-        })
-    }
-
-    /// Convert proto Vote to openraft Vote
-    fn from_proto_vote(vote: Option<ProtoVote>) -> Option<openraft::Vote<NodeId>> {
-        vote.map(|v| {
-            if v.committed {
-                openraft::Vote::new_committed(v.term, v.leader_id)
-            } else {
-                openraft::Vote::new(v.term, v.leader_id)
-            }
-        })
-    }
-
-    /// Convert openraft Vote to proto Vote
-    fn to_proto_vote(vote: &openraft::Vote<NodeId>) -> ProtoVote {
-        ProtoVote {
-            leader_id: vote.leader_id().node_id,
-            term: vote.leader_id().term,
-            committed: vote.is_committed(),
-        }
-    }
-
-    /// Convert proto Entry to openraft Entry
+    /// Convert proto Entry to openraft Entry (Nacos-specific due to RaftRequest type)
     fn from_proto_entry(
         entry: ProtoEntry,
     ) -> Result<openraft::Entry<TypeConfig>, serde_json::Error> {
-        let log_id = Self::from_proto_log_id(entry.log_id)
+        let log_id = super::proto_convert::from_proto_log_id(entry.log_id)
             .unwrap_or_else(|| openraft::LogId::new(openraft::CommittedLeaderId::new(0, 0), 0));
 
         let payload = match entry.payload_type {
@@ -128,14 +95,14 @@ impl RaftService for RaftGrpcService {
         })?;
 
         // Construct openraft request
-        let vote = Self::from_proto_vote(req.vote)
+        let vote = super::proto_convert::from_proto_vote(req.vote)
             .unwrap_or_else(|| openraft::Vote::new(req.term, req.leader_id));
 
         let append_req = openraft::raft::AppendEntriesRequest {
             vote,
-            prev_log_id: Self::from_proto_log_id(req.prev_log_id),
+            prev_log_id: super::proto_convert::from_proto_log_id(req.prev_log_id),
             entries,
-            leader_commit: Self::from_proto_log_id(req.leader_commit),
+            leader_commit: super::proto_convert::from_proto_log_id(req.leader_commit),
         };
 
         // Call raft node
@@ -184,12 +151,12 @@ impl RaftService for RaftGrpcService {
             req.term, req.candidate_id
         );
 
-        let vote = Self::from_proto_vote(req.vote)
+        let vote = super::proto_convert::from_proto_vote(req.vote)
             .unwrap_or_else(|| openraft::Vote::new(req.term, req.candidate_id));
 
         let vote_req = openraft::raft::VoteRequest {
             vote,
-            last_log_id: Self::from_proto_log_id(req.last_log_id),
+            last_log_id: super::proto_convert::from_proto_log_id(req.last_log_id),
         };
 
         let response = raft_node.raft().vote(vote_req).await.map_err(|e| {
@@ -200,8 +167,8 @@ impl RaftService for RaftGrpcService {
         Ok(Response::new(ProtoVoteResponse {
             term: response.vote.leader_id().term,
             vote_granted: response.vote_granted,
-            vote: Some(Self::to_proto_vote(&response.vote)),
-            last_log_id: Self::to_proto_log_id(response.last_log_id),
+            vote: Some(super::proto_convert::to_proto_vote(&response.vote)),
+            last_log_id: super::proto_convert::to_proto_log_id(response.last_log_id),
         }))
     }
 
@@ -257,7 +224,7 @@ impl RaftService for RaftGrpcService {
 
         Ok(Response::new(ProtoInstallSnapshotResponse {
             term: vote.leader_id().term,
-            vote: Some(Self::to_proto_vote(&vote)),
+            vote: Some(super::proto_convert::to_proto_vote(&vote)),
         }))
     }
 }

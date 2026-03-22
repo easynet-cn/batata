@@ -80,6 +80,9 @@ pub struct GrpcServers {
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
     /// Config change notifier for long-polling HTTP listeners.
     pub config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
+    /// Consul Raft gRPC service handle — call `set_raft_node()` after
+    /// creating `ConsulRaftNode` to activate Consul Raft on port 9849.
+    pub consul_raft_grpc: Arc<batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService>,
 }
 
 /// Registers all internal handlers (health check, connection setup, etc.).
@@ -647,24 +650,27 @@ pub fn start_grpc_servers(
         }
     });
 
+    // Create Consul Raft gRPC service (starts empty, ConsulRaftNode set later)
+    let consul_raft_grpc = Arc::new(
+        batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService::new(),
+    );
+
     // Start dedicated Raft gRPC server (only in distributed embedded mode)
     // Pre-bind the TCP port synchronously so it is listening BEFORE this
     // function returns. This prevents a race condition where
     // `raft_node.initialize()` (called later in main.rs) triggers leader
     // election before peer Raft gRPC servers have bound their ports.
+    // Start Nacos Raft gRPC server (only in distributed embedded mode)
     let raft_server_handle = if let Some(raft_node) = raft_node {
         let raft_port = app_state.configuration.raft_port();
         let grpc_raft_addr: std::net::SocketAddr = format!("0.0.0.0:{}", raft_port).parse()?;
-        info!("Starting Raft gRPC server on {}", grpc_raft_addr);
+        info!("Starting Nacos Raft gRPC server on {}", grpc_raft_addr);
 
-        // Pre-bind the port synchronously to guarantee it is listening
         let std_listener = std::net::TcpListener::bind(grpc_raft_addr)?;
         std_listener.set_nonblocking(true)?;
-        info!("Raft gRPC port {} bound and listening", raft_port);
+        info!("Nacos Raft gRPC port {} bound and listening", raft_port);
 
-        // Wrap in Arc<RwLock<Option<...>>> as required by the Raft gRPC services
         let raft_holder = Arc::new(tokio::sync::RwLock::new(Some(raft_node)));
-
         let raft_service = batata_consistency::raft::RaftGrpcService::new(raft_holder.clone());
         let raft_mgmt_service =
             batata_consistency::raft::RaftManagementGrpcService::new(raft_holder);
@@ -673,7 +679,7 @@ pub fn start_grpc_servers(
             let tokio_listener = match tokio::net::TcpListener::from_std(std_listener) {
                 Ok(l) => l,
                 Err(e) => {
-                    tracing::error!("Failed to convert Raft TCP listener: {}", e);
+                    tracing::error!("Failed to convert Nacos Raft TCP listener: {}", e);
                     return;
                 }
             };
@@ -690,7 +696,54 @@ pub fn start_grpc_servers(
                 .serve_with_incoming(incoming)
                 .await;
             if let Err(e) = result {
-                tracing::error!("Raft gRPC server error: {}", e);
+                tracing::error!("Nacos Raft gRPC server error: {}", e);
+            }
+        });
+        Some(handle)
+    } else {
+        None
+    };
+
+    // Start Consul Raft gRPC server (independent port, only if consul enabled)
+    let consul_raft_port = app_state.configuration.consul_raft_port();
+    let _consul_raft_server_handle = if app_state.configuration.consul_enabled()
+        && !app_state.configuration.is_standalone()
+    {
+        let grpc_addr: std::net::SocketAddr =
+            format!("0.0.0.0:{}", consul_raft_port).parse()?;
+        info!("Starting Consul Raft gRPC server on {}", grpc_addr);
+
+        let std_listener = std::net::TcpListener::bind(grpc_addr)?;
+        std_listener.set_nonblocking(true)?;
+        info!("Consul Raft gRPC port {} bound and listening", consul_raft_port);
+
+        let consul_raft_grpc_for_server = consul_raft_grpc.clone_service();
+        let consul_raft_mgmt_for_server = consul_raft_grpc.management_service();
+
+        let handle = tokio::spawn(async move {
+            let tokio_listener = match tokio::net::TcpListener::from_std(std_listener) {
+                Ok(l) => l,
+                Err(e) => {
+                    tracing::error!("Failed to convert Consul Raft TCP listener: {}", e);
+                    return;
+                }
+            };
+            let incoming = tokio_stream::wrappers::TcpListenerStream::new(tokio_listener);
+            let result = tonic::transport::Server::builder()
+                .add_service(
+                    batata_api::raft::consul_raft_service_server::ConsulRaftServiceServer::new(
+                        consul_raft_grpc_for_server,
+                    ),
+                )
+                .add_service(
+                    batata_api::raft::consul_raft_management_service_server::ConsulRaftManagementServiceServer::new(
+                        consul_raft_mgmt_for_server,
+                    ),
+                )
+                .serve_with_incoming(incoming)
+                .await;
+            if let Err(e) = result {
+                tracing::error!("Consul Raft gRPC server error: {}", e);
             }
         });
         Some(handle)
@@ -707,5 +760,6 @@ pub fn start_grpc_servers(
         distro_protocol,
         cluster_client_manager,
         config_change_notifier,
+        consul_raft_grpc,
     })
 }

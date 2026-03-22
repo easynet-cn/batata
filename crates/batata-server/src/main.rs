@@ -689,33 +689,120 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
 
         let services = if is_cluster {
-            // Cluster mode: use independent RocksDB for Consul persistence.
-            // Consul Raft consensus (dedicated Raft group with its own log index space)
-            // is available in batata_plugin_consul::raft but requires full cluster
-            // initialization (network registration, peer discovery, leader election).
-            // This will be wired up in a future iteration.
-            // For now, each node has its own RocksDB — Nacos Raft handles config/naming,
-            // Consul KV is per-node with standalone RocksDB.
-            info!("Consul services using standalone RocksDB persistence (cluster mode)");
-            let consul_rocks_db = open_consul_rocks_db(
+            // Cluster mode: create a dedicated Consul Raft group
+            let consul_node_id = app_state
+                .raft_node
+                .as_ref()
+                .map(|r| r.node_id())
+                .unwrap_or(1);
+            let consul_node_addr = app_state.configuration.server_address();
+
+            match batata_plugin_consul::raft::ConsulRaftNode::new(
+                consul_node_id,
+                consul_node_addr.clone(),
                 &consul_data_dir_for_init,
-                &app_state.configuration.rocksdb_config(),
-            );
-            if let Some(db) = consul_rocks_db {
-                ConsulServices::with_persistence(
-                    grpc_servers.naming_service.clone(),
-                    consul_registry.clone(),
-                    consul_acl_enabled,
-                    db,
-                    consul_dc_config.clone(),
-                )
-            } else {
-                ConsulServices::new(
-                    grpc_servers.naming_service.clone(),
-                    consul_registry.clone(),
-                    consul_acl_enabled,
-                    consul_dc_config.clone(),
-                )
+            )
+            .await
+            {
+                Ok((consul_raft_node, consul_db)) => {
+                    let consul_raft = Arc::new(consul_raft_node);
+                    info!("Consul Raft node created (id={}, dir={})", consul_node_id, consul_data_dir_for_init);
+
+                    // Activate the gRPC service (already listening on port 9849)
+                    grpc_servers.consul_raft_grpc.set_raft_node(consul_raft.clone()).await;
+
+                    // Initialize Consul Raft in background — don't block main startup.
+                    // Other nodes may not be ready yet; Raft will retry automatically.
+                    if let Some(ref nacos_raft) = app_state.raft_node {
+                        let nacos_metrics = nacos_raft.metrics();
+                        let local_raft_port = app_state.configuration.raft_port();
+                        let consul_raft_port = app_state.configuration.consul_raft_port();
+
+                        let members: std::collections::BTreeMap<u64, openraft::BasicNode> =
+                            nacos_metrics
+                                .membership_config
+                                .membership()
+                                .voter_ids()
+                                .map(|id| {
+                                    let nacos_addr = nacos_metrics
+                                        .membership_config
+                                        .membership()
+                                        .get_node(&id)
+                                        .map(|n| n.addr.clone())
+                                        .unwrap_or_default();
+                                    // Derive consul raft addr from nacos raft addr:
+                                    // nacos_raft_port = main_port - 1000
+                                    // consul_raft_port = consul_port - 1000
+                                    // For node with nacos_raft=7848 (main=8848):
+                                    //   consul_raft = consul_port - 1000 = 8500 - 1000 = 7500
+                                    // For node with nacos_raft=7858 (main=8858):
+                                    //   consul_raft = 8510 - 1000 = 7510
+                                    // Pattern: consul_raft = nacos_raft - (main - consul) = nacos_raft - 348
+                                    // But we don't know remote consul_port. Use: same offset as local.
+                                    // Local: nacos_raft=local_raft_port, consul_raft=consul_raft_port
+                                    // Remote: nacos_raft=nacos_rp, consul_raft=nacos_rp + (consul_raft_port - local_raft_port)
+                                    let consul_addr = if let Some((host, port_str)) = nacos_addr.rsplit_once(':') {
+                                        if let Ok(nacos_rp) = port_str.parse::<i32>() {
+                                            let diff = consul_raft_port as i32 - local_raft_port as i32;
+                                            let consul_rp = (nacos_rp + diff) as u16;
+                                            format!("{}:{}", host, consul_rp)
+                                        } else {
+                                            format!("{}:{}", host, consul_raft_port)
+                                        }
+                                    } else {
+                                        nacos_addr
+                                    };
+                                    (id, openraft::BasicNode { addr: consul_addr })
+                                })
+                                .collect();
+
+                        if !members.is_empty() {
+                            let consul_raft_bg = consul_raft.clone();
+                            info!("Consul Raft members: {:?}", members);
+                            tokio::spawn(async move {
+                                // Wait briefly for other nodes' Consul Raft ports to bind
+                                tokio::time::sleep(Duration::from_secs(3)).await;
+                                if let Err(e) = consul_raft_bg.initialize(members).await {
+                                    tracing::debug!("Consul Raft init: {} (may already be initialized)", e);
+                                } else {
+                                    info!("Consul Raft cluster initialized");
+                                }
+                            });
+                        }
+                    }
+
+                    ConsulServices::with_consul_raft(
+                        grpc_servers.naming_service.clone(),
+                        consul_registry.clone(),
+                        consul_acl_enabled,
+                        consul_db,
+                        consul_raft,
+                        consul_dc_config.clone(),
+                    )
+                }
+                Err(e) => {
+                    error!("Failed to create Consul Raft: {}. Falling back to standalone.", e);
+                    let consul_rocks_db = open_consul_rocks_db(
+                        &consul_data_dir_for_init,
+                        &app_state.configuration.rocksdb_config(),
+                    );
+                    if let Some(db) = consul_rocks_db {
+                        ConsulServices::with_persistence(
+                            grpc_servers.naming_service.clone(),
+                            consul_registry.clone(),
+                            consul_acl_enabled,
+                            db,
+                            consul_dc_config.clone(),
+                        )
+                    } else {
+                        ConsulServices::new(
+                            grpc_servers.naming_service.clone(),
+                            consul_registry.clone(),
+                            consul_acl_enabled,
+                            consul_dc_config.clone(),
+                        )
+                    }
+                }
             }
         } else if !is_console_remote {
             // Standalone mode: use independent RocksDB for Consul persistence

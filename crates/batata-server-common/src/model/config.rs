@@ -1151,6 +1151,16 @@ impl Configuration {
             .unwrap_or(8500) as u16
     }
 
+    /// Get Consul Raft gRPC port for inter-node consensus.
+    /// Default: consul_server_port - 1000 (e.g., 8500 → 7500)
+    /// Mirrors Consul's server RPC port convention.
+    pub fn consul_raft_port(&self) -> u16 {
+        self.config
+            .get_int("batata.plugin.consul.raft.port")
+            .unwrap_or_else(|_| (self.consul_server_port().saturating_sub(1000)) as i64)
+            as u16
+    }
+
     /// Check if Consul ACL is enabled (default: false)
     pub fn consul_acl_enabled(&self) -> bool {
         self.config
