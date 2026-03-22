@@ -44,6 +44,10 @@ sea-orm = { workspace = true }
 # Storage
 rocksdb = { workspace = true }
 
+# Raft consensus (Consul-dedicated Raft group)
+openraft = { workspace = true }
+byteorder = { workspace = true }
+
 # Caching
 moka = { workspace = true }
 

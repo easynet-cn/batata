@@ -12,12 +12,15 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tracing::{error, info};
 
-use batata_consistency::RaftNode;
-use batata_consistency::raft::request::RaftRequest;
-use batata_consistency::raft::state_machine::{CF_CONSUL_KV, CF_CONSUL_SESSIONS};
+use crate::raft::{ConsulRaftNode, ConsulRaftRequest};
+
+const CF_CONSUL_KV: &str = "consul_kv";
+const CF_CONSUL_SESSIONS: &str = "consul_sessions";
+const CF_CONSUL_ACL: &str = "consul_acl";
+const CF_CONSUL_QUERIES: &str = "consul_queries";
 
 use crate::acl::{AclService, ResourceType};
-use crate::index_provider::ConsulIndexProvider;
+use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -134,12 +137,10 @@ pub struct KVQueryParams {
     pub separator: Option<String>,
 
     /// Wait for index to be >= this value (blocking wait for watch)
-    #[serde(default, deserialize_with = "crate::model::consul_u64::deserialize")]
     pub index: Option<u64>,
 
-    /// Wait time in milliseconds for blocking wait
-    #[serde(default, deserialize_with = "crate::model::consul_u64::deserialize")]
-    pub wait: Option<u64>,
+    /// Wait time for blocking query (Consul format: "5s", "30s", "5m")
+    pub wait: Option<String>,
 
     /// Acquire session lock
     pub acquire: Option<String>,
@@ -219,7 +220,7 @@ pub struct ConsulKVService {
     /// Keeps temp directory alive for tests/in-memory mode
     _temp_dir: Option<Arc<tempfile::TempDir>>,
     /// Optional Raft node for cluster mode replication
-    raft_node: Option<Arc<RaftNode>>,
+    raft_node: Option<Arc<ConsulRaftNode>>,
 }
 
 impl ConsulKVService {
@@ -251,7 +252,7 @@ impl ConsulKVService {
 
     /// Create a new KV service backed by a Raft-replicated RocksDB instance.
     /// Writes go through Raft consensus; reads are local.
-    pub fn with_raft(db: Arc<DB>, raft_node: Arc<RaftNode>) -> Self {
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftNode>) -> Self {
         let max_index = Self::scan_max_index(&db);
 
         Self {
@@ -488,9 +489,9 @@ impl ConsulKVService {
         if let Some(ref raft) = self.raft_node {
             let json = serde_json::to_string(&stored).unwrap_or_default();
             match raft
-                .write(RaftRequest::ConsulKVPut {
+                .write(ConsulRaftRequest::KVPut {
                     key: key.clone(),
-                    value: json,
+                    stored_kv_json: json,
                     session_index_key: None,
                 })
                 .await
@@ -521,9 +522,9 @@ impl ConsulKVService {
         if let Some(ref raft) = self.raft_node {
             let json = serde_json::to_string(&stored).unwrap_or_default();
             match raft
-                .write(RaftRequest::ConsulKVPut {
+                .write(ConsulRaftRequest::KVPut {
                     key: key.clone(),
-                    value: json,
+                    stored_kv_json: json,
                     session_index_key: None,
                 })
                 .await
@@ -561,7 +562,7 @@ impl ConsulKVService {
                 if let Some(ref raft) = self.raft_node {
                     let json = serde_json::to_string(&existing).unwrap_or_default();
                     match raft
-                        .write(RaftRequest::ConsulKVCas {
+                        .write(ConsulRaftRequest::KVCas {
                             key: key.clone(),
                             stored_kv_json: json,
                             expected_modify_index: cas_index,
@@ -594,12 +595,18 @@ impl ConsulKVService {
         }
     }
 
-    /// Acquire a session lock on a key.
-    /// Returns false if the key is locked by a different session, or the key does not exist.
-    pub async fn acquire_session(&self, key: &str, session_id: &str) -> bool {
-        let Some(mut stored) = self.get_stored(key) else {
-            return false;
-        };
+    /// Put a value and acquire a session lock on a key atomically.
+    /// Returns false if the key is locked by a different session.
+    /// If the key does not exist, it is created.
+    pub async fn put_and_acquire(
+        &self,
+        key: &str,
+        value: &str,
+        flags: Option<u64>,
+        session_id: &str,
+    ) -> bool {
+        let encoded = Some(BASE64.encode(value.as_bytes()));
+        let mut stored = self.build_stored_kv(key, encoded, flags);
 
         // Match Consul's LockIndex logic from kvs.go kvsLockTxn:
         // - If already locked by the SAME session: preserve LockIndex (re-acquire is a no-op)
@@ -626,7 +633,7 @@ impl ConsulKVService {
         if let Some(ref raft) = self.raft_node {
             let json = serde_json::to_string(&stored).unwrap_or_default();
             match raft
-                .write(RaftRequest::ConsulKVAcquireSession {
+                .write(ConsulRaftRequest::KVAcquireSession {
                     key: key.to_string(),
                     session_id: session_id.to_string(),
                     stored_kv_json: json,
@@ -665,6 +672,118 @@ impl ConsulKVService {
         }
     }
 
+    /// Acquire a session lock on a key (without changing value).
+    /// Returns false if the key is locked by a different session, or the key does not exist.
+    pub async fn acquire_session(&self, key: &str, session_id: &str) -> bool {
+        let Some(mut stored) = self.get_stored(key) else {
+            return false;
+        };
+
+        match stored.pair.session.as_deref() {
+            Some(holder) if holder == session_id => {}
+            Some(_) => return false,
+            None => {
+                stored.pair.lock_index += 1;
+            }
+        }
+
+        stored.pair.session = Some(session_id.to_string());
+        stored.pair.modify_index = self.next_index();
+        stored.modified_at = current_timestamp();
+
+        if let Some(ref raft) = self.raft_node {
+            let json = serde_json::to_string(&stored).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::KVAcquireSession {
+                    key: key.to_string(),
+                    session_id: session_id.to_string(),
+                    stored_kv_json: json,
+                })
+                .await
+            {
+                Ok(r) if r.success => {
+                    self.notify.notify_waiters();
+                    true
+                }
+                _ => false,
+            }
+        } else {
+            let mut batch = WriteBatch::default();
+            self.batch_put_stored(&mut batch, key, &stored);
+            if let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
+                let idx_key = format!("kidx:{}:{}", session_id, key);
+                batch.put_cf(cf_sessions, idx_key.as_bytes(), b"");
+            }
+            if let Err(e) = self.db.write(batch) {
+                error!("Failed to acquire session on '{}': {}", key, e);
+                return false;
+            }
+            self.notify.notify_waiters();
+            true
+        }
+    }
+
+    /// Put a value and release a session lock on a key atomically.
+    /// Returns false if the key is not held by the given session.
+    pub async fn put_and_release(
+        &self,
+        key: &str,
+        value: &str,
+        flags: Option<u64>,
+        session_id: &str,
+    ) -> bool {
+        let encoded = Some(BASE64.encode(value.as_bytes()));
+        let mut stored = self.build_stored_kv(key, encoded, flags);
+
+        if stored.pair.session.as_deref() != Some(session_id) {
+            return false;
+        }
+
+        stored.pair.session = None;
+        stored.pair.modify_index = self.next_index();
+        stored.modified_at = current_timestamp();
+
+        if let Some(ref raft) = self.raft_node {
+            let json = serde_json::to_string(&stored).unwrap_or_default();
+            match raft
+                .write(ConsulRaftRequest::KVReleaseSessionKey {
+                    key: key.to_string(),
+                    session_id: session_id.to_string(),
+                    stored_kv_json: json,
+                })
+                .await
+            {
+                Ok(r) if r.success => {
+                    self.notify.notify_waiters();
+                    true
+                }
+                Ok(r) => {
+                    error!("Raft ConsulKVReleaseSessionKey rejected: {:?}", r.message);
+                    false
+                }
+                Err(e) => {
+                    error!("Raft ConsulKVReleaseSessionKey failed: {}", e);
+                    false
+                }
+            }
+        } else {
+            let mut batch = WriteBatch::default();
+            self.batch_put_stored(&mut batch, key, &stored);
+            if let Some(cf_sessions) = self.db.cf_handle(CF_CONSUL_SESSIONS) {
+                let idx_key = format!("kidx:{}:{}", session_id, key);
+                batch.delete_cf(cf_sessions, idx_key.as_bytes());
+            }
+
+            if let Err(e) = self.db.write(batch) {
+                error!("Failed to release session on '{}': {}", key, e);
+                return false;
+            }
+
+            self.notify.notify_waiters();
+            true
+        }
+    }
+
     /// Release a session lock on a single key.
     /// Returns false if the key is not held by the given session.
     pub async fn release_session_key(&self, key: &str, session_id: &str) -> bool {
@@ -683,7 +802,7 @@ impl ConsulKVService {
         if let Some(ref raft) = self.raft_node {
             let json = serde_json::to_string(&stored).unwrap_or_default();
             match raft
-                .write(RaftRequest::ConsulKVReleaseSessionKey {
+                .write(ConsulRaftRequest::KVReleaseSessionKey {
                     key: key.to_string(),
                     session_id: session_id.to_string(),
                     stored_kv_json: json,
@@ -776,7 +895,7 @@ impl ConsulKVService {
 
         if let Some(ref raft) = self.raft_node {
             match raft
-                .write(RaftRequest::ConsulKVReleaseSession {
+                .write(ConsulRaftRequest::KVReleaseSession {
                     session_id: session_id.to_string(),
                     updates,
                     index_keys_to_delete,
@@ -825,7 +944,7 @@ impl ConsulKVService {
 
         if let Some(ref raft) = self.raft_node {
             match raft
-                .write(RaftRequest::ConsulKVDelete {
+                .write(ConsulRaftRequest::KVDelete {
                     key: key.to_string(),
                     session_index_cleanup,
                 })
@@ -873,7 +992,7 @@ impl ConsulKVService {
             // For Raft mode, send the prefix to the state machine which handles
             // the scan + batch delete atomically on all nodes
             match raft
-                .write(RaftRequest::ConsulKVDeletePrefix {
+                .write(ConsulRaftRequest::KVDeletePrefix {
                     prefix: prefix.to_string(),
                 })
                 .await
@@ -1194,8 +1313,6 @@ impl Default for ConsulKVService {
 /// Open a temporary RocksDB instance with all Consul column families.
 /// Used for tests and in-memory mode.
 pub fn open_temp_consul_db() -> (Arc<DB>, Arc<tempfile::TempDir>) {
-    use batata_consistency::raft::state_machine::{CF_CONSUL_ACL, CF_CONSUL_QUERIES};
-
     let temp_dir = Arc::new(tempfile::tempdir().expect("Failed to create temp directory"));
     let mut db_opts = rocksdb::Options::default();
     db_opts.create_if_missing(true);
@@ -1222,6 +1339,7 @@ pub fn open_temp_consul_db() -> (Arc<DB>, Arc<tempfile::TempDir>) {
 /// Get a key or keys with prefix
 pub async fn get_kv(
     kv_service: web::Data<ConsulKVService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     acl_service: web::Data<AclService>,
     req: HttpRequest,
     query: web::Query<KVQueryParams>,
@@ -1239,13 +1357,16 @@ pub async fn get_kv(
     let keys_only = query.keys.unwrap_or(false);
     let recurse = query.recurse.unwrap_or(false);
 
-    // Handle blocking watch request
+    // Handle blocking watch request using the unified index provider.
+    // This ensures blocking queries use the same index (Raft log index in cluster mode)
+    // as the X-Consul-Index header returned to clients.
     if let Some(target_index) = query.index {
-        let wait_ms = query.wait.unwrap_or(5000); // Default 5 second timeout
-        // Wait for index to be reached
-        let reached = kv_service.wait_for_index(target_index, wait_ms).await;
+        let wait_dur = query
+            .wait
+            .as_deref()
+            .and_then(ConsulIndexProvider::parse_wait_duration);
+        let reached = index_provider.wait_for_change(ConsulTable::KVS, target_index, wait_dur).await;
         if !reached {
-            // Timeout - return 404 or empty response based on existing data
             let has_data = kv_service.get(&key).is_some()
                 || kv_service
                     .get_prefix(&key)
@@ -1254,11 +1375,10 @@ pub async fn get_kv(
             if !has_data {
                 return HttpResponse::NotFound().finish();
             }
-            // Return current data even though timeout occurred
         }
     }
 
-    let current_idx = kv_service.current_index();
+    let current_idx = index_provider.current_index(ConsulTable::KVS);
 
     // Handle keys-only request
     if keys_only {
@@ -1340,56 +1460,48 @@ pub async fn put_kv(
 
     let value = String::from_utf8_lossy(&body).to_string();
 
-    // Handle acquire (session-based lock)
+    // Handle acquire (session-based lock) — atomic put + acquire
     if let Some(ref session_id) = query.acquire {
-        // Check if locked by another session first
-        if let Some(existing) = kv_service.get(&key)
-            && existing.session.is_some()
-            && existing.session.as_deref() != Some(session_id)
-        {
-            // Another session holds the lock
-            return HttpResponse::Ok()
-                .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-                .json(false);
+        let success = kv_service
+            .put_and_acquire(&key, &value, query.flags, session_id)
+            .await;
+        if success {
+            index_provider.increment(ConsulTable::KVS);
         }
-        // Write the value
-        kv_service.put(key.clone(), &value, query.flags).await;
-        // Acquire the session lock
-        kv_service.acquire_session(&key, session_id).await;
         return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-            .json(true);
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::KVS).to_string()))
+            .json(success);
     }
 
-    // Handle release (session-based unlock)
+    // Handle release (session-based unlock) — atomic put + release
     if let Some(ref session_id) = query.release {
-        if let Some(existing) = kv_service.get(&key)
-            && existing.session.as_deref() == Some(session_id)
-        {
-            // Release the lock: update the value and clear session
-            kv_service.put(key.clone(), &value, query.flags).await;
-            kv_service.release_session_key(&key, session_id).await;
-            return HttpResponse::Ok()
-                .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-                .json(true);
+        let success = kv_service
+            .put_and_release(&key, &value, query.flags, session_id)
+            .await;
+        if success {
+            index_provider.increment(ConsulTable::KVS);
         }
         return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
-            .json(false);
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::KVS).to_string()))
+            .json(success);
     }
 
     // Check-and-set if cas parameter is provided
     if let Some(cas_index) = query.cas {
         let success = kv_service.cas(key, &value, cas_index, query.flags).await;
+        if success {
+            index_provider.increment(ConsulTable::KVS);
+        }
         return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::KVS).to_string()))
             .json(success);
     }
 
     // Regular put
     kv_service.put(key, &value, query.flags).await;
+    index_provider.increment(ConsulTable::KVS);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::KVS).to_string()))
         .json(true)
 }
 
@@ -1397,6 +1509,7 @@ pub async fn put_kv(
 /// Delete a key or keys with prefix
 pub async fn delete_kv(
     kv_service: web::Data<ConsulKVService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     acl_service: web::Data<AclService>,
     req: HttpRequest,
     query: web::Query<KVQueryParams>,
@@ -1428,6 +1541,7 @@ pub async fn delete_kv(
         kv_service.delete(&key).await;
     }
 
+    index_provider.increment(ConsulTable::KVS);
     HttpResponse::Ok().json(true)
 }
 

@@ -175,18 +175,18 @@ impl ConsulServices {
     }
 
     /// Creates Consul service adapters with Raft-replicated RocksDB storage.
-    /// Used in cluster mode for data replication across nodes.
-    pub fn with_raft(
+    /// Used in cluster mode for Consul-dedicated Raft consensus.
+    pub fn with_consul_raft(
         naming_service: Arc<NamingService>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
-        raft_node: Arc<RaftNode>,
+        consul_raft: Arc<batata_plugin_consul::raft::ConsulRaftNode>,
         dc_config: ConsulDatacenterConfig,
     ) -> Self {
-        let index_provider = ConsulIndexProvider::with_raft(raft_node.clone());
-        let session = ConsulSessionService::with_raft(db.clone(), raft_node.clone());
-        let kv = ConsulKVService::with_raft(db.clone(), raft_node);
+        let index_provider = ConsulIndexProvider::new();
+        let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone());
+        let kv = ConsulKVService::with_raft(db.clone(), consul_raft);
         let kv_arc = Arc::new(kv.clone());
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());

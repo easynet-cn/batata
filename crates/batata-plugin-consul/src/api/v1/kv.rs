@@ -34,11 +34,12 @@ async fn import_kv(
 #[get("/{key:.*}")]
 async fn get_kv(
     kv_service: web::Data<ConsulKVService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     acl_service: web::Data<AclService>,
     req: HttpRequest,
     query: web::Query<KVQueryParams>,
 ) -> HttpResponse {
-    crate::kv::get_kv(kv_service, acl_service, req, query).await
+    crate::kv::get_kv(kv_service, index_provider, acl_service, req, query).await
 }
 
 #[put("/{key:.*}")]
@@ -56,11 +57,12 @@ async fn put_kv(
 #[delete("/{key:.*}")]
 async fn delete_kv(
     kv_service: web::Data<ConsulKVService>,
+    index_provider: web::Data<ConsulIndexProvider>,
     acl_service: web::Data<AclService>,
     req: HttpRequest,
     query: web::Query<KVQueryParams>,
 ) -> HttpResponse {
-    crate::kv::delete_kv(kv_service, acl_service, req, query).await
+    crate::kv::delete_kv(kv_service, index_provider, acl_service, req, query).await
 }
 
 pub fn routes() -> Scope {

@@ -24,6 +24,7 @@
 //! - `peering`: Cluster peering for cross-datacenter service discovery
 
 pub mod api;
+pub mod raft;
 
 pub mod acl;
 pub mod agent;

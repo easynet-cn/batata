@@ -689,46 +689,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ));
 
         let services = if is_cluster {
-            // Cluster mode: use Raft-replicated storage for Consul data
-            if let Some(ref raft) = app_state.raft_node {
-                // DistributedEmbedded: reuse main Raft node and its state machine DB
-                let db = _rocks_db
-                    .clone()
-                    .expect("DistributedEmbedded must have a RocksDB handle");
-                info!("Consul services using Raft-replicated storage (DistributedEmbedded mode)");
-                ConsulServices::with_raft(
+            // Cluster mode: use independent RocksDB for Consul persistence.
+            // Consul Raft consensus (dedicated Raft group with its own log index space)
+            // is available in batata_plugin_consul::raft but requires full cluster
+            // initialization (network registration, peer discovery, leader election).
+            // This will be wired up in a future iteration.
+            // For now, each node has its own RocksDB — Nacos Raft handles config/naming,
+            // Consul KV is per-node with standalone RocksDB.
+            info!("Consul services using standalone RocksDB persistence (cluster mode)");
+            let consul_rocks_db = open_consul_rocks_db(
+                &consul_data_dir_for_init,
+                &app_state.configuration.rocksdb_config(),
+            );
+            if let Some(db) = consul_rocks_db {
+                ConsulServices::with_persistence(
                     grpc_servers.naming_service.clone(),
                     consul_registry.clone(),
                     consul_acl_enabled,
                     db,
-                    raft.clone(),
                     consul_dc_config.clone(),
                 )
             } else {
-                // ExternalDb cluster: Consul doesn't have a Raft node yet.
-                // Fall back to independent RocksDB for now. A dedicated Consul Raft node
-                // can be added later for ExternalDb cluster replication.
-                info!("Consul services using standalone RocksDB persistence (ExternalDb cluster)");
-                let consul_rocks_db = open_consul_rocks_db(
-                    &consul_data_dir_for_init,
-                    &app_state.configuration.rocksdb_config(),
-                );
-                if let Some(db) = consul_rocks_db {
-                    ConsulServices::with_persistence(
-                        grpc_servers.naming_service.clone(),
-                        consul_registry.clone(),
-                        consul_acl_enabled,
-                        db,
-                        consul_dc_config.clone(),
-                    )
-                } else {
-                    ConsulServices::new(
-                        grpc_servers.naming_service.clone(),
-                        consul_registry.clone(),
-                        consul_acl_enabled,
-                        consul_dc_config.clone(),
-                    )
-                }
+                ConsulServices::new(
+                    grpc_servers.naming_service.clone(),
+                    consul_registry.clone(),
+                    consul_acl_enabled,
+                    consul_dc_config.clone(),
+                )
             }
         } else if !is_console_remote {
             // Standalone mode: use independent RocksDB for Consul persistence
@@ -801,34 +788,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             let session_svc = services.session.clone();
             let kv_svc = services.kv.clone();
-            let raft_for_cleanup = app_state.raft_node.clone();
             tokio::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_secs(30));
                 loop {
                     interval.tick().await;
-                    if let Some(ref raft) = raft_for_cleanup {
-                        // Cluster mode: only leader performs cleanup via Raft
-                        if raft.is_leader() {
-                            let expired = session_svc.scan_expired_session_ids();
-                            if !expired.is_empty() {
-                                info!(
-                                    "Cleaning up {} expired Consul sessions (leader)",
-                                    expired.len()
-                                );
-                                for id in &expired {
-                                    kv_svc.release_session(id).await;
-                                }
-                                let _ = raft
-                                    .write(
-                                        batata_consistency::raft::request::RaftRequest::ConsulSessionCleanupExpired {
-                                            expired_session_ids: expired,
-                                        },
-                                    )
-                                    .await;
-                            }
+                    // Session cleanup: scan and remove expired sessions,
+                    // release any KV locks they held
+                    let expired = session_svc.scan_expired_session_ids();
+                    if !expired.is_empty() {
+                        info!("Cleaning up {} expired Consul sessions", expired.len());
+                        for id in &expired {
+                            kv_svc.release_session(id).await;
                         }
-                    } else {
-                        // Standalone mode: direct cleanup
                         session_svc.cleanup_expired();
                     }
                 }

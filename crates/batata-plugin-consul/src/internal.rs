@@ -17,7 +17,7 @@ use crate::config_entry::ConsulConfigEntryService;
 use crate::connect::ConsulConnectService;
 use crate::connect_ca::ConsulConnectCAService;
 use crate::health::ConsulHealthService;
-use crate::index_provider::ConsulIndexProvider;
+use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{ConsulDatacenterConfig, ConsulError};
 
 // ============================================================================
@@ -208,15 +208,15 @@ pub async fn ui_nodes(
                     .cloned()
                     .unwrap_or_else(|| dc.clone()),
                 meta: None,
-                create_index: index_provider.current_index(),
-                modify_index: index_provider.current_index(),
+                create_index: index_provider.current_index(ConsulTable::Catalog),
+                modify_index: index_provider.current_index(ConsulTable::Catalog),
             });
         }
     }
 
     let nodes: Vec<UINode> = node_map.into_values().collect();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(nodes)
 }
 
@@ -267,11 +267,11 @@ pub async fn ui_node_info(
                         .cloned()
                         .unwrap_or_else(|| dc_config.datacenter.clone()),
                     meta: None,
-                    create_index: index_provider.current_index(),
-                    modify_index: index_provider.current_index(),
+                    create_index: index_provider.current_index(ConsulTable::Catalog),
+                    modify_index: index_provider.current_index(ConsulTable::Catalog),
                 };
                 return HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
                     .json(node);
             }
         }
@@ -294,7 +294,7 @@ pub async fn ui_exported_services(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(connect_service.list_exported_services())
 }
 
@@ -384,7 +384,7 @@ pub async fn ui_catalog_overview(
 
     let _ = total_instances; // used for node counting
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(summary)
 }
 
@@ -407,7 +407,7 @@ pub async fn ui_gateway_services_nodes(
         catalog.get_gateway_services_from_config(&gateway_name, &config_entry_service);
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(gateway_services)
 }
 
@@ -427,7 +427,7 @@ pub async fn ui_gateway_intentions(
     let gateway = path.into_inner();
     let matched = ca_service.match_intentions("destination", &gateway);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(matched)
 }
 
@@ -548,7 +548,7 @@ pub async fn ui_service_topology(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(topology)
 }
 
@@ -652,7 +652,7 @@ pub async fn federation_state_list(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(vec![state])
 }
 
@@ -705,7 +705,7 @@ pub async fn federation_state_mesh_gateways(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(gateways_by_dc)
 }
 
@@ -743,7 +743,7 @@ pub async fn federation_state_get(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(state)
 }
 
@@ -778,7 +778,7 @@ pub async fn assign_service_virtual_ip(
     let found = !instances.is_empty();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(AssignServiceVIPsResponse {
             service_name: request.service_name,
             found,

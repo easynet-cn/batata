@@ -11,7 +11,7 @@ use dashmap::DashMap;
 use sea_orm::DatabaseConnection;
 
 use crate::acl::{AclService, ResourceType};
-use crate::index_provider::ConsulIndexProvider;
+use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{ConsulError, EventFireParams, EventFireRequest, EventListParams, UserEvent};
 
 // ConfigService storage constants for events
@@ -391,7 +391,7 @@ pub async fn fire_event(
     let event = service.fire_event(&name, payload, &node_filter, &service_filter, &tag_filter);
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(event)
 }
 
@@ -418,7 +418,7 @@ pub async fn list_events(
     );
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(events)
 }
 
@@ -459,7 +459,7 @@ pub async fn fire_event_persistent(
         .await;
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(event)
 }
 
@@ -488,7 +488,7 @@ pub async fn list_events_persistent(
         .await;
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(events)
 }
 

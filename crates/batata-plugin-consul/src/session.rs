@@ -10,12 +10,12 @@ use rocksdb::{DB, WriteBatch};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
-use batata_consistency::RaftNode;
-use batata_consistency::raft::request::RaftRequest;
-use batata_consistency::raft::state_machine::CF_CONSUL_SESSIONS;
+use crate::raft::{ConsulRaftNode, ConsulRaftRequest};
+
+const CF_CONSUL_SESSIONS: &str = "consul_sessions";
 
 use crate::acl::{AclService, ResourceType};
-use crate::index_provider::ConsulIndexProvider;
+use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::kv::ConsulKVService;
 use crate::model::{ConsulError, Session, SessionCreateRequest, SessionCreateResponse};
 
@@ -55,7 +55,7 @@ pub struct ConsulSessionService {
     /// Keeps temp directory alive for tests/in-memory mode
     _temp_dir: Option<Arc<tempfile::TempDir>>,
     /// Optional Raft node for cluster-mode replication
-    raft_node: Option<Arc<RaftNode>>,
+    raft_node: Option<Arc<ConsulRaftNode>>,
 }
 
 impl ConsulSessionService {
@@ -136,7 +136,7 @@ impl ConsulSessionService {
 
     /// Create a new session service backed by a Raft-replicated RocksDB.
     /// Does NOT clean up expired sessions locally on startup — cleanup goes through Raft.
-    pub fn with_raft(db: Arc<DB>, raft_node: Arc<RaftNode>) -> Self {
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftNode>) -> Self {
         let node_name = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "batata-node".to_string());
@@ -232,7 +232,7 @@ impl ConsulSessionService {
         if let Some(ref raft) = self.raft_node {
             let stored_json = serde_json::to_string(&stored).unwrap_or_default();
             match raft
-                .write(RaftRequest::ConsulSessionCreate {
+                .write(ConsulRaftRequest::SessionCreate {
                     session_id: session_id.clone(),
                     stored_session_json: stored_json,
                 })
@@ -257,7 +257,7 @@ impl ConsulSessionService {
     pub async fn destroy_session(&self, session_id: &str) -> bool {
         if let Some(ref raft) = self.raft_node {
             match raft
-                .write(RaftRequest::ConsulSessionDestroy {
+                .write(ConsulRaftRequest::SessionDestroy {
                     session_id: session_id.to_string(),
                 })
                 .await
@@ -324,7 +324,7 @@ impl ConsulSessionService {
         if let Some(ref raft) = self.raft_node {
             let stored_json = serde_json::to_string(&stored).unwrap_or_default();
             match raft
-                .write(RaftRequest::ConsulSessionRenew {
+                .write(ConsulRaftRequest::SessionRenew {
                     session_id: session_id.to_string(),
                     stored_session_json: stored_json,
                 })
@@ -535,7 +535,7 @@ pub async fn create_session(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
         .json(response)
 }
 
@@ -562,7 +562,7 @@ pub async fn destroy_session(
 
     let destroyed = session_service.destroy_session(&session_id).await;
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
         .json(destroyed)
 }
 
@@ -583,7 +583,7 @@ pub async fn get_session_info(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let idx = index_provider.current_index().to_string();
+    let idx = index_provider.current_index(ConsulTable::Sessions).to_string();
     match session_service.get_session(&session_id) {
         Some(session) => HttpResponse::Ok()
             .insert_header(("X-Consul-Index", idx))
@@ -613,7 +613,7 @@ pub async fn list_sessions(
 
     let sessions = session_service.list_sessions();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
         .json(sessions)
 }
 
@@ -636,7 +636,7 @@ pub async fn list_node_sessions(
 
     let sessions = session_service.list_node_sessions(&node);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
         .json(sessions)
 }
 
@@ -659,7 +659,7 @@ pub async fn renew_session(
 
     match session_service.renew_session(&session_id).await {
         Some(session) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
             .json(vec![session]),
         None => HttpResponse::NotFound().json(ConsulError::new("Session not found or expired")),
     }

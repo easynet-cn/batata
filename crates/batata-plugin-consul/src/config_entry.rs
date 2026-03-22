@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::acl::{AclService, ResourceType};
-use crate::index_provider::ConsulIndexProvider;
+use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -409,7 +409,7 @@ pub async fn list_config_entries(
 
     let entries = config_service.list_entries(&kind);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(entries)
 }
 
@@ -430,7 +430,7 @@ pub async fn get_config_entry(
     let (kind, name) = path.into_inner();
     match config_service.get_entry(&kind, &name) {
         Some(entry) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
             .json(entry),
         None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
     }
@@ -478,7 +478,7 @@ pub async fn apply_config_entry(
 
     match config_service.apply_entry(entry_req, cas) {
         Ok(success) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
             .json(success),
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
     }
@@ -503,11 +503,11 @@ pub async fn delete_config_entry(
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
                     .json(success)
             } else {
                 HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
                     .json(serde_json::json!({}))
             }
         }
@@ -543,7 +543,7 @@ pub async fn list_config_entries_persistent(
 
     let entries = config_service.list_entries(&kind).await;
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(entries)
 }
 
@@ -564,7 +564,7 @@ pub async fn get_config_entry_persistent(
     let (kind, name) = path.into_inner();
     match config_service.get_entry(&kind, &name).await {
         Some(entry) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
             .json(entry),
         None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
     }
@@ -594,7 +594,7 @@ pub async fn apply_config_entry_persistent(
 
     match config_service.apply_entry(entry_req, query.cas).await {
         Ok(success) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
             .json(success),
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
     }
@@ -619,11 +619,11 @@ pub async fn delete_config_entry_persistent(
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
                     .json(success)
             } else {
                 HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
                     .json(serde_json::json!({}))
             }
         }

@@ -19,7 +19,7 @@ use batata_consistency::raft::state_machine::CF_CONSUL_QUERIES;
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
-use crate::index_provider::ConsulIndexProvider;
+use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentService, ConsulDatacenterConfig, ConsulError, HealthCheck, Node, PreparedQuery,
     PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
@@ -213,7 +213,7 @@ pub async fn create_query(
     let query = query_service.create_query(body.into_inner());
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(PreparedQueryCreateResponse { id: query.id })
 }
 
@@ -234,7 +234,7 @@ pub async fn list_queries(
     let queries = query_service.list_queries();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(queries)
 }
 
@@ -257,7 +257,7 @@ pub async fn get_query(
 
     match query_service.get_query(&id) {
         Some(query) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
             .json(vec![query]),
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }
@@ -283,7 +283,7 @@ pub async fn update_query(
 
     match query_service.update_query(&id, body.into_inner()) {
         Some(_) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
             .finish(),
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }
@@ -308,7 +308,7 @@ pub async fn delete_query(
 
     if query_service.delete_query(&id) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
             .finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Query not found"))
@@ -495,7 +495,7 @@ pub async fn execute_query(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(result)
 }
 
@@ -518,7 +518,7 @@ pub async fn explain_query(
 
     match query_service.get_query(&id) {
         Some(query) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
             .json(PreparedQueryExplainResult { query }),
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }

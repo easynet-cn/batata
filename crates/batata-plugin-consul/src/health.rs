@@ -15,7 +15,7 @@ use batata_naming::healthcheck::registry::{
 use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
-use crate::index_provider::ConsulIndexProvider;
+use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentService, CheckRegistration, CheckStatusUpdate, CheckUpdateParams, ConsulDatacenterConfig,
     ConsulError, HealthCheck, HealthQueryParams, Node, ServiceHealth, ServiceQueryParams,
@@ -26,7 +26,7 @@ use crate::model::{
 async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, wait: Option<&str>) {
     if let Some(target_index) = index {
         let timeout = wait.and_then(ConsulIndexProvider::parse_wait_duration);
-        index_provider.wait_for_index(target_index, timeout).await;
+        index_provider.wait_for_change(ConsulTable::Catalog, target_index, timeout).await;
     }
 }
 
@@ -419,7 +419,7 @@ pub async fn get_service_health(
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(results)
 }
 
@@ -557,7 +557,7 @@ pub async fn get_service_checks(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(all_checks)
 }
 
@@ -598,7 +598,7 @@ pub async fn get_checks_by_state(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(checks)
 }
 
@@ -629,7 +629,7 @@ pub async fn get_node_checks(
         .collect();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(checks)
 }
 
@@ -822,7 +822,7 @@ pub async fn list_agent_checks(
         .collect();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(checks_map)
 }
 
@@ -905,7 +905,7 @@ pub async fn get_connect_health(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(results)
 }
 
@@ -989,7 +989,7 @@ pub async fn get_ingress_health(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index().to_string()))
+        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
         .json(results)
 }
 

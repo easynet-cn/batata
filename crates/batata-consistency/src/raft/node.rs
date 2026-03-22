@@ -216,10 +216,25 @@ impl RaftNode {
         &self,
         request: RaftRequest,
     ) -> Result<RaftResponse, Box<dyn std::error::Error + Send + Sync>> {
+        let (resp, _log_index) = self.write_with_index(request).await?;
+        Ok(resp)
+    }
+
+    /// Write a request through Raft and return both the response and the Raft log index.
+    ///
+    /// The log index is the globally consistent Raft commit index for this write,
+    /// suitable for use as CreateIndex/ModifyIndex/X-Consul-Index.
+    pub async fn write_with_index(
+        &self,
+        request: RaftRequest,
+    ) -> Result<(RaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
         debug!("Writing through Raft: {}", request.op_type());
 
         match self.raft.client_write(request.clone()).await {
-            Ok(result) => Ok(result.data),
+            Ok(result) => {
+                let log_index = result.log_id.index;
+                Ok((result.data, log_index))
+            }
             Err(e) => {
                 // Check if we need to forward to the leader
                 if let Some(leader_addr) = self.leader_addr() {
@@ -228,7 +243,12 @@ impl RaftNode {
                         leader_addr,
                         request.op_type()
                     );
-                    self.forward_write_to_leader(&leader_addr, request).await
+                    // Forward returns RaftResponse without log_id; use last_applied as proxy
+                    let resp = self
+                        .forward_write_to_leader(&leader_addr, request)
+                        .await?;
+                    let idx = self.last_applied_index().unwrap_or(1);
+                    Ok((resp, idx))
                 } else {
                     Err(Box::new(e))
                 }

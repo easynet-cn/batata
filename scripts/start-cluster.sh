@@ -32,7 +32,7 @@ WITH_CONSOLE="${WITH_CONSOLE:-true}"
 BUILD="${BUILD:-false}"
 
 CLUSTER_PID_DIR="data/cluster-pids"
-BINARY="./target/debug/batata-server"
+BINARY="${BINARY:-./target/release/batata-server}"
 
 # Colors
 RED='\033[0;31m'
@@ -158,6 +158,7 @@ EOF
         --batata.server.main.port=${NODE1_PORT} \
         --batata.console.port=${CONSOLE_PORT} \
         --batata.persistence.embedded.data_dir=data/node1 \
+        --batata.plugin.consul.data_dir=data/node1/consul_rocksdb \
         --batata.logs.path=logs/node1 \
         --batata.plugin.consul.port=${NODE1_CONSUL_PORT} \
         ${common_args} \
@@ -170,6 +171,7 @@ EOF
         -d server \
         --batata.server.main.port=${NODE2_PORT} \
         --batata.persistence.embedded.data_dir=data/node2 \
+        --batata.plugin.consul.data_dir=data/node2/consul_rocksdb \
         --batata.logs.path=logs/node2 \
         --batata.plugin.consul.port=${NODE2_CONSUL_PORT} \
         ${common_args} \
@@ -182,6 +184,7 @@ EOF
         -d server \
         --batata.server.main.port=${NODE3_PORT} \
         --batata.persistence.embedded.data_dir=data/node3 \
+        --batata.plugin.consul.data_dir=data/node3/consul_rocksdb \
         --batata.logs.path=logs/node3 \
         --batata.plugin.consul.port=${NODE3_CONSUL_PORT} \
         ${common_args} \
