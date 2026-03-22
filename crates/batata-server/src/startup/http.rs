@@ -252,10 +252,11 @@ pub fn console_server(
     let max_payload_size = app_state.configuration.max_payload_size();
     let max_json_size = app_state.configuration.max_json_size();
     let compression_enabled = app_state.configuration.http_compression_enabled();
+    let access_log_enabled = app_state.configuration.http_access_log_enabled();
 
     Ok(HttpServer::new(move || {
         let mut app = App::new()
-            .wrap(Logger::default())
+            .wrap(Condition::new(access_log_enabled, Logger::default()))
             .wrap(
                 DefaultHeaders::new()
                     .add(("X-Content-Type-Options", "nosniff"))
@@ -329,10 +330,11 @@ pub fn consul_server(
     let max_json_size = app_state.configuration.max_json_size();
     let compression_enabled = app_state.configuration.http_compression_enabled();
     let client_request_timeout_secs = app_state.configuration.http_client_request_timeout_secs();
+    let access_log_enabled = app_state.configuration.http_access_log_enabled();
 
     Ok(HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default())
+            .wrap(Condition::new(access_log_enabled, Logger::default()))
             .wrap(
                 DefaultHeaders::new()
                     .add(("X-Content-Type-Options", "nosniff"))
@@ -404,10 +406,11 @@ pub fn mcp_registry_server(
     mcp_registry: Arc<McpServerRegistry>,
     address: String,
     port: u16,
+    access_log_enabled: bool,
 ) -> Result<Server, std::io::Error> {
     Ok(HttpServer::new(move || {
         App::new()
-            .wrap(Logger::default())
+            .wrap(Condition::new(access_log_enabled, Logger::default()))
             .app_data(web::Data::from(mcp_registry.clone()))
             .configure(configure_mcp_registry)
     })
@@ -521,6 +524,7 @@ pub fn main_server(
     let max_payload_size = app_state.configuration.max_payload_size();
     let max_json_size = app_state.configuration.max_json_size();
     let compression_enabled = app_state.configuration.http_compression_enabled();
+    let access_log_enabled = app_state.configuration.http_access_log_enabled();
     let control_plugin = app_state.control_plugin.clone();
 
     // Initialize Prometheus metrics recorder (metrics crate integration)
@@ -530,7 +534,7 @@ pub fn main_server(
 
     Ok(HttpServer::new(move || {
         let mut app = App::new()
-            .wrap(Logger::default())
+            .wrap(Condition::new(access_log_enabled, Logger::default()))
             .wrap(
                 DefaultHeaders::new()
                     .add(("X-Content-Type-Options", "nosniff"))

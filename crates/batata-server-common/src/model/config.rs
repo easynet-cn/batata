@@ -896,6 +896,14 @@ impl Configuration {
     // ========================================================================
 
     /// Check if the control plugin (TPS + connection limiting) is enabled
+    /// Whether HTTP access logging is enabled (default: true).
+    /// Disable for better performance in production.
+    pub fn http_access_log_enabled(&self) -> bool {
+        self.config
+            .get_bool("batata.server.http.access_log.enabled")
+            .unwrap_or(true)
+    }
+
     pub fn control_plugin_enabled(&self) -> bool {
         self.config
             .get_bool("batata.plugin.control.enabled")

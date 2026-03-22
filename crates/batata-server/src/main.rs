@@ -976,6 +976,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ai_services.mcp_registry.clone(),
                     mcp_registry_address,
                     mcp_registry_port,
+                    app_state.configuration.http_access_log_enabled(),
                 )?)
             } else {
                 None
@@ -1058,6 +1059,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     mcp_registry_for_server,
                     mcp_registry_address,
                     mcp_registry_port,
+                    app_state.configuration.http_access_log_enabled(),
                 )?)
             } else {
                 None

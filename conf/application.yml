@@ -300,6 +300,9 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.server.http.compression.enabled: true
 #batata.server.http.compression.min_size: 256    # bytes; responses smaller than this are not compressed
 
+# HTTP access log (per-request logging). Disable for better performance.
+#batata.server.http.access_log.enabled: true
+
 # --- gRPC Server ---
 #batata.server.grpc.tcp_keepalive: 30              # seconds
 #batata.server.grpc.tcp_nodelay: true              # disable Nagle's algorithm for lower latency

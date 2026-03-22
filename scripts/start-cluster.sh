@@ -145,7 +145,7 @@ EOF
     local member_list="127.0.0.1:${NODE1_PORT},127.0.0.1:${NODE2_PORT},127.0.0.1:${NODE3_PORT}"
 
     # Common args: cluster mode + embedded storage + member list
-    local common_args="-m cluster --batata.sql.init.platform=embedded --batata.member.list=${member_list}"
+    local common_args="-m cluster --batata.sql.init.platform=embedded --batata.member.list=${member_list} --batata.server.http.access_log.enabled=false --batata.plugin.control.enabled=false"
     if [ "$CONSUL_ENABLED" = "true" ]; then
         common_args="${common_args} --batata.plugin.consul.enabled=true"
     fi
