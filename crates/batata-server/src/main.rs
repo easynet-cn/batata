@@ -704,7 +704,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await
             {
-                Ok((consul_raft_node, consul_db)) => {
+                Ok((consul_raft_node, consul_db, consul_table_index)) => {
                     let consul_raft = Arc::new(consul_raft_node);
                     info!("Consul Raft node created (id={}, dir={})", consul_node_id, consul_data_dir_for_init);
 
@@ -777,6 +777,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         consul_acl_enabled,
                         consul_db,
                         consul_raft,
+                        consul_table_index,
                         consul_dc_config.clone(),
                     )
                 }

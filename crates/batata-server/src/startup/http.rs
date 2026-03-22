@@ -182,9 +182,12 @@ impl ConsulServices {
         acl_enabled: bool,
         db: Arc<DB>,
         consul_raft: Arc<batata_plugin_consul::raft::ConsulRaftNode>,
+        table_index: batata_plugin_consul::index_provider::ConsulTableIndex,
         dc_config: ConsulDatacenterConfig,
     ) -> Self {
-        let index_provider = ConsulIndexProvider::new();
+        // Use the table_index from the state machine — it gets updated
+        // on every Raft apply, ensuring blocking queries see latest data.
+        let index_provider: ConsulIndexProvider = table_index;
         let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone());
         let kv = ConsulKVService::with_raft(db.clone(), consul_raft);
         let kv_arc = Arc::new(kv.clone());

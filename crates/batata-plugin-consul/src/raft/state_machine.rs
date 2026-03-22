@@ -14,6 +14,7 @@ use tracing::{debug, error, info};
 
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
 use super::types::*;
+use crate::index_provider::{ConsulTable, ConsulTableIndex};
 
 // Column family names
 const CF_CONSUL_KV: &str = "consul_kv";
@@ -30,6 +31,9 @@ pub struct ConsulStateMachine {
     db: Arc<DB>,
     last_applied: RwLock<Option<ConsulLogId>>,
     last_membership: RwLock<ConsulStoredMembership>,
+    /// Per-table index — updated on every apply to notify blocking queries.
+    /// Shared with ConsulServices so GET handlers can wait_for_change().
+    table_index: ConsulTableIndex,
 }
 
 impl ConsulStateMachine {
@@ -56,19 +60,33 @@ impl ConsulStateMachine {
         let last_applied = Self::load_last_applied(&db);
         let last_membership = Self::load_last_membership(&db);
 
+        let table_index = ConsulTableIndex::new();
+        // Initialize table indexes from last_applied
+        if let Some(ref la) = last_applied {
+            table_index.update(ConsulTable::KVS, la.index);
+            table_index.update(ConsulTable::Sessions, la.index);
+            table_index.update(ConsulTable::Catalog, la.index);
+        }
+
         Ok(Self {
             db,
             last_applied: RwLock::new(last_applied),
             last_membership: RwLock::new(
                 last_membership.unwrap_or_else(|| StoredMembership::new(None, ConsulMembership::new(vec![], None))),
             ),
+            table_index,
         })
     }
 
     /// Get a shared handle to the underlying RocksDB.
-    /// Used by ConsulKVService for direct reads.
     pub fn db(&self) -> Arc<DB> {
         self.db.clone()
+    }
+
+    /// Get the per-table index tracker.
+    /// Share this with ConsulServices so GET handlers can wait_for_change().
+    pub fn table_index(&self) -> ConsulTableIndex {
+        self.table_index.clone()
     }
 
     // ========================================================================
@@ -486,8 +504,18 @@ impl RaftStateMachine<ConsulTypeConfig> for ConsulStateMachine {
                 EntryPayload::Blank => {
                     results.push(ConsulRaftResponse::default());
                 }
-                EntryPayload::Normal(request) => {
-                    let resp = self.apply_request(request, log_index);
+                EntryPayload::Normal(ref request) => {
+                    // Determine which table this request affects
+                    let table = match request {
+                        ConsulRaftRequest::SessionCreate { .. }
+                        | ConsulRaftRequest::SessionDestroy { .. }
+                        | ConsulRaftRequest::SessionRenew { .. }
+                        | ConsulRaftRequest::SessionCleanupExpired { .. } => ConsulTable::Sessions,
+                        _ => ConsulTable::KVS,
+                    };
+                    let resp = self.apply_request(request.clone(), log_index);
+                    // Update table index AFTER apply (data is now in RocksDB)
+                    self.table_index.update(table, log_index);
                     results.push(resp);
                 }
                 EntryPayload::Membership(membership) => {
@@ -504,9 +532,14 @@ impl RaftStateMachine<ConsulTypeConfig> for ConsulStateMachine {
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        // TODO: Implement snapshot builder for Consul state machine
-        // For now, return self (we need to implement the SnapshotBuilder trait)
-        unreachable!("Consul snapshot builder not yet implemented")
+        // The state machine itself implements RaftSnapshotBuilder.
+        // Currently returns an empty snapshot; full implementation TODO.
+        ConsulStateMachine {
+            db: self.db.clone(),
+            last_applied: RwLock::new(self.last_applied.read().await.clone()),
+            last_membership: RwLock::new(self.last_membership.read().await.clone()),
+            table_index: self.table_index.clone(),
+        }
     }
 
     async fn begin_receiving_snapshot(

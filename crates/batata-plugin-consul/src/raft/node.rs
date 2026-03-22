@@ -14,6 +14,7 @@ use tracing::{debug, info, warn};
 use super::log_store::ConsulLogStore;
 use super::network::ConsulRaftNetworkFactory;
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
+use crate::index_provider::ConsulTableIndex;
 use super::state_machine::ConsulStateMachine;
 use super::types::*;
 
@@ -33,7 +34,7 @@ impl ConsulRaftNode {
         node_id: NodeId,
         addr: String,
         data_dir: impl AsRef<Path>,
-    ) -> Result<(Self, Arc<DB>), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(Self, Arc<DB>, ConsulTableIndex), Box<dyn std::error::Error + Send + Sync>> {
         let data_dir = data_dir.as_ref().to_path_buf();
         let raft_dir = data_dir.join("raft");
 
@@ -52,6 +53,7 @@ impl ConsulRaftNode {
         // Create state machine
         let state_machine = ConsulStateMachine::open(raft_dir.join("state")).await?;
         let db = state_machine.db();
+        let table_index = state_machine.table_index();
 
         // Create network factory
         let network_factory = ConsulRaftNetworkFactory::new();
@@ -89,6 +91,7 @@ impl ConsulRaftNode {
                 data_dir,
             },
             db,
+            table_index,
         ))
     }
 
