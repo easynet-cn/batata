@@ -432,9 +432,9 @@ async fn get_distro(
 
     // In standalone/embedded mode, the responsible server is always self
     let self_addr = data
-        .server_member_manager
+        .cluster_manager
         .as_ref()
-        .map(|smm| smm.local_address().to_string())
+        .map(|cm| cm.local_address().to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
     let response = serde_json::json!({

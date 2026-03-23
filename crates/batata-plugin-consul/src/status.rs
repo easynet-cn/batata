@@ -1,14 +1,14 @@
 //! Consul Status API HTTP handlers
 //!
 //! Implements Consul-compatible status endpoints for Raft information.
-//! Supports both fixed (fallback) and real cluster information via ServerMemberManager.
+//! Supports both fixed (fallback) and real cluster information via ClusterManager.
 
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde::Deserialize;
 
-use batata_core::service::cluster::ServerMemberManager;
+use batata_common::ClusterManager;
 
 use crate::acl::{AclService, ResourceType};
 use crate::model::{ConsulDatacenterConfig, ConsulError};
@@ -66,7 +66,7 @@ pub async fn get_peers(
 }
 
 // ============================================================================
-// Real Cluster Handlers (Using ServerMemberManager)
+// Real Cluster Handlers (Using ClusterManager)
 // ============================================================================
 
 /// Convert Batata member address to Consul-style address with the configured consul port.
@@ -84,11 +84,11 @@ fn to_consul_address(batata_address: &str, consul_port: u16) -> String {
 }
 
 /// GET /v1/status/leader (Real cluster version)
-/// Returns the actual Raft leader address from ServerMemberManager
+/// Returns the actual Raft leader address from ClusterManager
 pub async fn get_leader_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
     // Check ACL authorization - status endpoints require agent read
@@ -97,7 +97,7 @@ pub async fn get_leader_real(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Get real leader address from ServerMemberManager
+    // Get real leader address from ClusterManager
     let leader = member_manager
         .leader_address()
         .map(|addr| to_consul_address(&addr, dc_config.consul_port))
@@ -107,11 +107,11 @@ pub async fn get_leader_real(
 }
 
 /// GET /v1/status/peers (Real cluster version)
-/// Returns the actual Raft peer addresses from ServerMemberManager
+/// Returns the actual Raft peer addresses from ClusterManager
 pub async fn get_peers_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
     // Check ACL authorization - status endpoints require agent read
@@ -123,7 +123,7 @@ pub async fn get_peers_real(
     // Get all healthy members as peers
     let consul_port = dc_config.consul_port;
     let peers: Vec<String> = member_manager
-        .healthy_members()
+        .healthy_members_extended()
         .iter()
         .map(|m| to_consul_address(&m.address, consul_port))
         .collect();

@@ -4,7 +4,7 @@ use actix_web::{HttpRequest, Responder, get, put, web};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, api::model::Member, error, model::common::AppState,
+    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
     model::response::Result, secured,
 };
 
@@ -49,12 +49,13 @@ async fn get_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
             .build()
     );
 
-    let self_member = data.member_manager().get_self();
-    let extend_info = self_member
-        .extend_info
-        .read()
-        .ok()
-        .map(|info| info.clone().into_iter().collect());
+    let self_member = data.cluster_manager().get_self_member();
+    let extend_info: Option<std::collections::HashMap<String, serde_json::Value>> =
+        if self_member.extend_info.is_empty() {
+            None
+        } else {
+            Some(self_member.extend_info.into_iter().collect())
+        };
 
     let response = NodeSelfResponse {
         ip: self_member.ip.clone(),
@@ -62,7 +63,7 @@ async fn get_self(req: HttpRequest, data: web::Data<AppState>) -> impl Responder
         address: self_member.address.clone(),
         state: self_member.state.to_string(),
         extend_info,
-        fail_access_cnt: self_member.fail_access_cnt,
+        fail_access_cnt: 0,
         abilities: Some(NodeAbilities {
             naming_ability: Some(NamingAbility {
                 support_push: true,
@@ -93,7 +94,7 @@ async fn list_nodes(
             .build()
     );
 
-    let mut members: Vec<Member> = data.member_manager().all_members();
+    let mut members = data.cluster_manager().all_members_extended();
 
     if let Some(keyword) = &params.keyword
         && !keyword.is_empty()
@@ -104,11 +105,12 @@ async fn list_nodes(
     let nodes: Vec<NodeResponse> = members
         .into_iter()
         .map(|m| {
-            let extend_info = m
-                .extend_info
-                .read()
-                .ok()
-                .map(|info| info.clone().into_iter().collect());
+            let extend_info: Option<serde_json::Map<String, serde_json::Value>> =
+                if m.extend_info.is_empty() {
+                    None
+                } else {
+                    Some(m.extend_info.into_iter().collect())
+                };
 
             NodeResponse {
                 ip: m.ip,
@@ -116,7 +118,7 @@ async fn list_nodes(
                 address: m.address,
                 state: m.state.to_string(),
                 extend_info,
-                fail_access_cnt: m.fail_access_cnt,
+                fail_access_cnt: 0,
             }
         })
         .collect();
@@ -136,8 +138,8 @@ async fn get_health(req: HttpRequest, data: web::Data<AppState>) -> impl Respond
             .build()
     );
 
-    let self_member = data.member_manager().get_self();
-    let healthy = self_member.is_healthy();
+    let self_member = data.cluster_manager().get_self_member();
+    let healthy = self_member.state == batata_common::MemberState::Up;
 
     #[derive(Serialize)]
     struct HealthResponse {

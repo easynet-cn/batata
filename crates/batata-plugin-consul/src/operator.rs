@@ -429,9 +429,9 @@ impl Default for ConsulOperatorService {
 // Operator Service (Real Cluster)
 // ============================================================================
 
-/// Real cluster operator service using ServerMemberManager
+/// Real cluster operator service using ClusterManager
 pub struct ConsulOperatorServiceReal {
-    pub(crate) member_manager: Arc<batata_core::service::cluster::ServerMemberManager>,
+    pub(crate) member_manager: Arc<dyn batata_common::ClusterManager>,
     autopilot_config: Arc<tokio::sync::RwLock<AutopilotConfiguration>>,
     keyring: Arc<DashMap<String, i32>>,
     primary_key: Arc<tokio::sync::RwLock<Option<String>>>,
@@ -440,12 +440,12 @@ pub struct ConsulOperatorServiceReal {
 }
 
 impl ConsulOperatorServiceReal {
-    pub fn new(member_manager: Arc<batata_core::service::cluster::ServerMemberManager>) -> Self {
+    pub fn new(member_manager: Arc<dyn batata_common::ClusterManager>) -> Self {
         Self::with_datacenter(member_manager, "dc1".to_string())
     }
 
     pub fn with_datacenter(
-        member_manager: Arc<batata_core::service::cluster::ServerMemberManager>,
+        member_manager: Arc<dyn batata_common::ClusterManager>,
         datacenter: String,
     ) -> Self {
         Self {
@@ -459,7 +459,7 @@ impl ConsulOperatorServiceReal {
     }
 
     pub fn get_raft_configuration(&self) -> RaftConfigurationResponse {
-        let members = self.member_manager.all_members();
+        let members = self.member_manager.all_members_extended();
         let servers: Vec<RaftServer> = members
             .iter()
             .enumerate()
@@ -478,9 +478,9 @@ impl ConsulOperatorServiceReal {
     }
 
     pub fn get_autopilot_health(&self) -> AutopilotHealthResponse {
-        use batata_api::model::NodeState;
+        use batata_common::MemberState;
 
-        let members = self.member_manager.all_members();
+        let members = self.member_manager.all_members_extended();
         let current_index = self.index.load(Ordering::SeqCst);
         let mut healthy_voters = 0i32;
 
@@ -488,22 +488,16 @@ impl ConsulOperatorServiceReal {
             .iter()
             .enumerate()
             .map(|(i, m)| {
-                let is_healthy = matches!(m.state, NodeState::Up);
+                let is_healthy = m.state == MemberState::Up;
                 let serf_status = match m.state {
-                    NodeState::Up => "alive",
-                    NodeState::Down => "failed",
-                    NodeState::Suspicious => "leaving",
-                    _ => "none",
+                    MemberState::Up => "alive",
+                    MemberState::Down => "failed",
+                    MemberState::Suspicious => "leaving",
                 };
                 if is_healthy {
                     healthy_voters += 1;
                 }
-                // Estimate last contact from fail_access_cnt
-                let last_contact = if m.fail_access_cnt == 0 {
-                    "0ms".to_string()
-                } else {
-                    format!("{}ms", m.fail_access_cnt * 200)
-                };
+                let last_contact = "0ms".to_string();
                 AutopilotServerHealth {
                     id: m.ip.clone(),
                     name: m.ip.clone(),
@@ -586,7 +580,7 @@ impl ConsulOperatorServiceReal {
     }
 
     pub fn list_keys(&self) -> Vec<KeyringResponse> {
-        let members = self.member_manager.all_members();
+        let members = self.member_manager.all_members_extended();
         let num_nodes = members.len() as i32;
         let keys: HashMap<String, i32> = self
             .keyring
@@ -625,7 +619,7 @@ impl ConsulOperatorServiceReal {
     }
 
     pub fn install_key(&self, key: &str) {
-        let members = self.member_manager.all_members();
+        let members = self.member_manager.all_members_extended();
         self.keyring.insert(key.to_string(), members.len() as i32);
     }
 
@@ -1149,7 +1143,7 @@ pub async fn get_operator_usage_real(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let members = operator_service.member_manager.all_members();
+    let members = operator_service.member_manager.all_members_extended();
 
     // Get real service counts from catalog
     let services = catalog_service.get_services("public");

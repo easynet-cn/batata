@@ -82,11 +82,11 @@ async fn dump_local_cache(req: HttpRequest, data: web::Data<AppState>) -> impl R
                 for config in &configs {
                     // Update subscriber MD5 cache - if any subscriber has a stale MD5,
                     // they will be notified of the change on next check
-                    let config_key = batata_core::ConfigKey {
-                        data_id: config.data_id.clone(),
-                        group: config.group.clone(),
-                        tenant: config.tenant.clone(),
-                    };
+                    let config_key = batata_common::ConfigSubscriptionKey::new(
+                        &config.data_id,
+                        &config.group,
+                        &config.tenant,
+                    );
 
                     // Check if any subscribers have stale MD5 and need notification
                     let subscribers = data.config_subscriber_manager.get_subscribers(&config_key);

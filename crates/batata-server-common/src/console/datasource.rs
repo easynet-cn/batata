@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
 use batata_api::naming::model::Instance;
-use batata_core::cluster::ServerMemberManager;
+use batata_common::ClusterManager;
 
 use super::api_model::{
     ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
@@ -405,6 +405,6 @@ pub trait ConsoleDataSource: Send + Sync {
     /// Check if this is a remote data source
     fn is_remote(&self) -> bool;
 
-    /// Get server member manager (only available in local mode)
-    fn get_server_member_manager(&self) -> Option<Arc<ServerMemberManager>>;
+    /// Get cluster manager (only available in local mode)
+    fn get_cluster_manager(&self) -> Option<Arc<dyn ClusterManager>>;
 }

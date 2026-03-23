@@ -8,7 +8,7 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, HttpResponse, Scope, get, put, web};
 
 use batata_api::naming::NamingServiceProvider;
-use batata_core::service::cluster::ServerMemberManager;
+use batata_common::ClusterManager;
 
 use crate::acl::AclService;
 use crate::agent::{ConsulAgentService, MonitorQueryParams};
@@ -400,7 +400,7 @@ async fn get_agent_self_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::agent::get_agent_self_real(req, acl_service, dc_config, member_manager, index_provider)
@@ -412,7 +412,7 @@ async fn get_agent_members_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     _query: web::Query<AgentMembersParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -433,7 +433,7 @@ async fn get_agent_metrics_real(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     agent: web::Data<ConsulAgentService>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::agent::get_agent_metrics_real(
@@ -451,7 +451,7 @@ async fn get_agent_metrics_real(
 async fn agent_metrics_stream_real(
     req: HttpRequest,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -509,7 +509,7 @@ pub fn routes() -> Scope {
         .service(crate::api::v1::connect_ca::agent_connect_routes())
 }
 
-/// Real cluster agent routes (uses ServerMemberManager for /self, /members, /metrics)
+/// Real cluster agent routes (uses ClusterManager for /self, /members, /metrics)
 pub fn routes_real() -> Scope {
     web::scope("/agent")
         // Agent core - real cluster variants

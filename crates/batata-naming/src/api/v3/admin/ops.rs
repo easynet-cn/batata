@@ -157,7 +157,7 @@ async fn get_metrics(
 
     let subscriber_ids = naming_service.get_all_subscriber_ids();
     let subscribe_count = subscriber_ids.len() as i32;
-    let cluster_node_count = data.member_manager().all_members().len() as i32;
+    let cluster_node_count = data.cluster_manager().member_count() as i32;
 
     let is_standalone = data.configuration.is_standalone();
     let (responsible_service_count, responsible_instance_count) = if is_standalone {

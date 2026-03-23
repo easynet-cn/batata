@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use batata_auth::service::oauth::OAuthService;
+use batata_common::ClusterManager;
 use batata_consistency::raft::state_machine::{
     CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
 };
@@ -131,15 +132,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage_mode = configuration.persistence_mode();
     info!("Persistence mode: {}", storage_mode);
 
-    let (database_connection, server_member_manager, persistence, _rocks_db, raft_node): (
+    let (
+        database_connection,
+        server_member_manager,
+        cluster_manager,
+        persistence,
+        _rocks_db,
+        raft_node,
+    ): (
         Option<sea_orm::DatabaseConnection>,
         Option<Arc<ServerMemberManager>>,
+        Option<Arc<dyn ClusterManager>>,
         Option<Arc<dyn PersistenceService>>,
         Option<Arc<rocksdb::DB>>,
         Option<Arc<batata_consistency::RaftNode>>,
     ) = if is_console_remote {
         info!("Starting in console remote mode - connecting to remote server");
-        (None, None, None, None, None)
+        (None, None, None, None, None, None)
     } else {
         match storage_mode {
             StorageMode::ExternalDb => {
@@ -154,10 +163,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let core_config = configuration.to_core_config();
                 let smm = Arc::new(ServerMemberManager::new(&core_config));
+                let cm: Arc<dyn ClusterManager> = smm.clone();
                 let persist: Arc<dyn PersistenceService> = Arc::new(
                     batata_persistence::ExternalDbPersistService::new(db.clone()),
                 );
-                (Some(db), Some(smm), Some(persist), None, None)
+                (Some(db), Some(smm), Some(cm), Some(persist), None, None)
             }
             StorageMode::StandaloneEmbedded => {
                 let data_dir = configuration.embedded_data_dir();
@@ -175,7 +185,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Arc::new(batata_persistence::EmbeddedPersistService::from_state_machine(&sm));
                 let core_config = configuration.to_core_config();
                 let smm = Arc::new(ServerMemberManager::new(&core_config));
-                (None, Some(smm), Some(persist), Some(rdb), None)
+                let cm: Arc<dyn ClusterManager> = smm.clone();
+                (None, Some(smm), Some(cm), Some(persist), Some(rdb), None)
             }
             StorageMode::DistributedEmbedded => {
                 let data_dir = configuration.embedded_data_dir();
@@ -248,14 +259,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let core_config = configuration.to_core_config();
                 let smm = Arc::new(ServerMemberManager::new(&core_config));
-                (None, Some(smm), Some(persist), Some(rdb), Some(raft_node))
+                let cm: Arc<dyn ClusterManager> = smm.clone();
+                (
+                    None,
+                    Some(smm),
+                    Some(cm),
+                    Some(persist),
+                    Some(rdb),
+                    Some(raft_node),
+                )
             }
         }
     };
 
     // Create console datasource based on mode
     // Create config subscriber manager (shared between gRPC and console)
-    let config_subscriber_manager = Arc::new(batata_core::ConfigSubscriberManager::new());
+    let config_subscriber_manager_concrete = Arc::new(batata_core::ConfigSubscriberManager::new());
+    let config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService> =
+        config_subscriber_manager_concrete.clone();
 
     // Create NamingService early so it can be shared with both console datasource and gRPC servers
     let naming_service: Option<Arc<batata_naming::NamingService>> = if !is_console_remote {
@@ -267,8 +288,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let console_datasource = batata_console::create_datasource(
         &configuration,
         database_connection.clone(),
-        server_member_manager.clone(),
-        config_subscriber_manager.clone(),
+        cluster_manager.clone(),
+        config_subscriber_manager_concrete.clone(),
         naming_service
             .clone()
             .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>),
@@ -370,7 +391,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create application state
     let app_state = Arc::new(AppState {
         configuration,
-        server_member_manager,
+        cluster_manager,
         config_subscriber_manager,
         console_datasource,
         oauth_service,
@@ -457,6 +478,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sdk_server_port,
         cluster_server_port,
         raft_node,
+        server_member_manager.clone(),
+        config_subscriber_manager_concrete,
     )?;
 
     // Start health check manager (unhealthy and expired instance checkers)
@@ -532,7 +555,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Start cluster manager if in cluster mode
-    if let Some(ref smm) = app_state.server_member_manager {
+    if let Some(ref smm) = server_member_manager {
         let startup_mode = app_state.configuration.startup_mode();
         info!("Starting in {} mode", startup_mode);
 
@@ -1151,7 +1174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 6. Stop cluster manager if running (deregisters from cluster)
-    if let Some(ref smm) = app_state.server_member_manager
+    if let Some(ref smm) = server_member_manager
         && !app_state.configuration.is_standalone()
     {
         info!("Stopping cluster manager...");

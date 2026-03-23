@@ -11,7 +11,7 @@ use std::{
 };
 use tracing::{debug, info, warn};
 
-use batata_core::cluster::ServerMemberManager;
+use batata_common::ClusterManager;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
@@ -1107,7 +1107,7 @@ impl ConsoleDataSource for RemoteDataSource {
         true
     }
 
-    fn get_server_member_manager(&self) -> Option<Arc<ServerMemberManager>> {
+    fn get_cluster_manager(&self) -> Option<Arc<dyn ClusterManager>> {
         None
     }
 }

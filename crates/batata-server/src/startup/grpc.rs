@@ -224,8 +224,11 @@ fn register_distro_handlers(registry: &mut HandlerRegistry, distro_protocol: Arc
 }
 
 /// Registers the cluster member report handler.
-fn register_cluster_handlers(registry: &mut HandlerRegistry, app_state: Arc<AppState>) {
-    if let Some(member_manager) = app_state.try_member_manager() {
+fn register_cluster_handlers(
+    registry: &mut HandlerRegistry,
+    server_member_manager: &Option<Arc<batata_core::cluster::ServerMemberManager>>,
+) {
+    if let Some(member_manager) = server_member_manager {
         registry.register_handler(Arc::new(MemberReportHandler {
             member_manager: member_manager.clone(),
         }));
@@ -350,6 +353,8 @@ pub fn start_grpc_servers(
     sdk_server_port: u16,
     cluster_server_port: u16,
     raft_node: Option<Arc<RaftNode>>,
+    server_member_manager: Option<Arc<batata_core::cluster::ServerMemberManager>>,
+    config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
 ) -> Result<GrpcServers, Box<dyn std::error::Error>> {
     // Get TLS configuration
     let tls_config = app_state.configuration.grpc_tls_config();
@@ -452,8 +457,7 @@ pub fn start_grpc_servers(
     let core_config = app_state.configuration.to_core_config();
     let cluster_client_config = ClusterClientConfig::from_configuration(&core_config);
     let (members, cluster_client_manager) = if !is_standalone {
-        let members = app_state
-            .server_member_manager
+        let members = server_member_manager
             .as_ref()
             .map(|smm| smm.server_list())
             .unwrap_or_else(|| Arc::new(DashMap::new()));
@@ -511,7 +515,7 @@ pub fn start_grpc_servers(
     register_distro_handlers(&mut handler_registry, distro_protocol.clone());
 
     // Register cluster handlers
-    register_cluster_handlers(&mut handler_registry, app_state.clone());
+    register_cluster_handlers(&mut handler_registry, &server_member_manager);
 
     // Register lock handlers
     let lock_service = Arc::new(LockService::new());
@@ -531,7 +535,7 @@ pub fn start_grpc_servers(
     let grpc_bi_request_stream_service = GrpcBiRequestStreamService::from_arc(
         handler_registry_arc,
         connection_manager,
-        app_state.config_subscriber_manager.clone(),
+        config_subscriber_manager,
         Some(naming_service.clone() as Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>),
     );
 

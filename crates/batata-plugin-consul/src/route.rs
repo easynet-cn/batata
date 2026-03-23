@@ -152,7 +152,7 @@ pub fn consul_agent_routes_persistent() -> actix_web::Scope {
 }
 
 /// Configure Consul Agent API routes (real cluster version)
-/// Returns a scope configured with agent endpoints using real ServerMemberManager data
+/// Returns a scope configured with agent endpoints using real ClusterManager data
 pub fn consul_agent_routes_real() -> actix_web::Scope {
     web::scope("/agent")
         // Agent core endpoints - real cluster versions

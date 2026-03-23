@@ -501,20 +501,95 @@ impl ServerMemberManager {
     }
 }
 
-/// Cluster health summary
-#[derive(Clone, Debug, Default)]
-pub struct ClusterHealthSummary {
-    pub total: usize,
-    pub up: usize,
-    pub down: usize,
-    pub suspicious: usize,
-    pub starting: usize,
-    pub isolation: usize,
+/// Cluster health summary (re-exported from batata-common)
+pub use batata_common::ClusterHealthSummary;
+
+// ============================================================================
+// ClusterManager trait implementation for ServerMemberManager
+// ============================================================================
+
+impl batata_common::ClusterManager for ServerMemberManager {
+    fn is_standalone(&self) -> bool {
+        self.is_standalone
+    }
+
+    fn is_leader(&self) -> bool {
+        ServerMemberManager::is_leader(self)
+    }
+
+    fn is_cluster_healthy(&self) -> bool {
+        ServerMemberManager::is_cluster_healthy(self)
+    }
+
+    fn leader_address(&self) -> Option<String> {
+        ServerMemberManager::leader_address(self)
+    }
+
+    fn local_address(&self) -> &str {
+        &self.local_address
+    }
+
+    fn member_count(&self) -> usize {
+        self.server_list.len()
+    }
+
+    fn all_members_extended(&self) -> Vec<batata_common::ExtendedMemberInfo> {
+        self.server_list
+            .iter()
+            .map(|e| member_to_extended(e.value()))
+            .collect()
+    }
+
+    fn healthy_members_extended(&self) -> Vec<batata_common::ExtendedMemberInfo> {
+        self.server_list
+            .iter()
+            .filter(|e| matches!(e.value().state, NodeState::Up))
+            .map(|e| member_to_extended(e.value()))
+            .collect()
+    }
+
+    fn get_member(&self, address: &str) -> Option<batata_common::ExtendedMemberInfo> {
+        self.server_list
+            .get(address)
+            .map(|e| member_to_extended(e.value()))
+    }
+
+    fn get_self_member(&self) -> batata_common::ExtendedMemberInfo {
+        member_to_extended(&self.self_member)
+    }
+
+    fn health_summary(&self) -> ClusterHealthSummary {
+        ServerMemberManager::health_summary(self)
+    }
+
+    fn refresh_self(&self) {
+        ServerMemberManager::refresh_self(self)
+    }
+
+    fn is_self(&self, address: &str) -> bool {
+        address == self.local_address
+    }
 }
 
-impl ClusterHealthSummary {
-    pub fn is_healthy(&self) -> bool {
-        self.up > self.total / 2
+/// Convert a Member to ExtendedMemberInfo
+fn member_to_extended(m: &Member) -> batata_common::ExtendedMemberInfo {
+    let state = match m.state {
+        NodeState::Up => batata_common::MemberState::Up,
+        NodeState::Down => batata_common::MemberState::Down,
+        NodeState::Suspicious => batata_common::MemberState::Suspicious,
+        _ => batata_common::MemberState::Down,
+    };
+    let extend_info = m
+        .extend_info
+        .read()
+        .map(|info| info.clone())
+        .unwrap_or_default();
+    batata_common::ExtendedMemberInfo {
+        ip: m.ip.clone(),
+        port: m.port,
+        address: m.address.clone(),
+        state,
+        extend_info,
     }
 }
 

@@ -121,11 +121,11 @@ async fn health_detailed(data: web::Data<AppState>) -> HttpResponse {
     let server_state = data.server_status.status().to_string();
 
     // Cluster info
-    let cluster_status = if let Some(ref smm) = data.server_member_manager {
+    let cluster_status = if let Some(ref cm) = data.cluster_manager {
         serde_json::json!({
             "status": "UP",
-            "members": smm.member_count(),
-            "standalone": smm.is_standalone(),
+            "members": cm.member_count(),
+            "standalone": cm.is_standalone(),
         })
     } else {
         serde_json::json!({ "status": "N/A" })

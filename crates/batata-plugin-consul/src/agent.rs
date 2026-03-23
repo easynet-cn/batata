@@ -7,10 +7,9 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, HttpResponse, web};
 use sysinfo::System;
 
-use batata_api::model::NodeState;
 use batata_api::naming::NamingServiceProvider;
 use batata_api::naming::model::Instance;
-use batata_core::service::cluster::ServerMemberManager;
+use batata_common::{ClusterManager, MemberState};
 use batata_naming::healthcheck::registry::InstanceCheckRegistry;
 
 use crate::acl::{AclService, ResourceType};
@@ -993,27 +992,25 @@ pub async fn get_agent_members(
 }
 
 // ============================================================================
-// Real Cluster Integration Handlers (Using ServerMemberManager)
+// Real Cluster Integration Handlers (Using ClusterManager)
 // ============================================================================
 
-/// Convert NodeState to Consul member status
-fn node_state_to_consul_status(state: &NodeState) -> i32 {
+/// Convert MemberState to Consul member status
+fn member_state_to_consul_status(state: &MemberState) -> i32 {
     match state {
-        NodeState::Up => 1,         // alive
-        NodeState::Down => 4,       // failed
-        NodeState::Suspicious => 2, // leaving
-        NodeState::Starting => 3,   // left
-        NodeState::Isolation => 4,  // failed
+        MemberState::Up => 1,         // alive
+        MemberState::Down => 4,       // failed
+        MemberState::Suspicious => 2, // leaving
     }
 }
 
 /// GET /v1/agent/members (Real cluster version)
-/// Returns the actual cluster members from ServerMemberManager
+/// Returns the actual cluster members from ClusterManager
 pub async fn get_agent_members_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     _query: web::Query<AgentMembersParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -1023,9 +1020,9 @@ pub async fn get_agent_members_real(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Get all members from ServerMemberManager
+    // Get all members from ClusterManager
     let members: Vec<AgentMember> = member_manager
-        .all_members()
+        .all_members_extended()
         .iter()
         .map(|m| {
             let mut tags = HashMap::new();
@@ -1039,11 +1036,9 @@ pub async fn get_agent_members_real(
 
             // Add node state as tag
             let state_str = match m.state {
-                NodeState::Up => "alive",
-                NodeState::Down => "failed",
-                NodeState::Suspicious => "suspicious",
-                NodeState::Starting => "starting",
-                NodeState::Isolation => "isolation",
+                MemberState::Up => "alive",
+                MemberState::Down => "failed",
+                MemberState::Suspicious => "suspicious",
             };
             tags.insert("state".to_string(), state_str.to_string());
 
@@ -1061,7 +1056,7 @@ pub async fn get_agent_members_real(
                 addr,
                 port,
                 tags,
-                status: node_state_to_consul_status(&m.state),
+                status: member_state_to_consul_status(&m.state),
                 ..Default::default()
             }
         })
@@ -1078,12 +1073,12 @@ pub async fn get_agent_members_real(
 }
 
 /// GET /v1/agent/self (Real cluster version)
-/// Returns real cluster information from ServerMemberManager
+/// Returns real cluster information from ClusterManager
 pub async fn get_agent_self_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
@@ -1092,7 +1087,7 @@ pub async fn get_agent_self_real(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let self_member = member_manager.get_self();
+    let self_member = member_manager.get_self_member();
     let health_summary = member_manager.health_summary();
 
     let node_id = uuid::Uuid::new_v4().to_string();
@@ -1130,7 +1125,7 @@ pub async fn get_agent_self_real(
         addr,
         port,
         tags,
-        status: node_state_to_consul_status(&self_member.state),
+        status: member_state_to_consul_status(&self_member.state),
         ..Default::default()
     };
 
@@ -1573,7 +1568,7 @@ pub async fn get_agent_metrics_real(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     agent: web::Data<ConsulAgentService>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     // Check ACL authorization for agent read
@@ -1694,7 +1689,7 @@ pub async fn get_agent_metrics_real(
         unhealthy_instances as f64,
     ));
 
-    // Cluster metrics from ServerMemberManager
+    // Cluster metrics from ClusterManager
     let health_summary = member_manager.health_summary();
     gauges.push(GaugeMetric::new(
         "consul.serf.member.count",
@@ -1937,7 +1932,7 @@ pub async fn agent_metrics_stream(
 pub async fn agent_metrics_stream_real(
     req: HttpRequest,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -2029,11 +2024,9 @@ mod tests {
 
     #[test]
     fn test_node_state_to_consul_status_all_variants() {
-        assert_eq!(node_state_to_consul_status(&NodeState::Up), 1); // alive
-        assert_eq!(node_state_to_consul_status(&NodeState::Down), 4); // failed
-        assert_eq!(node_state_to_consul_status(&NodeState::Suspicious), 2); // leaving
-        assert_eq!(node_state_to_consul_status(&NodeState::Starting), 3); // left
-        assert_eq!(node_state_to_consul_status(&NodeState::Isolation), 4); // failed
+        assert_eq!(member_state_to_consul_status(&MemberState::Up), 1); // alive
+        assert_eq!(member_state_to_consul_status(&MemberState::Down), 4); // failed
+        assert_eq!(member_state_to_consul_status(&MemberState::Suspicious), 2); // leaving
     }
 
     #[test]

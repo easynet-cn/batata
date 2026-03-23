@@ -5,8 +5,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use batata_auth::service::oauth::OAuthService;
+use batata_common::{ClusterManager, ConfigSubscriptionService};
 use batata_consistency::RaftNode;
-use batata_core::cluster::ServerMemberManager;
 use batata_persistence::PersistenceService;
 use batata_plugin::ControlPlugin;
 
@@ -38,8 +38,8 @@ use super::{
 /// - console_datasource uses RemoteDataSource (HTTP calls to server)
 pub struct AppState {
     pub configuration: Configuration,
-    pub server_member_manager: Option<Arc<ServerMemberManager>>,
-    pub config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+    pub cluster_manager: Option<Arc<dyn ClusterManager>>,
+    pub config_subscriber_manager: Arc<dyn ConfigSubscriptionService>,
     pub console_datasource: Arc<dyn ConsoleDataSource>,
     /// OAuth2/OIDC service for external authentication
     pub oauth_service: Option<Arc<OAuthService>>,
@@ -61,11 +61,11 @@ impl std::fmt::Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AppState")
             .field("configuration", &self.configuration)
+            .field("cluster_manager", &self.cluster_manager.is_some())
             .field(
-                "server_member_manager",
-                &self.server_member_manager.is_some(),
+                "config_subscriber_manager",
+                &"<dyn ConfigSubscriptionService>",
             )
-            .field("config_subscriber_manager", &"<ConfigSubscriberManager>")
             .field("console_datasource", &"<dyn ConsoleDataSource>")
             .field("oauth_service", &self.oauth_service.is_some())
             .field("persistence", &self.persistence.is_some())
@@ -82,7 +82,7 @@ impl Clone for AppState {
     fn clone(&self) -> Self {
         Self {
             configuration: self.configuration.clone(),
-            server_member_manager: self.server_member_manager.clone(),
+            cluster_manager: self.cluster_manager.clone(),
             config_subscriber_manager: self.config_subscriber_manager.clone(),
             console_datasource: self.console_datasource.clone(),
             oauth_service: self.oauth_service.clone(),
@@ -128,62 +128,61 @@ impl batata_common::ConfigContext for AppState {
 
 impl batata_common::ClusterContext for AppState {
     fn is_standalone(&self) -> bool {
-        self.server_member_manager
+        self.cluster_manager
             .as_ref()
             .map_or(true, |m| m.is_standalone())
     }
 
     fn is_leader(&self) -> bool {
-        self.server_member_manager
+        self.cluster_manager
             .as_ref()
             .map_or(true, |m| m.is_leader())
     }
 
     fn leader_address(&self) -> Option<String> {
-        self.server_member_manager
+        self.cluster_manager
             .as_ref()
             .and_then(|m| m.leader_address())
     }
 
     fn all_members(&self) -> Vec<batata_common::MemberInfo> {
-        self.server_member_manager
+        self.cluster_manager
             .as_ref()
-            .map(|m| m.all_members().into_iter().map(member_to_info).collect())
+            .map(|m| {
+                m.all_members_extended()
+                    .into_iter()
+                    .map(extended_to_member_info)
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     fn healthy_members(&self) -> Vec<batata_common::MemberInfo> {
-        self.server_member_manager
+        self.cluster_manager
             .as_ref()
             .map(|m| {
-                m.healthy_members()
+                m.healthy_members_extended()
                     .into_iter()
-                    .map(member_to_info)
+                    .map(extended_to_member_info)
                     .collect()
             })
             .unwrap_or_default()
     }
 
     fn member_count(&self) -> usize {
-        self.server_member_manager
+        self.cluster_manager
             .as_ref()
             .map_or(1, |m| m.member_count())
     }
 }
 
-/// Convert a Member to MemberInfo for the ClusterContext trait
-fn member_to_info(m: batata_api::model::Member) -> batata_common::MemberInfo {
-    let state = match m.state {
-        batata_api::model::NodeState::Up => batata_common::MemberState::Up,
-        batata_api::model::NodeState::Down => batata_common::MemberState::Down,
-        batata_api::model::NodeState::Suspicious => batata_common::MemberState::Suspicious,
-        _ => batata_common::MemberState::Down,
-    };
+/// Convert an ExtendedMemberInfo to MemberInfo for the ClusterContext trait
+fn extended_to_member_info(m: batata_common::ExtendedMemberInfo) -> batata_common::MemberInfo {
     batata_common::MemberInfo {
         ip: m.ip,
         port: m.port,
         address: m.address,
-        state,
+        state: m.state,
     }
 }
 
@@ -209,16 +208,16 @@ impl AppState {
     // Cluster Management
     // ========================================================================
 
-    /// Try to get server member manager, returns None if not available
-    pub fn try_member_manager(&self) -> Option<&Arc<ServerMemberManager>> {
-        self.server_member_manager.as_ref()
+    /// Try to get cluster manager, returns None if not available
+    pub fn try_cluster_manager(&self) -> Option<&Arc<dyn ClusterManager>> {
+        self.cluster_manager.as_ref()
     }
 
-    /// Get server member manager (panics if not available)
-    pub fn member_manager(&self) -> &Arc<ServerMemberManager> {
-        self.server_member_manager
+    /// Get cluster manager (panics if not available)
+    pub fn cluster_manager(&self) -> &Arc<dyn ClusterManager> {
+        self.cluster_manager
             .as_ref()
-            .expect("Server member manager not available in remote console mode")
+            .expect("Cluster manager not available in remote console mode")
     }
 
     // ========================================================================

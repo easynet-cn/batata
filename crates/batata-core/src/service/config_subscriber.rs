@@ -241,6 +241,126 @@ impl ConfigSubscriberManager {
     }
 }
 
+// ============================================================================
+// ConfigSubscriptionService trait implementation
+// ============================================================================
+
+impl batata_common::ConfigSubscriptionService for ConfigSubscriberManager {
+    fn subscribe(
+        &self,
+        connection_id: &str,
+        client_ip: &str,
+        key: &batata_common::ConfigSubscriptionKey,
+        md5: &str,
+        client_tenant: &str,
+    ) {
+        let config_key = ConfigKey::new(&key.data_id, &key.group, &key.tenant);
+        ConfigSubscriberManager::subscribe(
+            self,
+            connection_id,
+            client_ip,
+            &config_key,
+            md5,
+            client_tenant,
+        );
+    }
+
+    fn unsubscribe(&self, connection_id: &str, key: &batata_common::ConfigSubscriptionKey) {
+        let config_key = ConfigKey::new(&key.data_id, &key.group, &key.tenant);
+        ConfigSubscriberManager::unsubscribe(self, connection_id, &config_key);
+    }
+
+    fn unsubscribe_all(&self, connection_id: &str) {
+        ConfigSubscriberManager::unsubscribe_all(self, connection_id);
+    }
+
+    fn get_subscribers(
+        &self,
+        key: &batata_common::ConfigSubscriptionKey,
+    ) -> Vec<batata_common::ConfigSubscriberInfo> {
+        let config_key = ConfigKey::new(&key.data_id, &key.group, &key.tenant);
+        ConfigSubscriberManager::get_subscribers(self, &config_key)
+            .into_iter()
+            .map(|s| batata_common::ConfigSubscriberInfo {
+                connection_id: s.connection_id,
+                client_ip: s.client_ip,
+                md5: s.md5,
+                client_tenant: s.client_tenant,
+            })
+            .collect()
+    }
+
+    fn get_subscribers_by_ip(
+        &self,
+        client_ip: &str,
+    ) -> Vec<(
+        batata_common::ConfigSubscriptionKey,
+        batata_common::ConfigSubscriberInfo,
+    )> {
+        ConfigSubscriberManager::get_subscribers_by_ip(self, client_ip)
+            .into_iter()
+            .map(|(k, s)| {
+                let key =
+                    batata_common::ConfigSubscriptionKey::new(&k.data_id, &k.group, &k.tenant);
+                let info = batata_common::ConfigSubscriberInfo {
+                    connection_id: s.connection_id,
+                    client_ip: s.client_ip,
+                    md5: s.md5,
+                    client_tenant: s.client_tenant,
+                };
+                (key, info)
+            })
+            .collect()
+    }
+
+    fn get_all_subscriptions(
+        &self,
+    ) -> Vec<(
+        batata_common::ConfigSubscriptionKey,
+        Vec<batata_common::ConfigSubscriberInfo>,
+    )> {
+        ConfigSubscriberManager::get_all_subscriptions(self)
+            .into_iter()
+            .map(|(k, subs)| {
+                let key =
+                    batata_common::ConfigSubscriptionKey::new(&k.data_id, &k.group, &k.tenant);
+                let infos = subs
+                    .into_iter()
+                    .map(|s| batata_common::ConfigSubscriberInfo {
+                        connection_id: s.connection_id,
+                        client_ip: s.client_ip,
+                        md5: s.md5,
+                        client_tenant: s.client_tenant,
+                    })
+                    .collect();
+                (key, infos)
+            })
+            .collect()
+    }
+
+    fn update_md5(
+        &self,
+        connection_id: &str,
+        key: &batata_common::ConfigSubscriptionKey,
+        md5: &str,
+    ) {
+        let config_key = ConfigKey::new(&key.data_id, &key.group, &key.tenant);
+        ConfigSubscriberManager::update_md5(self, connection_id, &config_key, md5);
+    }
+
+    fn subscription_count(&self) -> usize {
+        ConfigSubscriberManager::subscription_count(self)
+    }
+
+    fn config_count(&self) -> usize {
+        ConfigSubscriberManager::config_count(self)
+    }
+
+    fn subscriber_connection_count(&self) -> usize {
+        ConfigSubscriberManager::connection_count(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

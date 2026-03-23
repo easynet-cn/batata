@@ -146,7 +146,7 @@ async fn do_get_metrics(
     let subscribe_count = subscriber_ids.len() as i32;
 
     // Get cluster node count
-    let cluster_node_count = data.member_manager().all_members().len() as i32;
+    let cluster_node_count = data.cluster_manager().member_count() as i32;
 
     // In standalone mode, this node is responsible for everything
     let is_standalone = data.configuration.is_standalone();

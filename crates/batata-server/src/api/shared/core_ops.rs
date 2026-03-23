@@ -71,7 +71,7 @@ pub async fn do_get_ids(
             .build()
     );
 
-    let self_member = data.member_manager().get_self();
+    let self_member = data.cluster_manager().get_self_member();
 
     let response = IdsResponse {
         node_id: self_member.address.clone(),

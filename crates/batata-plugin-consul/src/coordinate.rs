@@ -204,7 +204,7 @@ impl Default for ConsulCoordinateService {
 }
 
 // ============================================================================
-// Service (Persistent) - uses ServerMemberManager for real cluster info
+// Service (Persistent) - uses ClusterManager for real cluster info
 // ============================================================================
 
 /// Persistent coordinate service backed by cluster member data

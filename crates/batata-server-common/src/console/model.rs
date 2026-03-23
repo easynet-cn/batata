@@ -152,6 +152,24 @@ impl From<batata_api::model::Member> for Member {
     }
 }
 
+impl From<batata_common::ExtendedMemberInfo> for Member {
+    fn from(value: batata_common::ExtendedMemberInfo) -> Self {
+        let extend_info: HashMap<String, serde_json::Value> =
+            value.extend_info.into_iter().collect();
+
+        Self {
+            ip: value.ip,
+            port: value.port,
+            state: value.state.to_string(),
+            extend_info,
+            address: value.address,
+            abilities: NodeAbilities::default(),
+            grpc_report_enabled: true,
+            fail_access_cnt: 0,
+        }
+    }
+}
+
 /// Cluster health summary for console responses
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

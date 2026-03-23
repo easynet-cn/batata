@@ -11,7 +11,7 @@
 use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, put, web};
 
 use crate::{
-    ActionTypes, ApiType, Secured, SignType, api::model::Member, error, model::common::AppState,
+    ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
     model::response::Result, secured,
 };
 
@@ -37,14 +37,15 @@ pub async fn get_node_self(req: HttpRequest, data: web::Data<AppState>) -> impl 
             .build()
     );
 
-    let self_member = data.member_manager().get_self();
+    let self_member = data.cluster_manager().get_self_member();
 
     // Extract extend info
-    let extend_info = self_member
-        .extend_info
-        .read()
-        .ok()
-        .map(|info| info.clone().into_iter().collect());
+    let extend_info: Option<std::collections::HashMap<String, serde_json::Value>> =
+        if self_member.extend_info.is_empty() {
+            None
+        } else {
+            Some(self_member.extend_info.into_iter().collect())
+        };
 
     let response = NodeSelfResponse {
         ip: self_member.ip.clone(),
@@ -52,7 +53,7 @@ pub async fn get_node_self(req: HttpRequest, data: web::Data<AppState>) -> impl 
         address: self_member.address.clone(),
         state: self_member.state.to_string(),
         extend_info,
-        fail_access_cnt: self_member.fail_access_cnt,
+        fail_access_cnt: 0,
         abilities: Some(NodeAbilities {
             naming_ability: Some(NamingAbility {
                 support_push: true,
@@ -88,7 +89,7 @@ pub async fn get_node_list(
             .build()
     );
 
-    let mut members: Vec<Member> = data.member_manager().all_members();
+    let mut members = data.cluster_manager().all_members_extended();
 
     // Filter by address prefix if provided
     if let Some(address) = &params.address
@@ -107,11 +108,12 @@ pub async fn get_node_list(
     let nodes: Vec<NodeResponse> = members
         .into_iter()
         .map(|m| {
-            let extend_info = m
-                .extend_info
-                .read()
-                .ok()
-                .map(|info| info.clone().into_iter().collect());
+            let extend_info: Option<std::collections::HashMap<String, serde_json::Value>> =
+                if m.extend_info.is_empty() {
+                    None
+                } else {
+                    Some(m.extend_info.into_iter().collect())
+                };
 
             NodeResponse {
                 ip: m.ip,
@@ -119,7 +121,7 @@ pub async fn get_node_list(
                 address: m.address,
                 state: m.state.to_string(),
                 extend_info,
-                fail_access_cnt: m.fail_access_cnt,
+                fail_access_cnt: 0,
             }
         })
         .collect();
@@ -144,7 +146,7 @@ pub async fn get_node_health(req: HttpRequest, data: web::Data<AppState>) -> imp
             .build()
     );
 
-    let self_member = data.member_manager().get_self();
+    let self_member = data.cluster_manager().get_self_member();
     let state = self_member.state.to_string();
 
     Result::<String>::http_success(state)

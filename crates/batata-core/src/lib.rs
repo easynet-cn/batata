@@ -22,9 +22,8 @@ pub mod api {
 
 // Re-export cluster module
 pub mod cluster {
-    pub use crate::service::cluster::{
-        ClusterHealthSummary, ServerMemberManager, ServerMemberManagerConfig,
-    };
+    pub use crate::service::cluster::{ServerMemberManager, ServerMemberManagerConfig};
+    pub use batata_common::ClusterHealthSummary;
 }
 
 // Re-export commonly used types

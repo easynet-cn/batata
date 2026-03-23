@@ -563,10 +563,14 @@ impl PayloadHandler for ConfigPublishHandler {
 
                 // Broadcast config change to other cluster nodes
                 if let Some(ref ccm) = self.cluster_client_manager
-                    && let Some(smm) = self.app_state.try_member_manager()
-                    && !smm.is_standalone()
+                    && let Some(cm) = self.app_state.try_cluster_manager()
+                    && !cm.is_standalone()
                 {
-                    let members = smm.all_members();
+                    let members: Vec<batata_api::model::Member> = cm
+                        .all_members_extended()
+                        .into_iter()
+                        .map(|m| batata_api::model::MemberBuilder::new(m.ip, m.port).build())
+                        .collect();
                     let sender = ClusterRequestSender::new(ccm.clone());
                     let data_id = data_id.to_string();
                     let group = group.to_string();
@@ -709,8 +713,8 @@ impl ConfigPublishHandler {
             );
         }
 
-        // Notify regular subscribers via ConfigSubscriberManager
-        let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
+        // Notify regular subscribers via ConfigSubscriptionService
+        let config_key = batata_common::ConfigSubscriptionKey::new(data_id, group, tenant);
         let subscribers = self
             .app_state
             .config_subscriber_manager
@@ -750,9 +754,11 @@ impl ConfigPublishHandler {
             join_all(futs).await;
 
             info!(
-                "Notified {} regular subscribers for config change: {}",
+                "Notified {} regular subscribers for config change: {}@@{}@@{}",
                 subscribers.len(),
-                config_key.to_key_string()
+                tenant,
+                group,
+                data_id
             );
         }
 
@@ -816,10 +822,14 @@ impl PayloadHandler for ConfigRemoveHandler {
 
                 // Broadcast config removal to other cluster nodes
                 if let Some(ref ccm) = self.cluster_client_manager
-                    && let Some(smm) = self.app_state.try_member_manager()
-                    && !smm.is_standalone()
+                    && let Some(cm) = self.app_state.try_cluster_manager()
+                    && !cm.is_standalone()
                 {
-                    let members = smm.all_members();
+                    let members: Vec<batata_api::model::Member> = cm
+                        .all_members_extended()
+                        .into_iter()
+                        .map(|m| batata_api::model::MemberBuilder::new(m.ip, m.port).build())
+                        .collect();
                     let sender = ClusterRequestSender::new(ccm.clone());
                     let data_id = data_id.to_string();
                     let group = group.to_string();
@@ -961,8 +971,8 @@ impl ConfigRemoveHandler {
             );
         }
 
-        // Notify regular subscribers via ConfigSubscriberManager
-        let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
+        // Notify regular subscribers via ConfigSubscriptionService
+        let config_key = batata_common::ConfigSubscriptionKey::new(data_id, group, tenant);
         let subscribers = self
             .app_state
             .config_subscriber_manager
@@ -1001,9 +1011,11 @@ impl ConfigRemoveHandler {
             join_all(futs).await;
 
             info!(
-                "Notified {} regular subscribers for config removal: {}",
+                "Notified {} regular subscribers for config removal: {}@@{}@@{}",
                 subscribers.len(),
-                config_key.to_key_string()
+                tenant,
+                group,
+                data_id
             );
         }
 
@@ -1057,7 +1069,7 @@ impl PayloadHandler for ConfigBatchListenHandler {
             let response_tenant = &ctx.tenant;
             let client_md5 = &ctx.md5;
 
-            let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
+            let config_key = batata_common::ConfigSubscriptionKey::new(data_id, group, tenant);
 
             if request.listen {
                 // Register subscription (pass original tenant for response matching)
@@ -1327,8 +1339,8 @@ impl ConfigChangeClusterSyncHandler {
             join_all(futs).await;
         }
 
-        // Notify regular subscribers via ConfigSubscriberManager
-        let config_key = batata_core::ConfigKey::new(data_id, group, tenant);
+        // Notify regular subscribers via ConfigSubscriptionService
+        let config_key = batata_common::ConfigSubscriptionKey::new(data_id, group, tenant);
         let subscribers = self
             .app_state
             .config_subscriber_manager
@@ -1336,9 +1348,11 @@ impl ConfigChangeClusterSyncHandler {
 
         if !subscribers.is_empty() {
             info!(
-                "Cluster sync: notifying {} regular subscribers for config change: {} (source: {})",
+                "Cluster sync: notifying {} regular subscribers for config change: {}@@{}@@{} (source: {})",
                 subscribers.len(),
-                config_key.to_key_string(),
+                tenant,
+                group,
+                data_id,
                 source_ip
             );
 

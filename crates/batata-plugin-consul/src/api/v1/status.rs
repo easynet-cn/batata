@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Scope, get, web};
 
-use batata_core::service::cluster::ServerMemberManager;
+use batata_common::ClusterManager;
 
 use crate::acl::AclService;
 use crate::model::ConsulDatacenterConfig;
@@ -42,7 +42,7 @@ async fn get_peers(
 async fn get_leader_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
     crate::status::get_leader_real(req, acl_service, member_manager, dc_config).await
@@ -52,7 +52,7 @@ async fn get_leader_real(
 async fn get_peers_real(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
-    member_manager: web::Data<Arc<ServerMemberManager>>,
+    member_manager: web::Data<Arc<dyn ClusterManager>>,
     dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
     crate::status::get_peers_real(req, acl_service, member_manager, dc_config).await
@@ -67,7 +67,7 @@ pub fn routes() -> Scope {
     web::scope("/status").service(get_leader).service(get_peers)
 }
 
-/// Real cluster status routes (using ServerMemberManager)
+/// Real cluster status routes (using ClusterManager)
 pub fn routes_real() -> Scope {
     web::scope("/status")
         .service(get_leader_real)

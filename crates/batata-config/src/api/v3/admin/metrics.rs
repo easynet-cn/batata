@@ -51,7 +51,7 @@ async fn cluster_metrics(req: HttpRequest, data: web::Data<AppState>) -> impl Re
 
     let response = ClusterMetrics {
         total_count: count,
-        cluster_node_count: data.member_manager().all_members().len() as i32,
+        cluster_node_count: data.cluster_manager().all_members_extended().len() as i32,
         is_standalone: data.configuration.is_standalone(),
     };
 
@@ -73,7 +73,7 @@ async fn ip_metrics(req: HttpRequest, data: web::Data<AppState>) -> impl Respond
     let count = get_config_count(&data).await;
 
     let response = IpMetrics {
-        node_address: data.member_manager().local_address().to_string(),
+        node_address: data.cluster_manager().local_address().to_string(),
         total_count: count,
     };
 
