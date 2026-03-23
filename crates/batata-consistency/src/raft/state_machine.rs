@@ -543,7 +543,6 @@ impl RocksStateMachine {
             RaftRequest::LockExpire { namespace, name } => {
                 self.apply_lock_expire(&namespace, &name)
             }
-
         }
     }
 

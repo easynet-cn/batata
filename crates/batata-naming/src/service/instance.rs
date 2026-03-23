@@ -456,7 +456,11 @@ impl NamingService {
             .iter()
             .filter(|e| {
                 e.value().ephemeral
-                    && e.value().metadata.get("_distro_remote").map(|v| v == "true").unwrap_or(false)
+                    && e.value()
+                        .metadata
+                        .get("_distro_remote")
+                        .map(|v| v == "true")
+                        .unwrap_or(false)
                     && !incoming_keys.contains(e.key())
             })
             .map(|e| e.key().clone())

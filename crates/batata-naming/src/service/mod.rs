@@ -12,6 +12,7 @@ mod cluster;
 mod fuzzy_watch;
 mod instance;
 mod metadata;
+mod provider;
 mod subscription;
 
 use std::{
@@ -20,137 +21,11 @@ use std::{
 };
 
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 
 use crate::model::Instance;
 
-/// Service-level metadata stored separately from instances
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ServiceMetadata {
-    /// Protection threshold (0.0 to 1.0)
-    pub protect_threshold: f32,
-    /// Service metadata key-value pairs
-    pub metadata: HashMap<String, String>,
-    /// Service selector type (e.g., "none", "label")
-    pub selector_type: String,
-    /// Service selector expression
-    pub selector_expression: String,
-    /// Whether this service's instances are ephemeral by default
-    pub ephemeral: bool,
-    /// Revision counter for change detection / cache invalidation
-    pub revision: u64,
-}
-
-/// Protection threshold information
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct ProtectionInfo {
-    /// Configured protection threshold (0.0 to 1.0)
-    pub threshold: f32,
-    /// Total number of instances
-    pub total_instances: usize,
-    /// Number of healthy instances
-    pub healthy_instances: usize,
-    /// Current healthy ratio (healthy_instances / total_instances)
-    pub healthy_ratio: f32,
-    /// Whether protection threshold was triggered
-    pub triggered: bool,
-}
-
-impl ProtectionInfo {
-    /// Check if the service is degraded (protection triggered)
-    pub fn is_degraded(&self) -> bool {
-        self.triggered
-    }
-
-    /// Get the number of unhealthy instances
-    pub fn unhealthy_instances(&self) -> usize {
-        self.total_instances.saturating_sub(self.healthy_instances)
-    }
-}
-
-/// Cluster statistics information
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ClusterStatistics {
-    /// Cluster name
-    pub cluster_name: String,
-    /// Total number of instances
-    pub total_instances: usize,
-    /// Number of healthy instances
-    pub healthy_instances: usize,
-    /// Number of unhealthy instances
-    pub unhealthy_instances: usize,
-    /// Number of disabled instances
-    pub disabled_instances: usize,
-    /// Healthy ratio (healthy_instances / enabled_instances)
-    pub healthy_ratio: f32,
-    /// Number of enabled instances
-    pub enabled_instances: usize,
-}
-
-impl ClusterStatistics {
-    /// Calculate cluster statistics from instances
-    pub fn from_instances(cluster_name: &str, instances: &[Instance]) -> Self {
-        Self::from_instance_refs(cluster_name, &instances.iter().collect::<Vec<_>>())
-    }
-
-    /// Calculate cluster statistics from instance references
-    pub fn from_instance_refs(cluster_name: &str, instances: &[&Instance]) -> Self {
-        let total = instances.len();
-        let healthy = instances.iter().filter(|i| i.healthy && i.enabled).count();
-        let unhealthy = instances.iter().filter(|i| !i.healthy && i.enabled).count();
-        let disabled = instances.iter().filter(|i| !i.enabled).count();
-        let enabled = instances.iter().filter(|i| i.enabled).count();
-
-        let healthy_ratio = if enabled > 0 {
-            healthy as f32 / enabled as f32
-        } else {
-            0.0
-        };
-
-        Self {
-            cluster_name: cluster_name.to_string(),
-            total_instances: total,
-            healthy_instances: healthy,
-            unhealthy_instances: unhealthy,
-            disabled_instances: disabled,
-            healthy_ratio,
-            enabled_instances: enabled,
-        }
-    }
-}
-
-/// Cluster-level configuration
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ClusterConfig {
-    /// Cluster name
-    pub name: String,
-    /// Parent service name
-    pub service_name: String,
-    /// Health checker type (e.g., "TCP", "HTTP", "NONE")
-    pub health_check_type: String,
-    /// Health check port
-    pub check_port: i32,
-    /// Default port for instances in this cluster
-    pub default_port: i32,
-    /// Use instance port for health check
-    pub use_instance_port: bool,
-    /// Cluster metadata
-    pub metadata: HashMap<String, String>,
-}
-
-impl Default for ClusterConfig {
-    fn default() -> Self {
-        Self {
-            name: "DEFAULT".to_string(),
-            service_name: String::new(),
-            health_check_type: "TCP".to_string(),
-            check_port: 80,
-            default_port: 80,
-            use_instance_port: true,
-            metadata: HashMap::new(),
-        }
-    }
-}
+// Re-export model types from batata-api
+pub use batata_api::naming::{ClusterConfig, ClusterStatistics, ProtectionInfo, ServiceMetadata};
 
 /// Build service key format: namespace@@groupName@@serviceName
 fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {

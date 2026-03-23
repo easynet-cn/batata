@@ -651,9 +651,8 @@ pub fn start_grpc_servers(
     });
 
     // Create Consul Raft gRPC service (starts empty, ConsulRaftNode set later)
-    let consul_raft_grpc = Arc::new(
-        batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService::new(),
-    );
+    let consul_raft_grpc =
+        Arc::new(batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService::new());
 
     // Start dedicated Raft gRPC server (only in distributed embedded mode)
     // Pre-bind the TCP port synchronously so it is listening BEFORE this
@@ -709,13 +708,15 @@ pub fn start_grpc_servers(
     let _consul_raft_server_handle = if app_state.configuration.consul_enabled()
         && !app_state.configuration.is_standalone()
     {
-        let grpc_addr: std::net::SocketAddr =
-            format!("0.0.0.0:{}", consul_raft_port).parse()?;
+        let grpc_addr: std::net::SocketAddr = format!("0.0.0.0:{}", consul_raft_port).parse()?;
         info!("Starting Consul Raft gRPC server on {}", grpc_addr);
 
         let std_listener = std::net::TcpListener::bind(grpc_addr)?;
         std_listener.set_nonblocking(true)?;
-        info!("Consul Raft gRPC port {} bound and listening", consul_raft_port);
+        info!(
+            "Consul Raft gRPC port {} bound and listening",
+            consul_raft_port
+        );
 
         let consul_raft_grpc_for_server = consul_raft_grpc.clone_service();
         let consul_raft_mgmt_for_server = consul_raft_grpc.management_service();

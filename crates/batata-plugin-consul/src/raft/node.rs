@@ -14,9 +14,9 @@ use tracing::{debug, info, warn};
 use super::log_store::ConsulLogStore;
 use super::network::ConsulRaftNetworkFactory;
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
-use crate::index_provider::ConsulTableIndex;
 use super::state_machine::ConsulStateMachine;
 use super::types::*;
+use crate::index_provider::ConsulTableIndex;
 
 pub struct ConsulRaftNode {
     node_id: NodeId,
@@ -59,17 +59,15 @@ impl ConsulRaftNode {
         let network_factory = ConsulRaftNetworkFactory::new();
 
         // OpenRaft config
-        let raft_config = Arc::new(
-            openraft::Config {
-                cluster_name: "consul-raft".to_string(),
-                heartbeat_interval: 500,
-                election_timeout_min: 1500,
-                election_timeout_max: 3000,
-                install_snapshot_timeout: 10000,
-                max_in_snapshot_log_to_keep: 500,
-                ..Default::default()
-            },
-        );
+        let raft_config = Arc::new(openraft::Config {
+            cluster_name: "consul-raft".to_string(),
+            heartbeat_interval: 500,
+            election_timeout_min: 1500,
+            election_timeout_max: 3000,
+            install_snapshot_timeout: 10000,
+            max_in_snapshot_log_to_keep: 500,
+            ..Default::default()
+        });
 
         // Create the Raft instance
         let raft = ConsulRaft::new(
@@ -104,7 +102,10 @@ impl ConsulRaftNode {
         &self,
         members: BTreeMap<NodeId, BasicNode>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        info!("Initializing Consul Raft cluster with {} members", members.len());
+        info!(
+            "Initializing Consul Raft cluster with {} members",
+            members.len()
+        );
         self.raft
             .initialize(members)
             .await
@@ -130,10 +131,7 @@ impl ConsulRaftNode {
             Err(e) => {
                 // Forward to leader if known
                 if let Some(leader_addr) = self.leader_addr() {
-                    debug!(
-                        "Consul Raft: forwarding write to leader at {}",
-                        leader_addr
-                    );
+                    debug!("Consul Raft: forwarding write to leader at {}", leader_addr);
                     return self.forward_to_leader(&leader_addr, request).await;
                 }
                 Err(Box::new(e))
@@ -193,8 +191,8 @@ impl ConsulRaftNode {
             .into_inner();
 
         if resp.success {
-            let consul_resp: ConsulRaftResponse =
-                serde_json::from_slice(&resp.data).unwrap_or_else(|_| ConsulRaftResponse::success());
+            let consul_resp: ConsulRaftResponse = serde_json::from_slice(&resp.data)
+                .unwrap_or_else(|_| ConsulRaftResponse::success());
             // The leader returns the log_index in the leader_id field
             let leader_log_index = resp.leader_id.unwrap_or(1);
 
@@ -214,7 +212,11 @@ impl ConsulRaftNode {
             let idx = self.last_applied_index().unwrap_or(leader_log_index);
             Ok((consul_resp, idx))
         } else {
-            let msg = if resp.message.is_empty() { "Leader write failed".to_string() } else { resp.message };
+            let msg = if resp.message.is_empty() {
+                "Leader write failed".to_string()
+            } else {
+                resp.message
+            };
             Err(msg.into())
         }
     }

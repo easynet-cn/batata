@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use crate::crypto::CryptoResult;
+
 /// Database access context trait
 ///
 /// Implementations provide access to the database connection.
@@ -30,7 +32,7 @@ pub trait ConfigContext: Send + Sync {
     fn token_expire_seconds(&self) -> i64;
 
     /// Secret key for JWT signing
-    fn secret_key(&self) -> &str;
+    fn secret_key(&self) -> String;
 
     /// Get the server's main port
     fn main_port(&self) -> u16;
@@ -183,6 +185,72 @@ pub trait PayloadHandler: Send + Sync {
         payload: &[u8],
         metadata: std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Vec<u8>>;
+}
+
+/// Heartbeat service trait for health check tracking
+///
+/// Abstracts heartbeat recording and removal operations,
+/// allowing AppState to hold a trait object instead of `Arc<dyn Any>`.
+pub trait HeartbeatService: Send + Sync {
+    /// Record a heartbeat for an instance
+    fn record_heartbeat(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        cluster_name: &str,
+        heartbeat_timeout: i64,
+        ip_delete_timeout: i64,
+    );
+
+    /// Remove heartbeat tracking for an instance
+    fn remove_heartbeat(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        cluster_name: &str,
+    );
+}
+
+/// Configuration encryption provider trait
+///
+/// Abstracts config encryption/decryption operations,
+/// allowing AppState to hold a trait object instead of `Arc<dyn Any>`.
+#[async_trait::async_trait]
+pub trait ConfigEncryptionProvider: Send + Sync {
+    /// Check if encryption is enabled
+    fn is_enabled(&self) -> bool;
+
+    /// Check if a data_id should be encrypted based on configured patterns
+    fn should_encrypt(&self, data_id: &str) -> bool;
+
+    /// Encrypt content if the data_id matches encryption patterns
+    ///
+    /// Returns (possibly encrypted content, encrypted_data_key).
+    /// If encryption is disabled or data_id doesn't match, returns original content
+    /// with an empty data key.
+    async fn encrypt_if_needed(&self, data_id: &str, content: &str) -> (String, String);
+
+    /// Decrypt content if it has an encrypted data key
+    ///
+    /// If the encrypted_data_key is empty, returns the content as-is.
+    async fn decrypt_if_needed(
+        &self,
+        data_id: &str,
+        content: &str,
+        encrypted_data_key: &str,
+    ) -> String;
+
+    /// Encrypt content directly
+    async fn encrypt(&self, content: &str) -> CryptoResult<(String, String)>;
+
+    /// Decrypt content directly
+    async fn decrypt(&self, content: &str, encrypted_data_key: &str) -> CryptoResult<String>;
 }
 
 #[cfg(test)]

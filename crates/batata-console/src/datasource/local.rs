@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
+use batata_api::naming::{Instance, NamingServiceProvider, ServiceMetadata};
 use batata_core::cluster::ServerMemberManager;
-use batata_naming::Instance;
 use batata_server_common::console::api_model::{
     ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
     ConfigHistoryDetailInfo, ImportResult, SameConfigPolicy,
@@ -21,7 +21,6 @@ use batata_server_common::console::model::{
 
 use std::collections::{HashMap, HashSet};
 
-use batata_naming::service::NamingService;
 use batata_server_common::model::{
     AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, BATATA_VERSION_KEY,
     CONFIG_RENTENTION_DAYS_PROPERTY_STATE, CONSUL_ENABLED_STATE, CONSUL_PORT_STATE,
@@ -39,7 +38,7 @@ pub struct LocalDataSource {
     server_member_manager: Arc<ServerMemberManager>,
     _config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     configuration: Configuration,
-    naming_service: Option<Arc<NamingService>>,
+    naming_service: Option<Arc<dyn NamingServiceProvider>>,
 }
 
 impl LocalDataSource {
@@ -48,7 +47,7 @@ impl LocalDataSource {
         server_member_manager: Arc<ServerMemberManager>,
         config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
         configuration: Configuration,
-        naming_service: Option<Arc<NamingService>>,
+        naming_service: Option<Arc<dyn NamingServiceProvider>>,
     ) -> Self {
         Self {
             database_connection,
@@ -708,7 +707,7 @@ impl ConsoleDataSource for LocalDataSource {
             ("none".to_string(), String::new())
         };
 
-        let service_metadata = batata_naming::service::ServiceMetadata {
+        let service_metadata = ServiceMetadata {
             protect_threshold,
             metadata: metadata_map,
             selector_type,

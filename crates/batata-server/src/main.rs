@@ -269,7 +269,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         database_connection.clone(),
         server_member_manager.clone(),
         config_subscriber_manager.clone(),
-        naming_service.clone(),
+        naming_service
+            .clone()
+            .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>),
         persistence.clone(),
     )
     .await?;
@@ -374,11 +376,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         oauth_service,
         persistence,
         health_check_manager: health_check_manager
-            .map(|m| m as Arc<dyn std::any::Any + Send + Sync>),
+            .clone()
+            .map(|m| m as Arc<dyn batata_common::HeartbeatService>),
         raft_node: raft_node.clone(),
         server_status: server_status.clone(),
         control_plugin,
-        encryption_service: Some(encryption_service.clone() as Arc<dyn std::any::Any + Send + Sync>),
+        encryption_service: Some(
+            encryption_service.clone() as Arc<dyn batata_common::ConfigEncryptionProvider>
+        ),
     });
 
     // If data warmup is disabled (default), transition to UP immediately.
@@ -403,7 +408,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ai_services = match (&app_state.persistence, &naming_service) {
         (Some(persist), Some(ns)) => {
             info!("AI services using config-backed persistence");
-            AIServices::with_persistence(persist.clone(), ns.clone())
+            AIServices::with_persistence(
+                persist.clone(),
+                ns.clone() as Arc<dyn batata_api::naming::NamingServiceProvider>,
+            )
         }
         _ => {
             info!("AI services using in-memory storage (no persistence)");
@@ -452,9 +460,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Start health check manager (unhealthy and expired instance checkers)
-    if let Some(hc_any) = app_state.health_check_manager.as_ref()
-        && let Ok(hc_manager) = Arc::clone(hc_any).downcast::<HealthCheckManager>()
-    {
+    if let Some(ref hc_manager) = health_check_manager {
         // Spawn in separate tasks - they will keep running in background
         let hc_manager_clone = hc_manager.clone();
         tokio::spawn(async move {
@@ -663,7 +669,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 server_id = %xds_config.server_id,
                 "Starting xDS service for service mesh support"
             );
-            match start_xds_service(xds_config, grpc_servers.naming_service.clone()).await {
+            match start_xds_service(
+                xds_config,
+                grpc_servers.naming_service.clone()
+                    as Arc<dyn batata_api::naming::NamingServiceProvider>,
+            )
+            .await
+            {
                 Ok(handle) => {
                     info!("xDS service started successfully");
                     Some(handle)
@@ -683,6 +695,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // In standalone mode, Consul uses independent RocksDB for persistence.
     let consul_services = if consul_enabled {
         let is_cluster = !app_state.configuration.is_standalone() && !is_console_remote;
+        // Cast naming service to trait object for consul consumers
+        let naming_provider: Arc<dyn batata_api::naming::NamingServiceProvider> =
+            grpc_servers.naming_service.clone();
         // Create unified health check registry for Consul
         let consul_registry = Arc::new(InstanceCheckRegistry::new(
             grpc_servers.naming_service.clone(),
@@ -706,10 +721,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 Ok((consul_raft_node, consul_db, consul_table_index)) => {
                     let consul_raft = Arc::new(consul_raft_node);
-                    info!("Consul Raft node created (id={}, dir={})", consul_node_id, consul_data_dir_for_init);
+                    info!(
+                        "Consul Raft node created (id={}, dir={})",
+                        consul_node_id, consul_data_dir_for_init
+                    );
 
                     // Activate the gRPC service (already listening on port 9849)
-                    grpc_servers.consul_raft_grpc.set_raft_node(consul_raft.clone()).await;
+                    grpc_servers
+                        .consul_raft_grpc
+                        .set_raft_node(consul_raft.clone())
+                        .await;
 
                     // Initialize Consul Raft in background — don't block main startup.
                     // Other nodes may not be ready yet; Raft will retry automatically.
@@ -741,9 +762,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     // But we don't know remote consul_port. Use: same offset as local.
                                     // Local: nacos_raft=local_raft_port, consul_raft=consul_raft_port
                                     // Remote: nacos_raft=nacos_rp, consul_raft=nacos_rp + (consul_raft_port - local_raft_port)
-                                    let consul_addr = if let Some((host, port_str)) = nacos_addr.rsplit_once(':') {
+                                    let consul_addr = if let Some((host, port_str)) =
+                                        nacos_addr.rsplit_once(':')
+                                    {
                                         if let Ok(nacos_rp) = port_str.parse::<i32>() {
-                                            let diff = consul_raft_port as i32 - local_raft_port as i32;
+                                            let diff =
+                                                consul_raft_port as i32 - local_raft_port as i32;
                                             let consul_rp = (nacos_rp + diff) as u16;
                                             format!("{}:{}", host, consul_rp)
                                         } else {
@@ -763,7 +787,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Wait briefly for other nodes' Consul Raft ports to bind
                                 tokio::time::sleep(Duration::from_secs(3)).await;
                                 if let Err(e) = consul_raft_bg.initialize(members).await {
-                                    tracing::debug!("Consul Raft init: {} (may already be initialized)", e);
+                                    tracing::debug!(
+                                        "Consul Raft init: {} (may already be initialized)",
+                                        e
+                                    );
                                 } else {
                                     info!("Consul Raft cluster initialized");
                                 }
@@ -772,7 +799,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     ConsulServices::with_consul_raft(
-                        grpc_servers.naming_service.clone(),
+                        naming_provider.clone(),
                         consul_registry.clone(),
                         consul_acl_enabled,
                         consul_db,
@@ -782,14 +809,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )
                 }
                 Err(e) => {
-                    error!("Failed to create Consul Raft: {}. Falling back to standalone.", e);
+                    error!(
+                        "Failed to create Consul Raft: {}. Falling back to standalone.",
+                        e
+                    );
                     let consul_rocks_db = open_consul_rocks_db(
                         &consul_data_dir_for_init,
                         &app_state.configuration.rocksdb_config(),
                     );
                     if let Some(db) = consul_rocks_db {
                         ConsulServices::with_persistence(
-                            grpc_servers.naming_service.clone(),
+                            naming_provider.clone(),
                             consul_registry.clone(),
                             consul_acl_enabled,
                             db,
@@ -797,7 +827,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                     } else {
                         ConsulServices::new(
-                            grpc_servers.naming_service.clone(),
+                            naming_provider.clone(),
                             consul_registry.clone(),
                             consul_acl_enabled,
                             consul_dc_config.clone(),
@@ -814,7 +844,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(db) = consul_rocks_db {
                 info!("Consul services using RocksDB persistence");
                 ConsulServices::with_persistence(
-                    grpc_servers.naming_service.clone(),
+                    naming_provider.clone(),
                     consul_registry.clone(),
                     consul_acl_enabled,
                     db,
@@ -823,7 +853,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 info!("Consul services using in-memory storage (no persistence)");
                 ConsulServices::new(
-                    grpc_servers.naming_service.clone(),
+                    naming_provider.clone(),
                     consul_registry.clone(),
                     consul_acl_enabled,
                     consul_dc_config.clone(),
@@ -833,7 +863,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Console remote mode: in-memory
             info!("Console remote mode: Consul services using in-memory storage");
             ConsulServices::new(
-                grpc_servers.naming_service.clone(),
+                naming_provider.clone(),
                 consul_registry.clone(),
                 consul_acl_enabled,
                 consul_dc_config.clone(),
@@ -907,12 +937,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Cast naming service to trait object for HTTP consumers
+    let naming_provider_for_http: Arc<dyn batata_api::naming::NamingServiceProvider> =
+        grpc_servers.naming_service.clone();
+
     // Start HTTP servers based on deployment type with graceful shutdown support
     match deployment_type.as_str() {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
             let console_server = startup::console_server(
                 app_state.clone(),
-                Some(grpc_servers.naming_service.clone()),
+                Some(naming_provider_for_http.clone()),
                 ai_services.clone(),
                 console_context_path,
                 console_server_address,
@@ -932,15 +966,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         model::common::NACOS_DEPLOYMENT_TYPE_SERVER
         | model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP => {
-            let naming_service = grpc_servers.naming_service.clone();
-
             info!(
                 "Starting Nacos main server on {}:{}",
                 server_address, server_main_port
             );
             let main = startup::main_server(
                 app_state.clone(),
-                grpc_servers.naming_service,
+                naming_provider_for_http.clone(),
                 grpc_servers.connection_manager,
                 grpc_servers.config_change_notifier.clone(),
                 ai_services.clone(),
@@ -959,7 +991,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     startup::consul_server(
                         app_state.clone(),
-                        naming_service.clone(),
+                        naming_provider_for_http.clone(),
                         svc,
                         consul_server_address.clone(),
                         consul_server_port,
@@ -1000,7 +1032,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         _ => {
-            let naming_service = grpc_servers.naming_service.clone();
             let mcp_registry_for_server = ai_services.mcp_registry.clone();
 
             // Start console, main, and optionally Consul servers
@@ -1010,7 +1041,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let console = startup::console_server(
                 app_state.clone(),
-                Some(naming_service.clone()),
+                Some(naming_provider_for_http.clone()),
                 ai_services.clone(),
                 console_context_path,
                 console_server_address,
@@ -1023,7 +1054,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let main = startup::main_server(
                 app_state.clone(),
-                grpc_servers.naming_service,
+                naming_provider_for_http.clone(),
                 grpc_servers.connection_manager,
                 grpc_servers.config_change_notifier,
                 ai_services,
@@ -1042,7 +1073,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     startup::consul_server(
                         app_state.clone(),
-                        naming_service.clone(),
+                        naming_provider_for_http.clone(),
                         svc,
                         consul_server_address.clone(),
                         consul_server_port,

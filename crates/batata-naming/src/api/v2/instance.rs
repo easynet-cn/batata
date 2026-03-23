@@ -119,10 +119,8 @@ pub async fn register_instance(
     };
 
     // Record heartbeat for health check tracking
-    if let Some(ref hc_any) = data.health_check_manager
-        && let Some(hc_manager) = hc_any.downcast_ref::<crate::healthcheck::HealthCheckManager>()
-    {
-        hc_manager.unhealthy_checker().record_heartbeat(
+    if let Some(ref hc_service) = data.health_check_manager {
+        hc_service.record_heartbeat(
             namespace_id,
             group_name,
             &form.service_name,
@@ -263,11 +261,8 @@ pub async fn deregister_instance(
         );
 
         // Remove heartbeat tracking
-        if let Some(ref hc_any) = data.health_check_manager
-            && let Some(hc_manager) =
-                hc_any.downcast_ref::<crate::healthcheck::HealthCheckManager>()
-        {
-            hc_manager.unhealthy_checker().remove_heartbeat(
+        if let Some(ref hc_service) = data.health_check_manager {
+            hc_service.remove_heartbeat(
                 namespace_id,
                 group_name,
                 &params.service_name,
@@ -1000,21 +995,19 @@ pub async fn beat_instance(
         );
 
         // Update heartbeat tracking
-        if result
-            && let Some(ref hc_any) = data.health_check_manager
-            && let Some(hc_manager) =
-                hc_any.downcast_ref::<crate::healthcheck::HealthCheckManager>()
-        {
-            hc_manager.unhealthy_checker().record_heartbeat(
-                namespace_id,
-                group_name,
-                &form.service_name,
-                &beat_info.ip,
-                beat_info.port,
-                cluster_name,
-                15000, // default heartbeat_timeout
-                30000, // default ip_delete_timeout
-            );
+        if result {
+            if let Some(ref hc_service) = data.health_check_manager {
+                hc_service.record_heartbeat(
+                    namespace_id,
+                    group_name,
+                    &form.service_name,
+                    &beat_info.ip,
+                    beat_info.port,
+                    cluster_name,
+                    15000, // default heartbeat_timeout
+                    30000, // default ip_delete_timeout
+                );
+            }
         }
 
         return Result::<BeatResponse>::http_success(BeatResponse {
@@ -1037,21 +1030,19 @@ pub async fn beat_instance(
         );
 
         // Update heartbeat tracking
-        if result
-            && let Some(ref hc_any) = data.health_check_manager
-            && let Some(hc_manager) =
-                hc_any.downcast_ref::<crate::healthcheck::HealthCheckManager>()
-        {
-            hc_manager.unhealthy_checker().record_heartbeat(
-                namespace_id,
-                group_name,
-                &form.service_name,
-                ip,
-                port,
-                cluster_name,
-                15000, // default heartbeat_timeout
-                30000, // default ip_delete_timeout
-            );
+        if result {
+            if let Some(ref hc_service) = data.health_check_manager {
+                hc_service.record_heartbeat(
+                    namespace_id,
+                    group_name,
+                    &form.service_name,
+                    ip,
+                    port,
+                    cluster_name,
+                    15000, // default heartbeat_timeout
+                    30000, // default ip_delete_timeout
+                );
+            }
         }
 
         Result::<BeatResponse>::http_success(BeatResponse {

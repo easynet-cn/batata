@@ -193,7 +193,7 @@ impl PayloadHandler for ConfigQueryHandler {
         let persistence = self.app_state.persistence();
 
         // Get encryption service for decryption
-        let enc_svc = crate::service::encryption::get_encryption_service(&self.app_state);
+        let enc_svc = crate::service::encryption::get_encryption_provider(&self.app_state);
 
         // Check for matching gray config first
         let labels = build_client_labels(__connection);
@@ -386,7 +386,7 @@ impl PayloadHandler for ConfigPublishHandler {
         );
 
         // Encrypt content if needed (based on data_id pattern)
-        let enc_svc = crate::service::encryption::get_encryption_service(&self.app_state);
+        let enc_svc = crate::service::encryption::get_encryption_provider(&self.app_state);
         let (content, encrypted_data_key) = if encrypted_data_key.is_empty() {
             let (enc_content, enc_key) = enc_svc.encrypt_if_needed(data_id, content).await;
             (enc_content, enc_key)

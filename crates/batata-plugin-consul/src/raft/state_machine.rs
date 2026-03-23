@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use openraft::storage::RaftStateMachine;
 use openraft::{EntryPayload, OptionalSend, StorageError, StoredMembership};
-use rocksdb::{ColumnFamilyDescriptor, Options, WriteBatch, DB};
+use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
@@ -37,7 +37,9 @@ pub struct ConsulStateMachine {
 }
 
 impl ConsulStateMachine {
-    pub async fn open(dir: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn open(
+        dir: impl AsRef<Path>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let path = dir.as_ref();
         std::fs::create_dir_all(path)?;
 
@@ -71,9 +73,9 @@ impl ConsulStateMachine {
         Ok(Self {
             db,
             last_applied: RwLock::new(last_applied),
-            last_membership: RwLock::new(
-                last_membership.unwrap_or_else(|| StoredMembership::new(None, ConsulMembership::new(vec![], None))),
-            ),
+            last_membership: RwLock::new(last_membership.unwrap_or_else(|| {
+                StoredMembership::new(None, ConsulMembership::new(vec![], None))
+            })),
             table_index,
         })
     }
@@ -94,11 +96,15 @@ impl ConsulStateMachine {
     // ========================================================================
 
     fn cf_kv(&self) -> &rocksdb::ColumnFamily {
-        self.db.cf_handle(CF_CONSUL_KV).expect("CF consul_kv must exist")
+        self.db
+            .cf_handle(CF_CONSUL_KV)
+            .expect("CF consul_kv must exist")
     }
 
     fn cf_sessions(&self) -> &rocksdb::ColumnFamily {
-        self.db.cf_handle(CF_CONSUL_SESSIONS).expect("CF consul_sessions must exist")
+        self.db
+            .cf_handle(CF_CONSUL_SESSIONS)
+            .expect("CF consul_sessions must exist")
     }
 
     fn cf_meta(&self) -> &rocksdb::ColumnFamily {
@@ -123,14 +129,21 @@ impl ConsulStateMachine {
 
     async fn save_last_applied(&self, log_id: ConsulLogId) -> Result<(), StorageError<NodeId>> {
         let bytes = serde_json::to_vec(&log_id).map_err(|e| sm_error(e))?;
-        self.db.put_cf(self.cf_meta(), KEY_LAST_APPLIED, &bytes).map_err(|e| sm_error(e))?;
+        self.db
+            .put_cf(self.cf_meta(), KEY_LAST_APPLIED, &bytes)
+            .map_err(|e| sm_error(e))?;
         *self.last_applied.write().await = Some(log_id);
         Ok(())
     }
 
-    async fn save_membership(&self, membership: ConsulStoredMembership) -> Result<(), StorageError<NodeId>> {
+    async fn save_membership(
+        &self,
+        membership: ConsulStoredMembership,
+    ) -> Result<(), StorageError<NodeId>> {
         let bytes = serde_json::to_vec(&membership).map_err(|e| sm_error(e))?;
-        self.db.put_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP, &bytes).map_err(|e| sm_error(e))?;
+        self.db
+            .put_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP, &bytes)
+            .map_err(|e| sm_error(e))?;
         *self.last_membership.write().await = membership;
         Ok(())
     }
@@ -141,42 +154,71 @@ impl ConsulStateMachine {
 
     fn apply_request(&self, request: ConsulRaftRequest, log_index: u64) -> ConsulRaftResponse {
         match request {
-            ConsulRaftRequest::KVPut { key, stored_kv_json, session_index_key } => {
-                self.apply_kv_put(&key, &stored_kv_json, session_index_key.as_deref(), log_index)
-            }
-            ConsulRaftRequest::KVDelete { key, session_index_cleanup } => {
-                self.apply_kv_delete(&key, session_index_cleanup.as_deref(), log_index)
-            }
+            ConsulRaftRequest::KVPut {
+                key,
+                stored_kv_json,
+                session_index_key,
+            } => self.apply_kv_put(
+                &key,
+                &stored_kv_json,
+                session_index_key.as_deref(),
+                log_index,
+            ),
+            ConsulRaftRequest::KVDelete {
+                key,
+                session_index_cleanup,
+            } => self.apply_kv_delete(&key, session_index_cleanup.as_deref(), log_index),
             ConsulRaftRequest::KVDeletePrefix { prefix } => {
                 self.apply_kv_delete_prefix(&prefix, log_index)
             }
-            ConsulRaftRequest::KVAcquireSession { key, session_id, stored_kv_json } => {
-                self.apply_kv_acquire_session(&key, &session_id, &stored_kv_json, log_index)
-            }
-            ConsulRaftRequest::KVReleaseSessionKey { key, session_id, stored_kv_json } => {
-                self.apply_kv_release_session_key(&key, &session_id, &stored_kv_json, log_index)
-            }
-            ConsulRaftRequest::KVReleaseSession { session_id, updates, index_keys_to_delete } => {
+            ConsulRaftRequest::KVAcquireSession {
+                key,
+                session_id,
+                stored_kv_json,
+            } => self.apply_kv_acquire_session(&key, &session_id, &stored_kv_json, log_index),
+            ConsulRaftRequest::KVReleaseSessionKey {
+                key,
+                session_id,
+                stored_kv_json,
+            } => self.apply_kv_release_session_key(&key, &session_id, &stored_kv_json, log_index),
+            ConsulRaftRequest::KVReleaseSession {
+                session_id,
+                updates,
+                index_keys_to_delete,
+            } => {
                 self.apply_kv_release_session(&session_id, updates, index_keys_to_delete, log_index)
             }
-            ConsulRaftRequest::KVCas { key, stored_kv_json, expected_modify_index } => {
-                self.apply_kv_cas(&key, &stored_kv_json, expected_modify_index, log_index)
-            }
-            ConsulRaftRequest::KVTransaction { puts, deletes, session_index_puts, session_index_deletes } => {
-                self.apply_kv_transaction(puts, deletes, session_index_puts, session_index_deletes, log_index)
-            }
-            ConsulRaftRequest::SessionCreate { session_id, stored_session_json } => {
-                self.apply_session_create(&session_id, &stored_session_json, log_index)
-            }
+            ConsulRaftRequest::KVCas {
+                key,
+                stored_kv_json,
+                expected_modify_index,
+            } => self.apply_kv_cas(&key, &stored_kv_json, expected_modify_index, log_index),
+            ConsulRaftRequest::KVTransaction {
+                puts,
+                deletes,
+                session_index_puts,
+                session_index_deletes,
+            } => self.apply_kv_transaction(
+                puts,
+                deletes,
+                session_index_puts,
+                session_index_deletes,
+                log_index,
+            ),
+            ConsulRaftRequest::SessionCreate {
+                session_id,
+                stored_session_json,
+            } => self.apply_session_create(&session_id, &stored_session_json, log_index),
             ConsulRaftRequest::SessionDestroy { session_id } => {
                 self.apply_session_destroy(&session_id, log_index)
             }
-            ConsulRaftRequest::SessionRenew { session_id, stored_session_json } => {
-                self.apply_session_renew(&session_id, &stored_session_json, log_index)
-            }
-            ConsulRaftRequest::SessionCleanupExpired { expired_session_ids } => {
-                self.apply_session_cleanup_expired(expired_session_ids, log_index)
-            }
+            ConsulRaftRequest::SessionRenew {
+                session_id,
+                stored_session_json,
+            } => self.apply_session_renew(&session_id, &stored_session_json, log_index),
+            ConsulRaftRequest::SessionCleanupExpired {
+                expired_session_ids,
+            } => self.apply_session_cleanup_expired(expired_session_ids, log_index),
             ConsulRaftRequest::Noop => ConsulRaftResponse::success(),
         }
     }
@@ -188,7 +230,13 @@ impl ConsulStateMachine {
     // set ModifyIndex/CreateIndex on StoredKV entries, matching Consul behavior.
     // ========================================================================
 
-    fn apply_kv_put(&self, key: &str, stored_kv_json: &str, session_index_key: Option<&str>, log_index: u64) -> ConsulRaftResponse {
+    fn apply_kv_put(
+        &self,
+        key: &str,
+        stored_kv_json: &str,
+        session_index_key: Option<&str>,
+        log_index: u64,
+    ) -> ConsulRaftResponse {
         // Rewrite ModifyIndex/CreateIndex with the Raft log index
         let json = self.rewrite_kv_indexes(key, stored_kv_json, log_index);
 
@@ -206,7 +254,12 @@ impl ConsulStateMachine {
         }
     }
 
-    fn apply_kv_delete(&self, key: &str, session_index_cleanup: Option<&str>, _log_index: u64) -> ConsulRaftResponse {
+    fn apply_kv_delete(
+        &self,
+        key: &str,
+        session_index_cleanup: Option<&str>,
+        _log_index: u64,
+    ) -> ConsulRaftResponse {
         let cf_kv = self.cf_kv();
         if let Some(idx_key) = session_index_cleanup {
             let mut batch = WriteBatch::default();
@@ -265,7 +318,13 @@ impl ConsulStateMachine {
         }
     }
 
-    fn apply_kv_acquire_session(&self, key: &str, session_id: &str, stored_kv_json: &str, log_index: u64) -> ConsulRaftResponse {
+    fn apply_kv_acquire_session(
+        &self,
+        key: &str,
+        session_id: &str,
+        stored_kv_json: &str,
+        log_index: u64,
+    ) -> ConsulRaftResponse {
         let json = self.rewrite_kv_indexes(key, stored_kv_json, log_index);
 
         let mut batch = WriteBatch::default();
@@ -275,7 +334,13 @@ impl ConsulStateMachine {
         self.write_batch(batch, "KV acquire session")
     }
 
-    fn apply_kv_release_session_key(&self, key: &str, session_id: &str, stored_kv_json: &str, log_index: u64) -> ConsulRaftResponse {
+    fn apply_kv_release_session_key(
+        &self,
+        key: &str,
+        session_id: &str,
+        stored_kv_json: &str,
+        log_index: u64,
+    ) -> ConsulRaftResponse {
         let json = self.rewrite_kv_indexes(key, stored_kv_json, log_index);
 
         let mut batch = WriteBatch::default();
@@ -306,7 +371,13 @@ impl ConsulStateMachine {
         self.write_batch(batch, "KV release session")
     }
 
-    fn apply_kv_cas(&self, key: &str, stored_kv_json: &str, expected_modify_index: u64, log_index: u64) -> ConsulRaftResponse {
+    fn apply_kv_cas(
+        &self,
+        key: &str,
+        stored_kv_json: &str,
+        expected_modify_index: u64,
+        log_index: u64,
+    ) -> ConsulRaftResponse {
         let cf_kv = self.cf_kv();
 
         // Read existing entry and check modify_index
@@ -369,9 +440,17 @@ impl ConsulStateMachine {
     // Session apply methods
     // ========================================================================
 
-    fn apply_session_create(&self, session_id: &str, stored_session_json: &str, log_index: u64) -> ConsulRaftResponse {
+    fn apply_session_create(
+        &self,
+        session_id: &str,
+        stored_session_json: &str,
+        log_index: u64,
+    ) -> ConsulRaftResponse {
         let json = rewrite_json_index(stored_session_json, log_index, true);
-        match self.db.put_cf(self.cf_sessions(), session_id.as_bytes(), json.as_bytes()) {
+        match self
+            .db
+            .put_cf(self.cf_sessions(), session_id.as_bytes(), json.as_bytes())
+        {
             Ok(_) => ConsulRaftResponse::success(),
             Err(e) => ConsulRaftResponse::failure(format!("Session create failed: {}", e)),
         }
@@ -384,15 +463,27 @@ impl ConsulStateMachine {
         }
     }
 
-    fn apply_session_renew(&self, session_id: &str, stored_session_json: &str, log_index: u64) -> ConsulRaftResponse {
+    fn apply_session_renew(
+        &self,
+        session_id: &str,
+        stored_session_json: &str,
+        log_index: u64,
+    ) -> ConsulRaftResponse {
         let json = rewrite_json_index(stored_session_json, log_index, false);
-        match self.db.put_cf(self.cf_sessions(), session_id.as_bytes(), json.as_bytes()) {
+        match self
+            .db
+            .put_cf(self.cf_sessions(), session_id.as_bytes(), json.as_bytes())
+        {
             Ok(_) => ConsulRaftResponse::success(),
             Err(e) => ConsulRaftResponse::failure(format!("Session renew failed: {}", e)),
         }
     }
 
-    fn apply_session_cleanup_expired(&self, expired_session_ids: Vec<String>, _log_index: u64) -> ConsulRaftResponse {
+    fn apply_session_cleanup_expired(
+        &self,
+        expired_session_ids: Vec<String>,
+        _log_index: u64,
+    ) -> ConsulRaftResponse {
         let cf = self.cf_sessions();
         let mut batch = WriteBatch::default();
         for id in &expired_session_ids {
@@ -490,7 +581,10 @@ impl RaftStateMachine<ConsulTypeConfig> for ConsulStateMachine {
         Ok((applied, membership))
     }
 
-    async fn apply<I>(&mut self, entries: I) -> Result<Vec<ConsulRaftResponse>, StorageError<NodeId>>
+    async fn apply<I>(
+        &mut self,
+        entries: I,
+    ) -> Result<Vec<ConsulRaftResponse>, StorageError<NodeId>>
     where
         I: IntoIterator<Item = ConsulEntry> + OptionalSend,
     {

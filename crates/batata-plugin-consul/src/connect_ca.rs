@@ -647,7 +647,12 @@ pub async fn get_ca_roots(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(ca_service.get_roots().await)
 }
 
@@ -664,7 +669,12 @@ pub async fn get_ca_configuration(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(ca_service.get_ca_config().await)
 }
 
@@ -683,7 +693,12 @@ pub async fn set_ca_configuration(
 
     match ca_service.set_ca_config(body.into_inner()).await {
         Ok(()) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .finish(),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
@@ -704,7 +719,12 @@ pub async fn get_leaf_cert(
 
     let service = path.into_inner();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(ca_service.get_leaf_cert(&service))
 }
 
@@ -722,7 +742,12 @@ pub async fn list_intentions(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(ca_service.list_intentions())
 }
 
@@ -741,7 +766,12 @@ pub async fn create_intention(
 
     let intention = ca_service.create_intention(body.into_inner());
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(serde_json::json!({ "ID": intention.id }))
 }
 
@@ -761,7 +791,12 @@ pub async fn get_intention(
     let id = path.into_inner();
     match ca_service.get_intention(&id) {
         Some(intention) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(intention),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
@@ -784,7 +819,12 @@ pub async fn update_intention(
     let id = path.into_inner();
     match ca_service.update_intention(&id, body.into_inner()) {
         Some(_) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(serde_json::json!({ "ID": id })),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
@@ -806,7 +846,12 @@ pub async fn delete_intention(
     let id = path.into_inner();
     if ca_service.delete_intention(&id) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
@@ -830,7 +875,12 @@ pub async fn check_intention(
     let destination = query.destination.as_deref().unwrap_or("*");
     let allowed = ca_service.check_intention(source, destination);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(IntentionCheckResponse { allowed })
 }
 
@@ -851,7 +901,12 @@ pub async fn match_intentions(
     let mut result = std::collections::HashMap::new();
     result.insert(query.name.clone(), matched);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(result)
 }
 
@@ -871,7 +926,12 @@ pub async fn connect_authorize(
     let auth_req = body.into_inner();
     let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -892,7 +952,12 @@ pub async fn get_intention_exact(
     let destination = query.destination.as_deref().unwrap_or("*");
     match ca_service.get_intention_exact(source, destination) {
         Some(intention) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(intention),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
@@ -913,7 +978,12 @@ pub async fn upsert_intention_exact(
 
     let intention = ca_service.upsert_intention_exact(body.into_inner());
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(serde_json::json!({ "Created": true, "ID": intention.id }))
 }
 
@@ -934,7 +1004,12 @@ pub async fn delete_intention_exact(
     let destination = query.destination.as_deref().unwrap_or("*");
     if ca_service.delete_intention_exact(source, destination) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
@@ -959,7 +1034,12 @@ pub async fn get_ca_roots_persistent(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(ca_service.get_roots().await)
 }
 
@@ -976,7 +1056,12 @@ pub async fn get_ca_configuration_persistent(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(ca_service.get_ca_config().await)
 }
 
@@ -995,7 +1080,12 @@ pub async fn set_ca_configuration_persistent(
 
     match ca_service.set_ca_config(body.into_inner()).await {
         Ok(()) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .finish(),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
@@ -1016,7 +1106,12 @@ pub async fn get_leaf_cert_persistent(
 
     let service = path.into_inner();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(ca_service.get_leaf_cert(&service))
 }
 
@@ -1034,7 +1129,12 @@ pub async fn list_intentions_persistent(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(ca_service.list_intentions())
 }
 
@@ -1053,7 +1153,12 @@ pub async fn create_intention_persistent(
 
     let intention = ca_service.create_intention(body.into_inner());
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(serde_json::json!({ "ID": intention.id }))
 }
 
@@ -1073,7 +1178,12 @@ pub async fn get_intention_persistent(
     let id = path.into_inner();
     match ca_service.get_intention(&id) {
         Some(intention) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(intention),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
@@ -1096,7 +1206,12 @@ pub async fn update_intention_persistent(
     let id = path.into_inner();
     match ca_service.update_intention(&id, body.into_inner()) {
         Some(_) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(serde_json::json!({ "ID": id })),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
@@ -1118,7 +1233,12 @@ pub async fn delete_intention_persistent(
     let id = path.into_inner();
     if ca_service.delete_intention(&id) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Intention not found"))
@@ -1142,7 +1262,12 @@ pub async fn check_intention_persistent(
     let destination = query.destination.as_deref().unwrap_or("*");
     let allowed = ca_service.check_intention(source, destination);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(IntentionCheckResponse { allowed })
 }
 
@@ -1163,7 +1288,12 @@ pub async fn match_intentions_persistent(
     let mut result = std::collections::HashMap::new();
     result.insert(query.name.clone(), matched);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(result)
 }
 
@@ -1183,7 +1313,12 @@ pub async fn connect_authorize_persistent(
     let auth_req = body.into_inner();
     let response = ca_service.authorize(&auth_req.target, &auth_req.client_cert_uri);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -1204,7 +1339,12 @@ pub async fn get_intention_exact_persistent(
     let destination = query.destination.as_deref().unwrap_or("*");
     match ca_service.get_intention_exact(source, destination) {
         Some(intention) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(intention),
         None => HttpResponse::NotFound().json(ConsulError::new("Intention not found")),
     }
@@ -1225,7 +1365,12 @@ pub async fn upsert_intention_exact_persistent(
 
     let intention = ca_service.upsert_intention_exact(body.into_inner());
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(serde_json::json!({ "Created": true, "ID": intention.id }))
 }
 
@@ -1246,7 +1391,12 @@ pub async fn delete_intention_exact_persistent(
     let destination = query.destination.as_deref().unwrap_or("*");
     if ca_service.delete_intention_exact(source, destination) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Intention not found"))

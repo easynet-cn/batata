@@ -15,8 +15,8 @@ use batata_core::cluster::ServerMemberManager;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
+use batata_api::naming::Instance;
 use batata_maintainer_client::{MaintainerClient, MaintainerClientConfig};
-use batata_naming::Instance;
 use batata_server_common::console::api_model::{
     ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
     ConfigHistoryDetailInfo, ImportResult, SameConfigPolicy,

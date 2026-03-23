@@ -38,8 +38,9 @@ use crate::{
         tps_control::TpsControlMiddleware, traffic_revise::TrafficReviseFilter,
     },
     model::common::AppState,
-    service::naming::NamingService,
 };
+
+use batata_api::naming::NamingServiceProvider;
 
 /// Consul service adapters for HTTP endpoints.
 #[derive(Clone)]
@@ -68,7 +69,7 @@ pub struct ConsulServices {
 impl ConsulServices {
     /// Creates Consul service adapters from a naming service (in-memory mode).
     pub fn new(
-        naming_service: Arc<NamingService>,
+        naming_service: Arc<dyn NamingServiceProvider>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         dc_config: ConsulDatacenterConfig,
@@ -122,7 +123,7 @@ impl ConsulServices {
     /// Creates Consul service adapters with RocksDB persistence.
     /// KV, ACL, Session, and Query data are persisted directly to RocksDB.
     pub fn with_persistence(
-        naming_service: Arc<NamingService>,
+        naming_service: Arc<dyn NamingServiceProvider>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
@@ -177,7 +178,7 @@ impl ConsulServices {
     /// Creates Consul service adapters with Raft-replicated RocksDB storage.
     /// Used in cluster mode for Consul-dedicated Raft consensus.
     pub fn with_consul_raft(
-        naming_service: Arc<NamingService>,
+        naming_service: Arc<dyn NamingServiceProvider>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
@@ -240,7 +241,7 @@ impl ConsulServices {
 /// the Batata cluster, including authentication and namespace management.
 pub fn console_server(
     app_state: Arc<AppState>,
-    naming_service: Option<Arc<NamingService>>,
+    naming_service: Option<Arc<dyn NamingServiceProvider>>,
     ai_services: AIServices,
     context_path: String,
     address: String,
@@ -318,7 +319,7 @@ pub fn console_server(
 /// uses its own ACL token system.
 pub fn consul_server(
     app_state: Arc<AppState>,
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
     consul_services: ConsulServices,
     address: String,
     port: u16,
@@ -445,7 +446,7 @@ impl AIServices {
     /// Creates AI service adapters with config-backed persistence.
     pub fn with_persistence(
         persistence: Arc<dyn batata_persistence::PersistenceService>,
-        naming_service: Arc<NamingService>,
+        naming_service: Arc<dyn NamingServiceProvider>,
     ) -> Self {
         let mcp_index = Arc::new(crate::service::ai::McpServerIndex::new());
         let mcp_service = Arc::new(crate::service::ai::McpServerOperationService::new(
@@ -506,7 +507,7 @@ impl Default for CloudServices {
 #[allow(clippy::too_many_arguments)]
 pub fn main_server(
     app_state: Arc<AppState>,
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
     connection_manager: Arc<ConnectionManager>,
     config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
     ai_services: AIServices,

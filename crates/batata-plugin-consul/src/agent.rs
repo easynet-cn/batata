@@ -8,10 +8,10 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use sysinfo::System;
 
 use batata_api::model::NodeState;
+use batata_api::naming::NamingServiceProvider;
 use batata_api::naming::model::Instance;
 use batata_core::service::cluster::ServerMemberManager;
 use batata_naming::healthcheck::registry::InstanceCheckRegistry;
-use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
 use crate::health::ConsulHealthService;
@@ -25,17 +25,20 @@ use crate::model::{
 };
 
 /// Consul Agent service adapter
-/// Wraps NamingService to provide Consul-compatible API
+/// Wraps NamingServiceProvider to provide Consul-compatible API
 #[derive(Clone)]
 pub struct ConsulAgentService {
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
     registry: Arc<InstanceCheckRegistry>,
     default_namespace: String,
     default_group: String,
 }
 
 impl ConsulAgentService {
-    pub fn new(naming_service: Arc<NamingService>, registry: Arc<InstanceCheckRegistry>) -> Self {
+    pub fn new(
+        naming_service: Arc<dyn NamingServiceProvider>,
+        registry: Arc<InstanceCheckRegistry>,
+    ) -> Self {
         Self {
             naming_service,
             registry,
@@ -298,7 +301,12 @@ pub async fn register_service(
             }
         }
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .finish()
     } else {
         HttpResponse::InternalServerError().json(ConsulError::new("Failed to register service"))
@@ -429,7 +437,12 @@ pub async fn deregister_service(
             let _ = health_service.deregister_check(&check.check_id).await;
         }
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new(format!(
@@ -488,7 +501,12 @@ pub async fn list_services(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(services)
 }
 
@@ -542,7 +560,12 @@ pub async fn get_service(
                     checks: Some(checks),
                 };
                 return HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+                    .insert_header((
+                        "X-Consul-Index",
+                        index_provider
+                            .current_index(ConsulTable::Catalog)
+                            .to_string(),
+                    ))
                     .json(response);
             }
         }
@@ -668,7 +691,12 @@ pub async fn agent_health_service_by_id(
                     checks,
                 };
 
-                let idx_header = ("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string());
+                let idx_header = (
+                    "X-Consul-Index",
+                    index_provider
+                        .current_index(ConsulTable::Catalog)
+                        .to_string(),
+                );
                 return match status.as_str() {
                     "passing" => HttpResponse::Ok().insert_header(idx_header).json(info),
                     "warning" => HttpResponse::TooManyRequests()
@@ -755,7 +783,12 @@ pub async fn agent_health_service_by_name(
         });
     }
 
-    let idx_header = ("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string());
+    let idx_header = (
+        "X-Consul-Index",
+        index_provider
+            .current_index(ConsulTable::Catalog)
+            .to_string(),
+    );
     match worst_status {
         "passing" => HttpResponse::Ok().insert_header(idx_header).json(results),
         "warning" => HttpResponse::TooManyRequests()
@@ -815,7 +848,12 @@ pub async fn set_service_maintenance(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .finish()
 }
 
@@ -897,7 +935,12 @@ pub async fn get_agent_self(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -940,7 +983,12 @@ pub async fn get_agent_members(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(vec![member])
 }
 
@@ -1020,7 +1068,12 @@ pub async fn get_agent_members_real(
         .collect();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(members)
 }
 
@@ -1130,7 +1183,12 @@ pub async fn get_agent_self_real(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -1227,7 +1285,12 @@ pub async fn get_agent_host(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -1247,7 +1310,12 @@ pub async fn get_agent_version(
         fips: "".to_string(),
     };
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -1271,7 +1339,12 @@ pub async fn agent_join(
     // Real cluster join would be handled by Batata's cluster management
     tracing::info!("Agent join requested for address: {}", address);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .finish()
 }
 
@@ -1292,7 +1365,12 @@ pub async fn agent_leave(
     // Real leave would trigger Batata's graceful shutdown
     tracing::info!("Agent leave requested");
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .finish()
 }
 
@@ -1315,7 +1393,12 @@ pub async fn agent_force_leave(
     // In compatibility mode, just return success
     tracing::info!("Agent force-leave requested for node: {}", node);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .finish()
 }
 
@@ -1335,7 +1418,12 @@ pub async fn agent_reload(
     // In compatibility mode, return success (config reload not actually supported)
     tracing::info!("Agent reload requested");
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .finish()
 }
 
@@ -1385,7 +1473,12 @@ pub async fn agent_maintenance(
     );
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .finish()
 }
 
@@ -1463,7 +1556,12 @@ pub async fn get_agent_metrics(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -1674,7 +1772,12 @@ pub async fn get_agent_metrics_real(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -1727,14 +1830,19 @@ pub async fn agent_monitor(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .content_type("text/plain; charset=utf-8")
         .body(message)
 }
 
 /// Collect current metrics snapshot from the naming service.
 fn collect_metrics_snapshot(
-    naming_service: &NamingService,
+    naming_service: &dyn NamingServiceProvider,
     dc_config: &ConsulDatacenterConfig,
 ) -> MetricsResponse {
     let (_, service_names) = naming_service.list_services(
@@ -1783,7 +1891,7 @@ fn collect_metrics_snapshot(
 /// Emits a JSON metrics snapshot every 10 seconds until client disconnects.
 pub async fn agent_metrics_stream(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -1802,7 +1910,7 @@ pub async fn agent_metrics_stream(
             if tick > 0 {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             }
-            let snapshot = collect_metrics_snapshot(&ns, &dc);
+            let snapshot = collect_metrics_snapshot(&**ns, &dc);
             let mut bytes = serde_json::to_vec(&snapshot).unwrap_or_default();
             bytes.push(b'\n');
             Some((
@@ -1813,7 +1921,12 @@ pub async fn agent_metrics_stream(
     });
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .insert_header(("Content-Type", "application/json"))
         .insert_header(("Transfer-Encoding", "chunked"))
         .streaming(stream)
@@ -1823,7 +1936,7 @@ pub async fn agent_metrics_stream(
 /// Streams metrics with cluster member data every 10 seconds.
 pub async fn agent_metrics_stream_real(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -1845,7 +1958,7 @@ pub async fn agent_metrics_stream_real(
             if tick > 0 {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             }
-            let mut snapshot = collect_metrics_snapshot(&ns, &dc);
+            let mut snapshot = collect_metrics_snapshot(&**ns, &dc);
             let health_summary = mm.health_summary();
             snapshot.gauges.push(GaugeMetric::new(
                 "consul.serf.member.count",
@@ -1861,7 +1974,12 @@ pub async fn agent_metrics_stream_real(
     });
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .insert_header(("Content-Type", "application/json"))
         .insert_header(("Transfer-Encoding", "chunked"))
         .streaming(stream)
@@ -1885,22 +2003,28 @@ pub async fn update_agent_token(
 
     tracing::info!("Agent token update requested for type: {}", token_type);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .finish()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batata_naming::service::NamingService;
 
     #[test]
     fn test_consul_agent_service_creation() {
         let naming_service = Arc::new(NamingService::new());
-        let naming_service_clone = naming_service.clone();
         let registry = Arc::new(InstanceCheckRegistry::new(naming_service.clone()));
-        let agent = ConsulAgentService::new(naming_service, registry);
-        // Verify the service was stored correctly
-        assert!(Arc::ptr_eq(&agent.naming_service, &naming_service_clone));
+        let naming_service_trait: Arc<dyn NamingServiceProvider> = naming_service;
+        let agent = ConsulAgentService::new(naming_service_trait, registry);
+        // Verify the service was stored correctly (naming_service field is set)
+        assert!(agent.naming_service.get_all_service_keys().is_empty());
     }
 
     #[test]

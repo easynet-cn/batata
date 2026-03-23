@@ -9,8 +9,8 @@ use std::future::{Ready, ready};
 use std::sync::Arc;
 
 use actix_service::{Service, Transform};
-use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::Error;
+use actix_web::dev::{ServiceRequest, ServiceResponse};
 use futures::future::LocalBoxFuture;
 
 use batata_core::service::distro::DistroProtocol;

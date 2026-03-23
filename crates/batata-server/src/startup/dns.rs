@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, warn};
 
-use batata_naming::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 /// DNS server configuration
 #[derive(Clone, Debug)]
@@ -85,12 +85,12 @@ const DNS_RCODE_NXDOMAIN: u16 = 3;
 /// DNS Server for service discovery
 pub struct DnsServer {
     config: DnsConfig,
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
 }
 
 impl DnsServer {
     /// Create a new DNS server
-    pub fn new(config: DnsConfig, naming_service: Arc<NamingService>) -> Self {
+    pub fn new(config: DnsConfig, naming_service: Arc<dyn NamingServiceProvider>) -> Self {
         Self {
             config,
             naming_service,
@@ -125,7 +125,7 @@ impl DnsServer {
                         let cfg = config.clone();
 
                         tokio::spawn(async move {
-                            if let Some(response) = Self::handle_query(&query, &ns, &cfg).await
+                            if let Some(response) = Self::handle_query(&query, &*ns, &cfg).await
                                 && let Err(e) = socket_clone.send_to(&response, src).await
                             {
                                 warn!("Failed to send DNS response: {}", e);
@@ -145,7 +145,7 @@ impl DnsServer {
     /// Handle a DNS query and return a response
     async fn handle_query(
         query: &[u8],
-        naming_service: &NamingService,
+        naming_service: &dyn NamingServiceProvider,
         config: &DnsConfig,
     ) -> Option<Vec<u8>> {
         if query.len() < 12 {

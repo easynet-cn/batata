@@ -15,8 +15,9 @@ use batata_mesh::{
     sync::{NacosSyncBridge, SyncBridgeConfig},
 };
 
+use batata_api::naming::NamingServiceProvider;
+
 use crate::model::config::XdsConfig;
-use crate::service::naming::NamingService;
 
 /// xDS service state and handles
 pub struct XdsServerHandle {
@@ -81,7 +82,7 @@ impl XdsServerHandle {
 /// A `XdsServerHandle` containing the xDS server and sync bridge
 pub async fn start_xds_service(
     xds_config: XdsConfig,
-    _naming_service: Arc<NamingService>,
+    _naming_service: Arc<dyn NamingServiceProvider>,
 ) -> Result<XdsServerHandle, Box<dyn std::error::Error + Send + Sync>> {
     if !xds_config.enabled {
         return Err("xDS service is not enabled".into());

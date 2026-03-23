@@ -244,9 +244,7 @@ impl RaftNode {
                         request.op_type()
                     );
                     // Forward returns RaftResponse without log_id; use last_applied as proxy
-                    let resp = self
-                        .forward_write_to_leader(&leader_addr, request)
-                        .await?;
+                    let resp = self.forward_write_to_leader(&leader_addr, request).await?;
                     let idx = self.last_applied_index().unwrap_or(1);
                     Ok((resp, idx))
                 } else {

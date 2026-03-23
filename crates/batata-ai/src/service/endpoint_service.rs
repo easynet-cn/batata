@@ -5,18 +5,18 @@ use std::sync::Arc;
 
 use tracing::{debug, info};
 
+use batata_api::naming::NamingServiceProvider;
 use batata_api::naming::model::Instance;
 
 use super::constants::*;
-use batata_naming::service::NamingService;
 
 /// AI Endpoint Service for managing NamingService integrations
 pub struct AiEndpointService {
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
 }
 
 impl AiEndpointService {
-    pub fn new(naming_service: Arc<NamingService>) -> Self {
+    pub fn new(naming_service: Arc<dyn NamingServiceProvider>) -> Self {
         Self { naming_service }
     }
 

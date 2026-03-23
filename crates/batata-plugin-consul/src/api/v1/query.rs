@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
-use batata_naming::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 use crate::acl::AclService;
 use crate::index_provider::ConsulIndexProvider;
@@ -80,7 +80,7 @@ async fn execute_query(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query_service: web::Data<ConsulQueryService>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::query::execute_query(

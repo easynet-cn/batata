@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Scope, get, web};
 
-use batata_naming::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 use crate::acl::AclService;
 use crate::health::ConsulHealthService;
@@ -17,7 +17,7 @@ use crate::model::{ConsulDatacenterConfig, HealthQueryParams};
 #[get("/service/{service}")]
 async fn get_service_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -41,7 +41,7 @@ async fn get_service_health(
 #[get("/checks/{service}")]
 async fn get_service_checks(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -105,7 +105,7 @@ async fn get_node_checks(
 #[get("/connect/{service}")]
 async fn get_connect_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -129,7 +129,7 @@ async fn get_connect_health(
 #[get("/ingress/{service}")]
 async fn get_ingress_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,

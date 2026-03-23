@@ -161,15 +161,47 @@ impl ConfigEncryptionService {
     }
 }
 
-/// Extract ConfigEncryptionService from AppState's `encryption_service` field.
+#[async_trait::async_trait]
+impl batata_common::ConfigEncryptionProvider for ConfigEncryptionService {
+    fn is_enabled(&self) -> bool {
+        self.is_enabled()
+    }
+
+    fn should_encrypt(&self, data_id: &str) -> bool {
+        self.should_encrypt(data_id)
+    }
+
+    async fn encrypt_if_needed(&self, data_id: &str, content: &str) -> (String, String) {
+        self.encrypt_if_needed(data_id, content).await
+    }
+
+    async fn decrypt_if_needed(
+        &self,
+        data_id: &str,
+        content: &str,
+        encrypted_data_key: &str,
+    ) -> String {
+        self.decrypt_if_needed(data_id, content, encrypted_data_key)
+            .await
+    }
+
+    async fn encrypt(&self, content: &str) -> CryptoResult<(String, String)> {
+        self.encrypt(content).await
+    }
+
+    async fn decrypt(&self, content: &str, encrypted_data_key: &str) -> CryptoResult<String> {
+        self.decrypt(content, encrypted_data_key).await
+    }
+}
+
+/// Get the encryption provider from AppState.
 /// Returns a disabled service if not available (never panics).
-pub fn get_encryption_service(
+pub fn get_encryption_provider(
     app_state: &batata_server_common::model::AppState,
-) -> Arc<ConfigEncryptionService> {
+) -> Arc<dyn batata_common::ConfigEncryptionProvider> {
     app_state
         .encryption_service
-        .as_ref()
-        .and_then(|svc| svc.clone().downcast::<ConfigEncryptionService>().ok())
+        .clone()
         .unwrap_or_else(|| Arc::new(ConfigEncryptionService::disabled()))
 }
 

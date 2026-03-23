@@ -11,7 +11,7 @@ use std::sync::Arc;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use openraft::storage::{LogFlushed, LogState, RaftLogStorage};
 use openraft::{ErrorSubject, ErrorVerb, OptionalSend, RaftLogReader, StorageError};
-use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, Options, DB};
+use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -22,12 +22,26 @@ const CF_STATE: &str = "state";
 const KEY_VOTE: &[u8] = b"vote";
 const KEY_LAST_PURGED: &[u8] = b"last_purged";
 
-fn vote_error(e: impl std::error::Error + Send + Sync + 'static, verb: ErrorVerb) -> StorageError<NodeId> {
-    StorageError::from_io_error(ErrorSubject::Vote, verb, std::io::Error::other(e.to_string()))
+fn vote_error(
+    e: impl std::error::Error + Send + Sync + 'static,
+    verb: ErrorVerb,
+) -> StorageError<NodeId> {
+    StorageError::from_io_error(
+        ErrorSubject::Vote,
+        verb,
+        std::io::Error::other(e.to_string()),
+    )
 }
 
-fn logs_error(e: impl std::error::Error + Send + Sync + 'static, verb: ErrorVerb) -> StorageError<NodeId> {
-    StorageError::from_io_error(ErrorSubject::Logs, verb, std::io::Error::other(e.to_string()))
+fn logs_error(
+    e: impl std::error::Error + Send + Sync + 'static,
+    verb: ErrorVerb,
+) -> StorageError<NodeId> {
+    StorageError::from_io_error(
+        ErrorSubject::Logs,
+        verb,
+        std::io::Error::other(e.to_string()),
+    )
 }
 
 pub struct ConsulLogStore {
@@ -108,7 +122,8 @@ impl ConsulLogStore {
 
     fn encode_index(index: u64) -> Vec<u8> {
         let mut buf = Vec::with_capacity(8);
-        buf.write_u64::<BigEndian>(index).expect("Vec write infallible");
+        buf.write_u64::<BigEndian>(index)
+            .expect("Vec write infallible");
         buf
     }
 }
@@ -141,14 +156,18 @@ impl RaftLogReader<ConsulTypeConfig> for ConsulLogStore {
                 if key >= end_key.as_slice() {
                     break;
                 }
-                let entry: ConsulEntry = serde_json::from_slice(value)
-                    .map_err(|e| logs_error(e, ErrorVerb::Read))?;
+                let entry: ConsulEntry =
+                    serde_json::from_slice(value).map_err(|e| logs_error(e, ErrorVerb::Read))?;
                 entries.push(entry);
             }
             iter.next();
         }
 
-        debug!("Consul log: read {} entries from {:?}", entries.len(), range);
+        debug!(
+            "Consul log: read {} entries from {:?}",
+            entries.len(),
+            range
+        );
         Ok(entries)
     }
 }
@@ -165,7 +184,8 @@ impl RaftLogStorage<ConsulTypeConfig> for ConsulLogStore {
 
     async fn save_vote(&mut self, vote: &ConsulVote) -> Result<(), StorageError<NodeId>> {
         let bytes = serde_json::to_vec(vote).map_err(|e| vote_error(e, ErrorVerb::Write))?;
-        self.db.put_cf(self.cf_state(), KEY_VOTE, &bytes)
+        self.db
+            .put_cf(self.cf_state(), KEY_VOTE, &bytes)
             .map_err(|e| vote_error(e, ErrorVerb::Write))?;
         *self.vote.write().await = Some(*vote);
         Ok(())
@@ -209,7 +229,9 @@ impl RaftLogStorage<ConsulTypeConfig> for ConsulLogStore {
             last_log_id = Some(entry.log_id);
         }
 
-        self.db.write(batch).map_err(|e| logs_error(e, ErrorVerb::Write))?;
+        self.db
+            .write(batch)
+            .map_err(|e| logs_error(e, ErrorVerb::Write))?;
 
         if let Some(log_id) = last_log_id {
             *self.last_log_id.write().await = Some(log_id);
@@ -232,7 +254,9 @@ impl RaftLogStorage<ConsulTypeConfig> for ConsulLogStore {
             iter.next();
         }
 
-        self.db.write(batch).map_err(|e| logs_error(e, ErrorVerb::Write))?;
+        self.db
+            .write(batch)
+            .map_err(|e| logs_error(e, ErrorVerb::Write))?;
         *self.last_log_id.write().await = Some(log_id);
         Ok(())
     }
@@ -256,7 +280,9 @@ impl RaftLogStorage<ConsulTypeConfig> for ConsulLogStore {
         let bytes = serde_json::to_vec(&log_id).map_err(|e| logs_error(e, ErrorVerb::Write))?;
         batch.put_cf(self.cf_state(), KEY_LAST_PURGED, &bytes);
 
-        self.db.write(batch).map_err(|e| logs_error(e, ErrorVerb::Write))?;
+        self.db
+            .write(batch)
+            .map_err(|e| logs_error(e, ErrorVerb::Write))?;
         *self.last_purged.write().await = Some(log_id);
         Ok(())
     }

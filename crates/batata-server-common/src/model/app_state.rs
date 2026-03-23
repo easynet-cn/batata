@@ -2,7 +2,7 @@
 //!
 //! This module defines the central application state shared across all handlers.
 
-use std::{any::Any, collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use batata_auth::service::oauth::OAuthService;
 use batata_consistency::RaftNode;
@@ -45,18 +45,16 @@ pub struct AppState {
     pub oauth_service: Option<Arc<OAuthService>>,
     /// Unified persistence service (SQL, embedded RocksDB, or distributed Raft)
     pub persistence: Option<Arc<dyn PersistenceService>>,
-    /// Health check manager for tracking instance heartbeats and expiration
-    /// Stored as `Arc<dyn Any>` to avoid circular dependency (actual type: `batata_naming::healthcheck::HealthCheckManager`)
-    pub health_check_manager: Option<Arc<dyn Any + Send + Sync>>,
+    /// Heartbeat service for tracking instance heartbeats and expiration
+    pub health_check_manager: Option<Arc<dyn batata_common::HeartbeatService>>,
     /// Raft consensus node (only in DistributedEmbedded mode)
     pub raft_node: Option<Arc<RaftNode>>,
     /// Server lifecycle status (Starting → Up / Down)
     pub server_status: Arc<ServerStatusManager>,
     /// Control plugin for TPS rate limiting and connection control
     pub control_plugin: Option<Arc<dyn ControlPlugin>>,
-    /// Config encryption service (stored as `Arc<dyn Any>` to avoid circular dep with batata-config)
-    /// Actual type: `Arc<batata_config::service::encryption::ConfigEncryptionService>`
-    pub encryption_service: Option<Arc<dyn Any + Send + Sync>>,
+    /// Config encryption provider for encrypting/decrypting configuration values
+    pub encryption_service: Option<Arc<dyn batata_common::ConfigEncryptionProvider>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -95,6 +93,97 @@ impl Clone for AppState {
             control_plugin: self.control_plugin.clone(),
             encryption_service: self.encryption_service.clone(),
         }
+    }
+}
+
+// ============================================================================
+// Trait implementations for domain-specific access
+// ============================================================================
+
+impl batata_common::ConfigContext for AppState {
+    fn max_content(&self) -> u64 {
+        self.configuration.max_content() as u64
+    }
+
+    fn auth_enabled(&self) -> bool {
+        self.configuration.auth_enabled()
+    }
+
+    fn token_expire_seconds(&self) -> i64 {
+        self.configuration.auth_token_expire_seconds()
+    }
+
+    fn secret_key(&self) -> String {
+        self.configuration.token_secret_key()
+    }
+
+    fn main_port(&self) -> u16 {
+        self.configuration.server_main_port()
+    }
+
+    fn console_port(&self) -> u16 {
+        self.configuration.console_server_port()
+    }
+}
+
+impl batata_common::ClusterContext for AppState {
+    fn is_standalone(&self) -> bool {
+        self.server_member_manager
+            .as_ref()
+            .map_or(true, |m| m.is_standalone())
+    }
+
+    fn is_leader(&self) -> bool {
+        self.server_member_manager
+            .as_ref()
+            .map_or(true, |m| m.is_leader())
+    }
+
+    fn leader_address(&self) -> Option<String> {
+        self.server_member_manager
+            .as_ref()
+            .and_then(|m| m.leader_address())
+    }
+
+    fn all_members(&self) -> Vec<batata_common::MemberInfo> {
+        self.server_member_manager
+            .as_ref()
+            .map(|m| m.all_members().into_iter().map(member_to_info).collect())
+            .unwrap_or_default()
+    }
+
+    fn healthy_members(&self) -> Vec<batata_common::MemberInfo> {
+        self.server_member_manager
+            .as_ref()
+            .map(|m| {
+                m.healthy_members()
+                    .into_iter()
+                    .map(member_to_info)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn member_count(&self) -> usize {
+        self.server_member_manager
+            .as_ref()
+            .map_or(1, |m| m.member_count())
+    }
+}
+
+/// Convert a Member to MemberInfo for the ClusterContext trait
+fn member_to_info(m: batata_api::model::Member) -> batata_common::MemberInfo {
+    let state = match m.state {
+        batata_api::model::NodeState::Up => batata_common::MemberState::Up,
+        batata_api::model::NodeState::Down => batata_common::MemberState::Down,
+        batata_api::model::NodeState::Suspicious => batata_common::MemberState::Suspicious,
+        _ => batata_common::MemberState::Down,
+    };
+    batata_common::MemberInfo {
+        ip: m.ip,
+        port: m.port,
+        address: m.address,
+        state,
     }
 }
 

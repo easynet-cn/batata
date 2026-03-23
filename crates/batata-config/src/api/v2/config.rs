@@ -89,7 +89,7 @@ pub async fn get_config(
 
     // Get config from persistence service
     let persistence = data.persistence();
-    let enc_svc = crate::service::encryption::get_encryption_service(&data);
+    let enc_svc = crate::service::encryption::get_encryption_provider(&data);
 
     // Check for matching gray config by client IP
     let client_ip = req
@@ -240,7 +240,7 @@ pub async fn publish_config(
     let persistence = data.persistence();
 
     // Encrypt content if needed (based on data_id pattern)
-    let enc_svc = crate::service::encryption::get_encryption_service(&data);
+    let enc_svc = crate::service::encryption::get_encryption_provider(&data);
     let (encrypted_content, encrypted_key) = enc_svc
         .encrypt_if_needed(&form.data_id, &form.content)
         .await;

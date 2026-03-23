@@ -316,7 +316,12 @@ pub async fn get_coordinate_datacenters(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(dc_maps)
 }
 
@@ -335,7 +340,12 @@ pub async fn get_coordinate_nodes(
 
     let entries = coord_service.get_nodes(query.segment.as_deref());
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(entries)
 }
 
@@ -356,7 +366,12 @@ pub async fn get_coordinate_node(
     let node = path.into_inner();
     match coord_service.get_node(&node) {
         Some(entries) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(entries),
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node)))
@@ -407,7 +422,12 @@ pub async fn get_coordinate_datacenters_persistent(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(dc_maps)
 }
 
@@ -426,7 +446,12 @@ pub async fn get_coordinate_nodes_persistent(
 
     let entries = coord_service.get_nodes(query.segment.as_deref());
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(entries)
 }
 
@@ -447,7 +472,12 @@ pub async fn get_coordinate_node_persistent(
     let node = path.into_inner();
     match coord_service.get_node(&node) {
         Some(entries) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(entries),
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node)))

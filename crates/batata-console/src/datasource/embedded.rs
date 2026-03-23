@@ -10,9 +10,9 @@ use batata_persistence::PersistenceService;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
+use batata_api::naming::{Instance, NamingServiceProvider, ServiceMetadata};
 use batata_config::model::config::ConfigAllInfo;
 use batata_config::model::export::NacosExportItem;
-use batata_naming::Instance;
 use batata_server_common::console::api_model::{
     ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
     ConfigHistoryDetailInfo, ImportFailItem, ImportResult, SameConfigPolicy,
@@ -25,7 +25,6 @@ use batata_server_common::console::model::{
 
 use std::collections::{HashMap, HashSet};
 
-use batata_naming::service::NamingService;
 use batata_server_common::model::{
     AUTH_ADMIN_REQUEST, AUTH_ENABLED, AUTH_SYSTEM_TYPE, BATATA_VERSION_KEY,
     CONFIG_RENTENTION_DAYS_PROPERTY_STATE, CONSUL_ENABLED_STATE, CONSUL_PORT_STATE,
@@ -47,7 +46,7 @@ pub struct EmbeddedLocalDataSource {
     server_member_manager: Arc<ServerMemberManager>,
     _config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
     configuration: Configuration,
-    naming_service: Option<Arc<NamingService>>,
+    naming_service: Option<Arc<dyn NamingServiceProvider>>,
 }
 
 impl EmbeddedLocalDataSource {
@@ -56,7 +55,7 @@ impl EmbeddedLocalDataSource {
         server_member_manager: Arc<ServerMemberManager>,
         config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
         configuration: Configuration,
-        naming_service: Option<Arc<NamingService>>,
+        naming_service: Option<Arc<dyn NamingServiceProvider>>,
     ) -> Self {
         Self {
             persistence,
@@ -678,7 +677,7 @@ impl ConsoleDataSource for EmbeddedLocalDataSource {
             ("none".to_string(), String::new())
         };
 
-        let service_metadata = batata_naming::service::ServiceMetadata {
+        let service_metadata = ServiceMetadata {
             protect_threshold,
             metadata: metadata_map,
             selector_type,

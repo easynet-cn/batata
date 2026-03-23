@@ -6,20 +6,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use openraft::BasicNode;
 use openraft::error::{InstallSnapshotError, RPCError, RaftError, Unreachable};
 use openraft::network::{RPCOption, RaftNetwork, RaftNetworkFactory};
 use openraft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
     VoteRequest, VoteResponse,
 };
-use openraft::BasicNode;
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tracing::{debug, warn};
 
-use batata_api::raft::{
-    self as proto, consul_raft_service_client::ConsulRaftServiceClient,
-};
+use batata_api::raft::{self as proto, consul_raft_service_client::ConsulRaftServiceClient};
 use batata_consistency::raft::proto_convert;
 
 use super::types::*;
@@ -71,7 +69,10 @@ impl ConsulRaftNetworkConnection {
         let grpc_addr = raft_grpc_addr(&self.target_addr);
         let endpoint = format!("http://{}", grpc_addr);
 
-        debug!("Consul Raft: connecting to node {} at {}", self.target, endpoint);
+        debug!(
+            "Consul Raft: connecting to node {} at {}",
+            self.target, endpoint
+        );
 
         let channel = Channel::from_shared(endpoint)
             .map_err(|e| Unreachable::new(&e))?
@@ -80,11 +81,17 @@ impl ConsulRaftNetworkConnection {
             .connect()
             .await
             .map_err(|e| {
-                warn!("Consul Raft: failed to connect to node {}: {}", self.target, e);
+                warn!(
+                    "Consul Raft: failed to connect to node {}: {}",
+                    self.target, e
+                );
                 Unreachable::new(&e)
             })?;
 
-        self.channels.write().await.insert(self.target, channel.clone());
+        self.channels
+            .write()
+            .await
+            .insert(self.target, channel.clone());
         Ok(channel)
     }
 
@@ -92,12 +99,8 @@ impl ConsulRaftNetworkConnection {
     fn entry_to_proto(entry: &openraft::Entry<ConsulTypeConfig>) -> proto::Entry {
         let (payload_type, payload) = match &entry.payload {
             openraft::EntryPayload::Blank => (0u32, vec![]),
-            openraft::EntryPayload::Normal(req) => {
-                (1, serde_json::to_vec(req).unwrap_or_default())
-            }
-            openraft::EntryPayload::Membership(m) => {
-                (2, serde_json::to_vec(m).unwrap_or_default())
-            }
+            openraft::EntryPayload::Normal(req) => (1, serde_json::to_vec(req).unwrap_or_default()),
+            openraft::EntryPayload::Membership(m) => (2, serde_json::to_vec(m).unwrap_or_default()),
         };
 
         proto::Entry {
@@ -163,7 +166,10 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
     > {
         // TODO: Implement snapshot transfer
         Err(RPCError::Unreachable(Unreachable::new(
-            &std::io::Error::new(std::io::ErrorKind::Unsupported, "Consul Raft snapshot not yet implemented"),
+            &std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "Consul Raft snapshot not yet implemented",
+            ),
         )))
     }
 

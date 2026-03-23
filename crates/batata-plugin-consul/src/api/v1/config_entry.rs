@@ -58,7 +58,12 @@ async fn apply_config_entry(
 
     match config_service.apply_entry(entry_req, cas) {
         Ok(success) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(success),
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
     }
@@ -110,11 +115,21 @@ async fn delete_config_entry(
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+                    .insert_header((
+                        "X-Consul-Index",
+                        index_provider
+                            .current_index(ConsulTable::Catalog)
+                            .to_string(),
+                    ))
                     .json(success)
             } else {
                 HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+                    .insert_header((
+                        "X-Consul-Index",
+                        index_provider
+                            .current_index(ConsulTable::Catalog)
+                            .to_string(),
+                    ))
                     .json(serde_json::json!({}))
             }
         }
@@ -146,7 +161,12 @@ async fn list_config_entries(
 
     let entries = config_service.list_entries(&kind);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(entries)
 }
 
@@ -195,7 +215,12 @@ async fn apply_config_entry_persistent(
 
     match config_service.apply_entry(entry_req, cas).await {
         Ok(success) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(success),
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
     }
@@ -246,11 +271,21 @@ async fn delete_config_entry_persistent(
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+                    .insert_header((
+                        "X-Consul-Index",
+                        index_provider
+                            .current_index(ConsulTable::Catalog)
+                            .to_string(),
+                    ))
                     .json(success)
             } else {
                 HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+                    .insert_header((
+                        "X-Consul-Index",
+                        index_provider
+                            .current_index(ConsulTable::Catalog)
+                            .to_string(),
+                    ))
                     .json(serde_json::json!({}))
             }
         }
@@ -282,7 +317,12 @@ async fn list_config_entries_persistent(
 
     let entries = config_service.list_entries(&kind).await;
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(entries)
 }
 

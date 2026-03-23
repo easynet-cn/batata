@@ -1365,7 +1365,9 @@ pub async fn get_kv(
             .wait
             .as_deref()
             .and_then(ConsulIndexProvider::parse_wait_duration);
-        let reached = index_provider.wait_for_change(ConsulTable::KVS, target_index, wait_dur).await;
+        let reached = index_provider
+            .wait_for_change(ConsulTable::KVS, target_index, wait_dur)
+            .await;
         if !reached {
             let has_data = kv_service.get(&key).is_some()
                 || kv_service
@@ -1469,7 +1471,10 @@ pub async fn put_kv(
             index_provider.increment(ConsulTable::KVS);
         }
         return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::KVS).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider.current_index(ConsulTable::KVS).to_string(),
+            ))
             .json(success);
     }
 
@@ -1482,7 +1487,10 @@ pub async fn put_kv(
             index_provider.increment(ConsulTable::KVS);
         }
         return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::KVS).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider.current_index(ConsulTable::KVS).to_string(),
+            ))
             .json(success);
     }
 
@@ -1493,7 +1501,10 @@ pub async fn put_kv(
             index_provider.increment(ConsulTable::KVS);
         }
         return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::KVS).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider.current_index(ConsulTable::KVS).to_string(),
+            ))
             .json(success);
     }
 
@@ -1501,7 +1512,10 @@ pub async fn put_kv(
     kv_service.put(key, &value, query.flags).await;
     index_provider.increment(ConsulTable::KVS);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::KVS).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider.current_index(ConsulTable::KVS).to_string(),
+        ))
         .json(true)
 }
 

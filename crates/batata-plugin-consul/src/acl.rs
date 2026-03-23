@@ -1124,7 +1124,12 @@ pub async fn list_tokens(
 ) -> HttpResponse {
     let tokens = acl_service.list_tokens();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(tokens)
 }
 
@@ -1155,7 +1160,9 @@ pub async fn get_token(
 
     match token {
         Some(t) => {
-            let idx = index_provider.current_index(ConsulTable::Catalog).to_string();
+            let idx = index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string();
             if expanded {
                 // Resolve policies and roles for expanded response
                 let expanded_policies: Vec<AclPolicy> = t
@@ -1268,7 +1275,12 @@ pub async fn create_token(
     );
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(token)
 }
 
@@ -1282,7 +1294,12 @@ pub async fn delete_token(
 
     if acl_service.delete_token(&accessor_id) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Token not found"))
@@ -1303,7 +1320,12 @@ pub async fn get_token_self(
 
     match acl_service.get_token(&secret_id) {
         Some(token) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(token),
         None => HttpResponse::Forbidden().json(AclError::new("ACL token not found or invalid")),
     }
@@ -1340,7 +1362,12 @@ pub async fn clone_token(
             let new_token =
                 acl_service.create_token(&description, policies, roles, source.local, None);
             HttpResponse::Ok()
-                .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+                .insert_header((
+                    "X-Consul-Index",
+                    index_provider
+                        .current_index(ConsulTable::Catalog)
+                        .to_string(),
+                ))
                 .json(new_token)
         }
         None => HttpResponse::NotFound().json(AclError::new("Token not found")),
@@ -1375,7 +1402,12 @@ pub async fn acl_bootstrap(
             hash: base64::engine::general_purpose::STANDARD.encode("bootstrap"),
         };
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(response)
     } else {
         HttpResponse::InternalServerError().json(AclError::new("Failed to bootstrap ACL"))
@@ -1442,7 +1474,12 @@ pub async fn acl_login(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -1470,14 +1507,24 @@ pub async fn acl_logout(
         && acl_service.delete_token(&token.accessor_id)
     {
         return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true);
     }
 
     // Also try direct removal from memory
     if MEMORY_TOKENS.remove(&secret_id).is_some() {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Token not found"))
@@ -1538,7 +1585,12 @@ pub async fn list_policies(
 ) -> HttpResponse {
     let policies = acl_service.list_policies();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(policies)
 }
 
@@ -1552,7 +1604,12 @@ pub async fn get_policy(
 
     match acl_service.get_policy(&id) {
         Some(policy) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(policy),
         None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
     }
@@ -1568,7 +1625,12 @@ pub async fn delete_policy(
 
     if acl_service.delete_policy(&id) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Policy not found"))
@@ -1600,7 +1662,12 @@ pub async fn create_policy(
     );
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(policy)
 }
 
@@ -1627,7 +1694,12 @@ pub async fn list_roles(
 ) -> HttpResponse {
     let roles = acl_service.list_roles();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(roles)
 }
 
@@ -1661,7 +1733,12 @@ pub async fn create_role(
     );
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(role)
 }
 
@@ -1676,7 +1753,12 @@ pub async fn get_role(
 
     match acl_service.get_role(&id) {
         Some(role) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(role),
         None => HttpResponse::NotFound().json(AclError::new("Role not found")),
     }
@@ -1699,7 +1781,12 @@ pub async fn update_role(
 
     match acl_service.update_role(&id, Some(&body.name), body.description.as_deref(), policies) {
         Some(role) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(role),
         None => HttpResponse::NotFound().json(AclError::new("Role not found")),
     }
@@ -1716,7 +1803,12 @@ pub async fn delete_role(
 
     if acl_service.delete_role(&id) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Role not found"))
@@ -1749,7 +1841,12 @@ pub async fn list_auth_methods(
 ) -> HttpResponse {
     let methods = acl_service.list_auth_methods();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(methods)
 }
 
@@ -1771,7 +1868,12 @@ pub async fn create_auth_method(
     );
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(method)
 }
 
@@ -1786,7 +1888,12 @@ pub async fn get_auth_method(
 
     match acl_service.get_auth_method(&name) {
         Some(method) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(method),
         None => HttpResponse::NotFound().json(AclError::new("Auth method not found")),
     }
@@ -1812,7 +1919,12 @@ pub async fn update_auth_method(
         body.config.clone(),
     ) {
         Some(method) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(method),
         None => HttpResponse::NotFound().json(AclError::new("Auth method not found")),
     }
@@ -1829,7 +1941,12 @@ pub async fn delete_auth_method(
 
     if acl_service.delete_auth_method(&name) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Auth method not found"))
@@ -2073,7 +2190,12 @@ pub async fn update_token(
     let accessor_id = path.into_inner();
     match acl_service.update_token(&accessor_id, body.into_inner()) {
         Some(token) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(token),
         None => HttpResponse::NotFound().json(AclError::new("Token not found")),
     }
@@ -2089,7 +2211,12 @@ pub async fn update_policy(
     let id = path.into_inner();
     match acl_service.update_policy(&id, body.into_inner()) {
         Some(policy) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(policy),
         None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
     }
@@ -2104,7 +2231,12 @@ pub async fn get_policy_by_name(
     let name = path.into_inner();
     match acl_service.get_policy(&name) {
         Some(policy) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(policy),
         None => HttpResponse::NotFound().json(AclError::new("Policy not found")),
     }
@@ -2119,7 +2251,12 @@ pub async fn get_role_by_name(
     let name = path.into_inner();
     match acl_service.get_role(&name) {
         Some(role) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(role),
         None => HttpResponse::NotFound().json(AclError::new("Role not found")),
     }
@@ -2131,7 +2268,12 @@ pub async fn acl_replication(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(AclReplicationStatus {
             enabled: false,
             running: false,
@@ -2152,7 +2294,12 @@ pub async fn list_binding_rules(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(acl_service.list_binding_rules())
 }
 
@@ -2164,7 +2311,12 @@ pub async fn create_binding_rule(
 ) -> HttpResponse {
     let rule = acl_service.create_binding_rule(body.into_inner());
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(rule)
 }
 
@@ -2177,7 +2329,12 @@ pub async fn get_binding_rule(
     let id = path.into_inner();
     match acl_service.get_binding_rule(&id) {
         Some(rule) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(rule),
         None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
     }
@@ -2193,7 +2350,12 @@ pub async fn update_binding_rule(
     let id = path.into_inner();
     match acl_service.update_binding_rule(&id, body.into_inner()) {
         Some(rule) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(rule),
         None => HttpResponse::NotFound().json(AclError::new("Binding rule not found")),
     }
@@ -2208,7 +2370,12 @@ pub async fn delete_binding_rule(
     let id = path.into_inner();
     if acl_service.delete_binding_rule(&id) {
         HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Catalog)
+                    .to_string(),
+            ))
             .json(true)
     } else {
         HttpResponse::NotFound().json(AclError::new("Binding rule not found"))
@@ -2257,7 +2424,12 @@ pub async fn list_templated_policies(
         },
     );
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(policies)
 }
 
@@ -2324,7 +2496,12 @@ pub async fn preview_templated_policy(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(serde_json::json!({ "Rules": rules }))
 }
 
@@ -2403,7 +2580,12 @@ pub async fn acl_authorize(
         .collect();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(responses)
 }
 

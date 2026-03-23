@@ -23,5 +23,5 @@ pub use capacity::*;
 pub use config::*;
 pub use encryption::{
     ConfigEncryptionService, ConfigEncryptionServiceBuilder, EncryptionPattern,
-    get_encryption_service,
+    get_encryption_provider,
 };

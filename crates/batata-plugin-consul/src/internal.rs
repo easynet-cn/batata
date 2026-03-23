@@ -9,7 +9,7 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde::{Deserialize, Serialize};
 
-use batata_naming::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
@@ -162,7 +162,7 @@ pub struct UICatalogOverviewQueryParams {
 /// GET /v1/internal/ui/nodes - List nodes for UI
 pub async fn ui_nodes(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<UINodeQueryParams>,
@@ -216,14 +216,19 @@ pub async fn ui_nodes(
 
     let nodes: Vec<UINode> = node_map.into_values().collect();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(nodes)
 }
 
 /// GET /v1/internal/ui/node/{node} - Get node info for UI
 pub async fn ui_node_info(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
@@ -271,7 +276,12 @@ pub async fn ui_node_info(
                     modify_index: index_provider.current_index(ConsulTable::Catalog),
                 };
                 return HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+                    .insert_header((
+                        "X-Consul-Index",
+                        index_provider
+                            .current_index(ConsulTable::Catalog)
+                            .to_string(),
+                    ))
                     .json(node);
             }
         }
@@ -294,14 +304,19 @@ pub async fn ui_exported_services(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.list_exported_services())
 }
 
 /// GET /v1/internal/ui/catalog-overview - Get catalog overview for UI
 pub async fn ui_catalog_overview(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -384,7 +399,12 @@ pub async fn ui_catalog_overview(
 
     let _ = total_instances; // used for node counting
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(summary)
 }
 
@@ -407,7 +427,12 @@ pub async fn ui_gateway_services_nodes(
         catalog.get_gateway_services_from_config(&gateway_name, &config_entry_service);
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(gateway_services)
 }
 
@@ -427,7 +452,12 @@ pub async fn ui_gateway_intentions(
     let gateway = path.into_inner();
     let matched = ca_service.match_intentions("destination", &gateway);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(matched)
 }
 
@@ -438,7 +468,7 @@ pub async fn ui_service_topology(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     ca_service: web::Data<ConsulConnectCAService>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     path: web::Path<String>,
     query: web::Query<UIServiceTopologyQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -548,7 +578,12 @@ pub async fn ui_service_topology(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(topology)
 }
 
@@ -571,7 +606,7 @@ pub async fn ui_metrics_proxy(
 
 /// Collect mesh-gateway service instances as JSON values for federation state
 fn collect_mesh_gateways(
-    naming_service: &Arc<NamingService>,
+    naming_service: &Arc<dyn NamingServiceProvider>,
     datacenter: &str,
     default_namespace: &str,
     default_group: &str,
@@ -628,7 +663,7 @@ pub async fn federation_state_list(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
@@ -652,7 +687,12 @@ pub async fn federation_state_list(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(vec![state])
 }
 
@@ -661,7 +701,7 @@ pub async fn federation_state_mesh_gateways(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
@@ -705,7 +745,12 @@ pub async fn federation_state_mesh_gateways(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(gateways_by_dc)
 }
 
@@ -714,7 +759,7 @@ pub async fn federation_state_get(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -743,7 +788,12 @@ pub async fn federation_state_get(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(state)
 }
 
@@ -756,7 +806,7 @@ pub async fn assign_service_virtual_ip(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     body: web::Json<AssignServiceVIPsRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -778,7 +828,12 @@ pub async fn assign_service_virtual_ip(
     let found = !instances.is_empty();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(AssignServiceVIPsResponse {
             service_name: request.service_name,
             found,

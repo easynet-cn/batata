@@ -668,7 +668,12 @@ pub async fn get_discovery_chain(
 
     let service_name = path.into_inner();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.get_discovery_chain(&service_name))
 }
 
@@ -686,7 +691,12 @@ pub async fn list_exported_services(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.list_exported_services())
 }
 
@@ -704,7 +714,12 @@ pub async fn list_imported_services(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.list_imported_services())
 }
 
@@ -725,7 +740,12 @@ pub async fn post_discovery_chain(
 
     let service_name = path.into_inner();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
@@ -749,7 +769,12 @@ pub async fn get_discovery_chain_persistent(
 
     let service_name = path.into_inner();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.get_discovery_chain(&service_name))
 }
 
@@ -770,7 +795,12 @@ pub async fn post_discovery_chain_persistent(
 
     let service_name = path.into_inner();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
@@ -788,7 +818,12 @@ pub async fn list_exported_services_persistent(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.list_exported_services())
 }
 
@@ -806,7 +841,12 @@ pub async fn list_imported_services_persistent(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(connect_service.list_imported_services())
 }
 

@@ -1335,6 +1335,7 @@ mod tests {
 
     use actix_web::{App, test, web};
 
+    use batata_api::naming::NamingServiceProvider;
     use batata_naming::service::NamingService;
 
     use crate::acl::AclService;
@@ -1363,10 +1364,12 @@ mod tests {
         let registry = Arc::new(batata_naming::InstanceCheckRegistry::new(
             naming_service.clone(),
         ));
+        let naming_service_trait: Arc<dyn NamingServiceProvider> = naming_service;
         let kv_service = ConsulKVService::new();
         let session_service = ConsulSessionService::new();
-        let health_service = ConsulHealthService::new(naming_service.clone(), registry.clone());
-        let agent_service = ConsulAgentService::new(naming_service.clone(), registry);
+        let health_service =
+            ConsulHealthService::new(naming_service_trait.clone(), registry.clone());
+        let agent_service = ConsulAgentService::new(naming_service_trait.clone(), registry);
         let acl_service = AclService::disabled();
         let event_service = ConsulEventService::new();
         let snapshot_service = ConsulSnapshotService::new();
@@ -1375,7 +1378,7 @@ mod tests {
         let session_arc = Arc::new(session_service.clone());
         let lock_service = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore_service = ConsulSemaphoreService::new(kv_arc, session_arc);
-        let catalog_service = ConsulCatalogService::new(naming_service.clone());
+        let catalog_service = ConsulCatalogService::new(naming_service_trait.clone());
         let config_entry_service = ConsulConfigEntryService::new();
         let connect_service = ConsulConnectService::new();
         let connect_ca_service = ConsulConnectCAService::new();
@@ -1396,7 +1399,7 @@ mod tests {
                 .app_data(web::Data::new(config_entry_service))
                 .app_data(web::Data::new(connect_service))
                 .app_data(web::Data::new(connect_ca_service))
-                .app_data(web::Data::new(naming_service))
+                .app_data(web::Data::new(naming_service_trait))
                 .app_data(web::Data::new(
                     crate::model::ConsulDatacenterConfig::default(),
                 ))

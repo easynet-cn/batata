@@ -10,12 +10,10 @@ use tracing::{debug, error};
 
 use batata_api::raft::{
     AppendEntriesRequest as ProtoAppendEntriesRequest,
-    AppendEntriesResponse as ProtoAppendEntriesResponse,
-    Entry as ProtoEntry,
+    AppendEntriesResponse as ProtoAppendEntriesResponse, Entry as ProtoEntry,
     InstallSnapshotRequest as ProtoInstallSnapshotRequest,
-    InstallSnapshotResponse as ProtoInstallSnapshotResponse,
-    VoteRequest as ProtoVoteRequest, VoteResponse as ProtoVoteResponse,
-    consul_raft_service_server::ConsulRaftService,
+    InstallSnapshotResponse as ProtoInstallSnapshotResponse, VoteRequest as ProtoVoteRequest,
+    VoteResponse as ProtoVoteResponse, consul_raft_service_server::ConsulRaftService,
 };
 use batata_consistency::raft::proto_convert;
 
@@ -60,9 +58,7 @@ impl ConsulRaftGrpcService {
     }
 
     /// Convert proto Entry to Consul openraft Entry
-    fn from_proto_entry(
-        entry: ProtoEntry,
-    ) -> Result<ConsulEntry, serde_json::Error> {
+    fn from_proto_entry(entry: ProtoEntry) -> Result<ConsulEntry, serde_json::Error> {
         let log_id = proto_convert::from_proto_log_id(entry.log_id)
             .unwrap_or_else(|| openraft::LogId::new(openraft::CommittedLeaderId::new(0, 0), 0));
 
@@ -95,7 +91,9 @@ impl ConsulRaftService for ConsulRaftGrpcService {
 
         debug!(
             "Consul Raft: AppendEntries term={}, leader={}, entries={}",
-            req.term, req.leader_id, req.entries.len()
+            req.term,
+            req.leader_id,
+            req.entries.len()
         );
 
         let entries: Result<Vec<_>, _> = req
@@ -154,7 +152,10 @@ impl ConsulRaftService for ConsulRaftGrpcService {
         let raft = self.get_raft().await?;
         let req = request.into_inner();
 
-        debug!("Consul Raft: Vote term={}, candidate={}", req.term, req.candidate_id);
+        debug!(
+            "Consul Raft: Vote term={}, candidate={}",
+            req.term, req.candidate_id
+        );
 
         let vote = proto_convert::from_proto_vote(req.vote)
             .unwrap_or_else(|| openraft::Vote::new(req.term, req.candidate_id));
@@ -181,7 +182,9 @@ impl ConsulRaftService for ConsulRaftGrpcService {
         &self,
         _request: Request<Streaming<ProtoInstallSnapshotRequest>>,
     ) -> Result<Response<ProtoInstallSnapshotResponse>, Status> {
-        Err(Status::unimplemented("Consul Raft snapshot not yet implemented"))
+        Err(Status::unimplemented(
+            "Consul Raft snapshot not yet implemented",
+        ))
     }
 }
 
@@ -190,11 +193,9 @@ impl ConsulRaftService for ConsulRaftGrpcService {
 // ============================================================================
 
 use batata_api::raft::{
-    ClientWriteRequest, ClientWriteResponse,
+    AddLearnerRequest, AddLearnerResponse, ChangeMembershipRequest, ChangeMembershipResponse,
+    ClientWriteRequest, ClientWriteResponse, GetMetricsRequest, GetMetricsResponse,
     consul_raft_management_service_server::ConsulRaftManagementService,
-    AddLearnerRequest, AddLearnerResponse,
-    ChangeMembershipRequest, ChangeMembershipResponse,
-    GetMetricsRequest, GetMetricsResponse,
 };
 
 /// gRPC management service for Consul Raft — handles forwarded client writes.

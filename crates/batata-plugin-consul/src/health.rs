@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 
+use batata_api::naming::NamingServiceProvider;
 use batata_api::naming::model::Instance as NacosInstance;
 use batata_naming::healthcheck::registry::{
     CheckOrigin, CheckStatus, CheckType as RegistryCheckType, InstanceCheckConfig,
     InstanceCheckRegistry,
 };
-use batata_naming::service::NamingService;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -26,17 +26,19 @@ use crate::model::{
 async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, wait: Option<&str>) {
     if let Some(target_index) = index {
         let timeout = wait.and_then(ConsulIndexProvider::parse_wait_duration);
-        index_provider.wait_for_change(ConsulTable::Catalog, target_index, timeout).await;
+        index_provider
+            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .await;
     }
 }
 
 /// Consul Health Check service backed by InstanceCheckRegistry.
 /// All check operations delegate to the unified registry, which immediately
-/// syncs health status changes to NamingService.
+/// syncs health status changes to the naming service.
 #[derive(Clone)]
 pub struct ConsulHealthService {
     #[allow(dead_code)]
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
     registry: Arc<InstanceCheckRegistry>,
     /// Node name for this agent
     node_name: String,
@@ -45,7 +47,10 @@ pub struct ConsulHealthService {
 }
 
 impl ConsulHealthService {
-    pub fn new(naming_service: Arc<NamingService>, registry: Arc<InstanceCheckRegistry>) -> Self {
+    pub fn new(
+        naming_service: Arc<dyn NamingServiceProvider>,
+        registry: Arc<InstanceCheckRegistry>,
+    ) -> Self {
         Self {
             naming_service,
             registry,
@@ -299,7 +304,7 @@ impl ConsulHealthService {
 #[allow(clippy::too_many_arguments)]
 pub async fn get_service_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -419,7 +424,12 @@ pub async fn get_service_health(
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(results)
 }
 
@@ -502,7 +512,7 @@ fn resolve_service_health_field(entry: &ServiceHealth, selector: &str) -> Option
 #[allow(clippy::too_many_arguments)]
 pub async fn get_service_checks(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -557,7 +567,12 @@ pub async fn get_service_checks(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(all_checks)
 }
 
@@ -598,7 +613,12 @@ pub async fn get_checks_by_state(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(checks)
 }
 
@@ -629,7 +649,12 @@ pub async fn get_node_checks(
         .collect();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(checks)
 }
 
@@ -822,7 +847,12 @@ pub async fn list_agent_checks(
         .collect();
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(checks_map)
 }
 
@@ -831,7 +861,7 @@ pub async fn list_agent_checks(
 #[allow(clippy::too_many_arguments)]
 pub async fn get_connect_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -905,7 +935,12 @@ pub async fn get_connect_health(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(results)
 }
 
@@ -914,7 +949,7 @@ pub async fn get_connect_health(
 #[allow(clippy::too_many_arguments)]
 pub async fn get_ingress_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -989,7 +1024,12 @@ pub async fn get_ingress_health(
     }
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Catalog).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Catalog)
+                .to_string(),
+        ))
         .json(results)
 }
 
@@ -1135,6 +1175,7 @@ fn apply_health_check_filter(checks: Vec<HealthCheck>, filter: &str) -> Vec<Heal
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batata_naming::service::NamingService;
 
     /// Helper to create a ConsulHealthService for tests
     fn create_test_service() -> ConsulHealthService {

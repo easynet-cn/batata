@@ -1,9 +1,7 @@
 /// Public proto ↔ openraft type conversion utilities.
 ///
 /// Shared between Nacos Raft and Consul Raft gRPC services.
-use batata_api::raft::{
-    LogId as ProtoLogId, Vote as ProtoVote,
-};
+use batata_api::raft::{LogId as ProtoLogId, Vote as ProtoVote};
 
 use super::types::NodeId;
 

@@ -22,7 +22,7 @@ pub async fn create_datasource(
     database_connection: Option<DatabaseConnection>,
     server_member_manager: Option<Arc<ServerMemberManager>>,
     config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
-    naming_service: Option<Arc<batata_naming::service::NamingService>>,
+    naming_service: Option<Arc<dyn batata_api::naming::NamingServiceProvider>>,
     persistence: Option<Arc<dyn batata_persistence::PersistenceService>>,
 ) -> anyhow::Result<Arc<dyn ConsoleDataSource>> {
     if configuration.is_console_remote_mode() {

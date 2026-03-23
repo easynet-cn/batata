@@ -535,7 +535,12 @@ pub async fn create_session(
     };
 
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Sessions)
+                .to_string(),
+        ))
         .json(response)
 }
 
@@ -562,7 +567,12 @@ pub async fn destroy_session(
 
     let destroyed = session_service.destroy_session(&session_id).await;
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Sessions)
+                .to_string(),
+        ))
         .json(destroyed)
 }
 
@@ -583,7 +593,9 @@ pub async fn get_session_info(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let idx = index_provider.current_index(ConsulTable::Sessions).to_string();
+    let idx = index_provider
+        .current_index(ConsulTable::Sessions)
+        .to_string();
     match session_service.get_session(&session_id) {
         Some(session) => HttpResponse::Ok()
             .insert_header(("X-Consul-Index", idx))
@@ -613,7 +625,12 @@ pub async fn list_sessions(
 
     let sessions = session_service.list_sessions();
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Sessions)
+                .to_string(),
+        ))
         .json(sessions)
 }
 
@@ -636,7 +653,12 @@ pub async fn list_node_sessions(
 
     let sessions = session_service.list_node_sessions(&node);
     HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
+        .insert_header((
+            "X-Consul-Index",
+            index_provider
+                .current_index(ConsulTable::Sessions)
+                .to_string(),
+        ))
         .json(sessions)
 }
 
@@ -659,7 +681,12 @@ pub async fn renew_session(
 
     match session_service.renew_session(&session_id).await {
         Some(session) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index_provider.current_index(ConsulTable::Sessions).to_string()))
+            .insert_header((
+                "X-Consul-Index",
+                index_provider
+                    .current_index(ConsulTable::Sessions)
+                    .to_string(),
+            ))
             .json(vec![session]),
         None => HttpResponse::NotFound().json(ConsulError::new("Session not found or expired")),
     }

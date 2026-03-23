@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Scope, get, put, web};
 
+use batata_api::naming::NamingServiceProvider;
 use batata_core::service::cluster::ServerMemberManager;
-use batata_naming::service::NamingService;
 
 use crate::acl::AclService;
 use crate::agent::{ConsulAgentService, MonitorQueryParams};
@@ -123,7 +123,7 @@ async fn get_agent_metrics(
 #[get("/metrics/stream")]
 async fn agent_metrics_stream(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -450,7 +450,7 @@ async fn get_agent_metrics_real(
 #[get("/metrics/stream")]
 async fn agent_metrics_stream_real(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     member_manager: web::Data<Arc<ServerMemberManager>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,

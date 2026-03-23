@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Scope, get, post, put, web};
 
-use batata_naming::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 use crate::acl::{AclAuthorizationCheck, AclService};
 use crate::catalog::ConsulCatalogService;
@@ -42,7 +42,7 @@ async fn ui_services(
 #[get("/ui/nodes")]
 async fn ui_nodes(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<UINodeQueryParams>,
@@ -62,7 +62,7 @@ async fn ui_nodes(
 #[get("/ui/node/{node}")]
 async fn ui_node_info(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
@@ -94,7 +94,7 @@ async fn ui_exported_services(
 #[get("/ui/catalog-overview")]
 async fn ui_catalog_overview(
     req: HttpRequest,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -150,7 +150,7 @@ async fn ui_service_topology(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     ca_service: web::Data<ConsulConnectCAService>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     path: web::Path<String>,
     query: web::Query<UIServiceTopologyQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -182,7 +182,7 @@ async fn federation_state_list(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::internal::federation_state_list(
@@ -200,7 +200,7 @@ async fn federation_state_mesh_gateways(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::internal::federation_state_mesh_gateways(
@@ -218,7 +218,7 @@ async fn federation_state_get(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -242,7 +242,7 @@ async fn assign_service_virtual_ip(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     body: web::Json<AssignServiceVIPsRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {

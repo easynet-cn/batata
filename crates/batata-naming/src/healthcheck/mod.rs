@@ -104,6 +104,50 @@ impl HealthCheckManager {
     }
 }
 
+impl batata_common::HeartbeatService for HealthCheckManager {
+    fn record_heartbeat(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        cluster_name: &str,
+        heartbeat_timeout: i64,
+        ip_delete_timeout: i64,
+    ) {
+        self.unhealthy_checker.record_heartbeat(
+            namespace,
+            group_name,
+            service_name,
+            ip,
+            port,
+            cluster_name,
+            heartbeat_timeout,
+            ip_delete_timeout,
+        );
+    }
+
+    fn remove_heartbeat(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        cluster_name: &str,
+    ) {
+        self.unhealthy_checker.remove_heartbeat(
+            namespace,
+            group_name,
+            service_name,
+            ip,
+            port,
+            cluster_name,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

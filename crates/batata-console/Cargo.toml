@@ -14,7 +14,6 @@ batata-auth = { workspace = true }
 batata-persistence = { workspace = true }
 batata-core = { workspace = true }
 batata-config = { workspace = true }
-batata-naming = { workspace = true }
 batata-client = { workspace = true }
 batata-maintainer-client = { workspace = true }
 batata-ai = { workspace = true }
