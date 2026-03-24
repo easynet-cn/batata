@@ -360,28 +360,44 @@ mod tests {
     }
 
     #[test]
-    fn test_deregister_non_existent_service() {
+    fn test_deregister_non_existent_service_is_idempotent() {
         let naming = NamingService::new();
         let instance = create_test_instance("127.0.0.1", 8080);
 
+        // Deregistering from a non-existent service returns true (idempotent)
+        // Nacos SDK expects this during cleanup — no error should occur
         let result =
             naming.deregister_instance("public", "DEFAULT_GROUP", "non-existent", &instance);
-        assert!(!result);
+        assert!(
+            result,
+            "Deregister non-existent service should be idempotent (return true)"
+        );
     }
 
     #[test]
-    fn test_deregister_non_existent_instance() {
+    fn test_deregister_non_existent_instance_is_idempotent() {
         let naming = NamingService::new();
         let instance1 = create_test_instance("127.0.0.1", 8080);
         let instance2 = create_test_instance("127.0.0.2", 9090);
 
         naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance1);
 
-        // Try to deregister instance that was never registered
+        // Deregistering instance that was never registered returns true (idempotent)
         let result =
             naming.deregister_instance("public", "DEFAULT_GROUP", "test-service", &instance2);
-        // Should return false because the specific instance was not found
-        assert!(!result);
+        assert!(
+            result,
+            "Deregister non-existent instance should be idempotent (return true)"
+        );
+
+        // Verify original instance is still there
+        let instances = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
+        assert_eq!(
+            instances.len(),
+            1,
+            "Original instance should not be affected"
+        );
+        assert_eq!(instances[0].ip, "127.0.0.1");
     }
 
     #[test]

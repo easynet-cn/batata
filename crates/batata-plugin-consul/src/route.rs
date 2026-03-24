@@ -1367,8 +1367,7 @@ mod tests {
         let naming_service_trait: Arc<dyn NamingServiceProvider> = naming_service;
         let kv_service = ConsulKVService::new();
         let session_service = ConsulSessionService::new();
-        let health_service =
-            ConsulHealthService::new(naming_service_trait.clone(), registry.clone());
+        let health_service = ConsulHealthService::new(registry.clone());
         let agent_service = ConsulAgentService::new(naming_service_trait.clone(), registry);
         let acl_service = AclService::disabled();
         let event_service = ConsulEventService::new();

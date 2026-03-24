@@ -88,7 +88,7 @@ impl ConsulServices {
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),
             ),
-            health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
+            health: ConsulHealthService::new(registry).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),
@@ -146,7 +146,7 @@ impl ConsulServices {
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),
             ),
-            health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
+            health: ConsulHealthService::new(registry).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),
@@ -208,7 +208,7 @@ impl ConsulServices {
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),
             ),
-            health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
+            health: ConsulHealthService::new(registry).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),

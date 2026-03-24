@@ -56,13 +56,11 @@ impl NamingService {
         };
 
         if let Some(instances) = self.services.get(&service_key) {
-            // Try exact key first, then try with DEFAULT cluster if empty
             if instances.remove(&instance_key).is_some() {
                 self.increment_service_revision(&service_key);
-                return true;
             }
-            // If exact match not found, the instance may not exist (already deregistered)
-            // Return true for idempotency — deregistering a non-existent instance is OK
+            // Return true for idempotency — deregistering a non-existent instance
+            // is OK (Nacos SDK expects this during cleanup)
             return true;
         }
         // Service not found — still return true for idempotency

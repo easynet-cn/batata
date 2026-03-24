@@ -582,7 +582,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !app_state.configuration.is_standalone() {
             // Wire the shared DistroProtocol to ServerMemberManager before starting
             // so it uses the same protocol instance as the gRPC handlers
-            smm.set_distro_protocol(grpc_servers.distro_protocol.clone())
+            smm.set_distro_protocol(grpc_servers.distro_protocol().clone())
                 .await;
 
             info!("Initializing cluster management...");
@@ -712,13 +712,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 server_id = %xds_config.server_id,
                 "Starting xDS service for service mesh support"
             );
-            match start_xds_service(
-                xds_config,
-                grpc_servers.naming_service.clone()
-                    as Arc<dyn batata_api::naming::NamingServiceProvider>,
-            )
-            .await
-            {
+            match start_xds_service(xds_config, grpc_servers.naming_provider()).await {
                 Ok(handle) => {
                     info!("xDS service started successfully");
                     Some(handle)
@@ -740,10 +734,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let is_cluster = !app_state.configuration.is_standalone() && !is_console_remote;
         // Cast naming service to trait object for consul consumers
         let naming_provider: Arc<dyn batata_api::naming::NamingServiceProvider> =
-            grpc_servers.naming_service.clone();
+            grpc_servers.naming_provider();
         // Create unified health check registry for Consul
         let consul_registry = Arc::new(InstanceCheckRegistry::new(
-            grpc_servers.naming_service.clone(),
+            grpc_servers.naming_service().clone(),
         ));
 
         let services = if is_cluster {
@@ -771,7 +765,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // Activate the gRPC service (already listening on port 9849)
                     grpc_servers
-                        .consul_raft_grpc
+                        .consul_raft_grpc()
                         .set_raft_node(consul_raft.clone())
                         .await;
 
@@ -942,7 +936,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Starting Consul deregister monitor...");
         let deregister_monitor = DeregisterMonitor::new(
             consul_registry.clone(),
-            grpc_servers.naming_service.clone(),
+            grpc_servers.naming_service().clone(),
             30,
         );
         tokio::spawn(async move {
@@ -979,14 +973,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Prepare distro protocol for HTTP server (only in cluster mode for distro sync)
     let distro_for_http = if !app_state.configuration.is_standalone() {
-        Some(grpc_servers.distro_protocol.clone())
+        Some(grpc_servers.distro_protocol().clone())
     } else {
         None
     };
 
     // Cast naming service to trait object for HTTP consumers
     let naming_provider_for_http: Arc<dyn batata_api::naming::NamingServiceProvider> =
-        grpc_servers.naming_service.clone();
+        grpc_servers.naming_provider();
 
     // Start HTTP servers based on deployment type with graceful shutdown support
     match deployment_type.as_str() {
@@ -1020,8 +1014,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = startup::main_server(
                 app_state.clone(),
                 naming_provider_for_http.clone(),
-                grpc_servers.connection_manager,
-                grpc_servers.config_change_notifier.clone(),
+                grpc_servers.connection_manager().clone(),
+                grpc_servers.config_change_notifier().clone(),
                 ai_services.clone(),
                 distro_for_http.clone(),
                 encryption_service.clone(),
@@ -1102,8 +1096,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = startup::main_server(
                 app_state.clone(),
                 naming_provider_for_http.clone(),
-                grpc_servers.connection_manager,
-                grpc_servers.config_change_notifier,
+                grpc_servers.connection_manager().clone(),
+                grpc_servers.config_change_notifier().clone(),
                 ai_services,
                 distro_for_http,
                 encryption_service,

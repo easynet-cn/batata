@@ -37,8 +37,6 @@ async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, w
 /// syncs health status changes to the naming service.
 #[derive(Clone)]
 pub struct ConsulHealthService {
-    #[allow(dead_code)]
-    naming_service: Arc<dyn NamingServiceProvider>,
     registry: Arc<InstanceCheckRegistry>,
     /// Node name for this agent
     node_name: String,
@@ -48,12 +46,8 @@ pub struct ConsulHealthService {
 }
 
 impl ConsulHealthService {
-    pub fn new(
-        naming_service: Arc<dyn NamingServiceProvider>,
-        registry: Arc<InstanceCheckRegistry>,
-    ) -> Self {
+    pub fn new(registry: Arc<InstanceCheckRegistry>) -> Self {
         Self {
-            naming_service,
             registry,
             node_name: "batata-node".to_string(),
             default_namespace: "public".to_string(),
@@ -1190,7 +1184,7 @@ mod tests {
     fn create_test_service() -> ConsulHealthService {
         let naming_service = Arc::new(NamingService::new());
         let registry = Arc::new(InstanceCheckRegistry::new(naming_service.clone()));
-        ConsulHealthService::new(naming_service, registry)
+        ConsulHealthService::new(registry)
     }
 
     #[test]
@@ -1729,11 +1723,10 @@ mod tests {
 
     fn create_test_health_service_with_defaults()
     -> (ConsulHealthService, Arc<InstanceCheckRegistry>) {
-        let naming_service: Arc<dyn NamingServiceProvider> = Arc::new(NamingService::new());
         let registry = Arc::new(InstanceCheckRegistry::new(
             Arc::new(NamingService::new()) as Arc<NamingService>
         ));
-        let service = ConsulHealthService::new(naming_service, registry.clone()).with_defaults(
+        let service = ConsulHealthService::new(registry.clone()).with_defaults(
             "public".to_string(),
             "DEFAULT_GROUP".to_string(),
             "DEFAULT".to_string(),

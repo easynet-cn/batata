@@ -71,18 +71,57 @@ pub struct GrpcServers {
     /// Handle for the Raft gRPC server task (only in distributed embedded mode).
     _raft_server: Option<tokio::task::JoinHandle<()>>,
     /// The naming service used by handlers.
-    pub naming_service: Arc<NamingService>,
+    naming_service: Arc<NamingService>,
     /// The connection manager for tracking client connections.
-    pub connection_manager: Arc<ConnectionManager>,
+    connection_manager: Arc<ConnectionManager>,
     /// The distro protocol for cluster data synchronization.
-    pub distro_protocol: Arc<DistroProtocol>,
+    distro_protocol: Arc<DistroProtocol>,
     /// The cluster client manager for inter-node communication.
-    pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
+    cluster_client_manager: Option<Arc<ClusterClientManager>>,
     /// Config change notifier for long-polling HTTP listeners.
-    pub config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
+    config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
     /// Consul Raft gRPC service handle — call `set_raft_node()` after
     /// creating `ConsulRaftNode` to activate Consul Raft on port 9849.
-    pub consul_raft_grpc: Arc<batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService>,
+    consul_raft_grpc: Arc<batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService>,
+}
+
+impl GrpcServers {
+    /// Get naming service as trait object for HTTP consumers.
+    pub fn naming_provider(&self) -> Arc<dyn batata_api::naming::NamingServiceProvider> {
+        self.naming_service.clone()
+    }
+
+    /// Get concrete naming service (for internal components that need it).
+    pub fn naming_service(&self) -> &Arc<NamingService> {
+        &self.naming_service
+    }
+
+    /// Get connection manager reference.
+    pub fn connection_manager(&self) -> &Arc<ConnectionManager> {
+        &self.connection_manager
+    }
+
+    /// Get distro protocol reference.
+    pub fn distro_protocol(&self) -> &Arc<DistroProtocol> {
+        &self.distro_protocol
+    }
+
+    /// Get cluster client manager reference.
+    pub fn cluster_client_manager(&self) -> &Option<Arc<ClusterClientManager>> {
+        &self.cluster_client_manager
+    }
+
+    /// Get config change notifier reference.
+    pub fn config_change_notifier(&self) -> &Arc<batata_config::ConfigChangeNotifier> {
+        &self.config_change_notifier
+    }
+
+    /// Get consul raft gRPC service reference.
+    pub fn consul_raft_grpc(
+        &self,
+    ) -> &Arc<batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService> {
+        &self.consul_raft_grpc
+    }
 }
 
 /// Registers all internal handlers (health check, connection setup, etc.).

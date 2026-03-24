@@ -404,17 +404,17 @@ mod tests {
 
         // Register up to the limit
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-1", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>svc-1", "add")
             .unwrap();
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-2", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>svc-2", "add")
             .unwrap();
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-3", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>svc-3", "add")
             .unwrap();
 
         // Fourth registration should fail
-        let result = manager.register_watch("conn-1", "public+DEFAULT_GROUP+svc-4", "add");
+        let result = manager.register_watch("conn-1", "public>>DEFAULT_GROUP>>svc-4", "add");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(
@@ -423,7 +423,7 @@ mod tests {
         );
 
         // Different connection should still work
-        let result = manager.register_watch("conn-2", "public+DEFAULT_GROUP+svc-1", "add");
+        let result = manager.register_watch("conn-2", "public>>DEFAULT_GROUP>>svc-1", "add");
         assert!(result.is_ok());
     }
 
@@ -469,16 +469,16 @@ mod tests {
         let manager = NamingFuzzyWatchManager::with_limits(limits);
 
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-1", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>svc-1", "add")
             .unwrap();
         manager
-            .register_watch("conn-1", "public+DEFAULT_GROUP+svc-2", "add")
+            .register_watch("conn-1", "public>>DEFAULT_GROUP>>svc-2", "add")
             .unwrap();
 
         // At limit, should fail
         assert!(
             manager
-                .register_watch("conn-1", "public+DEFAULT_GROUP+svc-3", "add")
+                .register_watch("conn-1", "public>>DEFAULT_GROUP>>svc-3", "add")
                 .is_err()
         );
 
@@ -486,7 +486,7 @@ mod tests {
         manager.unregister_connection("conn-1");
         assert!(
             manager
-                .register_watch("conn-1", "public+DEFAULT_GROUP+svc-1", "add")
+                .register_watch("conn-1", "public>>DEFAULT_GROUP>>svc-1", "add")
                 .is_ok()
         );
     }
