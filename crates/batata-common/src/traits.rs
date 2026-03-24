@@ -146,19 +146,119 @@ pub struct NamespaceInfo {
     pub namespace_type: i32,
 }
 
-/// Auth service trait for authentication operations
-#[async_trait::async_trait]
-pub trait AuthService: Send + Sync {
-    /// Validate a JWT token and return the username
-    async fn validate_token(&self, token: &str) -> anyhow::Result<String>;
+// ============================================================================
+// Auth Plugin Trait
+// ============================================================================
 
-    /// Check if a user has a specific permission
-    async fn check_permission(
+/// Raw token extracted by middleware, stored in request extensions.
+/// The middleware only extracts the token string — all validation
+/// (JWT decode, expiry check) is handled by the AuthPlugin.
+#[derive(Debug, Clone, Default)]
+pub struct RequestToken(pub Option<String>);
+
+/// Identity context built from request token, enriched by AuthPlugin.
+///
+/// The `secured!` macro creates this from the `RequestToken` and passes
+/// it to `AuthPlugin::validate_identity()` which fills in the remaining fields.
+#[derive(Debug, Clone, Default)]
+pub struct IdentityContext {
+    /// Raw token from the request (populated by secured! macro from RequestToken)
+    pub token: Option<String>,
+    /// Username extracted from the token (set by AuthPlugin)
+    pub username: String,
+    /// Whether the identity has been successfully authenticated (set by AuthPlugin)
+    pub authenticated: bool,
+    /// Whether the user is a global admin (set by AuthPlugin)
+    pub is_global_admin: bool,
+}
+
+/// Permission for authorization checking
+#[derive(Debug, Clone)]
+pub struct AuthPermission {
+    /// Resource being accessed (format: "namespace:group:type/name")
+    pub resource: String,
+    /// Action being performed: "r" (read) or "w" (write)
+    pub action: String,
+}
+
+/// Result of an authentication or authorization check
+#[derive(Debug, Clone)]
+pub struct AuthCheckResult {
+    pub success: bool,
+    pub message: Option<String>,
+}
+
+impl AuthCheckResult {
+    pub fn success() -> Self {
+        Self {
+            success: true,
+            message: None,
+        }
+    }
+
+    pub fn fail(msg: impl Into<String>) -> Self {
+        Self {
+            success: false,
+            message: Some(msg.into()),
+        }
+    }
+}
+
+/// Result returned by a successful login
+#[derive(Debug, Clone)]
+pub struct LoginResult {
+    /// JWT access token
+    pub token: String,
+    /// Token time-to-live in seconds
+    pub token_ttl: i64,
+    /// Authenticated username
+    pub username: String,
+    /// Whether the user is a global admin
+    pub is_global_admin: bool,
+}
+
+/// Auth plugin trait — the main SPI interface for pluggable authentication.
+///
+/// Each auth backend (nacos, ldap, oauth2) implements this trait.
+/// The active plugin is selected via config key `batata.core.auth.system.type`.
+///
+/// Flow:
+/// 1. Middleware extracts raw token → stores as `RequestToken`
+/// 2. `secured!` macro builds `IdentityContext` from `RequestToken`
+/// 3. `secured!` calls `validate_identity()` — plugin decodes token, checks validity,
+///    sets username/is_global_admin. Handles expired/invalid/missing token errors.
+/// 4. For non-admin users, `secured!` calls `validate_authority()` — plugin checks
+///    if user has permission for the requested resource+action.
+#[async_trait::async_trait]
+pub trait AuthPlugin: Send + Sync {
+    /// Plugin identifier (e.g., "nacos", "ldap", "oauth2")
+    fn plugin_name(&self) -> &str;
+
+    /// Whether this plugin supports username/password login
+    fn is_login_enabled(&self) -> bool {
+        true
+    }
+
+    /// Validate identity: decode token, verify validity, load user info/roles.
+    ///
+    /// Handles all token errors (missing, expired, invalid) internally.
+    /// On success, sets `identity.authenticated`, `identity.username`,
+    /// `identity.is_global_admin`.
+    async fn validate_identity(&self, identity: &mut IdentityContext) -> AuthCheckResult;
+
+    /// Authorize: check if authenticated user has permission for resource+action.
+    ///
+    /// Only called for non-admin users (admin bypass is handled by the caller).
+    async fn validate_authority(
         &self,
-        username: &str,
-        resource: &str,
-        action: &str,
-    ) -> anyhow::Result<bool>;
+        identity: &IdentityContext,
+        permission: &AuthPermission,
+    ) -> AuthCheckResult;
+
+    /// Login with username/password credentials.
+    ///
+    /// Returns a JWT token on success, or an error message on failure.
+    async fn login(&self, username: &str, password: &str) -> Result<LoginResult, String>;
 }
 
 /// Payload handler registry trait
@@ -556,5 +656,57 @@ mod tests {
         assert!(info.connection_id.is_empty());
         assert!(info.client_ip.is_empty());
         assert_eq!(info.create_time, 0);
+    }
+
+    #[test]
+    fn test_auth_check_result() {
+        let ok = AuthCheckResult::success();
+        assert!(ok.success);
+        assert!(ok.message.is_none());
+
+        let fail = AuthCheckResult::fail("token expired");
+        assert!(!fail.success);
+        assert_eq!(fail.message.as_deref(), Some("token expired"));
+    }
+
+    #[test]
+    fn test_identity_context_default() {
+        let ctx = IdentityContext::default();
+        assert!(ctx.token.is_none());
+        assert!(ctx.username.is_empty());
+        assert!(!ctx.authenticated);
+        assert!(!ctx.is_global_admin);
+    }
+
+    #[test]
+    fn test_request_token_default() {
+        let token = RequestToken::default();
+        assert!(token.0.is_none());
+
+        let token = RequestToken(Some("abc123".to_string()));
+        assert_eq!(token.0.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn test_auth_permission() {
+        let perm = AuthPermission {
+            resource: "public:DEFAULT_GROUP:config/app.yaml".to_string(),
+            action: "r".to_string(),
+        };
+        assert!(perm.resource.contains("config"));
+        assert_eq!(perm.action, "r");
+    }
+
+    #[test]
+    fn test_login_result() {
+        let result = LoginResult {
+            token: "jwt-token".to_string(),
+            token_ttl: 18000,
+            username: "nacos".to_string(),
+            is_global_admin: true,
+        };
+        assert_eq!(result.username, "nacos");
+        assert!(result.is_global_admin);
+        assert_eq!(result.token_ttl, 18000);
     }
 }

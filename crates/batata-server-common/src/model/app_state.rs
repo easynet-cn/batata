@@ -5,7 +5,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use batata_auth::service::oauth::OAuthService;
-use batata_common::{ClusterManager, ConfigSubscriptionService};
+use batata_common::{AuthPlugin, ClusterManager, ConfigSubscriptionService};
 use batata_consistency::RaftNode;
 use batata_persistence::PersistenceService;
 use batata_plugin::ControlPlugin;
@@ -43,6 +43,8 @@ pub struct AppState {
     pub console_datasource: Arc<dyn ConsoleDataSource>,
     /// OAuth2/OIDC service for external authentication
     pub oauth_service: Option<Arc<OAuthService>>,
+    /// Auth plugin for pluggable authentication and authorization
+    pub auth_plugin: Option<Arc<dyn AuthPlugin>>,
     /// Unified persistence service (SQL, embedded RocksDB, or distributed Raft)
     pub persistence: Option<Arc<dyn PersistenceService>>,
     /// Heartbeat service for tracking instance heartbeats and expiration
@@ -68,6 +70,7 @@ impl std::fmt::Debug for AppState {
             )
             .field("console_datasource", &"<dyn ConsoleDataSource>")
             .field("oauth_service", &self.oauth_service.is_some())
+            .field("auth_plugin", &self.auth_plugin.is_some())
             .field("persistence", &self.persistence.is_some())
             .field("health_check_manager", &self.health_check_manager.is_some())
             .field("raft_node", &self.raft_node.is_some())
@@ -86,6 +89,7 @@ impl Clone for AppState {
             config_subscriber_manager: self.config_subscriber_manager.clone(),
             console_datasource: self.console_datasource.clone(),
             oauth_service: self.oauth_service.clone(),
+            auth_plugin: self.auth_plugin.clone(),
             persistence: self.persistence.clone(),
             health_check_manager: self.health_check_manager.clone(),
             raft_node: self.raft_node.clone(),

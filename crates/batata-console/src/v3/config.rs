@@ -11,7 +11,7 @@ use serde::Deserialize;
 use chrono::Utc;
 
 use batata_api::config::ConfigListenerInfo;
-use batata_auth::model::AuthContext;
+use batata_common::IdentityContext;
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType,
     console::api_model::{ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo},
@@ -225,11 +225,11 @@ async fn create_or_update(
         .unwrap_or_default()
         .to_string();
 
-    let auth_content = match req.extensions().get::<AuthContext>() {
+    let identity = match req.extensions().get::<IdentityContext>() {
         Some(ctx) => ctx.clone(),
         None => return HttpResponse::Unauthorized().body("Unauthorized"),
     };
-    let src_user = config_form.src_user.take().unwrap_or(auth_content.username);
+    let src_user = config_form.src_user.take().unwrap_or(identity.username);
 
     let src_ip = req
         .connection_info()
@@ -286,12 +286,12 @@ async fn delete(
         .unwrap_or_default()
         .to_owned();
 
-    let auth_content = match req.extensions().get::<AuthContext>() {
+    let identity = match req.extensions().get::<IdentityContext>() {
         Some(ctx) => ctx.clone(),
         None => return HttpResponse::Unauthorized().body("Unauthorized"),
     };
 
-    let src_user = auth_content.username;
+    let src_user = identity.username;
 
     if let Err(e) = data
         .console_datasource
@@ -440,11 +440,11 @@ async fn publish_beta(
         form.group_name.clone()
     };
 
-    let auth_context = match req.extensions().get::<AuthContext>() {
+    let identity = match req.extensions().get::<IdentityContext>() {
         Some(ctx) => ctx.clone(),
         None => return HttpResponse::Unauthorized().body("Unauthorized"),
     };
-    let src_user = auth_context.username;
+    let src_user = identity.username;
     let src_ip = req
         .connection_info()
         .realip_remote_addr()
@@ -523,7 +523,7 @@ async fn delete_beta(
         .unwrap_or_default()
         .to_owned();
 
-    let src_user = match req.extensions().get::<AuthContext>() {
+    let src_user = match req.extensions().get::<IdentityContext>() {
         Some(ctx) => ctx.username.clone(),
         None => return HttpResponse::Unauthorized().body("Unauthorized"),
     };
@@ -673,12 +673,12 @@ async fn import_configs(
     };
 
     // Get user info
-    let auth_context = match req.extensions().get::<AuthContext>() {
+    let identity = match req.extensions().get::<IdentityContext>() {
         Some(ctx) => ctx.clone(),
         None => return HttpResponse::Unauthorized().body("Unauthorized"),
     };
 
-    let src_user = auth_context.username;
+    let src_user = identity.username;
     let src_ip = req
         .connection_info()
         .realip_remote_addr()
@@ -771,7 +771,7 @@ async fn batch_delete(
         .unwrap_or_default()
         .to_owned();
 
-    let src_user = match req.extensions().get::<AuthContext>() {
+    let src_user = match req.extensions().get::<IdentityContext>() {
         Some(ctx) => ctx.username.clone(),
         None => return HttpResponse::Unauthorized().body("Unauthorized"),
     };
@@ -972,7 +972,7 @@ async fn clone_config(
 
     let src_user = params.src_user.clone().unwrap_or_else(|| {
         req.extensions()
-            .get::<AuthContext>()
+            .get::<IdentityContext>()
             .map(|ctx| ctx.username.clone())
             .unwrap_or_default()
     });

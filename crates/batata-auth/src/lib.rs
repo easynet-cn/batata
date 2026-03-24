@@ -7,6 +7,7 @@
 //! - Auth middleware
 
 pub mod model;
+pub mod plugin;
 pub mod service;
 
 // Re-export commonly used types

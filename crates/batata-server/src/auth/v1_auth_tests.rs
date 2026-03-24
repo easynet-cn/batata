@@ -23,6 +23,7 @@ async fn test_v1_auth_login_success() {
         config_subscriber_manager,
         console_datasource,
         oauth_service,
+        auth_plugin: None,
         persistence,
         health_check_manager,
     });
@@ -77,6 +78,7 @@ async fn test_v3_auth_login_success() {
         config_subscriber_manager,
         console_datasource,
         oauth_service,
+        auth_plugin: None,
         persistence,
         health_check_manager,
     });

@@ -388,6 +388,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(batata_config::service::encryption::ConfigEncryptionService::disabled())
         };
 
+    // Create auth plugin based on configured auth system type
+    let auth_plugin: Option<Arc<dyn batata_common::AuthPlugin>> = persistence.as_ref().map(|p| {
+        let ldap_config = if configuration.auth_system_type() == "ldap" {
+            Some(configuration.ldap_config())
+        } else {
+            None
+        };
+        batata_auth::plugin::create_auth_plugin(
+            &configuration.auth_system_type(),
+            configuration.token_secret_key(),
+            configuration.auth_token_expire_seconds(),
+            p.clone(),
+            ldap_config,
+        )
+    });
+
     // Create application state
     let app_state = Arc::new(AppState {
         configuration,
@@ -395,6 +411,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_subscriber_manager,
         console_datasource,
         oauth_service,
+        auth_plugin,
         persistence,
         health_check_manager: health_check_manager
             .clone()
@@ -450,6 +467,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let console_server = startup::console_server(
             app_state.clone(),
             None, // No NamingService in remote mode
+            None,
             ai_services.clone(),
             console_context_path,
             console_server_address,
@@ -970,6 +988,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let console_server = startup::console_server(
                 app_state.clone(),
                 Some(naming_provider_for_http.clone()),
+                naming_service.clone(),
                 ai_services.clone(),
                 console_context_path,
                 console_server_address,
@@ -996,6 +1015,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = startup::main_server(
                 app_state.clone(),
                 naming_provider_for_http.clone(),
+                naming_service.clone(),
                 grpc_servers.connection_manager,
                 grpc_servers.config_change_notifier.clone(),
                 ai_services.clone(),
@@ -1065,6 +1085,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let console = startup::console_server(
                 app_state.clone(),
                 Some(naming_provider_for_http.clone()),
+                naming_service.clone(),
                 ai_services.clone(),
                 console_context_path,
                 console_server_address,
@@ -1078,6 +1099,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = startup::main_server(
                 app_state.clone(),
                 naming_provider_for_http.clone(),
+                naming_service,
                 grpc_servers.connection_manager,
                 grpc_servers.config_change_notifier,
                 ai_services,

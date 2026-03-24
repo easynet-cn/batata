@@ -14,7 +14,7 @@ use chrono::Utc;
 use futures::StreamExt;
 use serde::Deserialize;
 
-use batata_auth::model::AuthContext;
+use batata_common::IdentityContext;
 use batata_common::{DEFAULT_NAMESPACE_ID, default_page_no, default_page_size_small, is_valid};
 use batata_server_common::{
     ActionTypes, ApiType, Secured, SignType, error, model, model::AppState, secured,
@@ -269,7 +269,7 @@ async fn create_config(
         .unwrap_or_default()
         .to_string();
 
-    let src_user = match req.extensions().get::<AuthContext>() {
+    let src_user = match req.extensions().get::<IdentityContext>() {
         Some(ctx) => config_form
             .src_user
             .take()
@@ -402,7 +402,7 @@ async fn update_config(
         .unwrap_or_default()
         .to_string();
 
-    let src_user = match req.extensions().get::<AuthContext>() {
+    let src_user = match req.extensions().get::<IdentityContext>() {
         Some(ctx) => config_form
             .src_user
             .take()
@@ -476,7 +476,7 @@ async fn delete_config(
 
     let src_user = req
         .extensions()
-        .get::<AuthContext>()
+        .get::<IdentityContext>()
         .map(|ctx| ctx.username.clone())
         .unwrap_or_default();
 
@@ -532,7 +532,7 @@ async fn import_config(
 
     let src_user = req
         .extensions()
-        .get::<AuthContext>()
+        .get::<IdentityContext>()
         .map(|ctx| ctx.username.clone())
         .unwrap_or_default();
     let src_ip = req
@@ -919,7 +919,7 @@ async fn publish_beta_config(
 
     let src_user = if form.src_user.is_empty() {
         req.extensions()
-            .get::<AuthContext>()
+            .get::<IdentityContext>()
             .map(|ctx| ctx.username.clone())
             .unwrap_or_default()
     } else {
@@ -1021,7 +1021,7 @@ async fn stop_beta_config(
 
     let src_user = req
         .extensions()
-        .get::<AuthContext>()
+        .get::<IdentityContext>()
         .map(|ctx| ctx.username.clone())
         .unwrap_or_default();
 
@@ -1091,7 +1091,7 @@ async fn batch_delete_config(
         .to_owned();
     let src_user = req
         .extensions()
-        .get::<AuthContext>()
+        .get::<IdentityContext>()
         .map(|ctx| ctx.username.clone())
         .unwrap_or_default();
 
@@ -1228,7 +1228,7 @@ async fn clone_config(
 
     let src_user = params.src_user.clone().unwrap_or_else(|| {
         req.extensions()
-            .get::<AuthContext>()
+            .get::<IdentityContext>()
             .map(|ctx| ctx.username.clone())
             .unwrap_or_default()
     });

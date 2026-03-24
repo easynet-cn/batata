@@ -1,5 +1,13 @@
 // Authentication middleware for Actix-web
-// This middleware handles JWT token validation and authentication context setup
+//
+// This middleware ONLY extracts the raw token from the request and stores it
+// as a `RequestToken` in request extensions. All token validation (JWT decode,
+// expiry, etc.) is handled by the `AuthPlugin` inside the `secured!` macro.
+//
+// This separation ensures that:
+// - The middleware is simple, sync, and fast
+// - The AuthPlugin has full control over authentication behavior
+// - Unprotected endpoints (no secured! macro) have no auth overhead
 
 use actix_service::forward_ready;
 use actix_utils::future::{Ready, ok};
@@ -8,31 +16,14 @@ use actix_web::{
     body::EitherBody,
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     http::Method,
-    web::Data,
 };
 
+use batata_common::RequestToken;
 use futures::future::LocalBoxFuture;
-
-use crate::model::config::Configuration;
-use batata_auth::model::AuthContext;
-use batata_auth::service::auth as auth_service;
 
 const ACCESS_TOKEN: &str = "accessToken";
 const AUTHORIZATION_HEADER: &str = "Authorization";
 const BEARER_PREFIX: &str = "Bearer ";
-
-/// Trait for extracting token secret key from app_data.
-/// Both server's AppState and standalone Configuration implement this.
-pub trait TokenSecretProvider: 'static {
-    fn token_secret_key(&self) -> String;
-}
-
-// Implement for Configuration directly
-impl TokenSecretProvider for Configuration {
-    fn token_secret_key(&self) -> String {
-        self.token_secret_key()
-    }
-}
 
 // Authentication middleware transformer
 pub struct Authentication;
@@ -101,20 +92,6 @@ fn extract_token(req: &ServiceRequest) -> Option<String> {
     None
 }
 
-/// Try to get the token secret key from any registered TokenSecretProvider
-/// in the request's app_data. Tries common types in priority order.
-fn get_secret_key(req: &ServiceRequest) -> Option<String> {
-    // Try AppState first (used by main server and console server)
-    if let Some(app_state) = req.app_data::<Data<crate::model::AppState>>() {
-        return Some(app_state.configuration.token_secret_key());
-    }
-    // Try Configuration directly (used by standalone or test apps)
-    if let Some(config) = req.app_data::<Data<Configuration>>() {
-        return Some(config.token_secret_key());
-    }
-    None
-}
-
 impl<S, B> Service<ServiceRequest> for AuthenticationMiddleware<S>
 where
     S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
@@ -129,29 +106,10 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         if Method::OPTIONS != *req.method() {
-            let mut auth_context = AuthContext::default();
-
-            if let Some(token) = extract_token(&req) {
-                auth_context.token_provided = true;
-
-                if let Some(secret_key) = get_secret_key(&req) {
-                    let decode_result = auth_service::decode_jwt_token_cached(&token, &secret_key);
-
-                    match decode_result {
-                        Ok(token_data) => {
-                            auth_context.username = token_data.claims.sub;
-                        }
-                        Err(err) => {
-                            auth_context.jwt_error = Some(err);
-                        }
-                    }
-                } else {
-                    tracing::error!("No token secret key provider found in request app_data");
-                }
-            }
-
-            // Always insert AuthContext so the secured! macro can inspect it
-            req.extensions_mut().insert(auth_context);
+            // Extract the raw token and store it — no JWT decode here.
+            // The secured! macro will pass this to AuthPlugin::validate_identity()
+            let token = extract_token(&req);
+            req.extensions_mut().insert(RequestToken(token));
         }
 
         let res = self.service.call(req);

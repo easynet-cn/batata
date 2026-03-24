@@ -242,6 +242,7 @@ impl ConsulServices {
 pub fn console_server(
     app_state: Arc<AppState>,
     naming_service: Option<Arc<dyn NamingServiceProvider>>,
+    naming_service_concrete: Option<Arc<batata_naming::NamingService>>,
     ai_services: AIServices,
     context_path: String,
     address: String,
@@ -289,6 +290,10 @@ pub fn console_server(
 
         // Inject NamingService if available (not available in console-remote mode)
         if let Some(ref ns) = naming_service {
+            app = app.app_data(web::Data::new(ns.clone()));
+        }
+        // Register concrete NamingService for handlers that use Arc<NamingService>
+        if let Some(ref ns) = naming_service_concrete {
             app = app.app_data(web::Data::new(ns.clone()));
         }
 
@@ -508,6 +513,7 @@ impl Default for CloudServices {
 pub fn main_server(
     app_state: Arc<AppState>,
     naming_service: Arc<dyn NamingServiceProvider>,
+    naming_service_concrete: Option<Arc<batata_naming::NamingService>>,
     connection_manager: Arc<ConnectionManager>,
     config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
     ai_services: AIServices,
@@ -553,7 +559,14 @@ pub fn main_server(
             .app_data(web::PayloadConfig::new(max_payload_size))
             .app_data(web::JsonConfig::default().limit(max_json_size))
             .app_data(web::Data::from(app_state.clone()))
-            .app_data(web::Data::new(naming_service.clone()))
+            .app_data(web::Data::new(naming_service.clone()));
+
+        // Register concrete NamingService for handlers that use Arc<NamingService>
+        if let Some(ref ns) = naming_service_concrete {
+            app = app.app_data(web::Data::new(ns.clone()));
+        }
+
+        app = app
             .app_data(web::Data::new(connection_manager.clone()))
             // Config change notifier for long-polling listeners
             .app_data(web::Data::new(config_change_notifier.clone()))

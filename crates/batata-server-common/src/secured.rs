@@ -10,11 +10,13 @@ use batata_common::SERVICE_NAME;
 use crate::model::app_state::AppState;
 use crate::model::constants::{DATA_ID, GROUP, GROUP_NAME, NAMESPACE_ID, TENANT};
 
-// Re-export auth types needed by the secured! macro
+// Re-export types needed by the secured! macro
 // These are referenced via $crate::secured:: in the macro expansion
-pub use batata_auth::model::AuthContext;
 pub use batata_auth::model::CONSOLE_RESOURCE_NAME_PREFIX;
 pub use batata_auth::model::GLOBAL_ADMIN_ROLE;
+pub use batata_common::AuthPermission;
+pub use batata_common::IdentityContext;
+pub use batata_common::RequestToken;
 
 // Security context for API access control
 #[derive(Debug, Clone)]
@@ -126,6 +128,15 @@ impl<'a> SecuredBuilder<'a> {
     }
 }
 
+/// Authorization macro that delegates to `AuthPlugin` for identity validation
+/// and permission checking.
+///
+/// Flow:
+/// 1. Check if auth is enabled for the API type
+/// 2. Check server identity header (for InnerApi/AdminApi)
+/// 3. Extract `RequestToken` from request extensions (populated by middleware)
+/// 4. Call `auth_plugin.validate_identity()` — handles JWT decode, expiry, etc.
+/// 5. For non-admin users, call `auth_plugin.validate_authority()` — checks RBAC
 #[macro_export]
 macro_rules! secured {
     ($secured: expr) => {
@@ -137,7 +148,8 @@ macro_rules! secured {
             .auth_enabled_for_api_type(__secured.api_type);
 
         if __auth_enabled {
-            let __skip_jwt = if __secured.api_type == $crate::ApiType::InnerApi
+            // Server identity check for InnerApi/AdminApi
+            let __skip_auth = if __secured.api_type == $crate::ApiType::InnerApi
                 || __secured.api_type == $crate::ApiType::AdminApi
             {
                 let __identity_key = __secured.data.configuration.server_identity_key();
@@ -172,136 +184,91 @@ macro_rules! secured {
                 false
             };
 
-            if !__skip_jwt {
-                let __auth_context_opt: Option<$crate::secured::AuthContext> = {
-                    actix_web::HttpMessage::extensions(__secured.req)
-                        .get::<$crate::secured::AuthContext>()
-                        .cloned()
-                };
-
-                match __auth_context_opt {
+            if !__skip_auth {
+                // Get the auth plugin from AppState
+                let __auth_plugin = match __secured.data.auth_plugin.as_ref() {
+                    Some(p) => p,
                     None => {
                         return $crate::model::response::ErrorResult::http_response_forbidden(
-                            actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                            "no auth context found",
+                            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i32,
+                            "auth plugin not configured",
                             __secured.req.path(),
                         );
                     }
-                    Some(ref __auth_context) if !__auth_context.token_provided => {
-                        return $crate::model::response::ErrorResult::http_response_forbidden(
-                            actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                            "no token provided",
-                            __secured.req.path(),
-                        );
-                    }
-                    Some(ref __auth_context) if __auth_context.jwt_error.is_some() => {
-                        return $crate::model::response::ErrorResult::http_response_forbidden(
-                            actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                            &__auth_context.jwt_error_string(),
-                            __secured.req.path(),
-                        );
-                    }
-                    Some(ref __auth_context) => {
-                        if !__secured.only_identity()
-                            && !__secured.has_update_password_permission()
+                };
+
+                // Extract raw token from request extensions (populated by middleware)
+                let __request_token = actix_web::HttpMessage::extensions(__secured.req)
+                    .get::<$crate::secured::RequestToken>()
+                    .cloned()
+                    .unwrap_or_default();
+
+                // Build IdentityContext and let the plugin validate
+                let mut __identity = $crate::secured::IdentityContext {
+                    token: __request_token.0,
+                    ..Default::default()
+                };
+
+                let __id_result = __auth_plugin.validate_identity(&mut __identity).await;
+
+                if !__id_result.success {
+                    return $crate::model::response::ErrorResult::http_response_forbidden(
+                        actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
+                        __id_result
+                            .message
+                            .as_deref()
+                            .unwrap_or("authentication failed"),
+                        __secured.req.path(),
+                    );
+                }
+
+                // Store identity in request extensions so handlers can access the username
+                actix_web::HttpMessage::extensions_mut(__secured.req).insert(__identity.clone());
+
+                // Authorization check (skip for identity-only and password-update endpoints)
+                if !__secured.only_identity() && !__secured.has_update_password_permission() {
+                    // Admin bypass
+                    if !__identity.is_global_admin {
+                        // Console resources require admin
+                        if __secured
+                            .resource
+                            .starts_with($crate::secured::CONSOLE_RESOURCE_NAME_PREFIX)
                         {
-                            let __roles =
-                                __secured.data.persistence()
-                                    .role_find_by_username(
-                                        &__auth_context.username,
-                                    )
-                                .await
-                                .ok()
-                                .unwrap_or_default();
+                            return $crate::model::response::ErrorResult::http_response_forbidden(
+                                actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+                                "authorization failed!.",
+                                __secured.req.path(),
+                            );
+                        }
 
-                            if __roles.is_empty() {
-                                return $crate::model::response::ErrorResult::http_response_forbidden(
-                                    actix_web::http::StatusCode::UNAUTHORIZED.as_u16() as i32,
-                                    "no roles found for user",
-                                    __secured.req.path(),
-                                );
-                            }
+                        // Parse the resource from the request based on SignType
+                        let __resource: batata_auth::model::Resource =
+                            if __secured.sign_type == $crate::SignType::Config {
+                                $crate::ConfigHttpResourceParser::parse(__secured.req, &__secured)
+                            } else if __secured.sign_type == $crate::SignType::Naming {
+                                $crate::NamingHttpResourceParser::parse(__secured.req, &__secured)
+                            } else {
+                                (&__secured).into()
+                            };
 
-                            let __global_admin = __roles
-                                .iter()
-                                .any(|e| e.role == $crate::secured::GLOBAL_ADMIN_ROLE);
+                        let __permission = $crate::secured::AuthPermission {
+                            resource: $crate::join_resource(&__resource),
+                            action: __secured.action.as_str().to_string(),
+                        };
 
-                            if !__global_admin {
-                                if __secured
-                                    .resource
-                                    .starts_with(
-                                        $crate::secured::CONSOLE_RESOURCE_NAME_PREFIX,
-                                    )
-                                {
-                                    return $crate::model::response::ErrorResult::http_response_forbidden(
-                                        actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
-                                        "authorization failed!.",
-                                        __secured.req.path(),
-                                    );
-                                }
+                        let __perm_result = __auth_plugin
+                            .validate_authority(&__identity, &__permission)
+                            .await;
 
-                                let __role_names = __roles
-                                    .iter()
-                                    .map(|e| e.role.to_string())
-                                    .collect::<Vec<String>>();
-                                let __permissions =
-                                    __secured.data.persistence()
-                                        .permission_find_by_roles(
-                                            __role_names,
-                                        )
-                                    .await
-                                    .ok()
-                                    .unwrap_or_default();
-
-                                let __resource: batata_auth::model::Resource =
-                                    if __secured.sign_type == $crate::SignType::Config {
-                                        $crate::ConfigHttpResourceParser::parse(
-                                            __secured.req,
-                                            &__secured,
-                                        )
-                                    } else if __secured.sign_type == $crate::SignType::Naming {
-                                        $crate::NamingHttpResourceParser::parse(
-                                            __secured.req,
-                                            &__secured,
-                                        )
-                                    } else {
-                                        (&__secured).into()
-                                    };
-
-                                let __has_permission = __roles.iter().any(|__role| {
-                                    __permissions
-                                        .iter()
-                                        .filter(|e| e.role == __role.role)
-                                        .any(|e| {
-                                            let mut __permission_resource =
-                                                regex::escape(&e.resource).replace("\\*", ".*");
-
-                                            if __permission_resource.starts_with(":") {
-                                                __permission_resource = format!(
-                                                    "{}{}",
-                                                    $crate::model::constants::DEFAULT_NAMESPACE_ID,
-                                                    __permission_resource,
-                                                );
-                                            }
-
-                                            let __regex_match = batata_common::regex_matches(
-                                                &__permission_resource,
-                                                &$crate::join_resource(&__resource),
-                                            );
-
-                                            e.action.contains(__secured.action.as_str())
-                                                && __regex_match
-                                        })
-                                });
-
-                                if !__has_permission {
-                                    return $crate::model::response::ErrorResult::http_response_forbidden(
-                                        actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
-                                        "authorization failed!.",
-                                        __secured.req.path(),
-                                    );
-                                }
-                            }
+                        if !__perm_result.success {
+                            return $crate::model::response::ErrorResult::http_response_forbidden(
+                                actix_web::http::StatusCode::FORBIDDEN.as_u16() as i32,
+                                __perm_result
+                                    .message
+                                    .as_deref()
+                                    .unwrap_or("authorization failed!."),
+                                __secured.req.path(),
+                            );
                         }
                     }
                 }

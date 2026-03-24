@@ -9,7 +9,7 @@ use crate::api::auth::model::{
 };
 use crate::model::app_state::AppState;
 use crate::model::response::{ConsoleException, Result};
-use crate::secured::{AuthContext, Secured};
+use crate::secured::{IdentityContext, Secured};
 use crate::{ActionTypes, ApiType, SignType, secured};
 
 #[derive(Debug, Deserialize)]
@@ -215,13 +215,13 @@ async fn update(
     // Permission check consistent with Nacos: only global admin or the user themselves
     // can change the password (hasPermission logic from UserControllerV3.java)
     if data.configuration.auth_enabled() {
-        let auth_context = req
+        let identity_context = req
             .extensions()
-            .get::<AuthContext>()
+            .get::<IdentityContext>()
             .cloned()
             .unwrap_or_default();
 
-        let current_username = &auth_context.username;
+        let current_username = &identity_context.username;
 
         // If the user is not changing their own password, check if they are admin
         if current_username != &params.username {
