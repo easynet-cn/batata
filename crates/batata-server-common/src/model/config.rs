@@ -1243,6 +1243,13 @@ impl Configuration {
             .unwrap_or_else(|_| "DEFAULT_GROUP".to_string())
     }
 
+    /// Get the default Nacos cluster for Consul API mapping (default: "DEFAULT")
+    pub fn consul_default_cluster(&self) -> String {
+        self.config
+            .get_string("batata.plugin.consul.default_cluster")
+            .unwrap_or_else(|_| "DEFAULT".to_string())
+    }
+
     // ========================================================================
     // MCP Registry Configuration
     // ========================================================================

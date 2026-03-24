@@ -222,7 +222,8 @@ async fn smart_reload(
 
     // Get self metrics
     let self_member = data.cluster_manager().get_self_member();
-    let self_metric = get_self_loader_metric(&self_member.address, connection_manager.as_ref().as_ref());
+    let self_metric =
+        get_self_loader_metric(&self_member.address, connection_manager.as_ref().as_ref());
     let all_members = data.cluster_manager().all_members_extended();
     // In standalone mode, only self metrics available
     // Build metrics with just self (cluster mode would gather from all nodes via gRPC)
@@ -361,7 +362,8 @@ async fn get_cluster(
     let member_count = all_members.len();
 
     // Build self metric with real data
-    let self_metric = get_self_loader_metric(&self_member.address, connection_manager.as_ref().as_ref());
+    let self_metric =
+        get_self_loader_metric(&self_member.address, connection_manager.as_ref().as_ref());
 
     let mut details = vec![self_metric];
 

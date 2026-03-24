@@ -16,8 +16,8 @@ use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
 };
 
-use batata_api::naming::NamingServiceProvider;
 use crate::service::ServiceMetadata;
+use batata_api::naming::NamingServiceProvider;
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
@@ -140,7 +140,7 @@ async fn list_services(
     let service_list: Vec<ServiceInfoResponse> = service_names
         .iter()
         .map(|name| {
-            let instances = naming_service.get_instances(namespace_id, group_name, name, "", false);
+            let instances = naming_service.get_instances_by_source(namespace_id, group_name, name, "", false, Some(batata_api::naming::RegisterSource::Batata));
             let clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
             let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
             let metadata_opt = naming_service.get_service_metadata(namespace_id, group_name, name);
@@ -225,7 +225,7 @@ async fn get_service(
     }
 
     let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+        naming_service.get_instances_by_source(namespace_id, group_name, &params.service_name, "", false, Some(batata_api::naming::RegisterSource::Batata));
     let clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
     let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
     let metadata_opt =

@@ -147,6 +147,7 @@ impl Default for NamingService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use batata_api::naming::{NamingServiceProvider, RegisterSource};
 
     fn create_test_instance(ip: &str, port: i32) -> Instance {
         Instance {
@@ -160,6 +161,7 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: "test-service".to_string(),
             metadata: std::collections::HashMap::new(),
+            register_source: RegisterSource::default(),
         }
     }
 
@@ -1009,6 +1011,7 @@ mod tests {
                         cluster_name: "DEFAULT".to_string(),
                         service_name: "stress-svc".to_string(),
                         metadata: HashMap::new(),
+                        register_source: RegisterSource::default(),
                     };
                     naming.register_instance("public", "DEFAULT_GROUP", "stress-svc", instance);
                 }
@@ -1067,6 +1070,7 @@ mod tests {
                         cluster_name: "DEFAULT".to_string(),
                         service_name: svc_name.clone(),
                         metadata: HashMap::new(),
+                        register_source: RegisterSource::default(),
                     };
                     naming.register_instance("public", "DEFAULT_GROUP", &svc_name, instance);
                 }
@@ -1136,6 +1140,7 @@ mod tests {
                 cluster_name: "DEFAULT".to_string(),
                 service_name: "hb-svc".to_string(),
                 metadata: HashMap::new(),
+                register_source: RegisterSource::default(),
             };
             naming.register_instance("public", "DEFAULT_GROUP", "hb-svc", instance);
         }
@@ -1230,6 +1235,7 @@ mod tests {
                     cluster_name: "DEFAULT".to_string(),
                     service_name: "cl-svc".to_string(),
                     metadata: HashMap::new(),
+                    register_source: RegisterSource::default(),
                 };
                 let instance_key = format!("10.3.{}.{}#8080#DEFAULT", c, i);
                 naming.register_instance("public", "DEFAULT_GROUP", "cl-svc", instance);
@@ -1282,6 +1288,7 @@ mod tests {
                         cluster_name: "DEFAULT".to_string(),
                         service_name: "cl-svc".to_string(),
                         metadata: HashMap::new(),
+                        register_source: RegisterSource::default(),
                     };
                     let instance_key = format!("10.3.{}.{}#8080#DEFAULT", c, i);
                     naming.register_instance("public", "DEFAULT_GROUP", "cl-svc", instance);
@@ -1329,6 +1336,7 @@ mod tests {
                         cluster_name: "DEFAULT".to_string(),
                         service_name: svc_name.clone(),
                         metadata: HashMap::new(),
+                        register_source: RegisterSource::default(),
                     };
                     naming.register_instance("public", "DEFAULT_GROUP", &svc_name, instance);
                     naming.register_fuzzy_watch(
@@ -1367,5 +1375,291 @@ mod tests {
             result.is_ok(),
             "Deadlock detected: concurrent fuzzy_watch + register timed out"
         );
+    }
+
+    // ========================================================================
+    // RegisterSource isolation tests
+    // ========================================================================
+
+    fn create_batata_instance(ip: &str, port: i32) -> Instance {
+        Instance {
+            instance_id: format!("batata-{}#{}", ip, port),
+            ip: ip.to_string(),
+            port,
+            weight: 1.0,
+            healthy: true,
+            enabled: true,
+            ephemeral: true,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "shared-svc".to_string(),
+            metadata: HashMap::new(),
+            register_source: RegisterSource::Batata,
+        }
+    }
+
+    fn create_consul_instance(ip: &str, port: i32) -> Instance {
+        Instance {
+            instance_id: format!("consul-{}#{}", ip, port),
+            ip: ip.to_string(),
+            port,
+            weight: 1.0,
+            healthy: true,
+            enabled: true,
+            ephemeral: false,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "shared-svc".to_string(),
+            metadata: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "consul_service_id".to_string(),
+                    format!("consul-{}#{}", ip, port),
+                );
+                m
+            },
+            register_source: RegisterSource::Consul,
+        }
+    }
+
+    #[test]
+    fn test_register_source_isolation_get_instances_by_source() {
+        let naming = NamingService::new();
+
+        // Register instances from both sources for the same service
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "shared-svc",
+            create_batata_instance("10.0.0.1", 8080),
+        );
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "shared-svc",
+            create_batata_instance("10.0.0.2", 8080),
+        );
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "shared-svc",
+            create_consul_instance("10.0.0.3", 8080),
+        );
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "shared-svc",
+            create_consul_instance("10.0.0.4", 8080),
+        );
+
+        // Unfiltered: returns all 4
+        let all = naming.get_instances("public", "DEFAULT_GROUP", "shared-svc", "", false);
+        assert_eq!(all.len(), 4, "Unfiltered should return all 4 instances");
+
+        // Filter by Batata: returns only 2
+        let batata_only = naming.get_instances_by_source(
+            "public",
+            "DEFAULT_GROUP",
+            "shared-svc",
+            "",
+            false,
+            Some(RegisterSource::Batata),
+        );
+        assert_eq!(
+            batata_only.len(),
+            2,
+            "Batata filter should return 2 instances"
+        );
+        assert!(
+            batata_only
+                .iter()
+                .all(|i| i.register_source == RegisterSource::Batata),
+            "All Batata-filtered instances must have Batata source"
+        );
+        assert!(
+            batata_only
+                .iter()
+                .all(|i| i.instance_id.starts_with("batata-")),
+            "Batata instances should have batata- prefix"
+        );
+
+        // Filter by Consul: returns only 2
+        let consul_only = naming.get_instances_by_source(
+            "public",
+            "DEFAULT_GROUP",
+            "shared-svc",
+            "",
+            false,
+            Some(RegisterSource::Consul),
+        );
+        assert_eq!(
+            consul_only.len(),
+            2,
+            "Consul filter should return 2 instances"
+        );
+        assert!(
+            consul_only
+                .iter()
+                .all(|i| i.register_source == RegisterSource::Consul),
+            "All Consul-filtered instances must have Consul source"
+        );
+        assert!(
+            consul_only
+                .iter()
+                .all(|i| i.instance_id.starts_with("consul-")),
+            "Consul instances should have consul- prefix"
+        );
+
+        // None filter: returns all 4
+        let none_filter = naming.get_instances_by_source(
+            "public",
+            "DEFAULT_GROUP",
+            "shared-svc",
+            "",
+            false,
+            None,
+        );
+        assert_eq!(
+            none_filter.len(),
+            4,
+            "None filter should return all 4 instances"
+        );
+    }
+
+    #[test]
+    fn test_register_source_isolation_get_service_by_source() {
+        let naming = NamingService::new();
+
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "mixed-svc",
+            create_batata_instance("10.0.1.1", 9090),
+        );
+        let mut consul_inst = create_consul_instance("10.0.1.2", 9090);
+        consul_inst.service_name = "mixed-svc".to_string();
+        naming.register_instance("public", "DEFAULT_GROUP", "mixed-svc", consul_inst);
+
+        // get_service returns all hosts
+        let svc_all = naming.get_service("public", "DEFAULT_GROUP", "mixed-svc", "", false);
+        assert_eq!(
+            svc_all.hosts.len(),
+            2,
+            "Unfiltered service should have 2 hosts"
+        );
+
+        // get_service_by_source Batata
+        let svc_batata = naming.get_service_by_source(
+            "public",
+            "DEFAULT_GROUP",
+            "mixed-svc",
+            "",
+            false,
+            Some(RegisterSource::Batata),
+        );
+        assert_eq!(
+            svc_batata.hosts.len(),
+            1,
+            "Batata service should have 1 host"
+        );
+        assert_eq!(svc_batata.hosts[0].register_source, RegisterSource::Batata);
+
+        // get_service_by_source Consul
+        let svc_consul = naming.get_service_by_source(
+            "public",
+            "DEFAULT_GROUP",
+            "mixed-svc",
+            "",
+            false,
+            Some(RegisterSource::Consul),
+        );
+        assert_eq!(
+            svc_consul.hosts.len(),
+            1,
+            "Consul service should have 1 host"
+        );
+        assert_eq!(svc_consul.hosts[0].register_source, RegisterSource::Consul);
+    }
+
+    #[test]
+    fn test_register_source_default_is_batata() {
+        let instance = Instance::default();
+        assert_eq!(
+            instance.register_source,
+            RegisterSource::Batata,
+            "Default RegisterSource should be Batata"
+        );
+    }
+
+    #[test]
+    fn test_register_source_serialization() {
+        let batata = RegisterSource::Batata;
+        let consul = RegisterSource::Consul;
+
+        let batata_json = serde_json::to_string(&batata).unwrap();
+        let consul_json = serde_json::to_string(&consul).unwrap();
+
+        assert_eq!(batata_json, r#""batata""#);
+        assert_eq!(consul_json, r#""consul""#);
+
+        let deserialized: RegisterSource = serde_json::from_str(r#""batata""#).unwrap();
+        assert_eq!(deserialized, RegisterSource::Batata);
+
+        let deserialized: RegisterSource = serde_json::from_str(r#""consul""#).unwrap();
+        assert_eq!(deserialized, RegisterSource::Consul);
+    }
+
+    #[test]
+    fn test_register_source_in_instance_serialization() {
+        let mut instance = create_batata_instance("10.0.0.1", 8080);
+        let json = serde_json::to_string(&instance).unwrap();
+        assert!(
+            json.contains(r#""registerSource":"batata""#),
+            "Batata instance JSON should contain registerSource:batata"
+        );
+
+        instance.register_source = RegisterSource::Consul;
+        let json = serde_json::to_string(&instance).unwrap();
+        assert!(
+            json.contains(r#""registerSource":"consul""#),
+            "Consul instance JSON should contain registerSource:consul"
+        );
+    }
+
+    #[test]
+    fn test_register_source_isolation_empty_service() {
+        let naming = NamingService::new();
+
+        // Register only Consul instances
+        naming.register_instance(
+            "public",
+            "DEFAULT_GROUP",
+            "consul-only-svc",
+            create_consul_instance("10.0.2.1", 8080),
+        );
+
+        // Batata query returns empty
+        let batata = naming.get_instances_by_source(
+            "public",
+            "DEFAULT_GROUP",
+            "consul-only-svc",
+            "",
+            false,
+            Some(RegisterSource::Batata),
+        );
+        assert_eq!(
+            batata.len(),
+            0,
+            "Batata filter on consul-only service should return 0"
+        );
+
+        // Consul query returns the instance
+        let consul = naming.get_instances_by_source(
+            "public",
+            "DEFAULT_GROUP",
+            "consul-only-svc",
+            "",
+            false,
+            Some(RegisterSource::Consul),
+        );
+        assert_eq!(consul.len(), 1, "Consul filter should return 1");
     }
 }

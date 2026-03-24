@@ -22,6 +22,8 @@ pub struct ConsulDatacenterConfig {
     pub default_namespace: String,
     /// Default Nacos group for Consul API mapping (e.g., "DEFAULT_GROUP")
     pub default_group: String,
+    /// Default Nacos cluster for Consul API mapping (e.g., "DEFAULT")
+    pub default_cluster: String,
     /// The Consul compatibility HTTP port (default 8500)
     pub consul_port: u16,
 }
@@ -35,6 +37,7 @@ impl ConsulDatacenterConfig {
             batata_version: env!("CARGO_PKG_VERSION").to_string(),
             default_namespace: "public".to_string(),
             default_group: "DEFAULT_GROUP".to_string(),
+            default_cluster: "DEFAULT".to_string(),
             consul_port: 8500,
         }
     }
@@ -69,6 +72,13 @@ impl ConsulDatacenterConfig {
     pub fn with_default_group(mut self, group: String) -> Self {
         if !group.is_empty() {
             self.default_group = group;
+        }
+        self
+    }
+
+    pub fn with_default_cluster(mut self, cluster: String) -> Self {
+        if !cluster.is_empty() {
+            self.default_cluster = cluster;
         }
         self
     }
@@ -1101,9 +1111,10 @@ impl From<&AgentServiceRegistration> for NacosInstance {
             // Consul instances are persistent — server-side health checks manage them,
             // not gRPC heartbeat (Consul clients don't speak gRPC)
             ephemeral: false,
-            cluster_name: "DEFAULT".to_string(),
+            cluster_name: "DEFAULT".to_string(), // Overridden by agent handler with config value
             service_name: reg.name.clone(),
             metadata,
+            register_source: batata_api::naming::RegisterSource::Consul,
         }
     }
 }

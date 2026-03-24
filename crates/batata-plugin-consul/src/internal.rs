@@ -185,12 +185,13 @@ pub async fn ui_nodes(
     let mut node_map: HashMap<String, UINode> = HashMap::new();
 
     for service_name in &service_names {
-        let instances = naming_service.get_instances(
+        let instances = naming_service.get_instances_by_source(
             &dc_config.default_namespace,
             &dc_config.default_group,
             service_name,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
         for instance in &instances {
             let node_name = instance
@@ -248,12 +249,13 @@ pub async fn ui_node_info(
     );
 
     for service_name in &service_names {
-        let instances = naming_service.get_instances(
+        let instances = naming_service.get_instances_by_source(
             &dc_config.default_namespace,
             &dc_config.default_group,
             service_name,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
         for instance in &instances {
             let instance_node = instance
@@ -344,12 +346,13 @@ pub async fn ui_catalog_overview(
     let mut critical_checks: i64 = 0;
 
     for service_name in &service_names {
-        let instances = naming_service.get_instances(
+        let instances = naming_service.get_instances_by_source(
             &dc_config.default_namespace,
             &dc_config.default_group,
             service_name,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
         for instance in &instances {
             total_instances += 1;
@@ -521,8 +524,14 @@ pub async fn ui_service_topology(
         naming_service.list_services(namespace, &dc_config.default_group, 1, 10000);
 
     for svc in &all_services {
-        let instances =
-            naming_service.get_instances(namespace, &dc_config.default_group, svc, "", false);
+        let instances = naming_service.get_instances_by_source(
+            namespace,
+            &dc_config.default_group,
+            svc,
+            "",
+            false,
+            Some(batata_api::naming::RegisterSource::Consul),
+        );
         for instance in &instances {
             if let Some(kind) = instance.metadata.get("consul_kind")
                 && kind == "connect-proxy"
@@ -616,8 +625,14 @@ fn collect_mesh_gateways(
     let mut gateways = Vec::new();
 
     for svc in service_names {
-        let instances =
-            naming_service.get_instances(default_namespace, default_group, &svc, "", false);
+        let instances = naming_service.get_instances_by_source(
+            default_namespace,
+            default_group,
+            &svc,
+            "",
+            false,
+            Some(batata_api::naming::RegisterSource::Consul),
+        );
         for instance in instances {
             if instance
                 .metadata
@@ -720,12 +735,13 @@ pub async fn federation_state_mesh_gateways(
     let mut gateways_by_dc: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
 
     for svc in service_names {
-        let instances = naming_service.get_instances(
+        let instances = naming_service.get_instances_by_source(
             &dc_config.default_namespace,
             &dc_config.default_group,
             &svc,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
         for instance in instances {
             if instance
@@ -818,12 +834,13 @@ pub async fn assign_service_virtual_ip(
     let request = body.into_inner();
 
     // Check if the service exists in the naming service
-    let instances = naming_service.get_instances(
+    let instances = naming_service.get_instances_by_source(
         &dc_config.default_namespace,
         &dc_config.default_group,
         &request.service_name,
         "",
         false,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
     let found = !instances.is_empty();
 

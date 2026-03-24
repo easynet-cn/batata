@@ -122,6 +122,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_batata_version(configuration.batata_version())
             .with_default_namespace(configuration.consul_default_namespace())
             .with_default_group(configuration.consul_default_group())
+            .with_default_cluster(configuration.consul_default_cluster())
             .with_consul_port(consul_server_port);
     let mcp_registry_enabled = configuration.mcp_registry_enabled()
         || deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP;
@@ -923,6 +924,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Err(e) = agent.register_consul_service(consul_server_port, &dc).await {
                     error!("Failed to auto-register Consul service: {}", e);
                 }
+                // serfHealth check is registered with initial_status=Passing
+                // and a long TTL. No external keepalive needed — the check stays
+                // Passing as long as this server process is alive.
+                // TtlMonitor handles expiration if the process dies.
             });
         }
 

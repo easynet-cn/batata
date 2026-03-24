@@ -76,6 +76,9 @@ impl PayloadHandler for InstanceRequestHandler {
             "Received InstanceRequest"
         );
 
+        // Ensure source is Batata for SDK registrations
+        instance.register_source = batata_api::naming::RegisterSource::Batata;
+
         // Build keys for tracking before the instance is moved
         let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
         let instance_key = format!(
@@ -649,12 +652,13 @@ impl PayloadHandler for ServiceQueryRequestHandler {
             namespace, group_name, service_name, cluster, healthy_only
         );
 
-        let service_info = self.naming_service.get_service(
+        let service_info = self.naming_service.get_service_by_source(
             namespace,
             group_name,
             service_name,
             cluster,
             healthy_only,
+            Some(batata_api::naming::RegisterSource::Batata),
         );
 
         info!(
@@ -736,10 +740,15 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
                 .unsubscribe(connection_id, namespace, group_name, service_name);
         }
 
-        // Return current service info
-        let service_info =
-            self.naming_service
-                .get_service(namespace, group_name, service_name, clusters, false);
+        // Return current service info (filtered to Batata-registered instances only)
+        let service_info = self.naming_service.get_service_by_source(
+            namespace,
+            group_name,
+            service_name,
+            clusters,
+            false,
+            Some(batata_api::naming::RegisterSource::Batata),
+        );
 
         info!(
             "SubscribeServiceResponse: service='{}', clusters='{}', hosts_count={}",
@@ -814,8 +823,9 @@ impl PayloadHandler for PersistentInstanceRequestHandler {
         }
         let req_type = &request.r#type;
 
-        // Mark instance as persistent (non-ephemeral)
+        // Mark instance as persistent (non-ephemeral) and source as Batata
         instance.ephemeral = false;
+        instance.register_source = batata_api::naming::RegisterSource::Batata;
 
         let result = if req_type == REGISTER_INSTANCE {
             self.naming_service

@@ -7,7 +7,8 @@
 use std::collections::HashMap;
 
 use super::model::{
-    ClusterConfig, ClusterStatistics, Instance, ProtectionInfo, Service, ServiceMetadata,
+    ClusterConfig, ClusterStatistics, Instance, ProtectionInfo, RegisterSource, Service,
+    ServiceMetadata,
 };
 
 /// Naming service provider trait for service discovery operations
@@ -43,6 +44,27 @@ pub trait NamingServiceProvider: Send + Sync {
         healthy_only: bool,
     ) -> Vec<Instance>;
 
+    /// Get instances filtered by registration source.
+    /// - `Some(Batata)`: only Batata/Nacos-registered instances
+    /// - `Some(Consul)`: only Consul-registered instances
+    /// - `None`: all instances (no filtering)
+    fn get_instances_by_source(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster: &str,
+        healthy_only: bool,
+        source: Option<RegisterSource>,
+    ) -> Vec<Instance> {
+        let mut instances =
+            self.get_instances(namespace, group_name, service_name, cluster, healthy_only);
+        if let Some(src) = source {
+            instances.retain(|i| i.register_source == src);
+        }
+        instances
+    }
+
     fn get_service(
         &self,
         namespace: &str,
@@ -51,6 +73,27 @@ pub trait NamingServiceProvider: Send + Sync {
         cluster: &str,
         healthy_only: bool,
     ) -> Service;
+
+    /// Get service info filtered by registration source.
+    /// - `Some(Batata)`: only Batata/Nacos-registered instances in the service
+    /// - `Some(Consul)`: only Consul-registered instances in the service
+    /// - `None`: all instances (no filtering)
+    fn get_service_by_source(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        cluster: &str,
+        healthy_only: bool,
+        source: Option<RegisterSource>,
+    ) -> Service {
+        let mut service =
+            self.get_service(namespace, group_name, service_name, cluster, healthy_only);
+        if let Some(src) = source {
+            service.hosts.retain(|i| i.register_source == src);
+        }
+        service
+    }
 
     fn get_service_with_protection_info(
         &self,

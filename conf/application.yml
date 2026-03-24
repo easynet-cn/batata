@@ -256,6 +256,7 @@ batata.plugin.consul.acl.enabled: false
 batata.plugin.consul.check_reap_interval: 30
 batata.plugin.consul.default_namespace: public
 batata.plugin.consul.default_group: DEFAULT_GROUP
+batata.plugin.consul.default_cluster: DEFAULT
 
 # =============================================================================
 # MCP Registry

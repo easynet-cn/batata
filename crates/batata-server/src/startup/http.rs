@@ -86,10 +86,12 @@ impl ConsulServices {
             agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
+                dc_config.default_cluster.clone(),
             ),
             health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
+                dc_config.default_cluster.clone(),
             ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
@@ -97,6 +99,7 @@ impl ConsulServices {
                 dc_config.datacenter.clone(),
             )
             .with_default_group(dc_config.default_group.clone())
+            .with_default_cluster(dc_config.default_cluster.clone())
             .with_index_provider(index_provider.clone()),
             index_provider,
             acl: if acl_enabled {
@@ -141,10 +144,12 @@ impl ConsulServices {
             agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
+                dc_config.default_cluster.clone(),
             ),
             health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
+                dc_config.default_cluster.clone(),
             ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
@@ -152,6 +157,7 @@ impl ConsulServices {
                 dc_config.datacenter.clone(),
             )
             .with_default_group(dc_config.default_group.clone())
+            .with_default_cluster(dc_config.default_cluster.clone())
             .with_index_provider(index_provider.clone()),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
@@ -200,10 +206,12 @@ impl ConsulServices {
             agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
+                dc_config.default_cluster.clone(),
             ),
             health: ConsulHealthService::new(naming_service.clone(), registry).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
+                dc_config.default_cluster.clone(),
             ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
@@ -211,6 +219,7 @@ impl ConsulServices {
                 dc_config.datacenter.clone(),
             )
             .with_default_group(dc_config.default_group.clone())
+            .with_default_cluster(dc_config.default_cluster.clone())
             .with_index_provider(index_provider.clone()),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
@@ -556,7 +565,8 @@ pub fn main_server(
 
         // Register both concrete ConnectionManager (for v2/v3 client handlers that need get_client)
         // and trait object (for handlers that only need trait methods like loader)
-        let connection_manager_trait: Arc<dyn batata_core::ClientConnectionManager> = connection_manager.clone();
+        let connection_manager_trait: Arc<dyn batata_core::ClientConnectionManager> =
+            connection_manager.clone();
         app = app
             .app_data(web::Data::new(connection_manager.clone()))
             .app_data(web::Data::new(connection_manager_trait))

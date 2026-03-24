@@ -451,11 +451,7 @@ impl crate::ClientConnectionManager for ConnectionManager {
         ConnectionManager::connections_for_ip(self, ip)
     }
 
-    async fn push_message(
-        &self,
-        connection_id: &str,
-        payload: batata_api::grpc::Payload,
-    ) -> bool {
+    async fn push_message(&self, connection_id: &str, payload: batata_api::grpc::Payload) -> bool {
         ConnectionManager::push_message(self, connection_id, payload).await
     }
 

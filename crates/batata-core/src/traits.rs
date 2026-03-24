@@ -39,11 +39,7 @@ pub trait ClientConnectionManager: Send + Sync {
     async fn push_message(&self, connection_id: &str, payload: Payload) -> bool;
 
     /// Push a gRPC payload to multiple connections
-    async fn push_message_to_many(
-        &self,
-        connection_ids: &[String],
-        payload: Payload,
-    ) -> usize;
+    async fn push_message_to_many(&self, connection_ids: &[String], payload: Payload) -> usize;
 
     /// Send a connection reset request to a client
     async fn load_single(&self, connection_id: &str, redirect_address: Option<&str>) -> bool;
@@ -54,4 +50,3 @@ pub trait ClientConnectionManager: Send + Sync {
     /// Update the last active timestamp for a connection
     fn touch_connection(&self, connection_id: &str);
 }
-

@@ -37,6 +37,8 @@ pub struct DistroInstance {
     pub ephemeral: bool,
     pub cluster_name: String,
     pub metadata: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub register_source: batata_api::naming::RegisterSource,
 }
 
 /// Default implementation for naming instance data
@@ -106,6 +108,7 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
                 ephemeral: inst.ephemeral,
                 cluster_name: inst.cluster_name,
                 metadata: inst.metadata,
+                register_source: inst.register_source,
             })
             .collect();
 
@@ -150,6 +153,7 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
                 cluster_name: inst.cluster_name,
                 service_name: instance_data.service_name.clone(),
                 metadata: inst.metadata,
+                register_source: inst.register_source,
             })
             .collect();
 

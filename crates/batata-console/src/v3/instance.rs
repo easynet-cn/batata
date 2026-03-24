@@ -220,6 +220,7 @@ async fn update_instance(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata: form.metadata.clone().unwrap_or_default(),
+        register_source: batata_api::naming::RegisterSource::Batata,
     };
 
     if let Err(e) = data

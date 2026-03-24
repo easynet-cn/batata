@@ -31,6 +31,7 @@ pub struct ConsulAgentService {
     registry: Arc<InstanceCheckRegistry>,
     default_namespace: String,
     default_group: String,
+    default_cluster: String,
 }
 
 impl ConsulAgentService {
@@ -43,15 +44,19 @@ impl ConsulAgentService {
             registry,
             default_namespace: "public".to_string(),
             default_group: "DEFAULT_GROUP".to_string(),
+            default_cluster: "DEFAULT".to_string(),
         }
     }
 
-    pub fn with_defaults(mut self, namespace: String, group: String) -> Self {
+    pub fn with_defaults(mut self, namespace: String, group: String, cluster: String) -> Self {
         if !namespace.is_empty() {
             self.default_namespace = namespace;
         }
         if !group.is_empty() {
             self.default_group = group;
+        }
+        if !cluster.is_empty() {
+            self.default_cluster = cluster;
         }
         self
     }
@@ -74,14 +79,18 @@ impl ConsulAgentService {
             weight: 1.0,
             healthy: true,
             enabled: true,
-            ephemeral: true,
-            cluster_name: "DEFAULT".to_string(),
+            ephemeral: false, // Server-managed, aligned with Consul original
+            cluster_name: self.default_cluster.clone(),
             service_name: service_name.to_string(),
+            register_source: batata_api::naming::RegisterSource::Consul,
             metadata: {
                 let mut meta = std::collections::HashMap::new();
-                meta.insert("consul_service".to_string(), "true".to_string());
-                meta.insert("node_name".to_string(), node_name);
+                meta.insert("consul_node".to_string(), node_name);
                 meta.insert("consul_datacenter".to_string(), datacenter.to_string());
+                meta.insert("consul_service_id".to_string(), "consul".to_string());
+                meta.insert("version".to_string(), env!("CARGO_PKG_VERSION").to_string());
+                meta.insert("non_voter".to_string(), "false".to_string());
+                meta.insert("read_replica".to_string(), "false".to_string());
                 meta
             },
         };
@@ -94,11 +103,54 @@ impl ConsulAgentService {
         );
 
         if success {
+            // Register consul_service_id for O(1) lookup during deregistration
+            let service_key = format!(
+                "{}@@{}@@{}",
+                self.default_namespace, self.default_group, service_name
+            );
+            let instance_key = format!("{}#{}#{}", ip, port, self.default_cluster);
+            self.registry
+                .register_consul_service_id("consul", &service_key, &instance_key);
+
+            // Register serfHealth TTL check — aligned with Consul original
+            {
+                use batata_naming::healthcheck::registry::*;
+                self.registry.register_check(InstanceCheckConfig {
+                    check_id: "serfHealth".to_string(),
+                    name: "Serf Health Status".to_string(),
+                    check_type: CheckType::Ttl,
+                    namespace: self.default_namespace.clone(),
+                    group_name: self.default_group.clone(),
+                    service_name: service_name.to_string(),
+                    ip: ip.clone(),
+                    port: port as i32,
+                    cluster_name: self.default_cluster.clone(),
+                    http_url: None,
+                    tcp_addr: None,
+                    grpc_addr: None,
+                    db_url: None,
+                    interval: std::time::Duration::from_secs(10),
+                    timeout: std::time::Duration::from_secs(5),
+                    // Long TTL: server being alive = healthy. No external keepalive needed.
+                    // TtlMonitor will mark Critical only if the process dies.
+                    ttl: Some(std::time::Duration::from_secs(86400)),
+                    success_before_passing: 0,
+                    failures_before_critical: 0,
+                    deregister_critical_after: None,
+                    origin: CheckOrigin::ConsulService,
+                    initial_status: CheckStatus::Passing,
+                    consul_service_id: Some("consul".to_string()),
+                    notes: "Agent alive and reachable".to_string(),
+                });
+            }
+
             tracing::info!(
-                "Consul service registered: {}:{} in namespace {}",
+                "Consul service registered: {}:{} in namespace={} group={} cluster={}",
                 ip,
                 port,
-                self.default_namespace
+                self.default_namespace,
+                self.default_group,
+                self.default_cluster,
             );
             Ok(())
         } else {
@@ -116,9 +168,14 @@ impl ConsulAgentService {
         let service_name = "consul";
 
         // Get the Consul instance
-        let instances =
-            self.naming_service
-                .get_instances(namespace, group, service_name, "", false);
+        let instances = self.naming_service.get_instances_by_source(
+            namespace,
+            group,
+            service_name,
+            "",
+            false,
+            Some(batata_api::naming::RegisterSource::Consul),
+        );
 
         for instance in instances {
             if instance.instance_id == "consul" {
@@ -185,6 +242,9 @@ pub async fn register_service(
 
     // Convert Consul registration to Nacos Instance
     let mut nacos_instance: Instance = (&registration).into();
+
+    // Override cluster_name with configured value (From impl uses "DEFAULT" as fallback)
+    nacos_instance.cluster_name = dc_config.default_cluster.clone();
 
     // Store datacenter in metadata so it can be read back per-instance
     nacos_instance.metadata.insert(
@@ -326,6 +386,13 @@ pub async fn deregister_service(
     query: web::Query<ServiceQueryParams>,
 ) -> HttpResponse {
     let service_id = path.into_inner();
+
+    // Anti-entropy protection: prevent deregistration of the built-in consul service
+    // Aligned with Consul original (agent/local/state.go - skips consul service in updateSyncState)
+    if service_id == "consul" {
+        return HttpResponse::Ok().finish();
+    }
+
     let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service write (deregister requires write)
@@ -381,12 +448,13 @@ pub async fn deregister_service(
                     .list_services(&namespace, &dc_config.default_group, 1, 10000);
 
             for service_name in services.1 {
-                let instances = agent.naming_service.get_instances(
+                let instances = agent.naming_service.get_instances_by_source(
                     &namespace,
                     &dc_config.default_group,
                     &service_name,
                     "",
                     false,
+                    Some(batata_api::naming::RegisterSource::Consul),
                 );
 
                 for instance in instances {
@@ -484,12 +552,13 @@ pub async fn list_services(
         std::collections::HashMap::new();
 
     for service_name in service_names {
-        let instances = agent.naming_service.get_instances(
+        let instances = agent.naming_service.get_instances_by_source(
             &namespace,
             &dc_config.default_group,
             &service_name,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
 
         // Each instance becomes a separate service entry in Consul format
@@ -541,12 +610,13 @@ pub async fn get_service(
             .list_services(&namespace, &dc_config.default_group, 1, 10000);
 
     for service_name in service_names {
-        let instances = agent.naming_service.get_instances(
+        let instances = agent.naming_service.get_instances_by_source(
             &namespace,
             &dc_config.default_group,
             &service_name,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
 
         for instance in instances {
@@ -662,12 +732,13 @@ pub async fn agent_health_service_by_id(
             .list_services(&namespace, &dc_config.default_group, 1, 10000);
 
     for service_name in service_names {
-        let instances = agent.naming_service.get_instances(
+        let instances = agent.naming_service.get_instances_by_source(
             &namespace,
             &dc_config.default_group,
             &service_name,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
 
         for instance in &instances {
@@ -736,12 +807,13 @@ pub async fn agent_health_service_by_name(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let instances = agent.naming_service.get_instances(
+    let instances = agent.naming_service.get_instances_by_source(
         &namespace,
         &dc_config.default_group,
         &service_name,
         "",
         false,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
 
     if instances.is_empty() {
@@ -1648,12 +1720,13 @@ pub async fn get_agent_metrics_real(
     let mut unhealthy_instances = 0u64;
 
     for service_name in &service_names {
-        let instances = agent.naming_service.get_instances(
+        let instances = agent.naming_service.get_instances_by_source(
             &dc_config.default_namespace,
             &dc_config.default_group,
             service_name,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
 
         total_instances += instances.len() as u64;
@@ -1851,12 +1924,13 @@ fn collect_metrics_snapshot(
     let mut total_instances: usize = 0;
     let mut healthy_instances: usize = 0;
     for sn in &service_names {
-        let instances = naming_service.get_instances(
+        let instances = naming_service.get_instances_by_source(
             &dc_config.default_namespace,
             &dc_config.default_group,
             sn,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
         total_instances += instances.len();
         healthy_instances += instances.iter().filter(|i| i.healthy).count();

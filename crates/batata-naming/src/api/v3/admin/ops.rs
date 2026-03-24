@@ -150,8 +150,9 @@ async fn get_metrics(
     for key in &service_keys {
         let parts: Vec<&str> = key.split("@@").collect();
         if parts.len() == 3 {
-            instance_count +=
-                naming_service.get_instances(parts[0], parts[1], parts[2], "", false).len() as i32;
+            instance_count += naming_service
+                .get_instances_by_source(parts[0], parts[1], parts[2], "", false, Some(batata_api::naming::RegisterSource::Batata))
+                .len() as i32;
         }
     }
 

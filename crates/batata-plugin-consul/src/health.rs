@@ -44,6 +44,7 @@ pub struct ConsulHealthService {
     node_name: String,
     default_namespace: String,
     default_group: String,
+    default_cluster: String,
 }
 
 impl ConsulHealthService {
@@ -57,15 +58,19 @@ impl ConsulHealthService {
             node_name: "batata-node".to_string(),
             default_namespace: "public".to_string(),
             default_group: "DEFAULT_GROUP".to_string(),
+            default_cluster: "DEFAULT".to_string(),
         }
     }
 
-    pub fn with_defaults(mut self, namespace: String, group: String) -> Self {
+    pub fn with_defaults(mut self, namespace: String, group: String, cluster: String) -> Self {
         if !namespace.is_empty() {
             self.default_namespace = namespace;
         }
         if !group.is_empty() {
             self.default_group = group;
+        }
+        if !cluster.is_empty() {
+            self.default_cluster = cluster;
         }
         self
     }
@@ -328,12 +333,13 @@ pub async fn get_service_health(
     }
 
     // Get instances from naming service
-    let instances = naming_service.get_instances(
+    let instances = naming_service.get_instances_by_source(
         &namespace,
         &dc_config.default_group,
         &service_name,
         "",
         passing_only,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
 
     // Filter by tag if specified
@@ -535,12 +541,13 @@ pub async fn get_service_checks(
     }
 
     // Get instances to find all checks
-    let instances = naming_service.get_instances(
+    let instances = naming_service.get_instances_by_source(
         &namespace,
         &dc_config.default_group,
         &service_name,
         "",
         false,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
 
     let mut all_checks: Vec<HealthCheck> = Vec::new();
@@ -885,12 +892,13 @@ pub async fn get_connect_health(
     let mut results: Vec<ServiceHealth> = Vec::new();
 
     for svc_name in all_service_names {
-        let instances = naming_service.get_instances(
+        let instances = naming_service.get_instances_by_source(
             &namespace,
             &dc_config.default_group,
             &svc_name,
             "",
             passing_only,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
 
         for instance in instances {
@@ -973,12 +981,13 @@ pub async fn get_ingress_health(
     let mut results: Vec<ServiceHealth> = Vec::new();
 
     for svc_name in all_service_names {
-        let instances = naming_service.get_instances(
+        let instances = naming_service.get_instances_by_source(
             &namespace,
             &dc_config.default_group,
             &svc_name,
             "",
             passing_only,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
 
         for instance in instances {

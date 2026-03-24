@@ -448,6 +448,7 @@ pub struct ConsulCatalogService {
     node_name: String,
     datacenter: String,
     default_group: String,
+    default_cluster: String,
     index_provider: ConsulIndexProvider,
 }
 
@@ -465,6 +466,7 @@ impl ConsulCatalogService {
             node_name: "batata-node".to_string(),
             datacenter,
             default_group: "DEFAULT_GROUP".to_string(),
+            default_cluster: "DEFAULT".to_string(),
             index_provider: ConsulIndexProvider::default(),
         }
     }
@@ -472,6 +474,13 @@ impl ConsulCatalogService {
     pub fn with_default_group(mut self, group: String) -> Self {
         if !group.is_empty() {
             self.default_group = group;
+        }
+        self
+    }
+
+    pub fn with_default_cluster(mut self, cluster: String) -> Self {
+        if !cluster.is_empty() {
+            self.default_cluster = cluster;
         }
         self
     }
@@ -490,12 +499,13 @@ impl ConsulCatalogService {
         let mut services: HashMap<String, Vec<String>> = HashMap::new();
 
         for service_name in service_names {
-            let instances = self.naming_service.get_instances(
+            let instances = self.naming_service.get_instances_by_source(
                 namespace,
                 &self.default_group,
                 &service_name,
                 "",
                 false,
+                Some(batata_api::naming::RegisterSource::Consul),
             );
 
             // Collect all unique tags for this service
@@ -525,12 +535,13 @@ impl ConsulCatalogService {
         service_name: &str,
         tag_filter: Option<&str>,
     ) -> Vec<CatalogService> {
-        let instances = self.naming_service.get_instances(
+        let instances = self.naming_service.get_instances_by_source(
             namespace,
             &self.default_group,
             service_name,
             "",
             false,
+            Some(batata_api::naming::RegisterSource::Consul),
         );
 
         instances
@@ -566,12 +577,13 @@ impl ConsulCatalogService {
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
         for service_name in service_names {
-            let instances = self.naming_service.get_instances(
+            let instances = self.naming_service.get_instances_by_source(
                 namespace,
                 &self.default_group,
                 &service_name,
                 "",
                 false,
+                Some(batata_api::naming::RegisterSource::Consul),
             );
 
             for instance in instances {
@@ -611,12 +623,13 @@ impl ConsulCatalogService {
         let mut services: HashMap<String, AgentService> = HashMap::new();
 
         for service_name in service_names {
-            let instances = self.naming_service.get_instances(
+            let instances = self.naming_service.get_instances_by_source(
                 namespace,
                 &self.default_group,
                 &service_name,
                 "",
                 false,
+                Some(batata_api::naming::RegisterSource::Consul),
             );
 
             for instance in instances {
@@ -714,9 +727,10 @@ impl ConsulCatalogService {
                 healthy: true,
                 enabled: true,
                 ephemeral: true,
-                cluster_name: "DEFAULT".to_string(),
+                cluster_name: self.default_cluster.clone(),
                 service_name: service.service.clone(),
                 metadata,
+                register_source: batata_api::naming::RegisterSource::Consul,
             };
 
             self.naming_service.register_instance(
@@ -740,12 +754,13 @@ impl ConsulCatalogService {
                     .list_services(namespace, &self.default_group, 1, 10000);
 
             for service_name in service_names {
-                let instances = self.naming_service.get_instances(
+                let instances = self.naming_service.get_instances_by_source(
                     namespace,
                     &self.default_group,
                     &service_name,
                     "",
                     false,
+                    Some(batata_api::naming::RegisterSource::Consul),
                 );
 
                 for instance in instances {
@@ -770,12 +785,13 @@ impl ConsulCatalogService {
             let mut deregistered = false;
 
             for service_name in service_names {
-                let instances = self.naming_service.get_instances(
+                let instances = self.naming_service.get_instances_by_source(
                     namespace,
                     &self.default_group,
                     &service_name,
                     "",
                     false,
+                    Some(batata_api::naming::RegisterSource::Consul),
                 );
 
                 for instance in instances {
@@ -806,12 +822,13 @@ impl ConsulCatalogService {
         let mut summaries: Vec<ServiceListingSummary> = Vec::new();
 
         for service_name in service_names {
-            let instances = self.naming_service.get_instances(
+            let instances = self.naming_service.get_instances_by_source(
                 namespace,
                 &self.default_group,
                 &service_name,
                 "",
                 false,
+                Some(batata_api::naming::RegisterSource::Consul),
             );
 
             if instances.is_empty() {
@@ -946,12 +963,13 @@ impl ConsulCatalogService {
         let mut results = Vec::new();
 
         for service_name in service_names {
-            let instances = self.naming_service.get_instances(
+            let instances = self.naming_service.get_instances_by_source(
                 namespace,
                 &self.default_group,
                 &service_name,
                 "",
                 false,
+                Some(batata_api::naming::RegisterSource::Consul),
             );
 
             for instance in &instances {
@@ -1616,6 +1634,7 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: name.to_string(),
             metadata: HashMap::new(),
+            register_source: batata_api::naming::RegisterSource::Consul,
         }
     }
 
@@ -1780,6 +1799,7 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: "web".to_string(),
             metadata: metadata.clone(),
+            register_source: batata_api::naming::RegisterSource::Consul,
         };
 
         // Register an unhealthy service
@@ -1795,6 +1815,7 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: "db".to_string(),
             metadata,
+            register_source: batata_api::naming::RegisterSource::Consul,
         };
 
         naming_service.register_instance("public", "DEFAULT_GROUP", "web", instance1);

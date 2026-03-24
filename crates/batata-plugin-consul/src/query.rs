@@ -372,12 +372,13 @@ pub async fn execute_query(
     let namespace = &dc_config.default_namespace;
     let only_passing = query.service.only_passing;
 
-    let instances = naming_service.get_instances(
+    let instances = naming_service.get_instances_by_source(
         namespace,
         &dc_config.default_group,
         service_name,
         "",
         only_passing,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
 
     // Convert to ServiceHealth format

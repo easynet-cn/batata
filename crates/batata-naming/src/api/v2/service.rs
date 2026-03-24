@@ -19,8 +19,8 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
-use batata_api::naming::NamingServiceProvider;
 use crate::service::ServiceMetadata;
+use batata_api::naming::NamingServiceProvider;
 
 use super::model::{
     SelectorResponse, ServiceCreateParam, ServiceDeleteParam, ServiceDetailParam,
@@ -351,7 +351,7 @@ pub async fn get_service(
 
     // Get instances to calculate counts
     let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+        naming_service.get_instances_by_source(namespace_id, group_name, &params.service_name, "", false, Some(batata_api::naming::RegisterSource::Batata));
 
     // Calculate cluster count
     let clusters: std::collections::HashSet<_> =
