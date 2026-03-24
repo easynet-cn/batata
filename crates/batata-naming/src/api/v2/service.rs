@@ -350,8 +350,14 @@ pub async fn get_service(
         naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
 
     // Get instances to calculate counts
-    let instances =
-        naming_service.get_instances_by_source(namespace_id, group_name, &params.service_name, "", false, Some(batata_api::naming::RegisterSource::Batata));
+    let instances = naming_service.get_instances_by_source(
+        namespace_id,
+        group_name,
+        &params.service_name,
+        "",
+        false,
+        Some(batata_api::naming::RegisterSource::Batata),
+    );
 
     // Calculate cluster count
     let clusters: std::collections::HashSet<_> =

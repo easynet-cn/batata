@@ -119,3 +119,188 @@ fn current_timestamp_ms() -> i64 {
         .unwrap_or_default()
         .as_millis() as i64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::registry::*;
+    use super::*;
+    use std::time::Duration;
+
+    fn create_test_components() -> (Arc<NamingService>, Arc<InstanceCheckRegistry>) {
+        let naming_service = Arc::new(NamingService::new());
+        let registry = Arc::new(InstanceCheckRegistry::new(naming_service.clone()));
+        (naming_service, registry)
+    }
+
+    fn create_check_config(
+        check_id: &str,
+        deregister_after: Option<Duration>,
+    ) -> InstanceCheckConfig {
+        InstanceCheckConfig {
+            check_id: check_id.to_string(),
+            name: format!("Check {}", check_id),
+            check_type: CheckType::Tcp,
+            namespace: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: "test-svc".to_string(),
+            ip: "10.0.0.1".to_string(),
+            port: 8080,
+            cluster_name: "DEFAULT".to_string(),
+            http_url: None,
+            tcp_addr: None,
+            grpc_addr: None,
+            db_url: None,
+            interval: Duration::from_secs(10),
+            timeout: Duration::from_secs(5),
+            ttl: None,
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: deregister_after,
+            origin: CheckOrigin::ConsulService,
+            initial_status: CheckStatus::Passing,
+            consul_service_id: None,
+            notes: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_reap_skips_checks_without_deregister_config() {
+        let (naming_service, registry) = create_test_components();
+        let monitor = DeregisterMonitor::new(registry.clone(), naming_service.clone(), 30);
+
+        // Register instance
+        let instance = Instance {
+            ip: "10.0.0.1".to_string(),
+            port: 8080,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "test-svc".to_string(),
+            healthy: true,
+            enabled: true,
+            ephemeral: false,
+            ..Default::default()
+        };
+        naming_service.register_instance("public", "DEFAULT_GROUP", "test-svc", instance);
+
+        // Register check WITHOUT deregister_critical_after
+        let config = create_check_config("no-deregister", None);
+        registry.register_check(config);
+
+        // Make it critical
+        registry.ttl_update(
+            "no-deregister",
+            CheckStatus::Critical,
+            Some("failed".to_string()),
+        );
+
+        // Reap should skip it
+        monitor.reap_critical_instances();
+
+        // Instance should still exist
+        let instances =
+            naming_service.get_instances("public", "DEFAULT_GROUP", "test-svc", "", false);
+        assert_eq!(
+            instances.len(),
+            1,
+            "Instance should not be deregistered without deregister config"
+        );
+    }
+
+    #[test]
+    fn test_reap_deregisters_after_threshold() {
+        let (naming_service, registry) = create_test_components();
+        let monitor = DeregisterMonitor::new(registry.clone(), naming_service.clone(), 30);
+
+        // Register instance
+        let instance = Instance {
+            ip: "10.0.0.2".to_string(),
+            port: 9090,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "test-svc".to_string(),
+            healthy: true,
+            enabled: true,
+            ephemeral: false,
+            ..Default::default()
+        };
+        naming_service.register_instance("public", "DEFAULT_GROUP", "test-svc", instance);
+
+        // Register check with very short deregister threshold (1ms)
+        let config = create_check_config("auto-deregister", Some(Duration::from_millis(1)));
+        let mut config = config;
+        config.ip = "10.0.0.2".to_string();
+        config.port = 9090;
+        config.initial_status = CheckStatus::Critical;
+        registry.register_check(config);
+
+        // Make it critical (sets critical_since)
+        registry.ttl_update(
+            "auto-deregister",
+            CheckStatus::Critical,
+            Some("failed".to_string()),
+        );
+
+        // Wait for threshold
+        std::thread::sleep(Duration::from_millis(10));
+
+        // Reap should deregister the instance
+        monitor.reap_critical_instances();
+
+        // Instance should be gone
+        let instances =
+            naming_service.get_instances("public", "DEFAULT_GROUP", "test-svc", "", false);
+        assert_eq!(
+            instances.len(),
+            0,
+            "Instance should be deregistered after critical threshold"
+        );
+
+        // Check should also be removed
+        assert!(
+            registry.get_check("auto-deregister").is_none(),
+            "Check should be removed after deregistration"
+        );
+    }
+
+    #[test]
+    fn test_reap_preserves_recently_critical() {
+        let (naming_service, registry) = create_test_components();
+        let monitor = DeregisterMonitor::new(registry.clone(), naming_service.clone(), 30);
+
+        // Register instance
+        let instance = Instance {
+            ip: "10.0.0.3".to_string(),
+            port: 7070,
+            cluster_name: "DEFAULT".to_string(),
+            service_name: "test-svc".to_string(),
+            healthy: true,
+            enabled: true,
+            ephemeral: false,
+            ..Default::default()
+        };
+        naming_service.register_instance("public", "DEFAULT_GROUP", "test-svc", instance);
+
+        // Register check with long deregister threshold (1 hour)
+        let mut config = create_check_config("recent-critical", Some(Duration::from_secs(3600)));
+        config.ip = "10.0.0.3".to_string();
+        config.port = 7070;
+        registry.register_check(config);
+
+        // Make it critical
+        registry.ttl_update(
+            "recent-critical",
+            CheckStatus::Critical,
+            Some("just failed".to_string()),
+        );
+
+        // Reap immediately — should NOT deregister (threshold not reached)
+        monitor.reap_critical_instances();
+
+        // Instance should still exist
+        let instances =
+            naming_service.get_instances("public", "DEFAULT_GROUP", "test-svc", "", false);
+        assert_eq!(
+            instances.len(),
+            1,
+            "Recently critical instance should not be deregistered"
+        );
+    }
+}

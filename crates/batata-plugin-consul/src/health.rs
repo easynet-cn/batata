@@ -1726,4 +1726,205 @@ mod tests {
         assert_eq!(check.name, "overwrite-v2");
         assert_eq!(check.status, "critical");
     }
+
+    fn create_test_health_service_with_defaults()
+    -> (ConsulHealthService, Arc<InstanceCheckRegistry>) {
+        let naming_service: Arc<dyn NamingServiceProvider> = Arc::new(NamingService::new());
+        let registry = Arc::new(InstanceCheckRegistry::new(
+            Arc::new(NamingService::new()) as Arc<NamingService>
+        ));
+        let service = ConsulHealthService::new(naming_service, registry.clone()).with_defaults(
+            "public".to_string(),
+            "DEFAULT_GROUP".to_string(),
+            "DEFAULT".to_string(),
+        );
+        (service, registry)
+    }
+
+    #[test]
+    fn test_health_service_creation_with_defaults() {
+        let (service, _) = create_test_health_service_with_defaults();
+        assert_eq!(service.default_namespace, "public");
+        assert_eq!(service.default_group, "DEFAULT_GROUP");
+        assert_eq!(service.default_cluster, "DEFAULT");
+    }
+
+    #[test]
+    fn test_health_service_registry_access() {
+        let (_service, registry) = create_test_health_service_with_defaults();
+        // Registry should be accessible and empty
+        let checks = registry.get_all_checks();
+        assert!(checks.is_empty(), "Registry should start empty");
+    }
+
+    #[test]
+    fn test_check_status_from_consul_string() {
+        assert_eq!(
+            CheckStatus::from_consul_str("passing"),
+            CheckStatus::Passing
+        );
+        assert_eq!(
+            CheckStatus::from_consul_str("warning"),
+            CheckStatus::Warning
+        );
+        assert_eq!(
+            CheckStatus::from_consul_str("critical"),
+            CheckStatus::Critical
+        );
+        assert_eq!(
+            CheckStatus::from_consul_str("unknown"),
+            CheckStatus::Critical
+        ); // default
+    }
+
+    #[test]
+    fn test_check_type_from_consul_string() {
+        assert_eq!(
+            RegistryCheckType::from_consul_str("tcp"),
+            RegistryCheckType::Tcp
+        );
+        assert_eq!(
+            RegistryCheckType::from_consul_str("http"),
+            RegistryCheckType::Http
+        );
+        assert_eq!(
+            RegistryCheckType::from_consul_str("ttl"),
+            RegistryCheckType::Ttl
+        );
+        assert_eq!(
+            RegistryCheckType::from_consul_str("grpc"),
+            RegistryCheckType::Grpc
+        );
+        assert_eq!(
+            RegistryCheckType::from_consul_str("unknown"),
+            RegistryCheckType::None
+        );
+    }
+
+    #[test]
+    fn test_register_and_query_ttl_check() {
+        let (_service, registry) = create_test_health_service_with_defaults();
+
+        let config = InstanceCheckConfig {
+            check_id: "svc:web-1".to_string(),
+            name: "Web health".to_string(),
+            check_type: RegistryCheckType::Ttl,
+            namespace: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: "web".to_string(),
+            ip: "10.0.0.1".to_string(),
+            port: 8080,
+            cluster_name: "DEFAULT".to_string(),
+            http_url: None,
+            tcp_addr: None,
+            grpc_addr: None,
+            db_url: None,
+            interval: Duration::from_secs(10),
+            timeout: Duration::from_secs(5),
+            ttl: Some(Duration::from_secs(30)),
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: None,
+            origin: CheckOrigin::ConsulAgent,
+            initial_status: CheckStatus::Critical,
+            consul_service_id: Some("web-1".to_string()),
+            notes: String::new(),
+        };
+        registry.register_check(config);
+
+        // Check should be registered
+        let check = registry.get_check("svc:web-1");
+        assert!(check.is_some(), "Check should be registered");
+        let (config, status) = check.unwrap();
+        assert_eq!(config.check_type, RegistryCheckType::Ttl);
+        assert_eq!(status.status, CheckStatus::Critical); // initial
+
+        // Update via TTL
+        registry.ttl_update(
+            "svc:web-1",
+            CheckStatus::Passing,
+            Some("all good".to_string()),
+        );
+        let (_, status) = registry.get_check("svc:web-1").unwrap();
+        assert_eq!(status.status, CheckStatus::Passing);
+        assert_eq!(status.output, "all good");
+    }
+
+    #[test]
+    fn test_pass_warn_fail_cycle() {
+        let (_service, registry) = create_test_health_service_with_defaults();
+
+        let config = InstanceCheckConfig {
+            check_id: "cycle-check".to_string(),
+            name: "Cycle test".to_string(),
+            check_type: RegistryCheckType::Ttl,
+            namespace: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: "cycle-svc".to_string(),
+            ip: "10.0.0.1".to_string(),
+            port: 8080,
+            cluster_name: "DEFAULT".to_string(),
+            http_url: None,
+            tcp_addr: None,
+            grpc_addr: None,
+            db_url: None,
+            interval: Duration::from_secs(10),
+            timeout: Duration::from_secs(5),
+            ttl: Some(Duration::from_secs(30)),
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: None,
+            origin: CheckOrigin::ConsulAgent,
+            initial_status: CheckStatus::Passing,
+            consul_service_id: None,
+            notes: String::new(),
+        };
+        registry.register_check(config);
+
+        // Pass
+        registry.ttl_update("cycle-check", CheckStatus::Passing, Some("ok".to_string()));
+        assert_eq!(
+            registry.get_check("cycle-check").unwrap().1.status,
+            CheckStatus::Passing
+        );
+
+        // Warn
+        registry.ttl_update(
+            "cycle-check",
+            CheckStatus::Warning,
+            Some("degraded".to_string()),
+        );
+        let (_, status) = registry.get_check("cycle-check").unwrap();
+        assert_eq!(status.status, CheckStatus::Warning);
+        assert!(
+            status.status.is_healthy(),
+            "Warning should still be healthy"
+        );
+
+        // Fail
+        registry.ttl_update(
+            "cycle-check",
+            CheckStatus::Critical,
+            Some("down".to_string()),
+        );
+        let (_, status) = registry.get_check("cycle-check").unwrap();
+        assert_eq!(status.status, CheckStatus::Critical);
+        assert!(
+            !status.status.is_healthy(),
+            "Critical should not be healthy"
+        );
+        assert!(
+            status.critical_since.is_some(),
+            "Critical should set critical_since"
+        );
+
+        // Pass again — should clear critical_since
+        registry.ttl_update(
+            "cycle-check",
+            CheckStatus::Passing,
+            Some("recovered".to_string()),
+        );
+        let (_, status) = registry.get_check("cycle-check").unwrap();
+        assert_eq!(status.status, CheckStatus::Passing);
+    }
 }

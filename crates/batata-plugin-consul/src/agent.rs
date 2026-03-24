@@ -2172,4 +2172,111 @@ mod tests {
         let check = create_service_health_check(&instance, "my-service");
         assert_eq!(check.check_id, "service:my-service:svc-abc-123");
     }
+
+    fn create_test_agent() -> (
+        ConsulAgentService,
+        Arc<NamingService>,
+        Arc<InstanceCheckRegistry>,
+    ) {
+        let naming_service = Arc::new(NamingService::new());
+        let registry = Arc::new(InstanceCheckRegistry::new(naming_service.clone()));
+        let agent = ConsulAgentService::new(
+            naming_service.clone() as Arc<dyn NamingServiceProvider>,
+            registry.clone(),
+        )
+        .with_defaults(
+            "public".to_string(),
+            "DEFAULT_GROUP".to_string(),
+            "DEFAULT".to_string(),
+        );
+        (agent, naming_service, registry)
+    }
+
+    #[tokio::test]
+    async fn test_consul_self_registration() {
+        use batata_naming::healthcheck::registry::*;
+
+        let (agent, naming_service, registry) = create_test_agent();
+
+        let result = agent.register_consul_service(8500, "dc1").await;
+        assert!(result.is_ok(), "Self-registration should succeed");
+
+        // Verify instance is registered
+        let instances =
+            naming_service.get_instances("public", "DEFAULT_GROUP", "consul", "", false);
+        assert_eq!(instances.len(), 1, "Consul service should have 1 instance");
+
+        let instance = &instances[0];
+        assert_eq!(instance.instance_id, "consul");
+        assert_eq!(instance.port, 8500);
+        assert!(
+            !instance.ephemeral,
+            "Consul self-registration should be persistent (non-ephemeral)"
+        );
+        assert_eq!(
+            instance.register_source,
+            batata_api::naming::RegisterSource::Consul
+        );
+        assert_eq!(instance.cluster_name, "DEFAULT");
+
+        // Verify metadata
+        assert!(instance.metadata.contains_key("consul_datacenter"));
+        assert_eq!(instance.metadata["consul_datacenter"], "dc1");
+        assert!(instance.metadata.contains_key("consul_node"));
+        assert!(instance.metadata.contains_key("consul_service_id"));
+        assert_eq!(instance.metadata["consul_service_id"], "consul");
+        assert!(instance.metadata.contains_key("version"));
+
+        // Verify serfHealth check is registered
+        let check = registry.get_check("serfHealth");
+        assert!(check.is_some(), "serfHealth check should be registered");
+        let (config, status) = check.unwrap();
+        assert_eq!(config.check_type, CheckType::Ttl);
+        assert_eq!(
+            status.status,
+            CheckStatus::Passing,
+            "serfHealth should start as Passing"
+        );
+        assert_eq!(config.consul_service_id, Some("consul".to_string()));
+
+        // Verify consul service ID index
+        let lookup = registry.lookup_consul_service_id("consul");
+        assert!(lookup.is_some(), "consul service ID should be indexed");
+    }
+
+    #[tokio::test]
+    async fn test_consul_self_deregistration() {
+        let (agent, naming_service, _registry) = create_test_agent();
+
+        // Register first
+        agent.register_consul_service(8500, "dc1").await.unwrap();
+        assert_eq!(
+            naming_service
+                .get_instances("public", "DEFAULT_GROUP", "consul", "", false)
+                .len(),
+            1
+        );
+
+        // Deregister
+        agent.deregister_consul_service().await;
+
+        let instances =
+            naming_service.get_instances("public", "DEFAULT_GROUP", "consul", "", false);
+        assert_eq!(instances.len(), 0, "Consul service should be deregistered");
+    }
+
+    #[test]
+    fn test_agent_default_cluster_config() {
+        let naming_service: Arc<dyn NamingServiceProvider> = Arc::new(NamingService::new());
+        let registry = Arc::new(InstanceCheckRegistry::new(Arc::new(NamingService::new())));
+        let agent = ConsulAgentService::new(naming_service, registry).with_defaults(
+            "custom-ns".to_string(),
+            "CUSTOM_GROUP".to_string(),
+            "CUSTOM_CLUSTER".to_string(),
+        );
+
+        assert_eq!(agent.default_namespace, "custom-ns");
+        assert_eq!(agent.default_group, "CUSTOM_GROUP");
+        assert_eq!(agent.default_cluster, "CUSTOM_CLUSTER");
+    }
 }

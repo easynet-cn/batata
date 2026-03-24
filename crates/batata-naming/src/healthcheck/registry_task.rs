@@ -289,3 +289,177 @@ fn sanitize_db_url(url: &str) -> String {
     }
     url.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::registry::*;
+    use super::*;
+    use crate::service::NamingService;
+
+    fn create_registry() -> Arc<InstanceCheckRegistry> {
+        let naming_service = Arc::new(NamingService::new());
+        Arc::new(InstanceCheckRegistry::new(naming_service))
+    }
+
+    fn create_tcp_check_config(check_id: &str) -> InstanceCheckConfig {
+        InstanceCheckConfig {
+            check_id: check_id.to_string(),
+            name: format!("TCP check {}", check_id),
+            check_type: CheckType::Tcp,
+            namespace: "public".to_string(),
+            group_name: "DEFAULT_GROUP".to_string(),
+            service_name: "test-svc".to_string(),
+            ip: "10.0.0.1".to_string(),
+            port: 8080,
+            cluster_name: "DEFAULT".to_string(),
+            http_url: None,
+            tcp_addr: None,
+            grpc_addr: None,
+            db_url: None,
+            interval: Duration::from_secs(10),
+            timeout: Duration::from_secs(2),
+            ttl: None,
+            success_before_passing: 0,
+            failures_before_critical: 0,
+            deregister_critical_after: None,
+            origin: CheckOrigin::ConsulService,
+            initial_status: CheckStatus::Passing,
+            consul_service_id: None,
+            notes: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_registry_task_creation() {
+        let registry = create_registry();
+        let task = RegistryCheckTask::new("test-check".to_string(), registry);
+        assert_eq!(task.check_key(), "test-check");
+    }
+
+    #[test]
+    fn test_registry_task_interval_returns_none_when_removed() {
+        let registry = create_registry();
+        let task = RegistryCheckTask::new("nonexistent".to_string(), registry);
+        assert!(
+            task.interval().is_none(),
+            "Interval should be None for nonexistent check"
+        );
+    }
+
+    #[test]
+    fn test_registry_task_interval_returns_configured_value() {
+        let registry = create_registry();
+        let config = create_tcp_check_config("interval-test");
+        registry.register_check(config);
+
+        let task = RegistryCheckTask::new("interval-test".to_string(), registry);
+        assert_eq!(task.interval(), Some(Duration::from_secs(10)));
+    }
+
+    #[tokio::test]
+    async fn test_registry_task_execute_skips_removed_check() {
+        let registry = create_registry();
+        // Don't register any check — execute should gracefully skip
+        let task = RegistryCheckTask::new("removed-check".to_string(), registry);
+        task.execute().await; // Should not panic
+    }
+
+    #[tokio::test]
+    async fn test_registry_task_execute_skips_ttl_check() {
+        let registry = create_registry();
+        let mut config = create_tcp_check_config("ttl-skip");
+        config.check_type = CheckType::Ttl;
+        registry.register_check(config);
+
+        let task = RegistryCheckTask::new("ttl-skip".to_string(), registry.clone());
+        task.execute().await;
+
+        // TTL check should not be executed — status unchanged
+        let (_, status) = registry.get_check("ttl-skip").unwrap();
+        assert_eq!(
+            status.status,
+            CheckStatus::Passing,
+            "TTL check should not be executed by registry task"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_registry_task_execute_skips_none_check() {
+        let registry = create_registry();
+        let mut config = create_tcp_check_config("none-skip");
+        config.check_type = CheckType::None;
+        registry.register_check(config);
+
+        let task = RegistryCheckTask::new("none-skip".to_string(), registry.clone());
+        task.execute().await;
+
+        let (_, status) = registry.get_check("none-skip").unwrap();
+        assert_eq!(
+            status.status,
+            CheckStatus::Passing,
+            "None check should not be executed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_registry_task_tcp_check_unreachable_host() {
+        let registry = create_registry();
+        let mut config = create_tcp_check_config("tcp-fail");
+        config.tcp_addr = Some("127.0.0.1:19".to_string()); // Port 19 (chargen) — typically not listening
+        config.timeout = Duration::from_millis(500);
+        config.initial_status = CheckStatus::Passing;
+        registry.register_check(config);
+
+        let task = RegistryCheckTask::new("tcp-fail".to_string(), registry.clone());
+        task.execute().await;
+
+        let (_, status) = registry.get_check("tcp-fail").unwrap();
+        assert_eq!(
+            status.status,
+            CheckStatus::Critical,
+            "TCP check to unreachable host should fail"
+        );
+        assert!(
+            status.output.contains("TCP check"),
+            "Output should describe TCP check result"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_registry_task_http_check_unreachable_host() {
+        let registry = create_registry();
+        let mut config = create_tcp_check_config("http-fail");
+        config.check_type = CheckType::Http;
+        config.http_url = Some("http://127.0.0.1:19/health".to_string());
+        config.timeout = Duration::from_millis(500);
+        config.initial_status = CheckStatus::Passing;
+        registry.register_check(config);
+
+        let task = RegistryCheckTask::new("http-fail".to_string(), registry.clone());
+        task.execute().await;
+
+        let (_, status) = registry.get_check("http-fail").unwrap();
+        assert_eq!(
+            status.status,
+            CheckStatus::Critical,
+            "HTTP check to unreachable host should fail"
+        );
+        assert!(
+            status.output.contains("HTTP"),
+            "Output should describe HTTP check result"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_db_url_hides_password() {
+        assert_eq!(
+            sanitize_db_url("mysql://user:secret@host:3306/db"),
+            "mysql://user:***@host:3306/db"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_db_url_no_password() {
+        assert_eq!(sanitize_db_url("sqlite://data.db"), "sqlite://data.db");
+    }
+}

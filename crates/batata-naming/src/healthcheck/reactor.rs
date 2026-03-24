@@ -383,4 +383,66 @@ mod tests {
         assert_eq!(reactor.get_active_task_count(), 0);
         assert!(reactor.get_all_task_ids().is_empty());
     }
+
+    #[tokio::test]
+    async fn test_reactor_schedule_and_cancel() {
+        let naming_service = Arc::new(NamingService::default());
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new(naming_service.clone(), config);
+
+        // Schedule a check via send message
+        reactor.cancel_check("nonexistent"); // Should not panic
+
+        // Verify no tasks
+        assert_eq!(reactor.get_active_task_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_reactor_shutdown() {
+        let naming_service = Arc::new(NamingService::default());
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new(naming_service, config);
+
+        reactor.shutdown().await;
+        assert_eq!(
+            reactor.get_active_task_count(),
+            0,
+            "All tasks should be cleared after shutdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_reactor_schedule_registry_check_without_registry() {
+        let naming_service = Arc::new(NamingService::default());
+        let config = Arc::new(HealthCheckConfig::default());
+        let reactor = HealthCheckReactor::new(naming_service, config);
+
+        // Schedule registry check without setting registry — should not panic
+        reactor.schedule_registry_check("some-check");
+
+        // Give event loop time to process
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // No crash = success
+    }
+
+    #[tokio::test]
+    async fn test_reactor_disabled_config() {
+        let naming_service = Arc::new(NamingService::default());
+        let mut config = HealthCheckConfig::default();
+        config.health_check_enabled = false;
+        let config = Arc::new(config);
+        let reactor = HealthCheckReactor::new(naming_service.clone(), config);
+
+        // schedule_instance_checks should be a no-op when disabled
+        reactor.schedule_instance_checks("public", "DEFAULT_GROUP", "test-svc");
+
+        // Give time to process
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            reactor.get_active_task_count(),
+            0,
+            "No tasks should be scheduled when disabled"
+        );
+    }
 }

@@ -151,7 +151,14 @@ async fn get_metrics(
         let parts: Vec<&str> = key.split("@@").collect();
         if parts.len() == 3 {
             instance_count += naming_service
-                .get_instances_by_source(parts[0], parts[1], parts[2], "", false, Some(batata_api::naming::RegisterSource::Batata))
+                .get_instances_by_source(
+                    parts[0],
+                    parts[1],
+                    parts[2],
+                    "",
+                    false,
+                    Some(batata_api::naming::RegisterSource::Batata),
+                )
                 .len() as i32;
         }
     }
