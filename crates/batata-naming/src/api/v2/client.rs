@@ -19,7 +19,7 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, error, secured};
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 use super::model::{
     ClientDetailParam, ClientDetailResponse, ClientListParam, ClientListResponse,
@@ -143,7 +143,7 @@ pub async fn get_client_detail(
 pub async fn get_client_published_services(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ClientServiceListParam>,
 ) -> impl Responder {
     if params.client_id.is_empty() {
@@ -188,7 +188,7 @@ pub async fn get_client_published_services(
 pub async fn get_client_subscribed_services(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ClientServiceListParam>,
 ) -> impl Responder {
     if params.client_id.is_empty() {
@@ -234,7 +234,7 @@ pub async fn get_service_publishers(
     req: HttpRequest,
     data: web::Data<AppState>,
     connection_manager: web::Data<Arc<ConnectionManager>>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceClientListParam>,
 ) -> impl Responder {
     if params.service_name.is_empty() {
@@ -297,7 +297,7 @@ pub async fn get_service_subscribers(
     req: HttpRequest,
     data: web::Data<AppState>,
     connection_manager: web::Data<Arc<ConnectionManager>>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceClientListParam>,
 ) -> impl Responder {
     if params.service_name.is_empty() {

@@ -16,7 +16,8 @@ use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
 };
 
-use crate::service::{NamingService, ServiceMetadata};
+use batata_api::naming::NamingServiceProvider;
+use crate::service::ServiceMetadata;
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
@@ -114,7 +115,7 @@ struct SelectorResponse {
 async fn list_services(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceListQuery>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();
@@ -196,7 +197,7 @@ async fn list_services(
 async fn get_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceDetailQuery>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();
@@ -276,7 +277,7 @@ async fn get_service(
 async fn create_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
@@ -354,7 +355,7 @@ async fn create_service(
 async fn update_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
@@ -432,7 +433,7 @@ async fn update_service(
 async fn delete_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceDetailQuery>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();
@@ -511,7 +512,7 @@ struct SubscriberInfoResponse {
 async fn get_subscribers(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<SubscriberQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() {
@@ -625,7 +626,7 @@ impl UpdateClusterForm {
 async fn update_service_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<UpdateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();

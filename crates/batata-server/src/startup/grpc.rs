@@ -94,7 +94,9 @@ fn register_internal_handlers(
     registry.register_handler(Arc::new(ServerCheckHandler {}));
     registry.register_handler(Arc::new(ConnectionSetupHandler {}));
     registry.register_handler(Arc::new(ClientDetectionHandler {}));
-    registry.register_handler(Arc::new(ServerLoaderInfoHandler { connection_manager }));
+    registry.register_handler(Arc::new(ServerLoaderInfoHandler {
+        connection_manager: connection_manager as Arc<dyn batata_core::ClientConnectionManager>,
+    }));
     // ServerReloadHandler with config path
     let config_path = std::env::current_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -116,6 +118,7 @@ fn register_config_handlers(
     cluster_client_manager: Option<Arc<ClusterClientManager>>,
     config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
 ) {
+    let connection_manager: Arc<dyn batata_core::ClientConnectionManager> = connection_manager;
     registry.register_handler(Arc::new(ConfigQueryHandler {
         app_state: app_state.clone(),
     }));
@@ -171,6 +174,7 @@ fn register_naming_handlers(
     connection_manager: Arc<ConnectionManager>,
     distro_protocol: Option<Arc<DistroProtocol>>,
 ) {
+    let naming_service: Arc<dyn batata_api::naming::NamingServiceProvider> = naming_service;
     registry.register_handler(Arc::new(InstanceRequestHandler {
         naming_service: naming_service.clone(),
         naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
@@ -354,7 +358,7 @@ pub fn start_grpc_servers(
     cluster_server_port: u16,
     raft_node: Option<Arc<RaftNode>>,
     server_member_manager: Option<Arc<batata_core::cluster::ServerMemberManager>>,
-    config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+    config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
 ) -> Result<GrpcServers, Box<dyn std::error::Error>> {
     // Get TLS configuration
     let tls_config = app_state.configuration.grpc_tls_config();

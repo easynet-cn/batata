@@ -14,7 +14,7 @@ use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
 };
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -160,7 +160,7 @@ async fn get_client(
 async fn get_published(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ClientDetailParam>,
 ) -> impl Responder {
     if params.client_id.is_empty() {
@@ -200,7 +200,7 @@ async fn get_published(
 async fn get_subscribed(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ClientDetailParam>,
 ) -> impl Responder {
     if params.client_id.is_empty() {
@@ -292,7 +292,7 @@ async fn get_service_publishers(
     req: HttpRequest,
     data: web::Data<AppState>,
     connection_manager: web::Data<Arc<ConnectionManager>>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceClientQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() {
@@ -352,7 +352,7 @@ async fn get_service_subscribers(
     req: HttpRequest,
     data: web::Data<AppState>,
     connection_manager: web::Data<Arc<ConnectionManager>>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceClientQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() {

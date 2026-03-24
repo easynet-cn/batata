@@ -604,21 +604,37 @@ impl Configuration {
     // Persistence Mode Configuration
     // ========================================================================
 
-    /// Derive the persistence storage mode from `batata.sql.init.platform` and `batata.standalone`.
+    /// Get the storage backend type.
     ///
-    /// Logic (aligned with Nacos 3.x):
     /// - `batata.sql.init.platform` = "mysql" or "postgresql" → ExternalDb
-    /// - `batata.sql.init.platform` = empty + standalone=true → StandaloneEmbedded (RocksDB)
-    /// - `batata.sql.init.platform` = empty + standalone=false → DistributedEmbedded (Raft + RocksDB)
-    pub fn persistence_mode(&self) -> batata_persistence::StorageMode {
+    /// - Otherwise → Embedded (RocksDB)
+    pub fn storage_backend(&self) -> batata_persistence::StorageBackend {
         let platform = self.datasource_platform();
         if platform.eq_ignore_ascii_case("mysql") || platform.eq_ignore_ascii_case("postgresql") {
-            batata_persistence::StorageMode::ExternalDb
-        } else if self.is_standalone() {
-            batata_persistence::StorageMode::StandaloneEmbedded
+            batata_persistence::StorageBackend::ExternalDb
         } else {
-            batata_persistence::StorageMode::DistributedEmbedded
+            batata_persistence::StorageBackend::Embedded
         }
+    }
+
+    /// Get the deploy topology.
+    ///
+    /// - `batata.standalone` = true → Standalone
+    /// - `batata.standalone` = false → Cluster (Raft)
+    pub fn deploy_topology(&self) -> batata_persistence::DeployTopology {
+        if self.is_standalone() {
+            batata_persistence::DeployTopology::Standalone
+        } else {
+            batata_persistence::DeployTopology::Cluster
+        }
+    }
+
+    /// Derive the persistence storage mode from the two independent dimensions.
+    pub fn persistence_mode(&self) -> batata_persistence::StorageMode {
+        batata_persistence::StorageMode::from_dimensions(
+            self.storage_backend(),
+            self.deploy_topology(),
+        )
     }
 
     /// Get the RocksDB data directory for embedded modes

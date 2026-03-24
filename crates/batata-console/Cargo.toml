@@ -27,9 +27,6 @@ actix-multipart = { workspace = true }
 # HTTP client
 reqwest = { workspace = true }
 
-# Database
-sea-orm = { workspace = true }
-
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

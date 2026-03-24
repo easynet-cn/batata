@@ -14,8 +14,8 @@ use crate::{
         ConsulExportRequest, ConsulImportRequest, ConsulKVExportItem, ImportResult,
     },
     model::common::AppState,
-    service::config_import,
 };
+use batata_config::service::import as config_import;
 
 /// GET /v1/kv/export
 /// Export all configurations in Consul format

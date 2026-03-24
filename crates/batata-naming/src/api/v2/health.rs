@@ -16,7 +16,7 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 use super::model::InstanceHealthParam;
 
@@ -24,7 +24,7 @@ use super::model::InstanceHealthParam;
 async fn do_update_instance_health(
     req: &HttpRequest,
     data: &web::Data<AppState>,
-    naming_service: &web::Data<Arc<NamingService>>,
+    naming_service: &web::Data<Arc<dyn NamingServiceProvider>>,
     form: &InstanceHealthParam,
 ) -> actix_web::HttpResponse {
     // Validate required parameters
@@ -131,7 +131,7 @@ async fn do_update_instance_health(
 pub async fn update_instance_health(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<InstanceHealthParam>,
 ) -> impl Responder {
     do_update_instance_health(&req, &data, &naming_service, &form).await
@@ -142,7 +142,7 @@ pub async fn update_instance_health(
 pub async fn update_instance_health_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<InstanceHealthParam>,
 ) -> impl Responder {
     do_update_instance_health(&req, &data, &naming_service, &form).await

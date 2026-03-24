@@ -13,7 +13,7 @@ use batata_common::{
 use batata_server_common::{Secured, model::app_state::AppState, model::response::Result, secured};
 
 use crate::ClusterStatistics;
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,7 +57,7 @@ impl UpdateClusterForm {
 async fn create_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<CreateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form
@@ -117,7 +117,7 @@ async fn create_cluster(
 async fn get_cluster_statistics(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     path: web::Path<(String, String, String)>,
 ) -> impl Responder {
     let (namespace_id, group_name, service_name) = path.into_inner();
@@ -140,7 +140,7 @@ async fn get_cluster_statistics(
 async fn update_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<UpdateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();

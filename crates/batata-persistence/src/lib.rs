@@ -36,5 +36,6 @@ pub use distributed::DistributedPersistService;
 // Re-export model types
 pub use model::{
     CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
-    NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageMode, UserInfo,
+    DeployTopology, NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageBackend, StorageMode,
+    UserInfo,
 };

@@ -1,17 +1,20 @@
 // Local data source implementation
-// Provides direct database access for console operations
+// Provides direct PersistenceService access for console operations in non-remote modes.
 
 use async_trait::async_trait;
-use sea_orm::DatabaseConnection;
 use std::sync::Arc;
+
+use batata_common::ClusterManager;
+use batata_persistence::PersistenceService;
 
 use batata_api::config::ConfigListenerInfo;
 use batata_api::model::Page;
 use batata_api::naming::{Instance, NamingServiceProvider, ServiceMetadata};
-use batata_common::ClusterManager;
+use batata_config::model::config::ConfigAllInfo;
+use batata_config::model::export::NacosExportItem;
 use batata_server_common::console::api_model::{
     ConfigBasicInfo, ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo,
-    ConfigHistoryDetailInfo, ImportResult, SameConfigPolicy,
+    ConfigHistoryDetailInfo, ImportFailItem, ImportResult, SameConfigPolicy,
 };
 use batata_server_common::console::datasource::ConsoleDataSource;
 use batata_server_common::console::model::{
@@ -32,25 +35,28 @@ use batata_server_common::model::{
     STARTUP_MODE_STATE,
 };
 
-/// Local data source - direct database access
+/// Local data source — direct PersistenceService access
+///
+/// Used in all non-remote modes (external DB, standalone embedded, distributed embedded).
+/// Accesses storage through the PersistenceService trait abstraction.
 pub struct LocalDataSource {
-    database_connection: DatabaseConnection,
+    persistence: Arc<dyn PersistenceService>,
     cluster_manager: Arc<dyn ClusterManager>,
-    _config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+    _config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
     configuration: Configuration,
     naming_service: Option<Arc<dyn NamingServiceProvider>>,
 }
 
 impl LocalDataSource {
     pub fn new(
-        database_connection: DatabaseConnection,
+        persistence: Arc<dyn PersistenceService>,
         cluster_manager: Arc<dyn ClusterManager>,
-        config_subscriber_manager: Arc<batata_core::ConfigSubscriberManager>,
+        config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
         configuration: Configuration,
         naming_service: Option<Arc<dyn NamingServiceProvider>>,
     ) -> Self {
         Self {
-            database_connection,
+            persistence,
             cluster_manager,
             _config_subscriber_manager: config_subscriber_manager,
             configuration,
@@ -64,25 +70,24 @@ impl ConsoleDataSource for LocalDataSource {
     // ============== Namespace Operations ==============
 
     async fn namespace_find_all(&self) -> Vec<Namespace> {
-        batata_config::service::namespace::find_all(&self.database_connection)
-            .await
-            .into_iter()
-            .map(convert_namespace)
-            .collect()
+        match self.persistence.namespace_find_all().await {
+            Ok(infos) => infos.into_iter().map(Namespace::from).collect(),
+            Err(e) => {
+                tracing::error!("Failed to find all namespaces: {}", e);
+                Vec::new()
+            }
+        }
     }
 
     async fn namespace_get_by_id(
         &self,
         namespace_id: &str,
-        tenant_id: &str,
+        _tenant_id: &str,
     ) -> anyhow::Result<Namespace> {
-        let ns = batata_config::service::namespace::get_by_namespace_id(
-            &self.database_connection,
-            namespace_id,
-            tenant_id,
-        )
-        .await?;
-        Ok(convert_namespace(ns))
+        match self.persistence.namespace_get_by_id(namespace_id).await? {
+            Some(info) => Ok(Namespace::from(info)),
+            None => Err(anyhow::anyhow!("Namespace not found: {}", namespace_id)),
+        }
     }
 
     async fn namespace_create(
@@ -91,14 +96,9 @@ impl ConsoleDataSource for LocalDataSource {
         namespace_name: &str,
         namespace_desc: &str,
     ) -> anyhow::Result<()> {
-        batata_config::service::namespace::create(
-            &self.database_connection,
-            namespace_id,
-            namespace_name,
-            namespace_desc,
-        )
-        .await?;
-        Ok(())
+        self.persistence
+            .namespace_create(namespace_id, namespace_name, namespace_desc)
+            .await
     }
 
     async fn namespace_update(
@@ -107,44 +107,17 @@ impl ConsoleDataSource for LocalDataSource {
         namespace_name: &str,
         namespace_desc: &str,
     ) -> anyhow::Result<bool> {
-        batata_config::service::namespace::update(
-            &self.database_connection,
-            namespace_id,
-            namespace_name,
-            namespace_desc,
-        )
-        .await
+        self.persistence
+            .namespace_update(namespace_id, namespace_name, namespace_desc)
+            .await
     }
 
     async fn namespace_delete(&self, namespace_id: &str) -> anyhow::Result<bool> {
-        batata_config::service::namespace::delete(&self.database_connection, namespace_id).await
+        self.persistence.namespace_delete(namespace_id).await
     }
 
     async fn namespace_check(&self, namespace_id: &str) -> anyhow::Result<bool> {
-        // service::namespace::check() is designed for creation validation:
-        // - Ok(false) means namespace does NOT exist (can be created)
-        // - Err(NamespaceAlreadyExist) means namespace exists
-        // We convert this to a simple existence check: Ok(true) = exists, Ok(false) = not exists
-        match batata_config::service::namespace::check(&self.database_connection, namespace_id)
-            .await
-        {
-            Ok(false) => Ok(false),
-            Err(e) => {
-                if e.downcast_ref::<batata_common::error::BatataError>()
-                    .is_some_and(|be| {
-                        matches!(
-                            be,
-                            batata_common::error::BatataError::NamespaceAlreadyExist(_)
-                        )
-                    })
-                {
-                    Ok(true)
-                } else {
-                    Err(e)
-                }
-            }
-            Ok(true) => Ok(true),
-        }
+        self.persistence.namespace_check(namespace_id).await
     }
 
     // ============== Config Operations ==============
@@ -155,14 +128,11 @@ impl ConsoleDataSource for LocalDataSource {
         group_name: &str,
         namespace_id: &str,
     ) -> anyhow::Result<Option<ConfigDetailInfo>> {
-        let result = batata_config::service::config::find_one(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-        )
-        .await?;
-        Ok(result.map(convert_config_all_info_to_detail))
+        let storage = self
+            .persistence
+            .config_find_one(data_id, group_name, namespace_id)
+            .await?;
+        Ok(storage.map(ConfigDetailInfo::from))
     }
 
     async fn config_search_page(
@@ -177,21 +147,21 @@ impl ConsoleDataSource for LocalDataSource {
         types: Vec<String>,
         content: &str,
     ) -> anyhow::Result<Page<ConfigBasicInfo>> {
-        let result = batata_config::service::config::search_page(
-            &self.database_connection,
-            page_no,
-            page_size,
-            namespace_id,
-            data_id,
-            group_name,
-            app_name,
-            tags,
-            types,
-            content,
-        )
-        .await?;
+        let result = self
+            .persistence
+            .config_search_page(
+                page_no,
+                page_size,
+                namespace_id,
+                data_id,
+                group_name,
+                app_name,
+                tags,
+                types,
+                content,
+            )
+            .await?;
 
-        // Convert batata_config::ConfigBasicInfo to batata_server_common ConfigBasicInfo
         Ok(Page::new(
             result.total_count,
             result.page_number,
@@ -199,7 +169,7 @@ impl ConsoleDataSource for LocalDataSource {
             result
                 .page_items
                 .into_iter()
-                .map(convert_config_basic_info)
+                .map(ConfigBasicInfo::from)
                 .collect(),
         ))
     }
@@ -221,24 +191,24 @@ impl ConsoleDataSource for LocalDataSource {
         schema: &str,
         encrypted_data_key: &str,
     ) -> anyhow::Result<()> {
-        batata_config::service::config::create_or_update(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-            content,
-            app_name,
-            src_user,
-            src_ip,
-            config_tags,
-            desc,
-            r#use,
-            effect,
-            r#type,
-            schema,
-            encrypted_data_key,
-        )
-        .await?;
+        self.persistence
+            .config_create_or_update(
+                data_id,
+                group_name,
+                namespace_id,
+                content,
+                app_name,
+                src_user,
+                src_ip,
+                config_tags,
+                desc,
+                r#use,
+                effect,
+                r#type,
+                schema,
+                encrypted_data_key,
+            )
+            .await?;
         Ok(())
     }
 
@@ -252,16 +222,9 @@ impl ConsoleDataSource for LocalDataSource {
         src_user: &str,
         _caas_user: &str,
     ) -> anyhow::Result<()> {
-        batata_config::service::config::delete(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-            tag,
-            client_ip,
-            src_user,
-        )
-        .await?;
+        self.persistence
+            .config_delete(data_id, group_name, namespace_id, tag, client_ip, src_user)
+            .await?;
         Ok(())
     }
 
@@ -271,14 +234,33 @@ impl ConsoleDataSource for LocalDataSource {
         group_name: &str,
         namespace_id: &str,
     ) -> anyhow::Result<Option<ConfigGrayInfo>> {
-        let result = batata_config::service::config::find_gray_one(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-        )
-        .await?;
-        Ok(result.map(convert_gray_wrapper_to_gray_info))
+        let result = self
+            .persistence
+            .config_find_gray_one(data_id, group_name, namespace_id)
+            .await?;
+        Ok(result.map(|gray| ConfigGrayInfo {
+            config_detail_info: ConfigDetailInfo {
+                config_basic_info: ConfigBasicInfo {
+                    id: 0,
+                    namespace_id: gray.tenant,
+                    group_name: gray.group,
+                    data_id: gray.data_id,
+                    md5: gray.md5,
+                    r#type: String::new(),
+                    app_name: gray.app_name,
+                    create_time: gray.created_time,
+                    modify_time: gray.modified_time,
+                },
+                content: gray.content,
+                desc: String::new(),
+                encrypted_data_key: gray.encrypted_data_key,
+                create_user: gray.src_user,
+                create_ip: gray.src_ip,
+                config_tags: String::new(),
+            },
+            gray_name: gray.gray_name,
+            gray_rule: gray.gray_rule,
+        }))
     }
 
     async fn config_create_or_update_gray(
@@ -294,20 +276,20 @@ impl ConsoleDataSource for LocalDataSource {
         app_name: &str,
         encrypted_data_key: &str,
     ) -> anyhow::Result<()> {
-        batata_config::service::config::create_or_update_gray(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-            content,
-            gray_name,
-            gray_rule,
-            src_user,
-            src_ip,
-            app_name,
-            encrypted_data_key,
-        )
-        .await?;
+        self.persistence
+            .config_create_or_update_gray(
+                data_id,
+                group_name,
+                namespace_id,
+                content,
+                gray_name,
+                gray_rule,
+                src_user,
+                src_ip,
+                app_name,
+                encrypted_data_key,
+            )
+            .await?;
         Ok(())
     }
 
@@ -316,19 +298,20 @@ impl ConsoleDataSource for LocalDataSource {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-        _gray_name: &str,
+        gray_name: &str,
         client_ip: &str,
         src_user: &str,
     ) -> anyhow::Result<()> {
-        batata_config::service::config::delete_gray(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-            client_ip,
-            src_user,
-        )
-        .await?;
+        self.persistence
+            .config_delete_gray(
+                data_id,
+                group_name,
+                namespace_id,
+                gray_name,
+                client_ip,
+                src_user,
+            )
+            .await?;
         Ok(())
     }
 
@@ -339,20 +322,17 @@ impl ConsoleDataSource for LocalDataSource {
         data_ids: Option<Vec<String>>,
         app_name: Option<&str>,
     ) -> anyhow::Result<Vec<u8>> {
-        let configs = batata_config::service::export::find_configs_for_export(
-            &self.database_connection,
-            namespace_id,
-            group,
-            data_ids,
-            app_name,
-        )
-        .await?;
+        let configs = self
+            .persistence
+            .config_find_for_export(namespace_id, group, data_ids, app_name)
+            .await?;
 
         if configs.is_empty() {
             return Err(anyhow::anyhow!("No configurations found to export"));
         }
 
-        batata_config::service::export::create_nacos_export_zip(configs)
+        let all_infos: Vec<ConfigAllInfo> = configs.into_iter().map(ConfigAllInfo::from).collect();
+        batata_config::service::export::create_nacos_export_zip(all_infos)
     }
 
     async fn config_import(
@@ -369,17 +349,8 @@ impl ConsoleDataSource for LocalDataSource {
             return Err(anyhow::anyhow!("No configurations found in ZIP file"));
         }
 
-        let config_policy = convert_same_config_policy(&policy);
-        let result = batata_config::service::import::import_nacos_items(
-            &self.database_connection,
-            items,
-            namespace_id,
-            config_policy,
-            src_user,
-            src_ip,
-        )
-        .await?;
-        Ok(convert_import_result(result))
+        self.import_configs_via_persistence(items, namespace_id, policy, src_user, src_ip)
+            .await
     }
 
     async fn config_batch_delete(
@@ -388,13 +359,9 @@ impl ConsoleDataSource for LocalDataSource {
         client_ip: &str,
         src_user: &str,
     ) -> anyhow::Result<()> {
-        batata_config::service::config::batch_delete(
-            &self.database_connection,
-            ids,
-            client_ip,
-            src_user,
-        )
-        .await?;
+        self.persistence
+            .config_batch_delete(ids, client_ip, src_user)
+            .await?;
         Ok(())
     }
 
@@ -402,26 +369,39 @@ impl ConsoleDataSource for LocalDataSource {
         &self,
         ids: &[i64],
         target_namespace_id: &str,
-        policy: &str,
+        _policy: &str,
         src_user: &str,
         src_ip: &str,
     ) -> anyhow::Result<ImportResult> {
-        let clone_result = batata_config::service::config::clone_configs(
-            &self.database_connection,
-            ids,
-            target_namespace_id,
-            policy,
-            src_user,
-            src_ip,
-        )
-        .await?;
+        let source_configs = self.persistence.config_find_by_ids(ids).await?;
 
-        Ok(ImportResult {
-            success_count: clone_result.succeeded as u32,
-            skip_count: clone_result.skipped as u32,
-            fail_count: clone_result.failed as u32,
-            fail_data: vec![],
-        })
+        let mut result = ImportResult::default();
+        for config in source_configs {
+            match self
+                .persistence
+                .config_create_or_update(
+                    &config.data_id,
+                    &config.group,
+                    target_namespace_id,
+                    &config.content,
+                    &config.app_name,
+                    src_user,
+                    src_ip,
+                    &config.config_tags,
+                    &config.desc,
+                    &config.r#use,
+                    &config.effect,
+                    &config.config_type,
+                    &config.schema,
+                    &config.encrypted_data_key,
+                )
+                .await
+            {
+                Ok(_) => result.success_count += 1,
+                Err(_) => result.fail_count += 1,
+            }
+        }
+        Ok(result)
     }
 
     async fn config_listener_list_by_ip(
@@ -442,9 +422,8 @@ impl ConsoleDataSource for LocalDataSource {
         &self,
         nid: u64,
     ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
-        let result =
-            batata_config::service::history::find_by_id(&self.database_connection, nid).await?;
-        Ok(result.map(convert_history_info_to_detail))
+        let result = self.persistence.config_history_find_by_id(nid).await?;
+        Ok(result.map(ConfigHistoryDetailInfo::from))
     }
 
     async fn history_search_page(
@@ -455,15 +434,10 @@ impl ConsoleDataSource for LocalDataSource {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<ConfigHistoryBasicInfo>> {
-        let result = batata_config::service::history::search_page(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-            page_no,
-            page_size,
-        )
-        .await?;
+        let result = self
+            .persistence
+            .config_history_search_page(data_id, group_name, namespace_id, page_no, page_size)
+            .await?;
 
         Ok(Page::<ConfigHistoryBasicInfo>::new(
             result.total_count,
@@ -472,7 +446,7 @@ impl ConsoleDataSource for LocalDataSource {
             result
                 .page_items
                 .into_iter()
-                .map(convert_history_info_to_basic)
+                .map(ConfigHistoryBasicInfo::from)
                 .collect(),
         ))
     }
@@ -481,16 +455,11 @@ impl ConsoleDataSource for LocalDataSource {
         &self,
         namespace_id: &str,
     ) -> anyhow::Result<Vec<ConfigBasicInfo>> {
-        let result = batata_config::service::history::find_configs_by_namespace_id(
-            &self.database_connection,
-            namespace_id,
-        )
-        .await?;
-
-        Ok(result
-            .into_iter()
-            .map(convert_config_info_wrapper)
-            .collect())
+        let configs = self
+            .persistence
+            .config_find_by_namespace(namespace_id)
+            .await?;
+        Ok(configs.into_iter().map(ConfigBasicInfo::from).collect())
     }
 
     async fn history_find_previous(
@@ -500,15 +469,11 @@ impl ConsoleDataSource for LocalDataSource {
         namespace_id: &str,
         id: u64,
     ) -> anyhow::Result<Option<ConfigHistoryDetailInfo>> {
-        let result = batata_config::service::history::get_previous_version(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-            id as i64,
-        )
-        .await?;
-        Ok(result.map(convert_history_info_to_detail))
+        let result = self
+            .persistence
+            .config_history_get_previous(data_id, group_name, namespace_id, id)
+            .await?;
+        Ok(result.map(ConfigHistoryDetailInfo::from))
     }
 
     // ============== History Operations (Advanced) ==============
@@ -525,19 +490,20 @@ impl ConsoleDataSource for LocalDataSource {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<ConfigHistoryBasicInfo>> {
-        let result = batata_config::service::history::search_with_filters(
-            &self.database_connection,
-            data_id,
-            group_name,
-            namespace_id,
-            op_type,
-            src_user,
-            start_time,
-            end_time,
-            page_no,
-            page_size,
-        )
-        .await?;
+        let result = self
+            .persistence
+            .config_history_search_with_filters(
+                data_id,
+                group_name,
+                namespace_id,
+                op_type,
+                src_user,
+                start_time,
+                end_time,
+                page_no,
+                page_size,
+            )
+            .await?;
 
         Ok(Page::<ConfigHistoryBasicInfo>::new(
             result.total_count,
@@ -546,7 +512,7 @@ impl ConsoleDataSource for LocalDataSource {
             result
                 .page_items
                 .into_iter()
-                .map(convert_history_info_to_basic)
+                .map(ConfigHistoryBasicInfo::from)
                 .collect(),
         ))
     }
@@ -949,15 +915,16 @@ impl ConsoleDataSource for LocalDataSource {
             Some(format!("{}", cfg.config_rentention_days())),
         );
 
-        // Auth module state
+        // Auth module state — use PersistenceService directly
         let auth_enabled = cfg.auth_enabled();
-        let global_admin =
-            batata_auth::service::role::has_global_admin_role(&self.database_connection)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to check global admin role: {}", e);
-                    false
-                });
+        let global_admin = self
+            .persistence
+            .role_has_global_admin()
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to check global admin role: {}", e);
+                false
+            });
         state_map.insert(AUTH_ENABLED.to_string(), Some(format!("{}", auth_enabled)));
         state_map.insert(AUTH_SYSTEM_TYPE.to_string(), Some(cfg.auth_system_type()));
         state_map.insert(
@@ -996,11 +963,7 @@ impl ConsoleDataSource for LocalDataSource {
     }
 
     async fn server_readiness(&self) -> bool {
-        use sea_orm::ConnectionTrait;
-        self.database_connection
-            .execute_unprepared("SELECT 1")
-            .await
-            .is_ok()
+        self.persistence.health_check().await.is_ok()
     }
 
     // ============== Cluster Operations ==============
@@ -1084,9 +1047,6 @@ impl ConsoleDataSource for LocalDataSource {
             _ => return Err(anyhow::anyhow!("Invalid state: {}", state)),
         };
 
-        // Note: ClusterManager trait does not expose update_member_state.
-        // State updates are handled at a higher level (ServerMemberManager).
-        // For now, return the previous state without performing the update.
         Ok(previous_state)
     }
 
@@ -1154,178 +1114,86 @@ impl ConsoleDataSource for LocalDataSource {
     }
 }
 
-// ============== Conversion helpers ==============
+// Private helper methods
+impl LocalDataSource {
+    /// Import configs via PersistenceService
+    async fn import_configs_via_persistence(
+        &self,
+        items: Vec<NacosExportItem>,
+        namespace_id: &str,
+        policy: SameConfigPolicy,
+        src_user: &str,
+        src_ip: &str,
+    ) -> anyhow::Result<ImportResult> {
+        let mut result = ImportResult::default();
 
-fn convert_namespace(ns: batata_config::model::Namespace) -> Namespace {
-    Namespace {
-        namespace: ns.namespace,
-        namespace_show_name: ns.namespace_show_name,
-        namespace_desc: ns.namespace_desc,
-        quota: ns.quota,
-        config_count: ns.config_count,
-        type_: ns.type_,
-    }
-}
+        for item in items {
+            let data_id = &item.metadata.data_id;
+            let group = &item.metadata.group;
+            let content = &item.content;
+            let app_name = &item.metadata.app_name;
+            let config_type = &item.metadata.content_type;
+            let desc = &item.metadata.desc;
+            let config_tags = &item.metadata.config_tags;
+            let encrypted_data_key = &item.metadata.encrypted_data_key;
 
-fn convert_config_basic_info(
-    info: batata_config::model::config::ConfigBasicInfo,
-) -> ConfigBasicInfo {
-    ConfigBasicInfo {
-        id: info.id,
-        namespace_id: info.namespace_id,
-        group_name: info.group_name,
-        data_id: info.data_id,
-        md5: info.md5,
-        r#type: info.r#type,
-        app_name: info.app_name,
-        create_time: info.create_time,
-        modify_time: info.modify_time,
-    }
-}
+            // Check if config already exists
+            let existing = self
+                .persistence
+                .config_find_one(data_id, group, namespace_id)
+                .await?;
 
-fn convert_config_info_wrapper(
-    info: batata_config::model::config::ConfigInfoWrapper,
-) -> ConfigBasicInfo {
-    ConfigBasicInfo {
-        id: info.id.unwrap_or_default() as i64,
-        namespace_id: info.namespace_id,
-        group_name: info.group_name,
-        data_id: info.data_id,
-        md5: info.md5.unwrap_or_default(),
-        r#type: info.r#type,
-        app_name: info.app_name,
-        create_time: info.create_time,
-        modify_time: info.modify_time,
-    }
-}
+            if existing.is_some() {
+                match policy {
+                    SameConfigPolicy::Abort => {
+                        result.fail_data.push(ImportFailItem {
+                            data_id: data_id.clone(),
+                            group: group.clone(),
+                            reason: "Config already exists".to_string(),
+                        });
+                        return Ok(result);
+                    }
+                    SameConfigPolicy::Skip => {
+                        result.skip_count += 1;
+                        continue;
+                    }
+                    SameConfigPolicy::Overwrite => {
+                        // Fall through to create_or_update
+                    }
+                }
+            }
 
-fn convert_config_all_info_to_detail(
-    info: batata_config::model::config::ConfigAllInfo,
-) -> ConfigDetailInfo {
-    ConfigDetailInfo {
-        config_basic_info: ConfigBasicInfo {
-            id: info.config_info.config_info_base.id,
-            namespace_id: info.config_info.tenant,
-            group_name: info.config_info.config_info_base.group,
-            data_id: info.config_info.config_info_base.data_id,
-            md5: info.config_info.config_info_base.md5,
-            r#type: info.config_info.r#type,
-            app_name: info.config_info.app_name,
-            create_time: info.create_time,
-            modify_time: info.modify_time,
-        },
-        content: info.config_info.config_info_base.content,
-        desc: info.desc,
-        encrypted_data_key: info.config_info.config_info_base.encrypted_data_key,
-        create_user: info.create_user,
-        create_ip: info.create_ip,
-        config_tags: info.config_tags,
-    }
-}
+            match self
+                .persistence
+                .config_create_or_update(
+                    data_id,
+                    group,
+                    namespace_id,
+                    content,
+                    app_name,
+                    src_user,
+                    src_ip,
+                    config_tags,
+                    desc,
+                    "",
+                    "",
+                    config_type,
+                    "",
+                    encrypted_data_key,
+                )
+                .await
+            {
+                Ok(_) => result.success_count += 1,
+                Err(e) => {
+                    result.fail_data.push(ImportFailItem {
+                        data_id: data_id.clone(),
+                        group: group.clone(),
+                        reason: e.to_string(),
+                    });
+                }
+            }
+        }
 
-fn convert_gray_wrapper_to_gray_info(
-    gray: batata_config::model::config::ConfigInfoGrayWrapper,
-) -> ConfigGrayInfo {
-    ConfigGrayInfo {
-        config_detail_info: ConfigDetailInfo {
-            config_basic_info: ConfigBasicInfo {
-                id: gray.config_info.config_info_base.id,
-                namespace_id: gray.config_info.tenant,
-                group_name: gray.config_info.config_info_base.group,
-                data_id: gray.config_info.config_info_base.data_id,
-                md5: gray.config_info.config_info_base.md5,
-                r#type: gray.config_info.r#type,
-                app_name: gray.config_info.app_name,
-                create_time: 0,
-                modify_time: gray.last_modified,
-            },
-            content: gray.config_info.config_info_base.content,
-            desc: String::new(),
-            encrypted_data_key: gray.config_info.config_info_base.encrypted_data_key,
-            create_user: gray.src_user,
-            create_ip: String::new(),
-            config_tags: String::new(),
-        },
-        gray_name: gray.gray_name,
-        gray_rule: gray.gray_rule,
-    }
-}
-
-fn convert_history_info_to_basic(
-    info: batata_config::model::config::ConfigHistoryInfo,
-) -> ConfigHistoryBasicInfo {
-    ConfigHistoryBasicInfo {
-        config_basic_info: ConfigBasicInfo {
-            id: info.id as i64,
-            namespace_id: info.tenant,
-            group_name: info.group,
-            data_id: info.data_id,
-            md5: info.md5,
-            r#type: String::default(),
-            app_name: info.app_name,
-            create_time: info.created_time,
-            modify_time: info.last_modified_time,
-        },
-        src_ip: info.src_ip,
-        src_user: info.src_user,
-        op_type: info.op_type,
-        publish_type: info.publish_type,
-    }
-}
-
-fn convert_history_info_to_detail(
-    info: batata_config::model::config::ConfigHistoryInfo,
-) -> ConfigHistoryDetailInfo {
-    ConfigHistoryDetailInfo {
-        config_history_basic_info: ConfigHistoryBasicInfo {
-            config_basic_info: ConfigBasicInfo {
-                id: info.id as i64,
-                namespace_id: info.tenant,
-                group_name: info.group,
-                data_id: info.data_id,
-                md5: info.md5,
-                r#type: String::default(),
-                app_name: info.app_name,
-                create_time: info.created_time,
-                modify_time: info.last_modified_time,
-            },
-            src_ip: info.src_ip,
-            src_user: info.src_user,
-            op_type: info.op_type,
-            publish_type: info.publish_type,
-        },
-        content: info.content,
-        encrypted_data_key: info.encrypted_data_key,
-        gray_name: info.gray_name,
-        ext_info: info.ext_info,
-    }
-}
-
-fn convert_same_config_policy(
-    policy: &SameConfigPolicy,
-) -> batata_config::model::export::SameConfigPolicy {
-    match policy {
-        SameConfigPolicy::Abort => batata_config::model::export::SameConfigPolicy::Abort,
-        SameConfigPolicy::Skip => batata_config::model::export::SameConfigPolicy::Skip,
-        SameConfigPolicy::Overwrite => batata_config::model::export::SameConfigPolicy::Overwrite,
-    }
-}
-
-fn convert_import_result(result: batata_config::model::export::ImportResult) -> ImportResult {
-    ImportResult {
-        success_count: result.success_count,
-        skip_count: result.skip_count,
-        fail_count: result.fail_count,
-        fail_data: result
-            .fail_data
-            .into_iter()
-            .map(
-                |item| batata_server_common::console::api_model::ImportFailItem {
-                    data_id: item.data_id,
-                    group: item.group,
-                    reason: item.reason,
-                },
-            )
-            .collect(),
+        Ok(result)
     }
 }

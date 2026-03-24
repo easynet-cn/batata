@@ -20,9 +20,6 @@ batata-auth = { workspace = true }
 actix-web = { workspace = true }
 actix-multipart = { workspace = true }
 
-# Database
-sea-orm = { workspace = true }
-
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }

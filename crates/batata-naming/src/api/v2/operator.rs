@@ -17,7 +17,7 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 use serde::Deserialize;
 
@@ -108,7 +108,7 @@ async fn do_update_switches(
 async fn do_get_metrics(
     req: &HttpRequest,
     data: &web::Data<AppState>,
-    naming_service: &web::Data<Arc<NamingService>>,
+    naming_service: &web::Data<Arc<dyn NamingServiceProvider>>,
     params: &MetricsParam,
 ) -> actix_web::HttpResponse {
     // Check authorization for operator operations
@@ -137,7 +137,7 @@ async fn do_get_metrics(
         let parts: Vec<&str> = key.split("@@").collect();
         if parts.len() == 3 {
             instance_count +=
-                naming_service.get_instance_count(parts[0], parts[1], parts[2]) as i32;
+                naming_service.get_instances(parts[0], parts[1], parts[2], "", false).len() as i32;
         }
     }
 
@@ -219,7 +219,7 @@ pub async fn update_switches(
 pub async fn get_metrics(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<MetricsParam>,
 ) -> impl Responder {
     do_get_metrics(&req, &data, &naming_service, &params).await
@@ -244,7 +244,7 @@ pub async fn update_switches_handler(
 pub async fn get_metrics_handler(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<MetricsParam>,
 ) -> impl Responder {
     do_get_metrics(&req, &data, &naming_service, &params).await

@@ -397,9 +397,8 @@ pub trait ClusterManager: Send + Sync {
     fn is_self(&self, address: &str) -> bool;
 }
 
-// ============================================================================
-// Client Connection Manager Trait
-// ============================================================================
+// Note: ClientConnectionManager trait has been moved to batata-core
+// to allow using the Payload type from batata-api.
 
 /// Connection metadata for trait-based access
 #[derive(Debug, Clone, Default)]
@@ -413,51 +412,6 @@ pub struct ConnectionInfo {
     pub labels: std::collections::HashMap<String, String>,
     pub create_time: u64,
     pub last_active_time: u64,
-}
-
-/// Client connection manager trait
-///
-/// Abstracts gRPC client connection management operations.
-/// This allows services to push messages and query connections
-/// without depending on the concrete `ConnectionManager` type.
-#[async_trait::async_trait]
-pub trait ClientConnectionManager: Send + Sync {
-    /// Get the current number of connected clients
-    fn connection_count(&self) -> usize;
-
-    /// Check if a connection exists
-    fn has_connection(&self, connection_id: &str) -> bool;
-
-    /// Get all connection IDs
-    fn get_all_connection_ids(&self) -> Vec<String>;
-
-    /// Get connection info for a specific connection
-    fn get_connection_info(&self, connection_id: &str) -> Option<ConnectionInfo>;
-
-    /// Get all connection infos
-    fn get_all_connection_infos(&self) -> Vec<ConnectionInfo>;
-
-    /// Count connections from a given IP
-    fn connections_for_ip(&self, ip: &str) -> usize;
-
-    /// Push a message payload to a specific connection
-    async fn push_payload(&self, connection_id: &str, payload_bytes: Vec<u8>) -> bool;
-
-    /// Push a message payload to multiple connections
-    async fn push_payload_to_many(
-        &self,
-        connection_ids: &[String],
-        payload_bytes: Vec<u8>,
-    ) -> usize;
-
-    /// Send a connection reset request to a client
-    async fn load_single(&self, connection_id: &str, redirect_address: Option<&str>) -> bool;
-
-    /// Eject excess connections to reach target count
-    async fn load_count(&self, target_count: usize, redirect_address: Option<&str>) -> usize;
-
-    /// Update the last active timestamp for a connection
-    fn touch_connection(&self, connection_id: &str);
 }
 
 // ============================================================================

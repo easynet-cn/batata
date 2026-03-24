@@ -10,7 +10,7 @@ use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
 };
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -132,7 +132,7 @@ async fn update_switches(
 async fn get_metrics(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
 ) -> impl Responder {
     let resource = "*:*:naming/*";
     secured!(
@@ -151,7 +151,7 @@ async fn get_metrics(
         let parts: Vec<&str> = key.split("@@").collect();
         if parts.len() == 3 {
             instance_count +=
-                naming_service.get_instance_count(parts[0], parts[1], parts[2]) as i32;
+                naming_service.get_instances(parts[0], parts[1], parts[2], "", false).len() as i32;
         }
     }
 

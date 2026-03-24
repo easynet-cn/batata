@@ -27,15 +27,14 @@ use batata_api::{
     remote::model::{RequestTrait, ResponseCode, ResponseTrait},
 };
 
-use crate::{
-    handler::naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern},
-    service::NamingService,
-};
+use batata_api::naming::NamingServiceProvider;
+
+use crate::handler::naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern};
 
 // Handler for InstanceRequest - registers or deregisters a service instance
 #[derive(Clone)]
 pub struct InstanceRequestHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
     pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
     pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
     /// Distro protocol for syncing ephemeral instances across cluster nodes
@@ -345,7 +344,7 @@ impl InstanceRequestHandler {
 // Handler for BatchInstanceRequest - batch registers or deregisters instances
 #[derive(Clone)]
 pub struct BatchInstanceRequestHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
     pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
     /// Distro protocol for syncing ephemeral instances across cluster nodes
     pub distro_protocol: Option<Arc<DistroProtocol>>,
@@ -437,7 +436,7 @@ impl PayloadHandler for BatchInstanceRequestHandler {
                 namespace,
                 group_name,
                 service_name,
-                &instances,
+                instances,
             );
             if ok {
                 self.naming_service.remove_publisher(
@@ -557,7 +556,7 @@ impl BatchInstanceRequestHandler {
 // Handler for ServiceListRequest - lists services in a namespace
 #[derive(Clone)]
 pub struct ServiceListRequestHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
 }
 
 #[tonic::async_trait]
@@ -626,7 +625,7 @@ impl PayloadHandler for ServiceListRequestHandler {
 // Handler for ServiceQueryRequest - queries service details and instances
 #[derive(Clone)]
 pub struct ServiceQueryRequestHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
 }
 
 #[tonic::async_trait]
@@ -707,7 +706,7 @@ impl PayloadHandler for ServiceQueryRequestHandler {
 // Handler for SubscribeServiceRequest - subscribes to service changes
 #[derive(Clone)]
 pub struct SubscribeServiceRequestHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
 }
 
 #[tonic::async_trait]
@@ -792,7 +791,7 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
 // Handler for PersistentInstanceRequest - handles persistent (non-ephemeral) instances
 #[derive(Clone)]
 pub struct PersistentInstanceRequestHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
     pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
@@ -919,7 +918,7 @@ impl PersistentInstanceRequestHandler {
 // Note: This is typically a server-push request to clients
 #[derive(Clone)]
 pub struct NotifySubscriberHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
 }
 
 #[tonic::async_trait]
@@ -948,7 +947,7 @@ impl PayloadHandler for NotifySubscriberHandler {
 // Handler for NamingFuzzyWatchRequest - handles fuzzy pattern watch for services
 #[derive(Clone)]
 pub struct NamingFuzzyWatchHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
     pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
 }
 
@@ -1025,7 +1024,7 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
 // Handler for NamingFuzzyWatchChangeNotifyRequest - notifies fuzzy watch changes
 #[derive(Clone)]
 pub struct NamingFuzzyWatchChangeNotifyHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
     pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
 }
 
@@ -1057,7 +1056,7 @@ impl PayloadHandler for NamingFuzzyWatchChangeNotifyHandler {
 // Handler for NamingFuzzyWatchSyncRequest - syncs fuzzy watch state
 #[derive(Clone)]
 pub struct NamingFuzzyWatchSyncHandler {
-    pub naming_service: Arc<NamingService>,
+    pub naming_service: Arc<dyn NamingServiceProvider>,
     pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
 }
 
@@ -1078,13 +1077,7 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
 
         // For initial sync, get all matching services
         if sync_type == "all" || request.current_batch == 0 {
-            // Get all services matching the pattern
-            let _matched_services = self.naming_service.get_services_by_pattern(
-                namespace,
-                group_pattern,
-                service_pattern,
-            );
-            // The matched services would be sent to client in batches
+            // TODO: The matched services would be sent to client in batches
             // This handler acknowledges the sync request
         }
 

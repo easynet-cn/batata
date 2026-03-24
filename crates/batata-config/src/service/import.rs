@@ -1,20 +1,14 @@
 //! Configuration import service
 //!
-//! Provides functions for importing configurations from Nacos ZIP and Consul JSON formats
+//! Provides pure functions for parsing import files (Nacos ZIP, Consul JSON).
+//! Database access is handled by PersistenceService; this module only handles deserialization.
 
 use std::io::{Cursor, Read};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use zip::ZipArchive;
 
-use batata_persistence::entity::config_info;
-
-use crate::model::{
-    ConfigImportItem, ConsulKVExportItem, ImportFailItem, ImportResult, NacosConfigMetadata,
-    NacosExportItem, SameConfigPolicy,
-};
-use crate::service::config as config_service;
+use crate::model::{ConfigImportItem, ConsulKVExportItem, NacosConfigMetadata, NacosExportItem};
 
 /// Parse a Nacos-format ZIP file and extract configuration items
 pub fn parse_nacos_import_zip(data: &[u8]) -> anyhow::Result<Vec<NacosExportItem>> {
@@ -135,112 +129,6 @@ pub fn parse_consul_import_json(
     }
 
     Ok(items)
-}
-
-/// Import configurations with the specified conflict policy
-pub async fn import_configs(
-    db: &DatabaseConnection,
-    items: Vec<ConfigImportItem>,
-    target_namespace_id: &str,
-    policy: SameConfigPolicy,
-    src_user: &str,
-    src_ip: &str,
-) -> anyhow::Result<ImportResult> {
-    let mut result = ImportResult::default();
-
-    for item in items {
-        let namespace_id = if item.namespace_id.is_empty() {
-            target_namespace_id.to_string()
-        } else {
-            item.namespace_id.clone()
-        };
-
-        // Check if config already exists
-        let exists = config_info::Entity::find()
-            .filter(config_info::Column::DataId.eq(&item.data_id))
-            .filter(config_info::Column::GroupId.eq(&item.group))
-            .filter(config_info::Column::TenantId.eq(&namespace_id))
-            .one(db)
-            .await?
-            .is_some();
-
-        if exists {
-            match policy {
-                SameConfigPolicy::Abort => {
-                    result.fail_count += 1;
-                    result.fail_data.push(ImportFailItem {
-                        data_id: item.data_id.clone(),
-                        group: item.group.clone(),
-                        reason: "Configuration already exists".to_string(),
-                    });
-                    return Ok(result);
-                }
-                SameConfigPolicy::Skip => {
-                    result.skip_count += 1;
-                    continue;
-                }
-                SameConfigPolicy::Overwrite => {
-                    // Continue to update
-                }
-            }
-        }
-
-        // Create or update the configuration
-        match config_service::create_or_update(
-            db,
-            &item.data_id,
-            &item.group,
-            &namespace_id,
-            &item.content,
-            &item.app_name,
-            src_user,
-            src_ip,
-            &item.config_tags,
-            &item.desc,
-            "", // use
-            "", // effect
-            &item.config_type,
-            "", // schema
-            &item.encrypted_data_key,
-        )
-        .await
-        {
-            Ok(_) => {
-                result.success_count += 1;
-            }
-            Err(e) => {
-                result.fail_count += 1;
-                result.fail_data.push(ImportFailItem {
-                    data_id: item.data_id.clone(),
-                    group: item.group.clone(),
-                    reason: e.to_string(),
-                });
-            }
-        }
-    }
-
-    Ok(result)
-}
-
-/// Import Nacos export items (convenience wrapper)
-pub async fn import_nacos_items(
-    db: &DatabaseConnection,
-    items: Vec<NacosExportItem>,
-    target_namespace_id: &str,
-    policy: SameConfigPolicy,
-    src_user: &str,
-    src_ip: &str,
-) -> anyhow::Result<ImportResult> {
-    let config_items: Vec<ConfigImportItem> = items.into_iter().map(|i| i.into()).collect();
-    import_configs(
-        db,
-        config_items,
-        target_namespace_id,
-        policy,
-        src_user,
-        src_ip,
-    )
-    .await
 }
 
 /// Infer configuration type from file extension

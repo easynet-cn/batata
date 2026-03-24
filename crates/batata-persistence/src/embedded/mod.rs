@@ -14,7 +14,8 @@ use batata_consistency::raft::state_machine::{
 
 use crate::model::{
     CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
-    NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageMode, UserInfo,
+    DeployTopology, NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageBackend, StorageMode,
+    UserInfo,
 };
 use crate::traits::PersistenceService;
 use crate::traits::auth::AuthPersistence;
@@ -1220,8 +1221,12 @@ impl CapacityPersistence for EmbeddedPersistService {
 
 #[async_trait]
 impl PersistenceService for EmbeddedPersistService {
-    fn storage_mode(&self) -> StorageMode {
-        StorageMode::StandaloneEmbedded
+    fn storage_backend(&self) -> StorageBackend {
+        StorageBackend::Embedded
+    }
+
+    fn deploy_topology(&self) -> DeployTopology {
+        DeployTopology::Standalone
     }
 
     async fn health_check(&self) -> anyhow::Result<()> {

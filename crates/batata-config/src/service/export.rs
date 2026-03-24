@@ -1,84 +1,14 @@
 //! Configuration export service
 //!
-//! Provides functions for exporting configurations in Nacos ZIP and Consul JSON formats
+//! Provides pure functions for exporting configurations in Nacos ZIP and Consul JSON formats.
+//! Database access is handled by PersistenceService; this module only handles serialization.
 
 use std::io::{Cursor, Write};
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use zip::{ZipWriter, write::SimpleFileOptions};
 
-use batata_persistence::entity::{config_info, config_tags_relation};
-
 use crate::model::{ConfigAllInfo, ConsulKVExportItem, NacosConfigMetadata, NacosExportItem};
-
-/// Find all configurations for export with optional filters
-pub async fn find_configs_for_export(
-    db: &DatabaseConnection,
-    namespace_id: &str,
-    group: Option<&str>,
-    data_ids: Option<Vec<String>>,
-    app_name: Option<&str>,
-) -> anyhow::Result<Vec<ConfigAllInfo>> {
-    let mut query = config_info::Entity::find()
-        .filter(config_info::Column::TenantId.eq(namespace_id))
-        .order_by_asc(config_info::Column::GroupId)
-        .order_by_asc(config_info::Column::DataId);
-
-    if let Some(g) = group
-        && !g.is_empty()
-    {
-        query = query.filter(config_info::Column::GroupId.eq(g));
-    }
-
-    if let Some(ref ids) = data_ids
-        && !ids.is_empty()
-    {
-        query = query.filter(config_info::Column::DataId.is_in(ids.clone()));
-    }
-
-    if let Some(app) = app_name
-        && !app.is_empty()
-    {
-        query = query.filter(config_info::Column::AppName.eq(app));
-    }
-
-    let configs = query.all(db).await?;
-
-    // Fetch tags for all configs
-    let config_ids: Vec<i64> = configs.iter().map(|c| c.id).collect();
-
-    let tags = if !config_ids.is_empty() {
-        config_tags_relation::Entity::find()
-            .filter(config_tags_relation::Column::Id.is_in(config_ids))
-            .order_by_asc(config_tags_relation::Column::Id)
-            .order_by_asc(config_tags_relation::Column::Nid)
-            .all(db)
-            .await?
-    } else {
-        vec![]
-    };
-
-    // Group tags by config id with pre-allocated capacity
-    let mut tags_map: std::collections::HashMap<i64, Vec<String>> =
-        std::collections::HashMap::with_capacity(configs.len());
-    for tag in tags {
-        tags_map.entry(tag.id).or_default().push(tag.tag_name);
-    }
-
-    // Build ConfigAllInfo with tags
-    let result: Vec<ConfigAllInfo> = configs
-        .into_iter()
-        .map(|c| {
-            let config_tags = tags_map.get(&c.id).map(|t| t.join(",")).unwrap_or_default();
-            let mut info = ConfigAllInfo::from(c);
-            info.config_tags = config_tags;
-            info
-        })
-        .collect();
-
-    Ok(result)
-}
 
 /// Create a Nacos-format ZIP file from configurations
 pub fn create_nacos_export_zip(configs: Vec<ConfigAllInfo>) -> anyhow::Result<Vec<u8>> {

@@ -45,8 +45,12 @@ impl ExternalDbPersistService {
 
 #[async_trait]
 impl PersistenceService for ExternalDbPersistService {
-    fn storage_mode(&self) -> StorageMode {
-        StorageMode::ExternalDb
+    fn storage_backend(&self) -> StorageBackend {
+        StorageBackend::ExternalDb
+    }
+
+    fn deploy_topology(&self) -> DeployTopology {
+        DeployTopology::Standalone
     }
 
     async fn health_check(&self) -> anyhow::Result<()> {

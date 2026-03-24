@@ -15,7 +15,7 @@ use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
 };
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 const DEFAULT_CLUSTER: &str = "DEFAULT";
 
@@ -162,7 +162,7 @@ struct InstanceListResponse {
 async fn register_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<InstanceRegisterForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
@@ -260,7 +260,7 @@ async fn register_instance(
 async fn deregister_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceDeregisterQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() || params.ip.is_empty() || params.port <= 0 {
@@ -327,7 +327,7 @@ async fn deregister_instance(
 async fn update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<InstanceRegisterForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
@@ -389,7 +389,7 @@ async fn update_instance(
 async fn get_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceDetailQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() || params.ip.is_empty() || params.port <= 0 {
@@ -463,7 +463,7 @@ async fn get_instance(
 async fn list_instances(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceListQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() {
@@ -514,7 +514,7 @@ async fn list_instances(
 async fn update_metadata(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<MetadataUpdateForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.instances.is_empty() {
@@ -598,7 +598,7 @@ async fn update_metadata(
 async fn partial_update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Json<InstanceRegisterForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
@@ -694,7 +694,7 @@ async fn partial_update_instance(
 async fn delete_metadata_batch(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<MetadataUpdateForm>,
 ) -> impl Responder {
     if params.service_name.is_empty() || params.instances.is_empty() {

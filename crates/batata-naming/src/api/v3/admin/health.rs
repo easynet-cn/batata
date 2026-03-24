@@ -12,7 +12,7 @@ use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
 };
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 const DEFAULT_CLUSTER: &str = "DEFAULT";
 
@@ -44,7 +44,7 @@ impl InstanceHealthParam {
 async fn update_health(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceHealthParam>,
 ) -> impl Responder {
     if params.service_name.is_empty() || params.ip.is_empty() {

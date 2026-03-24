@@ -10,11 +10,9 @@ use tonic::Status;
 use tracing::{debug, info, warn};
 
 use batata_core::{
+    ClientConnectionManager,
     model::Connection,
-    service::{
-        cluster_client::{ClusterClientManager, ClusterRequestSender},
-        remote::ConnectionManager,
-    },
+    service::cluster_client::{ClusterClientManager, ClusterRequestSender},
 };
 use batata_persistence::PersistenceService;
 
@@ -298,7 +296,7 @@ impl PayloadHandler for ConfigQueryHandler {
 pub struct ConfigPublishHandler {
     pub app_state: Arc<AppState>,
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
-    pub connection_manager: Arc<ConnectionManager>,
+    pub connection_manager: Arc<dyn ClientConnectionManager>,
     /// Cluster client manager for broadcasting config changes to other nodes
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
     /// Notifier for waking up long-polling HTTP listeners on config changes
@@ -771,7 +769,7 @@ impl ConfigPublishHandler {
 pub struct ConfigRemoveHandler {
     pub app_state: Arc<AppState>,
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
-    pub connection_manager: Arc<ConnectionManager>,
+    pub connection_manager: Arc<dyn ClientConnectionManager>,
     /// Cluster client manager for broadcasting config removals to other nodes
     pub cluster_client_manager: Option<Arc<ClusterClientManager>>,
     /// Notifier for waking up long-polling HTTP listeners on config changes
@@ -1203,7 +1201,7 @@ pub struct ConfigChangeClusterSyncHandler {
     /// Fuzzy watch manager for notifying local fuzzy watchers
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
     /// Connection manager for pushing notifications to local clients
-    pub connection_manager: Arc<ConnectionManager>,
+    pub connection_manager: Arc<dyn ClientConnectionManager>,
     /// Notifier for waking up long-polling HTTP listeners on config changes
     pub config_change_notifier: Arc<crate::service::notifier::ConfigChangeNotifier>,
 }
@@ -1384,7 +1382,7 @@ impl ConfigChangeClusterSyncHandler {
 pub struct ConfigFuzzyWatchHandler {
     pub app_state: Arc<AppState>,
     pub fuzzy_watch_manager: Arc<ConfigFuzzyWatchManager>,
-    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
+    pub connection_manager: Arc<dyn ClientConnectionManager>,
 }
 
 #[tonic::async_trait]

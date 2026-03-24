@@ -1,26 +1,19 @@
 //! Configuration service layer
 //!
-//! This module provides database operations for configuration management:
-//! - Config CRUD operations
-//! - Config history tracking
-//! - Namespace management
-//! - Tag management
-//! - Gray release (beta configs)
-//! - Export/Import functionality
-//! - Capacity quota management
+//! This module provides:
+//! - Export/Import functionality (pure serialization/deserialization functions)
+//! - Encryption service
+//! - Cache management
+//! - Config change notification
+//!
+//! Note: Database CRUD operations are handled by PersistenceService in batata-persistence.
 
 pub mod cache;
-pub mod capacity;
-pub mod config;
 pub mod encryption;
 pub mod export;
-pub mod history;
 pub mod import;
-pub mod namespace;
 pub mod notifier;
 
-pub use capacity::*;
-pub use config::*;
 pub use encryption::{
     ConfigEncryptionService, ConfigEncryptionServiceBuilder, EncryptionPattern,
     get_encryption_provider,

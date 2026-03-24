@@ -27,7 +27,7 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 use super::model::{
     BatchMetadataParam, InstanceDeregisterParam, InstanceDetailParam, InstanceListParam,
@@ -43,7 +43,7 @@ use super::model::{
 pub async fn register_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     form: web::Form<InstanceRegisterParam>,
 ) -> impl Responder {
@@ -177,7 +177,7 @@ pub async fn register_instance(
 pub async fn deregister_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     params: web::Query<InstanceDeregisterParam>,
 ) -> impl Responder {
@@ -303,7 +303,7 @@ pub async fn deregister_instance(
 pub async fn update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     form: web::Form<InstanceUpdateParam>,
 ) -> impl Responder {
@@ -423,7 +423,7 @@ pub async fn update_instance(
 pub async fn get_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceDetailParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -522,7 +522,7 @@ pub async fn get_instance(
 pub async fn get_instance_list(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceListParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -611,7 +611,7 @@ pub async fn get_instance_list(
 pub async fn batch_update_metadata(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<BatchMetadataParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -733,7 +733,7 @@ pub async fn batch_update_metadata(
 pub async fn batch_delete_metadata(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<BatchMetadataParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -853,7 +853,7 @@ pub async fn batch_delete_metadata(
 pub async fn patch_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<InstanceUpdateParam>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
@@ -953,7 +953,7 @@ pub async fn patch_instance(
 pub async fn beat_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<InstanceBeatParam>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
@@ -985,13 +985,17 @@ pub async fn beat_instance(
         && let Ok(beat_info) = serde_json::from_str::<BeatInfo>(beat_str)
     {
         let cluster_name = beat_info.cluster.as_deref().unwrap_or("DEFAULT");
+        let heartbeat_instance = Instance {
+            ip: beat_info.ip.clone(),
+            port: beat_info.port,
+            cluster_name: cluster_name.to_string(),
+            ..Default::default()
+        };
         let result = naming_service.heartbeat(
             namespace_id,
             group_name,
             &form.service_name,
-            &beat_info.ip,
-            beat_info.port,
-            cluster_name,
+            heartbeat_instance,
         );
 
         // Update heartbeat tracking
@@ -1020,13 +1024,17 @@ pub async fn beat_instance(
     // If no beat JSON, try ip + port parameters
     if let (Some(ip), Some(port)) = (&form.ip, form.port) {
         let cluster_name = form.cluster_name.as_deref().unwrap_or("DEFAULT");
+        let heartbeat_instance = Instance {
+            ip: ip.clone(),
+            port,
+            cluster_name: cluster_name.to_string(),
+            ..Default::default()
+        };
         let result = naming_service.heartbeat(
             namespace_id,
             group_name,
             &form.service_name,
-            ip,
-            port,
-            cluster_name,
+            heartbeat_instance,
         );
 
         // Update heartbeat tracking
@@ -1069,7 +1077,7 @@ pub async fn beat_instance(
 pub async fn get_instance_statuses(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     path: web::Path<String>,
 ) -> impl Responder {
     let key = path.into_inner();

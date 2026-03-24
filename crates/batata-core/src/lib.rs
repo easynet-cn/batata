@@ -11,6 +11,10 @@ pub mod abstraction;
 pub mod handler;
 pub mod model;
 pub mod service;
+pub mod traits;
+
+// Re-export ClientConnectionManager trait
+pub use traits::ClientConnectionManager;
 
 /// Re-exports from batata-api for handler macro compatibility.
 /// Handler macros use `$crate::api::grpc::Payload` etc.

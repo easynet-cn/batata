@@ -242,7 +242,6 @@ impl ConsulServices {
 pub fn console_server(
     app_state: Arc<AppState>,
     naming_service: Option<Arc<dyn NamingServiceProvider>>,
-    naming_service_concrete: Option<Arc<batata_naming::NamingService>>,
     ai_services: AIServices,
     context_path: String,
     address: String,
@@ -292,11 +291,6 @@ pub fn console_server(
         if let Some(ref ns) = naming_service {
             app = app.app_data(web::Data::new(ns.clone()));
         }
-        // Register concrete NamingService for handlers that use Arc<NamingService>
-        if let Some(ref ns) = naming_service_concrete {
-            app = app.app_data(web::Data::new(ns.clone()));
-        }
-
         app.service(
             web::scope(&context_path)
                 .service(auth::v3::route::routes())
@@ -513,7 +507,6 @@ impl Default for CloudServices {
 pub fn main_server(
     app_state: Arc<AppState>,
     naming_service: Arc<dyn NamingServiceProvider>,
-    naming_service_concrete: Option<Arc<batata_naming::NamingService>>,
     connection_manager: Arc<ConnectionManager>,
     config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
     ai_services: AIServices,
@@ -561,13 +554,12 @@ pub fn main_server(
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(naming_service.clone()));
 
-        // Register concrete NamingService for handlers that use Arc<NamingService>
-        if let Some(ref ns) = naming_service_concrete {
-            app = app.app_data(web::Data::new(ns.clone()));
-        }
-
+        // Register both concrete ConnectionManager (for v2/v3 client handlers that need get_client)
+        // and trait object (for handlers that only need trait methods like loader)
+        let connection_manager_trait: Arc<dyn batata_core::ClientConnectionManager> = connection_manager.clone();
         app = app
             .app_data(web::Data::new(connection_manager.clone()))
+            .app_data(web::Data::new(connection_manager_trait))
             // Config change notifier for long-polling listeners
             .app_data(web::Data::new(config_change_notifier.clone()))
             // AI services (MCP Server Registry, A2A Agent Registry)

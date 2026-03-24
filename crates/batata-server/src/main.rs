@@ -15,7 +15,7 @@ use batata_migration::{Migrator, MigratorTrait};
 use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::{HealthCheckConfig, HealthCheckManager};
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
-use batata_persistence::{PersistenceService, StorageMode};
+use batata_persistence::{DeployTopology, PersistenceService, StorageBackend};
 use batata_plugin::Plugin as _;
 use batata_server::{
     middleware::rate_limit,
@@ -129,8 +129,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mcp_registry_address = server_address.clone();
 
     // Initialize database, persistence service, and server member manager based on deployment mode
-    let storage_mode = configuration.persistence_mode();
-    info!("Persistence mode: {}", storage_mode);
+    let storage_backend = configuration.storage_backend();
+    let deploy_topology = configuration.deploy_topology();
+    info!(
+        "Storage backend: {}, Deploy topology: {}",
+        storage_backend, deploy_topology
+    );
 
     let (
         database_connection,
@@ -150,8 +154,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Starting in console remote mode - connecting to remote server");
         (None, None, None, None, None, None)
     } else {
-        match storage_mode {
-            StorageMode::ExternalDb => {
+        match (storage_backend, deploy_topology) {
+            (StorageBackend::ExternalDb, _) => {
                 let db = configuration.database_connection().await?;
 
                 // Run database migrations if enabled
@@ -169,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 (Some(db), Some(smm), Some(cm), Some(persist), None, None)
             }
-            StorageMode::StandaloneEmbedded => {
+            (StorageBackend::Embedded, DeployTopology::Standalone) => {
                 let data_dir = configuration.embedded_data_dir();
                 info!("Initializing standalone embedded storage at: {}", data_dir);
                 let rocks_config = configuration.rocksdb_config();
@@ -188,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let cm: Arc<dyn ClusterManager> = smm.clone();
                 (None, Some(smm), Some(cm), Some(persist), Some(rdb), None)
             }
-            StorageMode::DistributedEmbedded => {
+            (StorageBackend::Embedded, DeployTopology::Cluster) => {
                 let data_dir = configuration.embedded_data_dir();
                 let main_port = configuration.server_main_port();
 
@@ -274,9 +278,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create console datasource based on mode
     // Create config subscriber manager (shared between gRPC and console)
-    let config_subscriber_manager_concrete = Arc::new(batata_core::ConfigSubscriberManager::new());
     let config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService> =
-        config_subscriber_manager_concrete.clone();
+        Arc::new(batata_core::ConfigSubscriberManager::new());
 
     // Create NamingService early so it can be shared with both console datasource and gRPC servers
     let naming_service: Option<Arc<batata_naming::NamingService>> = if !is_console_remote {
@@ -287,9 +290,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let console_datasource = batata_console::create_datasource(
         &configuration,
-        database_connection.clone(),
         cluster_manager.clone(),
-        config_subscriber_manager_concrete.clone(),
+        config_subscriber_manager.clone(),
         naming_service
             .clone()
             .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>),
@@ -408,7 +410,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(AppState {
         configuration,
         cluster_manager,
-        config_subscriber_manager,
+        config_subscriber_manager: config_subscriber_manager.clone(),
         console_datasource,
         oauth_service,
         auth_plugin,
@@ -467,7 +469,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let console_server = startup::console_server(
             app_state.clone(),
             None, // No NamingService in remote mode
-            None,
             ai_services.clone(),
             console_context_path,
             console_server_address,
@@ -497,7 +498,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cluster_server_port,
         raft_node,
         server_member_manager.clone(),
-        config_subscriber_manager_concrete,
+        config_subscriber_manager.clone(),
     )?;
 
     // Start health check manager (unhealthy and expired instance checkers)
@@ -988,7 +989,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let console_server = startup::console_server(
                 app_state.clone(),
                 Some(naming_provider_for_http.clone()),
-                naming_service.clone(),
                 ai_services.clone(),
                 console_context_path,
                 console_server_address,
@@ -1015,7 +1015,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = startup::main_server(
                 app_state.clone(),
                 naming_provider_for_http.clone(),
-                naming_service.clone(),
                 grpc_servers.connection_manager,
                 grpc_servers.config_change_notifier.clone(),
                 ai_services.clone(),
@@ -1085,7 +1084,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let console = startup::console_server(
                 app_state.clone(),
                 Some(naming_provider_for_http.clone()),
-                naming_service.clone(),
                 ai_services.clone(),
                 console_context_path,
                 console_server_address,
@@ -1099,7 +1097,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let main = startup::main_server(
                 app_state.clone(),
                 naming_provider_for_http.clone(),
-                naming_service,
                 grpc_servers.connection_manager,
                 grpc_servers.config_change_notifier,
                 ai_services,

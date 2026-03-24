@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::{model::Connection, service::remote::ConnectionManager};
+use crate::{ClientConnectionManager, model::Connection};
 use sysinfo::System;
 use tonic::Status;
 use tracing::{info, warn};
@@ -100,7 +100,7 @@ impl PayloadHandler for ClientDetectionHandler {
 // Handler for ServerLoaderInfoRequest - returns server load information
 #[derive(Clone)]
 pub struct ServerLoaderInfoHandler {
-    pub connection_manager: Arc<ConnectionManager>,
+    pub connection_manager: Arc<dyn ClientConnectionManager>,
 }
 
 #[tonic::async_trait]

@@ -391,6 +391,95 @@ impl ConnectionManager {
     }
 }
 
+#[async_trait::async_trait]
+impl crate::ClientConnectionManager for ConnectionManager {
+    fn connection_count(&self) -> usize {
+        self.clients.len()
+    }
+
+    fn has_connection(&self, connection_id: &str) -> bool {
+        self.clients.contains_key(connection_id)
+    }
+
+    fn get_all_connection_ids(&self) -> Vec<String> {
+        self.clients
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
+    }
+
+    fn get_connection_info(&self, connection_id: &str) -> Option<batata_common::ConnectionInfo> {
+        self.clients.get(connection_id).map(|entry| {
+            let client = entry.value();
+            let meta = &client.connection.meta_info;
+            batata_common::ConnectionInfo {
+                connection_id: connection_id.to_string(),
+                client_ip: meta.client_ip.clone(),
+                client_port: meta.remote_port,
+                app_name: meta.app_name.clone(),
+                sdk: meta.connect_type.clone(),
+                version: meta.version.clone(),
+                labels: meta.labels.clone(),
+                create_time: meta.create_time as u64,
+                last_active_time: client.connection.last_active.get() as u64,
+            }
+        })
+    }
+
+    fn get_all_connection_infos(&self) -> Vec<batata_common::ConnectionInfo> {
+        self.clients
+            .iter()
+            .map(|entry| {
+                let client = entry.value();
+                let meta = &client.connection.meta_info;
+                batata_common::ConnectionInfo {
+                    connection_id: entry.key().clone(),
+                    client_ip: meta.client_ip.clone(),
+                    client_port: meta.remote_port,
+                    app_name: meta.app_name.clone(),
+                    sdk: meta.connect_type.clone(),
+                    version: meta.version.clone(),
+                    labels: meta.labels.clone(),
+                    create_time: meta.create_time as u64,
+                    last_active_time: client.connection.last_active.get() as u64,
+                }
+            })
+            .collect()
+    }
+
+    fn connections_for_ip(&self, ip: &str) -> usize {
+        ConnectionManager::connections_for_ip(self, ip)
+    }
+
+    async fn push_message(
+        &self,
+        connection_id: &str,
+        payload: batata_api::grpc::Payload,
+    ) -> bool {
+        ConnectionManager::push_message(self, connection_id, payload).await
+    }
+
+    async fn push_message_to_many(
+        &self,
+        connection_ids: &[String],
+        payload: batata_api::grpc::Payload,
+    ) -> usize {
+        ConnectionManager::push_message_to_many(self, connection_ids, payload).await
+    }
+
+    async fn load_single(&self, connection_id: &str, redirect_address: Option<&str>) -> bool {
+        ConnectionManager::load_single(self, connection_id, redirect_address).await
+    }
+
+    async fn load_count(&self, target_count: usize, redirect_address: Option<&str>) -> usize {
+        ConnectionManager::load_count(self, target_count, redirect_address).await
+    }
+
+    fn touch_connection(&self, connection_id: &str) {
+        ConnectionManager::touch_connection(self, connection_id);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

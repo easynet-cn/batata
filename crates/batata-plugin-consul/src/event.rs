@@ -8,14 +8,11 @@ use std::sync::{Arc, LazyLock};
 use actix_web::{HttpRequest, HttpResponse, web};
 use base64::Engine;
 use dashmap::DashMap;
-use sea_orm::DatabaseConnection;
+use rocksdb::DB;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{ConsulError, EventFireParams, EventFireRequest, EventListParams, UserEvent};
-
-// ConfigService storage constants for events
-const CONSUL_EVENT_GROUP: &str = "consul-events";
+use crate::model::{ConsulError, EventFireParams, EventListParams, UserEvent};
 
 /// Global event storage
 static EVENTS: LazyLock<DashMap<String, UserEvent>> = LazyLock::new(DashMap::new);
@@ -128,136 +125,97 @@ impl ConsulEventService {
 }
 
 // ============================================================================
-// Persistent Event Service (Database-backed via ConfigService)
+// Persistent Event Service (RocksDB-backed)
 // ============================================================================
 
-/// Event service with persistent storage via ConfigService
-/// Events are stored as config items and cached in memory
+/// RocksDB column family for Consul events
+const CF_CONSUL_EVENTS: &str = "consul_kv";
+
+/// Event service with persistent storage via RocksDB
+/// Events are stored in the consul_kv column family and cached in memory
 #[derive(Clone)]
 pub struct ConsulEventServicePersistent {
-    db: Arc<DatabaseConnection>,
+    db: Arc<DB>,
     cache: Arc<DashMap<String, UserEvent>>,
     ltime: Arc<AtomicU64>,
     initialized: Arc<std::sync::atomic::AtomicBool>,
-    /// Default namespace for event storage
-    default_namespace: String,
 }
 
 impl ConsulEventServicePersistent {
-    /// Create a new persistent event service
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
+    /// Create a new persistent event service backed by RocksDB
+    pub fn new(db: Arc<DB>) -> Self {
         Self {
             db,
             cache: Arc::new(DashMap::new()),
             ltime: Arc::new(AtomicU64::new(1)),
             initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            default_namespace: "public".to_string(),
         }
     }
 
-    /// Create with a custom default namespace
-    pub fn with_namespace(mut self, namespace: String) -> Self {
-        if !namespace.is_empty() {
-            self.default_namespace = namespace;
-        }
-        self
+    fn event_key(event_id: &str) -> String {
+        format!("event:{}", event_id)
     }
 
-    fn event_data_id(event_id: &str) -> String {
-        format!("event:{}", event_id.replace('/', ":"))
-    }
-
-    /// Initialize cache from database
+    /// Initialize cache from RocksDB
     async fn ensure_initialized(&self) {
         if self.initialized.swap(true, Ordering::SeqCst) {
             return;
         }
 
-        // Load events from database using search_page
-        if let Ok(page) = batata_config::service::config::search_page(
-            &self.db,
-            1,
-            1000,
-            &self.default_namespace,
-            "event:*",
-            CONSUL_EVENT_GROUP,
-            "",
-            vec![],
-            vec![],
-            "",
-        )
-        .await
-        {
-            let mut max_ltime = 0u64;
-            for info in page.page_items {
-                // Load the full config to get the content
-                if let Ok(Some(config)) = batata_config::service::config::find_one(
-                    &self.db,
-                    &info.data_id,
-                    CONSUL_EVENT_GROUP,
-                    &self.default_namespace,
-                )
-                .await
-                    && let Ok(event) = serde_json::from_str::<UserEvent>(
-                        &config.config_info.config_info_base.content,
-                    )
-                {
-                    if event.ltime > max_ltime {
-                        max_ltime = event.ltime;
-                    }
-                    self.cache.insert(event.id.clone(), event);
+        let Some(cf) = self.db.cf_handle(CF_CONSUL_EVENTS) else {
+            return;
+        };
+
+        let prefix = "event:";
+        let iter = self.db.iterator_cf(
+            cf,
+            rocksdb::IteratorMode::From(prefix.as_bytes(), rocksdb::Direction::Forward),
+        );
+
+        let mut max_ltime = 0u64;
+        for item in iter {
+            let Ok((key, value)) = item else { break };
+            let key_str = String::from_utf8_lossy(&key);
+            if !key_str.starts_with(prefix) {
+                break;
+            }
+            if let Ok(event) = serde_json::from_slice::<UserEvent>(&value) {
+                if event.ltime > max_ltime {
+                    max_ltime = event.ltime;
                 }
+                self.cache.insert(event.id.clone(), event);
             }
-            // Set ltime to be greater than max found
-            if max_ltime > 0 {
-                self.ltime.store(max_ltime + 1, Ordering::SeqCst);
-            }
+        }
+        if max_ltime > 0 {
+            self.ltime.store(max_ltime + 1, Ordering::SeqCst);
         }
     }
 
-    async fn save_event(&self, event: &UserEvent) -> Result<(), String> {
+    fn save_event_to_db(&self, event: &UserEvent) -> Result<(), String> {
         let content =
-            serde_json::to_string(event).map_err(|e| format!("Serialization error: {}", e))?;
-        let data_id = Self::event_data_id(&event.id);
+            serde_json::to_vec(event).map_err(|e| format!("Serialization error: {}", e))?;
+        let key = Self::event_key(&event.id);
 
-        batata_config::service::config::create_or_update(
-            &self.db,
-            &data_id,
-            CONSUL_EVENT_GROUP,
-            &self.default_namespace,
-            &content,
-            "consul-event",
-            "system",
-            "127.0.0.1",
-            "",
-            &format!("Consul Event: {}", event.name),
-            "",
-            "",
-            "json",
-            "",
-            "",
-        )
-        .await
-        .map_err(|e| format!("Database error: {}", e))?;
+        let cf = self
+            .db
+            .cf_handle(CF_CONSUL_EVENTS)
+            .ok_or_else(|| "Column family not found".to_string())?;
+        self.db
+            .put_cf(cf, key.as_bytes(), &content)
+            .map_err(|e| format!("RocksDB error: {}", e))?;
 
         self.cache.insert(event.id.clone(), event.clone());
         Ok(())
     }
 
-    async fn delete_event_from_db(&self, event_id: &str) -> bool {
-        let data_id = Self::event_data_id(event_id);
+    fn delete_event_from_db(&self, event_id: &str) -> bool {
+        let key = Self::event_key(event_id);
         self.cache.remove(event_id);
-        batata_config::service::config::delete(
-            &self.db,
-            &data_id,
-            CONSUL_EVENT_GROUP,
-            &self.default_namespace,
-            "",
-            "127.0.0.1",
-            "system",
-        )
-        .await
-        .is_ok()
+        if let Some(cf) = self.db.cf_handle(CF_CONSUL_EVENTS) {
+            self.db.delete_cf(cf, key.as_bytes()).is_ok()
+        } else {
+            false
+        }
     }
 
     /// Fire a new user event (with persistence)
@@ -293,12 +251,12 @@ impl ConsulEventServicePersistent {
                 .min_by_key(|e| e.value().ltime)
                 .map(|e| e.key().clone());
             if let Some(old_id) = oldest {
-                let _ = self.delete_event_from_db(&old_id).await;
+                let _ = self.delete_event_from_db(&old_id);
             }
         }
 
-        // Persist to database
-        let _ = self.save_event(&event).await;
+        // Persist to RocksDB
+        let _ = self.save_event_to_db(&event);
 
         event
     }

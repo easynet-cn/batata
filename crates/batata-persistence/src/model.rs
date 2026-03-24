@@ -64,7 +64,43 @@ impl<T> Page<T> {
     }
 }
 
-/// Storage mode for the persistence layer
+/// Storage backend type
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StorageBackend {
+    /// External database (MySQL/PostgreSQL via SeaORM)
+    ExternalDb,
+    /// Embedded RocksDB (no external DB required)
+    Embedded,
+}
+
+impl std::fmt::Display for StorageBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StorageBackend::ExternalDb => write!(f, "external_db"),
+            StorageBackend::Embedded => write!(f, "embedded"),
+        }
+    }
+}
+
+/// Deployment topology
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeployTopology {
+    /// Single node
+    Standalone,
+    /// Raft consensus cluster
+    Cluster,
+}
+
+impl std::fmt::Display for DeployTopology {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeployTopology::Standalone => write!(f, "standalone"),
+            DeployTopology::Cluster => write!(f, "cluster"),
+        }
+    }
+}
+
+/// Storage mode for the persistence layer (derived from StorageBackend + DeployTopology)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StorageMode {
     /// External database (MySQL/PostgreSQL via SeaORM)
@@ -73,6 +109,37 @@ pub enum StorageMode {
     StandaloneEmbedded,
     /// Distributed embedded RocksDB (Raft cluster, no external DB)
     DistributedEmbedded,
+}
+
+impl StorageMode {
+    /// Derive StorageMode from the two independent dimensions
+    pub fn from_dimensions(backend: StorageBackend, topology: DeployTopology) -> Self {
+        match (backend, topology) {
+            (StorageBackend::ExternalDb, _) => StorageMode::ExternalDb,
+            (StorageBackend::Embedded, DeployTopology::Standalone) => {
+                StorageMode::StandaloneEmbedded
+            }
+            (StorageBackend::Embedded, DeployTopology::Cluster) => StorageMode::DistributedEmbedded,
+        }
+    }
+
+    /// Get the storage backend
+    pub fn backend(&self) -> StorageBackend {
+        match self {
+            StorageMode::ExternalDb => StorageBackend::ExternalDb,
+            StorageMode::StandaloneEmbedded | StorageMode::DistributedEmbedded => {
+                StorageBackend::Embedded
+            }
+        }
+    }
+
+    /// Get the deploy topology
+    pub fn topology(&self) -> DeployTopology {
+        match self {
+            StorageMode::ExternalDb | StorageMode::StandaloneEmbedded => DeployTopology::Standalone,
+            StorageMode::DistributedEmbedded => DeployTopology::Cluster,
+        }
+    }
 }
 
 impl std::fmt::Display for StorageMode {

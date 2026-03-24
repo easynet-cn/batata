@@ -13,8 +13,7 @@ pub mod v3;
 
 // Re-export commonly used types
 pub use datasource::{
-    ConsoleDataSource, create_datasource, embedded::EmbeddedLocalDataSource,
-    local::LocalDataSource, remote::RemoteDataSource,
+    ConsoleDataSource, create_datasource, local::LocalDataSource, remote::RemoteDataSource,
 };
 pub use model::*;
 

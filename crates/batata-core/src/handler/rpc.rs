@@ -558,7 +558,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 pub struct GrpcBiRequestStreamService {
     handler_registry: Arc<HandlerRegistry>,
     connection_manager: Arc<ConnectionManager>,
-    config_subscriber_manager: Arc<crate::ConfigSubscriberManager>,
+    config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
     connection_cleanup: Option<Arc<dyn ConnectionCleanupHandler>>,
 }
 
@@ -566,7 +566,7 @@ impl GrpcBiRequestStreamService {
     pub fn new(
         handler_registry: HandlerRegistry,
         connection_manager: ConnectionManager,
-        config_subscriber_manager: Arc<crate::ConfigSubscriberManager>,
+        config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
         connection_cleanup: Option<Arc<dyn ConnectionCleanupHandler>>,
     ) -> Self {
         Self {
@@ -579,7 +579,7 @@ impl GrpcBiRequestStreamService {
     pub fn from_arc(
         handler_registry: Arc<HandlerRegistry>,
         connection_manager: Arc<ConnectionManager>,
-        config_subscriber_manager: Arc<crate::ConfigSubscriberManager>,
+        config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService>,
         connection_cleanup: Option<Arc<dyn ConnectionCleanupHandler>>,
     ) -> Self {
         Self {

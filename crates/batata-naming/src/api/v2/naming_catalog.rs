@@ -17,7 +17,7 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, error, secured};
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,7 +70,7 @@ struct CatalogInstanceListResponse {
 pub async fn list_catalog_instances(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<CatalogInstancesQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() {

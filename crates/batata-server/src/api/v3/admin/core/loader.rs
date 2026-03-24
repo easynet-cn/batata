@@ -8,7 +8,7 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 
-use batata_core::service::remote::ConnectionManager;
+use batata_core::ClientConnectionManager;
 
 use crate::{
     ActionTypes, ApiType, Secured, SignType, error, model::common::AppState,
@@ -70,7 +70,7 @@ struct ReloadClientParam {
 /// Get the current node's loader metric using real system metrics
 fn get_self_loader_metric(
     address: &str,
-    connection_manager: &ConnectionManager,
+    connection_manager: &dyn ClientConnectionManager,
 ) -> ServerLoaderMetric {
     use sysinfo::System;
 
@@ -131,7 +131,7 @@ fn build_cluster_metrics(
 async fn get_current(
     req: HttpRequest,
     data: web::Data<AppState>,
-    connection_manager: web::Data<Arc<ConnectionManager>>,
+    connection_manager: web::Data<Arc<dyn ClientConnectionManager>>,
 ) -> impl Responder {
     let resource = "*:*:*";
     secured!(
@@ -160,7 +160,7 @@ async fn get_current(
 async fn reload_current(
     req: HttpRequest,
     data: web::Data<AppState>,
-    connection_manager: web::Data<Arc<ConnectionManager>>,
+    connection_manager: web::Data<Arc<dyn ClientConnectionManager>>,
     params: web::Query<ReloadCurrentParam>,
 ) -> impl Responder {
     let resource = "*:*:*";
@@ -196,7 +196,7 @@ async fn reload_current(
 async fn smart_reload(
     req: HttpRequest,
     data: web::Data<AppState>,
-    connection_manager: web::Data<Arc<ConnectionManager>>,
+    connection_manager: web::Data<Arc<dyn ClientConnectionManager>>,
     params: web::Query<SmartReloadParam>,
 ) -> impl Responder {
     let resource = "*:*:*";
@@ -222,7 +222,7 @@ async fn smart_reload(
 
     // Get self metrics
     let self_member = data.cluster_manager().get_self_member();
-    let self_metric = get_self_loader_metric(&self_member.address, &connection_manager);
+    let self_metric = get_self_loader_metric(&self_member.address, connection_manager.as_ref().as_ref());
     let all_members = data.cluster_manager().all_members_extended();
     // In standalone mode, only self metrics available
     // Build metrics with just self (cluster mode would gather from all nodes via gRPC)
@@ -288,7 +288,7 @@ async fn smart_reload(
 async fn reload_client(
     req: HttpRequest,
     data: web::Data<AppState>,
-    connection_manager: web::Data<Arc<ConnectionManager>>,
+    connection_manager: web::Data<Arc<dyn ClientConnectionManager>>,
     params: web::Query<ReloadClientParam>,
 ) -> impl Responder {
     let resource = "*:*:*";
@@ -345,7 +345,7 @@ async fn reload_client(
 async fn get_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
-    connection_manager: web::Data<Arc<ConnectionManager>>,
+    connection_manager: web::Data<Arc<dyn ClientConnectionManager>>,
 ) -> impl Responder {
     let resource = "*:*:*";
     secured!(
@@ -361,7 +361,7 @@ async fn get_cluster(
     let member_count = all_members.len();
 
     // Build self metric with real data
-    let self_metric = get_self_loader_metric(&self_member.address, &connection_manager);
+    let self_metric = get_self_loader_metric(&self_member.address, connection_manager.as_ref().as_ref());
 
     let mut details = vec![self_metric];
 

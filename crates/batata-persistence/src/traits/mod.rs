@@ -16,7 +16,7 @@ pub use namespace::NamespacePersistence;
 
 use async_trait::async_trait;
 
-use crate::model::StorageMode;
+use crate::model::{DeployTopology, StorageBackend, StorageMode};
 
 /// Unified persistence service trait
 ///
@@ -26,8 +26,16 @@ use crate::model::StorageMode;
 pub trait PersistenceService:
     ConfigPersistence + NamespacePersistence + AuthPersistence + CapacityPersistence + Send + Sync
 {
-    /// Get the current storage mode
-    fn storage_mode(&self) -> StorageMode;
+    /// Get the storage backend type
+    fn storage_backend(&self) -> StorageBackend;
+
+    /// Get the deploy topology
+    fn deploy_topology(&self) -> DeployTopology;
+
+    /// Get the storage mode (derived from backend + topology)
+    fn storage_mode(&self) -> StorageMode {
+        StorageMode::from_dimensions(self.storage_backend(), self.deploy_topology())
+    }
 
     /// Health check for the storage backend
     async fn health_check(&self) -> anyhow::Result<()>;

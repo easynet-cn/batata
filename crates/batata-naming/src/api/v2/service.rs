@@ -19,7 +19,8 @@ use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
-use crate::service::{NamingService, ServiceMetadata};
+use batata_api::naming::NamingServiceProvider;
+use crate::service::ServiceMetadata;
 
 use super::model::{
     SelectorResponse, ServiceCreateParam, ServiceDeleteParam, ServiceDetailParam,
@@ -35,7 +36,7 @@ use super::model::{
 pub async fn create_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<ServiceCreateParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -132,7 +133,7 @@ pub async fn create_service(
 pub async fn delete_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceDeleteParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -210,7 +211,7 @@ pub async fn delete_service(
 pub async fn update_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<ServiceUpdateParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -305,7 +306,7 @@ pub async fn update_service(
 pub async fn get_service(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceDetailParam>,
 ) -> impl Responder {
     // Validate required parameters
@@ -418,7 +419,7 @@ pub async fn get_service(
 pub async fn get_service_list(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<ServiceListParam>,
 ) -> impl Responder {
     let namespace_id = params.namespace_id_or_default();

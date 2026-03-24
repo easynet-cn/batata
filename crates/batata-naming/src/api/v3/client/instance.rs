@@ -11,7 +11,7 @@ use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
 };
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 use actix_web::{HttpRequest, Responder, delete, get, post, web};
 use serde::{Deserialize, Serialize};
 
@@ -128,7 +128,7 @@ struct InstanceListResponse {
 async fn register_or_beat(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<InstanceRegisterForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
@@ -190,7 +190,7 @@ async fn register_or_beat(
 async fn deregister(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceDeregisterQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() || params.ip.is_empty() || params.port <= 0 {
@@ -243,7 +243,7 @@ async fn deregister(
 async fn list_instances(
     req: HttpRequest,
     data: web::Data<AppState>,
-    naming_service: web::Data<Arc<NamingService>>,
+    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceListQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() {
