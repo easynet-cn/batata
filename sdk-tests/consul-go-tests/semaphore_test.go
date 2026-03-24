@@ -85,11 +85,12 @@ func TestSemaphoreForceInvalidate(t *testing.T) {
 		_, err = client.Session().Destroy(sessionID, nil)
 		require.NoError(t, err)
 
-		// Semaphore should be lost
+		// Semaphore should be lost (Go SDK monitors at lockWaitTime/3 ~5s interval,
+		// allow enough time for at least one monitoring cycle after session destroy)
 		select {
 		case <-lockCh:
 			// Expected - channel closed when session destroyed
-		case <-time.After(5 * time.Second):
+		case <-time.After(15 * time.Second):
 			t.Fatal("Lock channel should be closed after session destroy")
 		}
 	}

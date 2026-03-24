@@ -564,6 +564,8 @@ pub async fn destroy_session(
 
     // Release all KV keys held by this session (Consul "release" behavior)
     kv_service.release_session(&session_id).await;
+    // Increment KVS index to wake blocking queries (e.g., Go SDK Lock monitor)
+    index_provider.increment(ConsulTable::KVS);
 
     let destroyed = session_service.destroy_session(&session_id).await;
     HttpResponse::Ok()

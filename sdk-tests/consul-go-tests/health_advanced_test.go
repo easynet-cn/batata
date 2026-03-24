@@ -467,9 +467,10 @@ func TestHealthStateFilter(t *testing.T) {
 
 	health := client.Health()
 
-	// Filter by check name pattern
+	// Filter by check name pattern (Consul uses "Serf Health Status" as the Name,
+	// and "serfHealth" as the CheckID — filter by Name)
 	opts := &api.QueryOptions{
-		Filter: "Name contains \"serfHealth\"",
+		Filter: "Name contains \"Serf Health\"",
 	}
 
 	checks, _, err := health.State("any", opts)
@@ -478,7 +479,7 @@ func TestHealthStateFilter(t *testing.T) {
 	}
 	assert.NotNil(t, checks, "Filtered health checks should not be nil")
 	for _, check := range checks {
-		assert.Contains(t, check.Name, "serfHealth", "Filtered check name should contain serfHealth")
+		assert.Contains(t, check.Name, "Serf Health", "Filtered check name should contain 'Serf Health'")
 	}
 	t.Logf("Checks matching filter: %d", len(checks))
 }
