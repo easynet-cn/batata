@@ -560,11 +560,13 @@ impl RocksStateMachine {
         src_user: Option<String>,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
+        let md5 = format!("{:x}", md5::compute(content.as_bytes()));
         let value = serde_json::json!({
             "data_id": data_id,
             "group": group,
             "tenant": tenant,
             "content": content,
+            "md5": md5,
             "config_type": config_type,
             "app_name": app_name,
             "tag": tag,
