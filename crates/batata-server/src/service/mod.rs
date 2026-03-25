@@ -11,9 +11,11 @@ pub mod config_fuzzy_watch;
 pub mod naming_fuzzy_watch;
 
 // AI persistent operation services
+#[cfg(feature = "ai")]
 pub mod ai;
 
 // Local implementations (gRPC handlers and RPC)
+#[cfg(feature = "ai")]
 pub mod ai_handler; // AI module gRPC handlers (MCP + A2A)
 pub mod cluster_handler; // Cluster module gRPC handlers
 pub mod config_handler; // Config module gRPC handlers

@@ -40,7 +40,7 @@ tracing = { workspace = true }
 
 # HTTP client (for MCP tool import)
 reqwest = { workspace = true }
-reqwest-eventsource = { workspace = true }
+bytes = { workspace = true }
 futures = { workspace = true }
 
 # Error handling

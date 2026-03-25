@@ -175,16 +175,8 @@ pub fn encode_jwt_token(
     };
 
     let header = Header {
-        typ: None,
         alg: Algorithm::HS256,
-        cty: None,
-        jku: None,
-        jwk: None,
-        kid: None,
-        x5u: None,
-        x5c: None,
-        x5t: None,
-        x5t_s256: None,
+        ..Default::default()
     };
 
     let encoding_key = EncodingKey::from_base64_secret(secret_key)?;

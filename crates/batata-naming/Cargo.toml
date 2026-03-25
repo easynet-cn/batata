@@ -23,7 +23,7 @@ actix-web = { workspace = true }
 dashmap = { workspace = true }
 
 # Random
-fastrand = { workspace = true }
+rand = { workspace = true }
 
 # Database
 sea-orm = { workspace = true }

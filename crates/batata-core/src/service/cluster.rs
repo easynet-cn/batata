@@ -1,11 +1,12 @@
 // Cluster management and coordination
 // Manages cluster membership, health checks, and inter-node communication
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
 use serde_json::Value;
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 use tracing::info;
 
 use batata_api::model::{Member, MemberBuilder, NodeState};
@@ -56,6 +57,11 @@ impl Default for ServerMemberManagerConfig {
 
 /// Server member manager
 /// Central component for cluster management
+///
+/// Uses `OnceCell` for lazily-initialized resources that are set once during `start()`
+/// and never reset. This avoids the overhead and complexity of `RwLock<Option<>>`.
+/// The `distro_protocol` field uses `RwLock<Option<>>` because it may be set externally
+/// before `start()` via `set_distro_protocol()` or created internally during `start()`.
 #[derive(Clone)]
 pub struct ServerMemberManager {
     port: u16,
@@ -65,12 +71,12 @@ pub struct ServerMemberManager {
     is_standalone: bool,
     config: Configuration,
     manager_config: ServerMemberManagerConfig,
-    member_lookup: Arc<RwLock<Option<Box<dyn MemberLookup>>>>,
-    health_checker: Arc<RwLock<Option<MemberHealthChecker>>>,
+    member_lookup: Arc<OnceCell<Box<dyn MemberLookup>>>,
+    health_checker: Arc<OnceCell<MemberHealthChecker>>,
     event_publisher: Arc<MemberChangeEventPublisher>,
-    client_manager: Arc<RwLock<Option<Arc<ClusterClientManager>>>>,
+    client_manager: Arc<OnceCell<Arc<ClusterClientManager>>>,
     distro_protocol: Arc<RwLock<Option<Arc<DistroProtocol>>>>,
-    running: Arc<RwLock<bool>>,
+    running: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for ServerMemberManager {
@@ -138,19 +144,18 @@ impl ServerMemberManager {
             is_standalone,
             config: config.clone(),
             manager_config,
-            member_lookup: Arc::new(RwLock::new(None)),
-            health_checker: Arc::new(RwLock::new(None)),
+            member_lookup: Arc::new(OnceCell::new()),
+            health_checker: Arc::new(OnceCell::new()),
             event_publisher,
-            client_manager: Arc::new(RwLock::new(None)),
+            client_manager: Arc::new(OnceCell::new()),
             distro_protocol: Arc::new(RwLock::new(None)),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Start the server member manager
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut running = self.running.write().await;
-        if *running {
+        if self.running.load(Ordering::Acquire) {
             return Ok(());
         }
 
@@ -176,19 +181,15 @@ impl ServerMemberManager {
             let members = lookup.get_members();
             self.update_members_from_lookup(members).await;
 
-            let mut lookup_guard = self.member_lookup.write().await;
-            *lookup_guard = Some(lookup);
+            let _ = self.member_lookup.set(lookup);
 
-            // Initialize cluster client manager (wrap in Arc for sharing)
+            // Initialize cluster client manager
             let client_manager = Arc::new(ClusterClientManager::new(
                 self.local_address.clone(),
                 self.manager_config.cluster_client.clone(),
             ));
 
-            {
-                let mut cm_guard = self.client_manager.write().await;
-                *cm_guard = Some(client_manager.clone());
-            }
+            let _ = self.client_manager.set(client_manager.clone());
 
             // Start health checker if enabled
             if self.manager_config.health_check_enabled {
@@ -199,8 +200,7 @@ impl ServerMemberManager {
                 );
                 health_checker.start().await;
 
-                let mut hc_guard = self.health_checker.write().await;
-                *hc_guard = Some(health_checker);
+                let _ = self.health_checker.set(health_checker);
             }
 
             // Start distro protocol if enabled
@@ -233,26 +233,25 @@ impl ServerMemberManager {
             info!("Standalone mode - skipping cluster initialization");
         }
 
-        *running = true;
+        self.running.store(true, Ordering::Release);
         Ok(())
     }
 
     /// Stop the server member manager
     pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        if !*running {
+        if !self.running.load(Ordering::Acquire) {
             return;
         }
 
         info!("Stopping ServerMemberManager");
 
         // Stop member lookup
-        if let Some(lookup) = self.member_lookup.read().await.as_ref() {
+        if let Some(lookup) = self.member_lookup.get() {
             lookup.stop().await;
         }
 
         // Stop health checker (synchronous - uses atomic bool)
-        if let Some(hc) = self.health_checker.read().await.as_ref() {
+        if let Some(hc) = self.health_checker.get() {
             hc.stop();
         }
 
@@ -264,7 +263,7 @@ impl ServerMemberManager {
         // Stop event publisher
         self.event_publisher.stop().await;
 
-        *running = false;
+        self.running.store(false, Ordering::Release);
     }
 
     /// Update members from lookup results

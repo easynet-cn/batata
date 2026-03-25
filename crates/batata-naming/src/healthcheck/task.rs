@@ -140,7 +140,7 @@ impl HealthCheckTask {
             }
         };
 
-        let random_delay = fastrand::u64(0..=UPPER_RANDOM_CHECK_RT);
+        let random_delay = rand::random_range(0..=UPPER_RANDOM_CHECK_RT);
         let random_upper = random_delay.min(max);
         Duration::from_millis(LOWER_CHECK_RT + random_upper)
     }

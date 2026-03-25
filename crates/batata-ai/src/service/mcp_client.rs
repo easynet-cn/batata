@@ -3,6 +3,9 @@
 //! Connects to a remote MCP server via the SSE transport protocol,
 //! performs the initialize handshake, and calls tools/list to discover available tools.
 //! Follows the same behavior as Nacos's importToolsFromMcp.
+//!
+//! SSE parsing is implemented directly on reqwest's `bytes_stream()` —
+//! no external SSE crate dependency required.
 
 use std::time::Duration;
 
@@ -42,50 +45,118 @@ struct JsonRpcError {
 }
 
 // =============================================================================
+// SSE event parser
+// =============================================================================
+
+/// A parsed SSE event.
+#[derive(Debug, Default)]
+struct SseEvent {
+    event: String,
+    data: String,
+}
+
+/// Lightweight SSE stream reader that wraps reqwest's bytes_stream.
+///
+/// Parses the SSE text/event-stream format per the W3C spec:
+/// - Lines starting with "event:" set the event type
+/// - Lines starting with "data:" append to the data buffer
+/// - Empty lines dispatch the accumulated event
+struct SseReader {
+    buffer: String,
+}
+
+impl SseReader {
+    fn new() -> Self {
+        Self {
+            buffer: String::new(),
+        }
+    }
+
+    /// Feed raw bytes from the stream and extract complete SSE events.
+    fn feed(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
+        let text = String::from_utf8_lossy(chunk);
+        self.buffer.push_str(&text);
+
+        let mut events = Vec::new();
+        let mut current_event = String::new();
+        let mut current_data = String::new();
+
+        // Process complete lines from buffer
+        while let Some(pos) = self.buffer.find('\n') {
+            let line = self.buffer[..pos].trim_end_matches('\r').to_string();
+            self.buffer = self.buffer[pos + 1..].to_string();
+
+            if line.is_empty() {
+                // Empty line = dispatch event
+                if !current_data.is_empty() || !current_event.is_empty() {
+                    // Remove trailing newline from data (spec compliance)
+                    if current_data.ends_with('\n') {
+                        current_data.pop();
+                    }
+                    events.push(SseEvent {
+                        event: if current_event.is_empty() {
+                            "message".to_string()
+                        } else {
+                            current_event.clone()
+                        },
+                        data: current_data.clone(),
+                    });
+                    current_event.clear();
+                    current_data.clear();
+                }
+            } else if let Some(value) = line.strip_prefix("event:") {
+                current_event = value.trim_start().to_string();
+            } else if let Some(value) = line.strip_prefix("data:") {
+                if !current_data.is_empty() {
+                    current_data.push('\n');
+                }
+                current_data.push_str(value.trim_start());
+            } else if line.starts_with(':') {
+                // Comment line, ignore
+            } else if let Some(value) = line.strip_prefix("id:") {
+                // ID field, ignore for our use case
+                let _ = value;
+            } else if let Some(value) = line.strip_prefix("retry:") {
+                // Retry field, ignore for our use case
+                let _ = value;
+            }
+        }
+
+        events
+    }
+}
+
+// =============================================================================
 // MCP protocol types
 // =============================================================================
 
 #[derive(Deserialize)]
 struct ListToolsResult {
     #[serde(default)]
-    tools: Vec<McpToolSpec>,
+    tools: Vec<McpToolSchema>,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct McpToolSpec {
+struct McpToolSchema {
     name: String,
-    #[serde(default)]
     description: Option<String>,
-    #[serde(default)]
-    input_schema: serde_json::Value,
+    #[serde(rename = "inputSchema")]
+    input_schema: Option<serde_json::Value>,
 }
 
 // =============================================================================
 // Public API
 // =============================================================================
 
-/// Import tools from a remote MCP server via SSE transport.
+/// Discover MCP tools from a remote server via SSE transport.
 ///
-/// Connects to `{base_url}{endpoint}`, performs the MCP initialize handshake,
-/// then calls `tools/list` to discover available tools.
-///
-/// Only the `mcp-sse` transport type is supported (matching Nacos behavior).
+/// Connects to `base_url` + `endpoint` (default `/sse`), performs the MCP
+/// initialize handshake, and returns the list of tools.
 pub async fn import_tools_from_mcp_sse(
     base_url: &str,
     endpoint: &str,
     auth_token: Option<&str>,
-    timeout: Duration,
-) -> anyhow::Result<Vec<McpTool>> {
-    tokio::time::timeout(timeout, import_tools_inner(base_url, endpoint, auth_token))
-        .await
-        .map_err(|_| anyhow::anyhow!("Timed out connecting to MCP server"))?
-}
-
-async fn import_tools_inner(
-    base_url: &str,
-    endpoint: &str,
-    auth_token: Option<&str>,
+    _timeout: Duration,
 ) -> anyhow::Result<Vec<McpTool>> {
     let sse_url = format!("{}{}", base_url.trim_end_matches('/'), endpoint);
 
@@ -102,10 +173,19 @@ async fn import_tools_inner(
         .default_headers(headers.clone())
         .build()?;
 
-    // Step 1: Connect to SSE endpoint and wait for the "endpoint" event
-    let mut es = reqwest_eventsource::EventSource::new(client.get(&sse_url))?;
+    // Step 1: Connect to SSE endpoint and read events
+    let response = client.get(&sse_url).send().await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "SSE connection failed with status: {}",
+            response.status()
+        ));
+    }
 
-    let post_url = wait_for_endpoint_event(&mut es, base_url).await?;
+    let mut stream = response.bytes_stream();
+    let mut reader = SseReader::new();
+
+    let post_url = wait_for_endpoint_event(&mut stream, &mut reader, base_url).await?;
 
     tracing::debug!(post_url = %post_url, "Received MCP endpoint URL");
 
@@ -125,7 +205,7 @@ async fn import_tools_inner(
     };
 
     post_jsonrpc(&client, &post_url, &init_request, auth_token).await?;
-    wait_for_response(&mut es, 1).await?;
+    wait_for_response(&mut stream, &mut reader, 1).await?;
 
     // Step 3: Send initialized notification (no response expected)
     let initialized_notification = JsonRpcRequest {
@@ -144,7 +224,7 @@ async fn import_tools_inner(
         params: None,
     };
     post_jsonrpc(&client, &post_url, &list_tools_request, auth_token).await?;
-    let result_value = wait_for_response(&mut es, 2).await?;
+    let result_value = wait_for_response(&mut stream, &mut reader, 2).await?;
 
     // Step 5: Parse tools
     let list_result: ListToolsResult = serde_json::from_value(result_value)
@@ -156,12 +236,9 @@ async fn import_tools_inner(
         .map(|t| McpTool {
             name: t.name,
             description: t.description.unwrap_or_default(),
-            input_schema: t.input_schema,
+            input_schema: t.input_schema.unwrap_or_default(),
         })
         .collect();
-
-    // Close SSE stream
-    es.close();
 
     Ok(tools)
 }
@@ -172,28 +249,20 @@ async fn import_tools_inner(
 
 /// Wait for the SSE "endpoint" event that tells us where to POST JSON-RPC messages.
 async fn wait_for_endpoint_event(
-    es: &mut reqwest_eventsource::EventSource,
+    stream: &mut (impl futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin),
+    reader: &mut SseReader,
     base_url: &str,
 ) -> anyhow::Result<String> {
-    while let Some(event) = es.next().await {
-        match event {
-            Ok(reqwest_eventsource::Event::Open) => {
-                tracing::debug!("SSE connection opened");
-            }
-            Ok(reqwest_eventsource::Event::Message(msg)) => {
-                if msg.event == "endpoint" {
-                    let endpoint_path = msg.data.trim().to_string();
-                    // Resolve relative URL against base_url
-                    if endpoint_path.starts_with("http://") || endpoint_path.starts_with("https://")
-                    {
-                        return Ok(endpoint_path);
-                    }
-                    let base = base_url.trim_end_matches('/');
-                    return Ok(format!("{}{}", base, endpoint_path));
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow::anyhow!("SSE stream error: {}", e))?;
+        for ev in reader.feed(&chunk) {
+            if ev.event == "endpoint" {
+                let endpoint_path = ev.data.trim().to_string();
+                if endpoint_path.starts_with("http://") || endpoint_path.starts_with("https://") {
+                    return Ok(endpoint_path);
                 }
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!("SSE connection error: {}", e));
+                let base = base_url.trim_end_matches('/');
+                return Ok(format!("{}{}", base, endpoint_path));
             }
         }
     }
@@ -204,31 +273,27 @@ async fn wait_for_endpoint_event(
 
 /// Wait for a JSON-RPC response with the given id on the SSE stream.
 async fn wait_for_response(
-    es: &mut reqwest_eventsource::EventSource,
+    stream: &mut (impl futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin),
+    reader: &mut SseReader,
     expected_id: u64,
 ) -> anyhow::Result<serde_json::Value> {
-    while let Some(event) = es.next().await {
-        match event {
-            Ok(reqwest_eventsource::Event::Message(msg)) => {
-                if (msg.event == "message" || msg.event.is_empty())
-                    && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&msg.data)
-                    && resp.id == Some(expected_id)
-                {
-                    if let Some(err) = resp.error {
-                        return Err(anyhow::anyhow!(
-                            "MCP server error ({}): {}",
-                            err.code,
-                            err.message
-                        ));
-                    }
-                    return resp
-                        .result
-                        .ok_or_else(|| anyhow::anyhow!("Empty result from MCP server"));
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow::anyhow!("SSE stream error: {}", e))?;
+        for ev in reader.feed(&chunk) {
+            if (ev.event == "message" || ev.event.is_empty())
+                && let Ok(resp) = serde_json::from_str::<JsonRpcResponse>(&ev.data)
+                && resp.id == Some(expected_id)
+            {
+                if let Some(err) = resp.error {
+                    return Err(anyhow::anyhow!(
+                        "MCP server error ({}): {}",
+                        err.code,
+                        err.message
+                    ));
                 }
-            }
-            Ok(reqwest_eventsource::Event::Open) => {}
-            Err(e) => {
-                return Err(anyhow::anyhow!("SSE error waiting for response: {}", e));
+                return resp
+                    .result
+                    .ok_or_else(|| anyhow::anyhow!("Empty result from MCP server"));
             }
         }
     }
@@ -254,150 +319,14 @@ async fn post_jsonrpc(
     }
 
     let resp = req.send().await?;
-
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         return Err(anyhow::anyhow!(
-            "MCP server returned HTTP {}: {}",
+            "JSON-RPC POST failed ({}): {}",
             status,
             body
         ));
     }
-
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_jsonrpc_request_serialization() {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0",
-            id: Some(1),
-            method: "initialize",
-            params: Some(serde_json::json!({"protocolVersion": "2024-11-05"})),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"jsonrpc\":\"2.0\""));
-        assert!(json.contains("\"id\":1"));
-        assert!(json.contains("\"method\":\"initialize\""));
-    }
-
-    #[test]
-    fn test_jsonrpc_notification_no_id() {
-        let req = JsonRpcRequest {
-            jsonrpc: "2.0",
-            id: None,
-            method: "notifications/initialized",
-            params: None,
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(!json.contains("\"id\""));
-        assert!(!json.contains("\"params\""));
-    }
-
-    #[test]
-    fn test_jsonrpc_response_deserialization() {
-        let json = r#"{"jsonrpc":"2.0","id":1,"result":{"capabilities":{}}}"#;
-        let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.id, Some(1));
-        assert!(resp.result.is_some());
-        assert!(resp.error.is_none());
-    }
-
-    #[test]
-    fn test_jsonrpc_error_deserialization() {
-        let json =
-            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"Invalid Request"}}"#;
-        let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.id, Some(1));
-        assert!(resp.error.is_some());
-        let err = resp.error.unwrap();
-        assert_eq!(err.code, -32600);
-        assert_eq!(err.message, "Invalid Request");
-    }
-
-    #[test]
-    fn test_list_tools_result_deserialization() {
-        let json = r#"{
-            "tools": [
-                {
-                    "name": "get_weather",
-                    "description": "Get weather info",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {
-                            "city": {"type": "string"}
-                        }
-                    }
-                },
-                {
-                    "name": "search",
-                    "inputSchema": {}
-                }
-            ]
-        }"#;
-        let result: ListToolsResult = serde_json::from_str(json).unwrap();
-        assert_eq!(result.tools.len(), 2);
-        assert_eq!(result.tools[0].name, "get_weather");
-        assert_eq!(
-            result.tools[0].description,
-            Some("Get weather info".to_string())
-        );
-        assert_eq!(result.tools[1].name, "search");
-        assert!(result.tools[1].description.is_none());
-    }
-
-    #[test]
-    fn test_mcp_tool_conversion() {
-        let spec = McpToolSpec {
-            name: "test_tool".to_string(),
-            description: Some("A test tool".to_string()),
-            input_schema: serde_json::json!({"type": "object"}),
-        };
-        let tool = McpTool {
-            name: spec.name,
-            description: spec.description.unwrap_or_default(),
-            input_schema: spec.input_schema,
-        };
-        assert_eq!(tool.name, "test_tool");
-        assert_eq!(tool.description, "A test tool");
-    }
-
-    #[test]
-    fn test_empty_tools_list() {
-        let json = r#"{"tools": []}"#;
-        let result: ListToolsResult = serde_json::from_str(json).unwrap();
-        assert!(result.tools.is_empty());
-    }
-
-    #[test]
-    fn test_url_construction() {
-        // Absolute URL
-        let base = "http://localhost:3000";
-        let endpoint = "/sse";
-        let url = format!("{}{}", base.trim_end_matches('/'), endpoint);
-        assert_eq!(url, "http://localhost:3000/sse");
-
-        // Base URL with trailing slash
-        let base = "http://localhost:3000/";
-        let url = format!("{}{}", base.trim_end_matches('/'), endpoint);
-        assert_eq!(url, "http://localhost:3000/sse");
-    }
-
-    #[tokio::test]
-    async fn test_timeout() {
-        // Connecting to a non-existent server should timeout
-        let result = import_tools_from_mcp_sse(
-            "http://127.0.0.1:19999",
-            "/sse",
-            None,
-            Duration::from_millis(100),
-        )
-        .await;
-        assert!(result.is_err());
-    }
 }

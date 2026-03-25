@@ -1545,6 +1545,20 @@ impl Configuration {
             .unwrap_or(false)
     }
 
+    /// Whether whole-key filtering is enabled in bloom filter
+    pub fn rocksdb_whole_key_filtering(&self) -> bool {
+        self.config
+            .get_bool("batata.rocksdb.whole_key_filtering")
+            .unwrap_or(true)
+    }
+
+    /// Hash ratio for binary-and-hash data block index (0.0 = disabled)
+    pub fn rocksdb_data_block_hash_ratio(&self) -> f64 {
+        self.config
+            .get_float("batata.rocksdb.data_block_hash_ratio")
+            .unwrap_or(0.75)
+    }
+
     // ========================================================================
     // Rate Limiting Advanced
     // ========================================================================
@@ -1600,6 +1614,8 @@ impl Configuration {
             bottommost_compression: self.rocksdb_bottommost_compression(),
             compression: self.rocksdb_compression(),
             enable_statistics: self.rocksdb_enable_statistics(),
+            whole_key_filtering: self.rocksdb_whole_key_filtering(),
+            data_block_hash_ratio: self.rocksdb_data_block_hash_ratio(),
         }
     }
 }
@@ -1616,6 +1632,10 @@ pub struct RocksDbConfig {
     pub bottommost_compression: String,
     pub compression: String,
     pub enable_statistics: bool,
+    /// Enable whole-key filtering in bloom filter for better point lookups
+    pub whole_key_filtering: bool,
+    /// Hash ratio for binary-and-hash data block index (0.0 = disabled, 0.75 = recommended)
+    pub data_block_hash_ratio: f64,
 }
 
 impl Default for RocksDbConfig {
@@ -1630,6 +1650,8 @@ impl Default for RocksDbConfig {
             bottommost_compression: "zstd".to_string(),
             compression: "lz4".to_string(),
             enable_statistics: false,
+            whole_key_filtering: true,
+            data_block_hash_ratio: 0.75,
         }
     }
 }
@@ -1673,7 +1695,12 @@ impl RocksDbConfig {
         db_opts
     }
 
-    /// Create column family Options with block cache and bloom filter
+    /// Create column family Options with block cache, bloom filter, and optimizations.
+    ///
+    /// Includes:
+    /// - Block-based table with LRU cache and bloom filter for point lookups
+    /// - `optimize_for_point_lookup` hint when bloom filter is enabled
+    /// - Level compaction dynamic bytes for better space amplification
     pub fn to_cf_options(&self) -> rocksdb::Options {
         let mut cf_opts = rocksdb::Options::default();
         cf_opts.set_write_buffer_size(self.write_buffer_mb * 1024 * 1024);
@@ -1681,11 +1708,20 @@ impl RocksDbConfig {
         cf_opts
             .set_bottommost_compression_type(Self::parse_compression(&self.bottommost_compression));
 
+        if self.level_compaction_dynamic {
+            cf_opts.set_level_compaction_dynamic_level_bytes(true);
+        }
+
         let mut block_opts = rocksdb::BlockBasedOptions::default();
         let cache = rocksdb::Cache::new_lru_cache(self.block_cache_mb * 1024 * 1024);
         block_opts.set_block_cache(&cache);
         if self.bloom_filter_bits > 0.0 {
             block_opts.set_bloom_filter(self.bloom_filter_bits, false);
+            block_opts.set_whole_key_filtering(self.whole_key_filtering);
+        }
+        if self.data_block_hash_ratio > 0.0 {
+            block_opts.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash);
+            block_opts.set_data_block_hash_ratio(self.data_block_hash_ratio);
         }
         cf_opts.set_block_based_table_factory(&block_opts);
         cf_opts

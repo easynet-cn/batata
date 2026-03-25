@@ -60,7 +60,6 @@ async-trait = "0.1"
 futures = "0.3"
 
 # Web frameworks
-actix = "0.13"
 actix-web = { version = "4", features = ["compress-gzip", "compress-brotli", "compress-zstd"] }
 actix-rt = "2"
 actix-http = "3"
@@ -86,8 +85,8 @@ serde_urlencoded = "0.7"
 serde_with = "3.18"
 
 # Auth
-jsonwebtoken = "9"
-bcrypt = "0.17"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+bcrypt = "0.19"
 
 # Consensus
 openraft = { version = "0.9", features = ["serde", "storage-v2"] }
@@ -103,22 +102,21 @@ tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 tracing-bunyan-formatter = "0.3"
 tracing-log = "0.2"
 tracing-appender = "0.2"
-tracing-opentelemetry = "0.29"
+tracing-opentelemetry = "0.32"
 
 # Error handling
 anyhow = "1.0"
 thiserror = "2.0"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
-reqwest-eventsource = "0.6"
+reqwest = { version = "0.13", features = ["json", "stream", "query", "form"] }
 
 # Utils
 chrono = "0.4"
 uuid = { version = "1.22", features = ["v4"] }
 regex = "1.11"
 base64 = "0.22"
-# Note: md5 (simple API via compute()) and md-5 (RustCrypto Digest trait) serve different use cases
+# md5 v0.8: simple API via md5::compute(). md-5 v0.10: RustCrypto Digest trait (md5::Md5, md5::Digest)
 md5 = "0.8"
 md-5 = "0.10"
 bytes = "1.11"
@@ -126,13 +124,11 @@ byteorder = "1.5"
 zip = "2.2"
 if-addrs = "0.14"
 htmlescape = "0.3"
-pin-project-lite = "0.2"
 tokio-stream = "0.1"
 sysinfo = "0.33"
 parking_lot = "0.12"
 hostname = "0.4"
 url = "2.5"
-fastrand = "2.3"
 rand = "0.9"
 hex = "0.4"
 hmac = "0.12"
@@ -141,10 +137,10 @@ sha2 = "0.10"
 aes-gcm = "0.10"
 
 # Telemetry
-opentelemetry = { version = "0.28", features = ["trace", "metrics"] }
-opentelemetry_sdk = { version = "0.28", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.28", features = ["tonic", "grpc-tonic", "trace", "metrics"] }
-opentelemetry-semantic-conventions = "0.28"
+opentelemetry = { version = "0.31", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", features = ["tonic", "grpc-tonic", "trace", "metrics"] }
+opentelemetry-semantic-conventions = "0.31"
 
 # Kubernetes
 kube = { version = "0.98", features = ["runtime", "client", "derive", "rustls-tls"], default-features = false }
@@ -153,14 +149,14 @@ k8s-openapi = { version = "0.24", features = ["v1_31"] }
 # HTTP protocol
 http-body = "1.0"
 http-body-util = "0.1"
-hyper = { version = "1.6", features = ["server", "http2"] }
+hyper = { version = "1.8", features = ["server", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio", "server"] }
 
 # Auth (extended)
-ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"] }
+ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
 
 # Metrics (extended)
-prometheus = "0.13"
+prometheus = "0.14"
 
 # Configuration
 config = "0.15"
@@ -168,18 +164,18 @@ clap = { version = "4.6", features = ["derive", "env"] }
 
 # Metrics
 metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
+metrics-exporter-prometheus = "0.18"
 
 # Input validation
-validator = { version = "0.18", features = ["derive"] }
+validator = { version = "0.20", features = ["derive"] }
 
 # Dev dependencies
-criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
-proptest = "1.4"
+criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
+proptest = "1.11"
 tempfile = "3"
 
 # Build dependencies
-tonic-prost-build = "0.14.2"
+tonic-prost-build = "0.14.5"
 
 [profile.dev]
 incremental = true

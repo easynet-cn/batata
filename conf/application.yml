@@ -326,6 +326,8 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.rocksdb.level_compaction_dynamic: true    # dynamic level sizes for better space amplification
 #batata.rocksdb.bottommost_compression: zstd      # zstd for bottommost level (better ratio), lz4 for speed
 #batata.rocksdb.compression: lz4                  # default compression for non-bottommost levels
+#batata.rocksdb.whole_key_filtering: true          # whole-key bloom filtering for point lookups
+#batata.rocksdb.data_block_hash_ratio: 0.75        # hash index ratio in data blocks (0.0 = disabled)
 
 # --- Rate Limiting ---
 # Maximum tracked IPs to prevent unbounded memory growth under DoS

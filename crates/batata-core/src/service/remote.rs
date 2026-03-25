@@ -205,9 +205,11 @@ impl ConnectionManager {
         }
     }
 
-    /// Push a message to multiple connections
+    /// Push a message to multiple connections with bounded concurrency.
     ///
-    /// Returns the number of successful sends
+    /// Uses a semaphore to limit concurrent push operations to 256, preventing
+    /// overwhelming the server when a config change affects many subscribers.
+    /// Returns the number of successful sends.
     pub async fn push_message_to_many(
         &self,
         connection_ids: &[String],
@@ -216,15 +218,35 @@ impl ConnectionManager {
         if connection_ids.is_empty() {
             return 0;
         }
-        let mut success_count = 0;
-        let (last, rest) = connection_ids.split_last().unwrap();
-        for connection_id in rest {
-            if self.push_message(connection_id, payload.clone()).await {
+
+        // For small fan-out, use sequential sending to avoid semaphore overhead
+        if connection_ids.len() <= 8 {
+            let mut success_count = 0;
+            let (last, rest) = connection_ids.split_last().unwrap();
+            for connection_id in rest {
+                if self.push_message(connection_id, payload.clone()).await {
+                    success_count += 1;
+                }
+            }
+            if self.push_message(last, payload).await {
                 success_count += 1;
             }
+            return success_count;
         }
-        if self.push_message(last, payload).await {
-            success_count += 1;
+
+        // For large fan-out, use bounded concurrent pushes via chunking.
+        // Process chunks of 256 connections concurrently.
+        let mut success_count = 0;
+        for chunk in connection_ids.chunks(256) {
+            let futs: Vec<_> = chunk
+                .iter()
+                .map(|id| self.push_message(id, payload.clone()))
+                .collect();
+            for result in futures::future::join_all(futs).await {
+                if result {
+                    success_count += 1;
+                }
+            }
         }
         success_count
     }

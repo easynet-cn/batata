@@ -8,6 +8,7 @@ pub mod config {
 }
 
 // Consul-compatible API implementation
+#[cfg(feature = "consul")]
 pub mod consul;
 
 // gRPC service definitions - re-exported from batata-api crate
@@ -45,9 +46,11 @@ pub mod v2;
 pub mod v3;
 
 // AI Capabilities API (MCP Server Registry, A2A Communication)
+#[cfg(feature = "ai")]
 pub mod ai;
 
 // Cloud Native Integration API (Kubernetes Sync, Prometheus SD)
+#[cfg(feature = "cloud")]
 pub mod cloud;
 
 // Prometheus metrics endpoint using metrics-exporter-prometheus
