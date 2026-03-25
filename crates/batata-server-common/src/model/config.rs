@@ -1602,6 +1602,48 @@ impl Configuration {
             .unwrap_or(86400) as u64
     }
 
+    // ---- Raft consensus tuning ----
+
+    /// Raft election timeout in milliseconds (default: 5000).
+    /// If a follower doesn't hear from the leader within this time, it starts an election.
+    /// Increase for WAN clusters or high-latency networks.
+    pub fn raft_election_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.election_timeout_ms")
+            .unwrap_or(5000) as u64
+    }
+
+    /// Raft heartbeat interval in milliseconds (default: 1000).
+    /// Leader sends heartbeats at this interval. Should be < election_timeout / 3.
+    pub fn raft_heartbeat_interval_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.heartbeat_interval_ms")
+            .unwrap_or(1000) as u64
+    }
+
+    /// Raft RPC request timeout in milliseconds (default: 5000).
+    /// Timeout for individual Raft RPCs (AppendEntries, Vote).
+    pub fn raft_rpc_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.rpc_timeout_ms")
+            .unwrap_or(5000) as u64
+    }
+
+    /// Raft snapshot threshold — log entries before triggering snapshot (default: 10000).
+    pub fn raft_snapshot_threshold(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.snapshot_threshold")
+            .unwrap_or(10000) as u64
+    }
+
+    /// Raft snapshot transfer timeout in milliseconds (default: 30000).
+    /// Timeout for full snapshot transfer between nodes. Should be larger than rpc_timeout.
+    pub fn raft_snapshot_transfer_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.snapshot_transfer_timeout_ms")
+            .unwrap_or(30000) as u64
+    }
+
     /// Build a RocksDB configuration struct from the current config values
     pub fn rocksdb_config(&self) -> RocksDbConfig {
         RocksDbConfig {

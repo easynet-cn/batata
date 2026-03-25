@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast, mpsc};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use batata_api::model::{Member, NodeState};
 
@@ -162,7 +162,12 @@ impl MemberChangeEventPublisher {
         );
 
         // Broadcast to subscribers
-        let _ = self.broadcast_tx.send(event.clone());
+        if let Err(e) = self.broadcast_tx.send(event.clone()) {
+            warn!(
+                "Failed to broadcast member change event for {} (no active receivers): {}",
+                e.0.member.address, e
+            );
+        }
 
         // Notify listeners
         let listeners = self.listeners.read().await;

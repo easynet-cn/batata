@@ -230,7 +230,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Phase 8: Start background tasks
     // ====================================================================
     start_health_checkers(&health_check_manager);
-    start_warmup_poller(&app_state, &server_status);
+    start_warmup_poller(
+        &app_state,
+        &server_status,
+        persistence_ctx.server_member_manager.as_ref(),
+    );
     start_mcp_index_refresh(&ai_services, &app_state);
 
     // ====================================================================
@@ -414,7 +418,15 @@ fn start_health_checkers(health_check_manager: &Option<Arc<HealthCheckManager>>)
 }
 
 /// Start data warmup poller if enabled.
-fn start_warmup_poller(app_state: &Arc<AppState>, server_status: &Arc<ServerStatusManager>) {
+///
+/// In cluster mode, the poller also gates readiness on the distro protocol
+/// having completed its initial data load — preventing clients from connecting
+/// to a node that has no naming data yet.
+fn start_warmup_poller(
+    app_state: &Arc<AppState>,
+    server_status: &Arc<ServerStatusManager>,
+    server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
+) {
     if !app_state.configuration.data_warmup() {
         return;
     }
@@ -422,6 +434,8 @@ fn start_warmup_poller(app_state: &Arc<AppState>, server_status: &Arc<ServerStat
     let status_mgr = server_status.clone();
     let console_ds = app_state.console_datasource.clone();
     let raft_ref = app_state.raft_node.clone();
+    let is_standalone = app_state.configuration.is_standalone();
+    let smm_clone = server_member_manager.cloned();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         loop {
@@ -432,7 +446,17 @@ fn start_warmup_poller(app_state: &Arc<AppState>, server_status: &Arc<ServerStat
                 None => (true, None),
             };
 
-            if db_ready && raft_ready {
+            // In cluster mode, also check that distro protocol has loaded initial data.
+            // This prevents clients from seeing empty naming data on newly joined nodes.
+            let distro_ready = if is_standalone {
+                true
+            } else if let Some(ref smm) = smm_clone {
+                smm.is_distro_initialized().await
+            } else {
+                true
+            };
+
+            if db_ready && raft_ready && distro_ready {
                 if !status_mgr.is_up() {
                     status_mgr.set_up();
                     status_mgr.set_error_msg(None).await;
@@ -445,6 +469,9 @@ fn start_warmup_poller(app_state: &Arc<AppState>, server_status: &Arc<ServerStat
                 }
                 if let Some(reason) = raft_reason {
                     reasons.push(reason);
+                }
+                if !distro_ready {
+                    reasons.push("distro initial data not loaded".to_string());
                 }
                 let msg = reasons.join(", ");
                 status_mgr.set_down();

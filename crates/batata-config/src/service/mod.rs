@@ -13,6 +13,7 @@ pub mod encryption;
 pub mod export;
 pub mod import;
 pub mod notifier;
+pub mod reconciliation;
 
 pub use encryption::{
     ConfigEncryptionService, ConfigEncryptionServiceBuilder, EncryptionPattern,

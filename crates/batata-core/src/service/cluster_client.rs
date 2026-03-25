@@ -22,6 +22,14 @@ use batata_api::{
 };
 use prost_types::Any;
 
+/// Get current time in milliseconds since epoch
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
 /// TLS configuration for cluster client
 #[derive(Clone, Debug, Default)]
 pub struct ClusterClientTlsConfig {
@@ -192,12 +200,38 @@ impl ClusterConnection {
     }
 }
 
+/// Per-address circuit breaker state.
+///
+/// After `failure_threshold` consecutive failures, the circuit opens for
+/// `open_duration`. During this time, requests to that address are immediately
+/// rejected to avoid wasting resources on unreachable nodes.
+struct CircuitBreakerEntry {
+    consecutive_failures: u32,
+    /// Timestamp (millis) when the circuit opened. 0 = closed.
+    open_since: i64,
+}
+
+impl CircuitBreakerEntry {
+    fn new() -> Self {
+        Self {
+            consecutive_failures: 0,
+            open_since: 0,
+        }
+    }
+}
+
 /// Cluster client manager
-/// Manages connections to other cluster nodes
+/// Manages connections to other cluster nodes with circuit breaker protection
 pub struct ClusterClientManager {
     config: ClusterClientConfig,
     connections: Arc<DashMap<String, Arc<ClusterConnection>>>,
     local_address: String,
+    /// Per-address circuit breaker state
+    circuit_breakers: Arc<DashMap<String, CircuitBreakerEntry>>,
+    /// Number of consecutive failures before opening circuit
+    circuit_breaker_threshold: u32,
+    /// Duration (ms) to keep circuit open before allowing a retry
+    circuit_breaker_open_ms: i64,
 }
 
 impl ClusterClientManager {
@@ -206,6 +240,9 @@ impl ClusterClientManager {
             config,
             connections: Arc::new(DashMap::new()),
             local_address,
+            circuit_breakers: Arc::new(DashMap::new()),
+            circuit_breaker_threshold: 5,
+            circuit_breaker_open_ms: 10_000, // 10 seconds
         }
     }
 
@@ -301,17 +338,67 @@ impl ClusterClientManager {
         debug!("Removed cluster connection to {}", address);
     }
 
-    /// Send a request to a cluster node
+    /// Check if the circuit breaker is open for an address.
+    /// Returns true if the address should be skipped (circuit open).
+    fn is_circuit_open(&self, address: &str) -> bool {
+        if let Some(entry) = self.circuit_breakers.get(address)
+            && entry.open_since > 0
+        {
+            let now = now_millis();
+            if now - entry.open_since < self.circuit_breaker_open_ms {
+                return true; // Still open
+            }
+            // Half-open: allow one retry
+        }
+        false
+    }
+
+    /// Record a successful request — reset the circuit breaker for this address.
+    fn record_success(&self, address: &str) {
+        self.circuit_breakers.remove(address);
+    }
+
+    /// Record a failed request — increment failure count, open circuit if threshold reached.
+    fn record_failure(&self, address: &str) {
+        let mut entry = self
+            .circuit_breakers
+            .entry(address.to_string())
+            .or_insert_with(CircuitBreakerEntry::new);
+        entry.consecutive_failures += 1;
+        if entry.consecutive_failures >= self.circuit_breaker_threshold {
+            let now = now_millis();
+            if entry.open_since == 0 {
+                warn!(
+                    "Circuit breaker OPEN for {} after {} consecutive failures",
+                    address, entry.consecutive_failures
+                );
+            }
+            entry.open_since = now;
+        }
+    }
+
+    /// Send a request to a cluster node with circuit breaker protection.
+    ///
+    /// If the circuit breaker is open for this address, the request is
+    /// immediately rejected to avoid wasting resources on unreachable nodes.
     pub async fn send_request<T: RequestTrait + Serialize + Sync>(
         &self,
         address: &str,
         request: T,
     ) -> Result<Payload, Box<dyn std::error::Error + Send + Sync>> {
+        // Circuit breaker check
+        if self.is_circuit_open(address) {
+            return Err(format!("Circuit breaker open for {}", address).into());
+        }
+
         let mut last_error = None;
 
         for attempt in 0..self.config.max_retries {
             match self.try_send_request(address, &request).await {
-                Ok(response) => return Ok(response),
+                Ok(response) => {
+                    self.record_success(address);
+                    return Ok(response);
+                }
                 Err(e) => {
                     warn!(
                         "Failed to send request to {} (attempt {}/{}): {}",
@@ -326,12 +413,15 @@ impl ClusterClientManager {
                     self.remove_connection(address);
 
                     if attempt < self.config.max_retries - 1 {
-                        tokio::time::sleep(self.config.retry_delay).await;
+                        // Exponential backoff: base_delay * 2^attempt
+                        let backoff = self.config.retry_delay * (1u32 << attempt.min(4));
+                        tokio::time::sleep(backoff).await;
                     }
                 }
             }
         }
 
+        self.record_failure(address);
         Err(last_error.unwrap_or_else(|| "Unknown error".into()))
     }
 
@@ -422,6 +512,9 @@ impl ClusterClientManager {
             config: self.config.clone(),
             connections: self.connections.clone(),
             local_address: self.local_address.clone(),
+            circuit_breakers: self.circuit_breakers.clone(),
+            circuit_breaker_threshold: self.circuit_breaker_threshold,
+            circuit_breaker_open_ms: self.circuit_breaker_open_ms,
         }
     }
 
@@ -602,5 +695,57 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.err().unwrap().to_string();
         assert!(err_msg.contains("Cannot connect to self"));
+    }
+
+    #[test]
+    fn test_circuit_breaker_initially_closed() {
+        let config = ClusterClientConfig::default();
+        let manager = ClusterClientManager::new("127.0.0.1:8848".to_string(), config);
+        assert!(!manager.is_circuit_open("192.168.1.1:8848"));
+    }
+
+    #[test]
+    fn test_circuit_breaker_opens_after_threshold() {
+        let config = ClusterClientConfig::default();
+        let manager = ClusterClientManager::new("127.0.0.1:8848".to_string(), config);
+
+        let addr = "192.168.1.1:8848";
+
+        // Record failures below threshold
+        for _ in 0..4 {
+            manager.record_failure(addr);
+            assert!(
+                !manager.is_circuit_open(addr),
+                "Should be closed below threshold"
+            );
+        }
+
+        // 5th failure opens the circuit
+        manager.record_failure(addr);
+        assert!(
+            manager.is_circuit_open(addr),
+            "Should be open after 5 failures"
+        );
+    }
+
+    #[test]
+    fn test_circuit_breaker_resets_on_success() {
+        let config = ClusterClientConfig::default();
+        let manager = ClusterClientManager::new("127.0.0.1:8848".to_string(), config);
+
+        let addr = "192.168.1.1:8848";
+
+        // Open the circuit
+        for _ in 0..5 {
+            manager.record_failure(addr);
+        }
+        assert!(manager.is_circuit_open(addr));
+
+        // Success resets it
+        manager.record_success(addr);
+        assert!(
+            !manager.is_circuit_open(addr),
+            "Should be closed after success"
+        );
     }
 }

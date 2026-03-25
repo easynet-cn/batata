@@ -18,3 +18,4 @@ pub mod service;
 pub use model::*;
 pub use service::cache::ConfigCacheService;
 pub use service::notifier::ConfigChangeNotifier;
+pub use service::reconciliation::{ReconciliationConfig, start_reconciliation_task};

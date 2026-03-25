@@ -230,8 +230,79 @@ async fn update_lookup(
     Result::<LookupSwitchResponse>::http_success(response)
 }
 
+/// GET /v3/admin/core/cluster/health
+///
+/// Returns a comprehensive cluster health summary including:
+/// - Member count and healthy count
+/// - Raft leader and state
+/// - Distro protocol metrics (sync/verify success/failure, pending tasks)
+/// - Server readiness status
+///
+/// This endpoint gives operators a single view to diagnose cluster issues.
+#[get("health")]
+async fn cluster_health(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    distro: Option<web::Data<std::sync::Arc<batata_core::service::distro::DistroProtocol>>>,
+) -> impl Responder {
+    let resource = "*:*:*";
+    secured!(
+        Secured::builder(&req, &data, resource)
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let cm = data.cluster_manager();
+    let members = cm.all_members_extended();
+    let healthy_count = cm.healthy_members_extended().len();
+
+    // Raft state
+    let (raft_leader, raft_state) = if let Some(ref raft) = data.raft_node {
+        let metrics = raft.metrics();
+        (
+            metrics.current_leader.map(|id| id.to_string()),
+            Some(format!("{:?}", metrics.state)),
+        )
+    } else {
+        (None, None)
+    };
+
+    // Distro metrics
+    let distro_metrics = distro.as_ref().map(|dp| dp.metrics());
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ClusterHealthResponse {
+        member_count: usize,
+        healthy_count: usize,
+        server_status: String,
+        standalone: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        raft_leader: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        raft_state: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        distro: Option<batata_core::service::distro::DistroMetrics>,
+    }
+
+    let resp = ClusterHealthResponse {
+        member_count: members.len(),
+        healthy_count,
+        server_status: data.server_status.status().to_string(),
+        standalone: cm.is_standalone(),
+        raft_leader,
+        raft_state,
+        distro: distro_metrics,
+    };
+
+    Result::<ClusterHealthResponse>::http_success(resp)
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/cluster")
+        .service(cluster_health)
         .service(
             web::scope("/node")
                 .service(get_self)

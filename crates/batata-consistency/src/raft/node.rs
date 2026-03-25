@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use openraft::{BasicNode, Raft};
 use rocksdb::Options;
@@ -83,8 +84,13 @@ impl RaftNode {
             RocksStateMachine::with_options(config.state_machine_dir(), db_opts, cf_opts).await?;
         let db = state_machine.db();
 
-        // Create network factory
-        let network_factory = BatataRaftNetworkFactory::new();
+        // Create network factory with configured timeouts
+        let network_config = super::network::RaftNetworkConfig {
+            rpc_timeout: config.rpc_timeout(),
+            snapshot_timeout: config.snapshot_transfer_timeout(),
+            connect_timeout: Duration::from_secs(5),
+        };
+        let network_factory = BatataRaftNetworkFactory::with_config(network_config);
 
         // Create openraft config
         let raft_config = Arc::new(config.to_openraft_config());
@@ -236,20 +242,48 @@ impl RaftNode {
                 Ok((result.data, log_index))
             }
             Err(e) => {
-                // Check if we need to forward to the leader
-                if let Some(leader_addr) = self.leader_addr() {
+                // Forward to leader with retry and re-discovery.
+                // If the leader has changed between attempts, we re-discover it
+                // from Raft metrics rather than retrying a stale address.
+                const MAX_FORWARD_RETRIES: u32 = 2;
+                let mut last_err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
+
+                for attempt in 0..MAX_FORWARD_RETRIES {
+                    let leader_addr = match self.leader_addr() {
+                        Some(addr) => addr,
+                        None => break, // No leader known, give up
+                    };
+
                     debug!(
-                        "Forwarding write to Raft leader at {}: {}",
+                        "Forwarding write to Raft leader at {} (attempt {}): {}",
                         leader_addr,
+                        attempt + 1,
                         request.op_type()
                     );
-                    // Forward returns RaftResponse without log_id; use last_applied as proxy
-                    let resp = self.forward_write_to_leader(&leader_addr, request).await?;
-                    let idx = self.last_applied_index().unwrap_or(1);
-                    Ok((resp, idx))
-                } else {
-                    Err(Box::new(e))
+
+                    match self
+                        .forward_write_to_leader(&leader_addr, request.clone())
+                        .await
+                    {
+                        Ok(resp) => {
+                            let idx = self.last_applied_index().unwrap_or(1);
+                            return Ok((resp, idx));
+                        }
+                        Err(forward_err) => {
+                            tracing::warn!(
+                                "Forward to leader {} failed (attempt {}): {}",
+                                leader_addr,
+                                attempt + 1,
+                                forward_err
+                            );
+                            last_err = forward_err;
+                            // Brief pause before re-discovering leader
+                            tokio::time::sleep(Duration::from_millis(200)).await;
+                        }
+                    }
                 }
+
+                Err(last_err)
             }
         }
     }

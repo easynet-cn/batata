@@ -206,6 +206,37 @@ pub trait DistroDataHandler: Send + Sync {
     async fn get_snapshot(&self) -> Vec<DistroData>;
 }
 
+/// Snapshot of distro protocol health metrics for monitoring
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DistroMetrics {
+    pub sync_success_total: u64,
+    pub sync_failure_total: u64,
+    pub verify_success_total: u64,
+    pub verify_failure_total: u64,
+    pub pending_sync_tasks: usize,
+    pub initialized: bool,
+    pub member_count: usize,
+}
+
+/// Atomic counters for distro protocol operations
+struct DistroCounters {
+    sync_success: std::sync::atomic::AtomicU64,
+    sync_failure: std::sync::atomic::AtomicU64,
+    verify_success: std::sync::atomic::AtomicU64,
+    verify_failure: std::sync::atomic::AtomicU64,
+}
+
+impl DistroCounters {
+    fn new() -> Self {
+        Self {
+            sync_success: std::sync::atomic::AtomicU64::new(0),
+            sync_failure: std::sync::atomic::AtomicU64::new(0),
+            verify_success: std::sync::atomic::AtomicU64::new(0),
+            verify_failure: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+}
+
 /// Distro protocol manager
 pub struct DistroProtocol {
     config: DistroConfig,
@@ -221,6 +252,8 @@ pub struct DistroProtocol {
     mapper: Arc<DistroMapper>,
     /// Whether the protocol has completed initial data loading
     initialized: Arc<AtomicBool>,
+    /// Operation counters for monitoring
+    counters: Arc<DistroCounters>,
 }
 
 impl DistroProtocol {
@@ -241,6 +274,7 @@ impl DistroProtocol {
             datacenter_manager: None,
             mapper: Arc::new(DistroMapper::new()),
             initialized: Arc::new(AtomicBool::new(false)),
+            counters: Arc::new(DistroCounters::new()),
         }
     }
 
@@ -263,6 +297,7 @@ impl DistroProtocol {
             datacenter_manager: Some(datacenter_manager),
             mapper: Arc::new(DistroMapper::new()),
             initialized: Arc::new(AtomicBool::new(false)),
+            counters: Arc::new(DistroCounters::new()),
         }
     }
 
@@ -284,6 +319,19 @@ impl DistroProtocol {
     /// Check whether the protocol has completed initial data loading
     pub fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Relaxed)
+    }
+
+    /// Get a snapshot of distro protocol metrics for monitoring
+    pub fn metrics(&self) -> DistroMetrics {
+        DistroMetrics {
+            sync_success_total: self.counters.sync_success.load(Ordering::Relaxed),
+            sync_failure_total: self.counters.sync_failure.load(Ordering::Relaxed),
+            verify_success_total: self.counters.verify_success.load(Ordering::Relaxed),
+            verify_failure_total: self.counters.verify_failure.load(Ordering::Relaxed),
+            pending_sync_tasks: self.sync_tasks.len(),
+            initialized: self.initialized.load(Ordering::Relaxed),
+            member_count: self.members.len(),
+        }
     }
 
     /// Register a data handler
@@ -332,8 +380,29 @@ impl DistroProtocol {
         self.mapper.update_members(healthy);
     }
 
-    /// Stop the distro protocol
+    /// Stop the distro protocol, draining pending sync tasks first.
+    ///
+    /// Waits up to 5 seconds for in-flight sync tasks to complete before
+    /// forcibly stopping. This prevents data loss during rolling restarts.
     pub async fn stop(&self) {
+        info!(
+            "Stopping Distro protocol (draining {} pending sync tasks)...",
+            self.sync_tasks.len()
+        );
+
+        // Give pending tasks a brief window to complete
+        let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while !self.sync_tasks.is_empty() && tokio::time::Instant::now() < drain_deadline {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        if !self.sync_tasks.is_empty() {
+            warn!(
+                "Distro protocol stopping with {} undrained sync tasks",
+                self.sync_tasks.len()
+            );
+        }
+
         let mut running = self.running.write().await;
         *running = false;
         info!("Stopped Distro protocol");
@@ -427,6 +496,7 @@ impl DistroProtocol {
         let client_manager = self.client_manager.clone();
         let config = self.config.clone();
         let _local_address = self.local_address.clone();
+        let counters = self.counters.clone();
 
         tokio::spawn(async move {
             loop {
@@ -439,62 +509,69 @@ impl DistroProtocol {
 
                 let now = chrono::Utc::now().timestamp_millis();
 
-                // Find tasks that are ready to execute
-                let ready_tasks: Vec<DistroSyncTask> = sync_tasks
+                // Atomically claim ready tasks by removing them from the map.
+                // This prevents race conditions where a task could be modified
+                // between collection and removal by a concurrent thread.
+                let ready_tasks: Vec<(String, DistroSyncTask)> = sync_tasks
                     .iter()
                     .filter(|e| e.value().scheduled_time <= now)
-                    .map(|e| e.value().clone())
+                    .map(|e| (e.key().clone(), e.value().clone()))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .filter_map(|(key, _)| {
+                        // Atomically remove — if another thread already claimed it, skip
+                        sync_tasks.remove(&key)
+                    })
                     .collect();
 
-                for task in ready_tasks {
-                    let task_key =
-                        format!("{}:{}:{}", task.data_type, task.key, task.target_address);
+                for (task_key, task) in ready_tasks {
+                    // Get data from handler and send sync request
+                    if let Some(handler) = handlers.get(&task.data_type)
+                        && let Some(data) = handler.get_data(&task.key).await
+                    {
+                        // Send sync request
+                        let result = Self::send_sync_data(
+                            &client_manager,
+                            &task.target_address,
+                            data.clone(),
+                        )
+                        .await;
 
-                    // Get data from handler
-                    if let Some(handler) = handlers.get(&task.data_type) {
-                        if let Some(data) = handler.get_data(&task.key).await {
-                            // Send sync request
-                            let result = Self::send_sync_data(
-                                &client_manager,
-                                &task.target_address,
-                                data.clone(),
-                            )
-                            .await;
-
-                            if result.is_ok() {
-                                sync_tasks.remove(&task_key);
-                                debug!(
-                                    "Sync completed for {}:{} to {}",
-                                    task.data_type, task.key, task.target_address
+                        if result.is_ok() {
+                            counters.sync_success.fetch_add(1, Ordering::Relaxed);
+                            debug!(
+                                "Sync completed for {}:{} to {}",
+                                task.data_type, task.key, task.target_address
+                            );
+                        } else {
+                            counters.sync_failure.fetch_add(1, Ordering::Relaxed);
+                            // Retry with exponential backoff + jitter
+                            if task.retry_count < 3 {
+                                let mut updated_task = task.clone();
+                                updated_task.retry_count += 1;
+                                let base_delay = config.sync_retry_delay.as_millis() as i64;
+                                let backoff =
+                                    base_delay * (1i64 << updated_task.retry_count.min(4));
+                                // Add ~25% jitter to prevent thundering herd
+                                let jitter = (now % (backoff / 4 + 1)).max(0);
+                                updated_task.scheduled_time = now + backoff + jitter;
+                                sync_tasks.insert(task_key, updated_task);
+                                warn!(
+                                    "Sync failed for {}:{} to {}, retry count: {}",
+                                    task.data_type,
+                                    task.key,
+                                    task.target_address,
+                                    task.retry_count + 1
                                 );
                             } else {
-                                // Retry with delay
-                                if task.retry_count < 3 {
-                                    let mut updated_task = task.clone();
-                                    updated_task.retry_count += 1;
-                                    updated_task.scheduled_time =
-                                        now + config.sync_retry_delay.as_millis() as i64;
-                                    sync_tasks.insert(task_key, updated_task);
-                                    warn!(
-                                        "Sync failed for {}:{} to {}, retry count: {}",
-                                        task.data_type,
-                                        task.key,
-                                        task.target_address,
-                                        task.retry_count + 1
-                                    );
-                                } else {
-                                    sync_tasks.remove(&task_key);
-                                    error!(
-                                        "Sync failed after max retries for {}:{} to {}",
-                                        task.data_type, task.key, task.target_address
-                                    );
-                                }
+                                error!(
+                                    "Sync failed after max retries for {}:{} to {}",
+                                    task.data_type, task.key, task.target_address
+                                );
                             }
-                        } else {
-                            // Data no longer exists, remove task
-                            sync_tasks.remove(&task_key);
                         }
                     }
+                    // Data no longer exists — task was already removed, nothing to do
                 }
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -514,6 +591,7 @@ impl DistroProtocol {
         let handlers = self.handlers.clone();
         let client_manager = self.client_manager.clone();
         let sync_tasks = self.sync_tasks.clone();
+        let counters = self.counters.clone();
 
         tokio::spawn(async move {
             loop {
@@ -618,17 +696,23 @@ impl DistroProtocol {
                     // Collect results from all parallel verify requests
                     let now = chrono::Utc::now().timestamp_millis();
                     for handle in handles {
-                        if let Ok(Some((addr, dt, keys_need_sync))) = handle.await {
-                            for key in keys_need_sync {
-                                let task_key = format!("{}:{}:{}", dt, key, addr);
-                                let task = DistroSyncTask {
-                                    data_type: dt.clone(),
-                                    key,
-                                    target_address: addr.clone(),
-                                    scheduled_time: now + config.sync_delay.as_millis() as i64,
-                                    retry_count: 0,
-                                };
-                                sync_tasks.insert(task_key, task);
+                        match handle.await {
+                            Ok(Some((addr, dt, keys_need_sync))) => {
+                                counters.verify_success.fetch_add(1, Ordering::Relaxed);
+                                for key in keys_need_sync {
+                                    let task_key = format!("{}:{}:{}", dt, key, addr);
+                                    let task = DistroSyncTask {
+                                        data_type: dt.clone(),
+                                        key,
+                                        target_address: addr.clone(),
+                                        scheduled_time: now + config.sync_delay.as_millis() as i64,
+                                        retry_count: 0,
+                                    };
+                                    sync_tasks.insert(task_key, task);
+                                }
+                            }
+                            _ => {
+                                counters.verify_failure.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     }
@@ -1109,5 +1193,42 @@ mod tests {
         for count in counts.values() {
             assert!(*count > 0, "Each member should have at least one key");
         }
+    }
+
+    #[test]
+    fn test_distro_counters() {
+        let counters = DistroCounters::new();
+        assert_eq!(counters.sync_success.load(Ordering::Relaxed), 0);
+        assert_eq!(counters.sync_failure.load(Ordering::Relaxed), 0);
+        assert_eq!(counters.verify_success.load(Ordering::Relaxed), 0);
+        assert_eq!(counters.verify_failure.load(Ordering::Relaxed), 0);
+
+        counters.sync_success.fetch_add(3, Ordering::Relaxed);
+        counters.sync_failure.fetch_add(1, Ordering::Relaxed);
+        counters.verify_success.fetch_add(10, Ordering::Relaxed);
+        counters.verify_failure.fetch_add(2, Ordering::Relaxed);
+
+        assert_eq!(counters.sync_success.load(Ordering::Relaxed), 3);
+        assert_eq!(counters.sync_failure.load(Ordering::Relaxed), 1);
+        assert_eq!(counters.verify_success.load(Ordering::Relaxed), 10);
+        assert_eq!(counters.verify_failure.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn test_distro_metrics_serialization() {
+        let metrics = DistroMetrics {
+            sync_success_total: 100,
+            sync_failure_total: 5,
+            verify_success_total: 200,
+            verify_failure_total: 3,
+            pending_sync_tasks: 2,
+            initialized: true,
+            member_count: 3,
+        };
+
+        let json = serde_json::to_string(&metrics).unwrap();
+        assert!(json.contains("\"sync_success_total\":100"));
+        assert!(json.contains("\"initialized\":true"));
+        assert!(json.contains("\"member_count\":3"));
     }
 }

@@ -160,6 +160,11 @@ async fn init_embedded_cluster(
     );
 
     let raft_config = batata_consistency::RaftConfig {
+        election_timeout_ms: configuration.raft_election_timeout_ms(),
+        heartbeat_interval_ms: configuration.raft_heartbeat_interval_ms(),
+        rpc_request_timeout_ms: configuration.raft_rpc_timeout_ms(),
+        snapshot_threshold: configuration.raft_snapshot_threshold(),
+        snapshot_transfer_timeout_ms: configuration.raft_snapshot_transfer_timeout_ms(),
         data_dir: std::path::PathBuf::from(&data_dir),
         ..Default::default()
     };

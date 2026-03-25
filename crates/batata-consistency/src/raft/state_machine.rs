@@ -6,6 +6,7 @@
 // Allow complex types for snapshot data structures
 #![allow(clippy::type_complexity)]
 
+use std::hash::Hasher;
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
@@ -17,10 +18,20 @@ use openraft::{
 };
 use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::request::{RaftRequest, RaftResponse};
 use super::types::{NodeId, TypeConfig};
+
+/// Compute a checksum over data bytes using SipHash (stable, in std)
+fn compute_checksum(data: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(data);
+    hasher.finish()
+}
+
+/// Size of the checksum trailer appended to snapshot data (8 bytes for u64)
+const SNAPSHOT_CHECKSUM_SIZE: usize = std::mem::size_of::<u64>();
 
 /// Helper to create StorageError for state machine operations
 fn sm_error(
@@ -1586,7 +1597,13 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             }
         }
 
-        let data = serde_json::to_vec(&snapshot_data).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let payload =
+            serde_json::to_vec(&snapshot_data).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+
+        // Append a 8-byte checksum trailer (SipHash) for integrity validation
+        let checksum = compute_checksum(&payload);
+        let mut data = payload;
+        data.extend_from_slice(&checksum.to_le_bytes());
 
         info!("Built snapshot {} with {} bytes", snapshot_id, data.len());
 
@@ -1671,28 +1688,56 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
         let data = snapshot.into_inner();
 
         if !data.is_empty() {
+            // Validate snapshot integrity checksum
+            let payload = if data.len() > SNAPSHOT_CHECKSUM_SIZE {
+                let (payload, checksum_bytes) = data.split_at(data.len() - SNAPSHOT_CHECKSUM_SIZE);
+                let expected = u64::from_le_bytes(checksum_bytes.try_into().map_err(|_| {
+                    sm_error(
+                        std::io::Error::other("Invalid checksum trailer size"),
+                        ErrorVerb::Read,
+                    )
+                })?);
+                let actual = compute_checksum(payload);
+                if actual != expected {
+                    error!(
+                        "Snapshot checksum mismatch: expected {:#x}, got {:#x}",
+                        expected, actual
+                    );
+                    return Err(sm_error(
+                        std::io::Error::other("Snapshot checksum mismatch — data may be corrupted"),
+                        ErrorVerb::Read,
+                    ));
+                }
+                info!("Snapshot checksum verified ({:#x})", actual);
+                payload
+            } else {
+                // Legacy snapshot without checksum — accept but warn
+                warn!("Snapshot has no checksum trailer, skipping integrity check");
+                &data
+            };
+
             // Deserialize the snapshot data
             let snapshot_data: std::collections::HashMap<String, Vec<(Vec<u8>, Vec<u8>)>> =
-                serde_json::from_slice(&data).map_err(|e| sm_error(e, ErrorVerb::Read))?;
+                serde_json::from_slice(payload).map_err(|e| sm_error(e, ErrorVerb::Read))?;
 
-            // Clear and restore each column family
+            // Atomically clear and restore each column family using a single WriteBatch
+            // per CF. This prevents data loss if the node crashes mid-restore — either
+            // the old data remains intact or the new data is fully written.
             for (cf_name, cf_data) in snapshot_data {
                 if let Some(cf) = self.db.cf_handle(&cf_name) {
-                    // Delete existing data
                     let mut batch = rocksdb::WriteBatch::default();
+
+                    // Delete existing data
                     let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
                     for (key, _) in iter.flatten() {
                         batch.delete_cf(cf, &key);
                     }
-                    self.db
-                        .write(batch)
-                        .map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
-                    // Restore snapshot data
-                    let mut batch = rocksdb::WriteBatch::default();
+                    // Restore snapshot data in the same batch
                     for (key, value) in cf_data {
                         batch.put_cf(cf, &key, &value);
                     }
+
                     self.db
                         .write(batch)
                         .map_err(|e| sm_error(e, ErrorVerb::Write))?;

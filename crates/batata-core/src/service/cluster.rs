@@ -356,6 +356,19 @@ impl ServerMemberManager {
         self.is_standalone
     }
 
+    /// Check if the distro protocol has completed initial data loading.
+    ///
+    /// Returns `true` in standalone mode or if no distro protocol is configured.
+    pub async fn is_distro_initialized(&self) -> bool {
+        if self.is_standalone {
+            return true;
+        }
+        match self.distro_protocol.read().await.as_ref() {
+            Some(dp) => dp.is_initialized(),
+            None => true,
+        }
+    }
+
     /// Check if a member is the local node
     pub fn is_self(&self, address: &str) -> bool {
         address == self.local_address

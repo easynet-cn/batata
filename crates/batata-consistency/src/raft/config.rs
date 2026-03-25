@@ -33,6 +33,10 @@ pub struct RaftConfig {
 
     /// Maximum size of a single log entry in bytes (default: 4MB)
     pub max_entry_size: u64,
+
+    /// Snapshot transfer timeout in milliseconds (default: 30000ms)
+    /// Used for full snapshot transfer between nodes. Should be > rpc_request_timeout_ms.
+    pub snapshot_transfer_timeout_ms: u64,
 }
 
 impl Default for RaftConfig {
@@ -46,6 +50,7 @@ impl Default for RaftConfig {
             max_payload_entries: 300,
             data_dir: PathBuf::from("./data/raft"),
             max_entry_size: 4 * 1024 * 1024, // 4MB
+            snapshot_transfer_timeout_ms: 30000,
         }
     }
 }
@@ -68,6 +73,7 @@ impl RaftConfig {
             max_payload_entries: 300,
             data_dir,
             max_entry_size: 4 * 1024 * 1024,
+            snapshot_transfer_timeout_ms: 30000,
         }
     }
 
@@ -84,6 +90,11 @@ impl RaftConfig {
     /// Get RPC timeout as Duration
     pub fn rpc_timeout(&self) -> Duration {
         Duration::from_millis(self.rpc_request_timeout_ms)
+    }
+
+    /// Get snapshot transfer timeout as Duration
+    pub fn snapshot_transfer_timeout(&self) -> Duration {
+        Duration::from_millis(self.snapshot_transfer_timeout_ms)
     }
 
     /// Get the log store directory
@@ -138,6 +149,7 @@ mod tests {
         assert_eq!(config.rpc_request_timeout_ms, 5000);
         assert_eq!(config.max_payload_entries, 300);
         assert_eq!(config.max_entry_size, 4 * 1024 * 1024);
+        assert_eq!(config.snapshot_transfer_timeout_ms, 30000);
     }
 
     #[test]
@@ -146,6 +158,10 @@ mod tests {
         assert_eq!(config.election_timeout(), Duration::from_millis(5000));
         assert_eq!(config.heartbeat_interval(), Duration::from_millis(1000));
         assert_eq!(config.rpc_timeout(), Duration::from_millis(5000));
+        assert_eq!(
+            config.snapshot_transfer_timeout(),
+            Duration::from_millis(30000)
+        );
     }
 
     #[test]

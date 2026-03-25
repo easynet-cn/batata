@@ -321,6 +321,21 @@ impl ConfigCacheService {
         );
     }
 
+    /// Export all cache entries as (key, md5, last_modified) tuples for reconciliation.
+    /// Key format is "{tenant}+{group}+{dataId}".
+    pub fn export_md5_digest(&self) -> Vec<(String, String, i64)> {
+        self.cache
+            .iter()
+            .map(|entry| {
+                (
+                    entry.key().clone(),
+                    entry.value().md5.clone(),
+                    entry.value().last_modified,
+                )
+            })
+            .collect()
+    }
+
     /// Get the total number of cached entries
     pub fn len(&self) -> usize {
         self.cache.len()

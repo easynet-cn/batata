@@ -22,12 +22,42 @@ use batata_api::raft::{
 
 use super::types::{NodeId, TypeConfig};
 
+/// Network timeout configuration for Raft gRPC connections
+#[derive(Clone, Debug)]
+pub struct RaftNetworkConfig {
+    /// Timeout for regular RPCs (AppendEntries, Vote)
+    pub rpc_timeout: Duration,
+    /// Timeout for snapshot transfer (larger due to data volume)
+    pub snapshot_timeout: Duration,
+    /// Connection establishment timeout
+    pub connect_timeout: Duration,
+}
+
+impl Default for RaftNetworkConfig {
+    fn default() -> Self {
+        Self {
+            rpc_timeout: Duration::from_secs(10),
+            snapshot_timeout: Duration::from_secs(30),
+            connect_timeout: Duration::from_secs(5),
+        }
+    }
+}
+
 /// Factory for creating Raft network connections
-pub struct BatataRaftNetworkFactory;
+pub struct BatataRaftNetworkFactory {
+    network_config: RaftNetworkConfig,
+}
 
 impl BatataRaftNetworkFactory {
     pub fn new() -> Self {
-        Self
+        Self {
+            network_config: RaftNetworkConfig::default(),
+        }
+    }
+
+    /// Create a factory with custom network timeouts
+    pub fn with_config(network_config: RaftNetworkConfig) -> Self {
+        Self { network_config }
     }
 }
 
@@ -41,7 +71,7 @@ impl openraft::network::RaftNetworkFactory<TypeConfig> for BatataRaftNetworkFact
     type Network = RaftNetworkConnection;
 
     async fn new_client(&mut self, _target: NodeId, node: &BasicNode) -> Self::Network {
-        RaftNetworkConnection::new(node.addr.clone())
+        RaftNetworkConnection::with_config(node.addr.clone(), self.network_config.clone())
     }
 }
 
@@ -49,11 +79,25 @@ impl openraft::network::RaftNetworkFactory<TypeConfig> for BatataRaftNetworkFact
 pub struct RaftNetworkConnection {
     addr: String,
     client: Option<RaftServiceClient<Channel>>,
+    network_config: RaftNetworkConfig,
 }
 
 impl RaftNetworkConnection {
     pub fn new(addr: String) -> Self {
-        Self { addr, client: None }
+        Self {
+            addr,
+            client: None,
+            network_config: RaftNetworkConfig::default(),
+        }
+    }
+
+    /// Create with custom network configuration
+    pub fn with_config(addr: String, network_config: RaftNetworkConfig) -> Self {
+        Self {
+            addr,
+            client: None,
+            network_config,
+        }
     }
 
     /// Ensure we have a connected client
@@ -64,8 +108,8 @@ impl RaftNetworkConnection {
 
             let channel = Channel::from_shared(endpoint.clone())
                 .map_err(|e| NetworkError::new(&e))?
-                .connect_timeout(Duration::from_secs(5))
-                .timeout(Duration::from_secs(10))
+                .connect_timeout(self.network_config.connect_timeout)
+                .timeout(self.network_config.rpc_timeout)
                 .connect()
                 .await
                 .map_err(|e| {

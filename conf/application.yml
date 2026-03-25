@@ -180,6 +180,26 @@ batata.config.encryption.reload.interval.ms: 0
 #batata.core.member.lookup.type: file
 
 # =============================================================================
+# Raft Consensus (distributed embedded mode only)
+# =============================================================================
+
+# Election timeout (ms). Follower starts election if no heartbeat within this period.
+# Increase for WAN clusters or high-latency networks. Must be > 3 * heartbeat_interval.
+#batata.raft.election_timeout_ms: 5000
+
+# Heartbeat interval (ms). Leader sends heartbeats at this rate.
+#batata.raft.heartbeat_interval_ms: 1000
+
+# RPC request timeout (ms) for individual Raft RPCs (AppendEntries, Vote).
+#batata.raft.rpc_timeout_ms: 5000
+
+# Snapshot threshold — number of log entries before triggering a snapshot.
+#batata.raft.snapshot_threshold: 10000
+
+# Snapshot transfer timeout (ms). Should be larger than rpc_timeout for large snapshots.
+#batata.raft.snapshot_transfer_timeout_ms: 30000
+
+# =============================================================================
 # gRPC
 # =============================================================================
 
