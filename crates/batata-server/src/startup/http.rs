@@ -9,7 +9,6 @@ use actix_web::{
     web,
 };
 
-use batata_consistency::RaftNode;
 use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;
 use rocksdb::DB;
@@ -25,7 +24,7 @@ use crate::{
         AclService, ConsulEventService, ConsulIndexProvider, ConsulLockService,
         ConsulPeeringService, ConsulQueryService, ConsulSemaphoreService, ConsulSessionService,
         agent::ConsulAgentService, catalog::ConsulCatalogService, health::ConsulHealthService,
-        kv::ConsulKVService, model::ConsulDatacenterConfig, route,
+        kv::ConsulKVService, model::ConsulDatacenterConfig,
     },
     api::metrics::{PrometheusMetricsState, prometheus_metrics},
     api::v2::route::{cluster_routes, config_routes, naming_routes},
@@ -333,7 +332,7 @@ pub fn consul_server(
     port: u16,
 ) -> Result<Server, std::io::Error> {
     let rate_limit_config = app_state.configuration.rate_limit_config();
-    let workers = app_state.configuration.http_workers();
+    let consul_workers = app_state.configuration.consul_http_workers();
     let keep_alive_secs = app_state.configuration.http_keep_alive_secs();
     let max_payload_size = app_state.configuration.max_payload_size();
     let max_json_size = app_state.configuration.max_json_size();
@@ -399,7 +398,9 @@ pub fn consul_server(
             // All Consul API v1 routes under a single /v1 scope
             .service(batata_plugin_consul::route::routes())
     })
-    .workers(workers)
+    // Consul uses fewer workers to avoid CPU contention with the main Nacos server.
+    // Configurable via batata.plugin.consul.http.workers (default: min(4, cpu_cores/2))
+    .workers(consul_workers)
     .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
     .client_request_timeout(std::time::Duration::from_secs(client_request_timeout_secs))
     .bind((address, port))?

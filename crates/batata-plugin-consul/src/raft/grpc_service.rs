@@ -26,6 +26,12 @@ pub struct ConsulRaftGrpcService {
     raft_node: Arc<RwLock<Option<Arc<ConsulRaftNode>>>>,
 }
 
+impl Default for ConsulRaftGrpcService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConsulRaftGrpcService {
     pub fn new() -> Self {
         Self {

@@ -76,7 +76,7 @@ async fn get_config_entry(
     config_service: web::Data<ConsulConfigEntryService>,
     path: web::Path<(String, String)>,
     _query: web::Query<ConfigEntryListParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
+    _index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {
@@ -233,7 +233,7 @@ async fn get_config_entry_persistent(
     config_service: web::Data<ConsulConfigEntryServicePersistent>,
     path: web::Path<(String, String)>,
     _query: web::Query<ConfigEntryListParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
+    _index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
     if !authz.allowed {

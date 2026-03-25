@@ -13,7 +13,7 @@ use batata_api::raft::{
     ChangeMembershipResponse, ClientWriteRequest, ClientWriteResponse, Entry as ProtoEntry,
     GetMetricsRequest, GetMetricsResponse, InstallSnapshotRequest as ProtoInstallSnapshotRequest,
     InstallSnapshotResponse as ProtoInstallSnapshotResponse, LogId as ProtoLogId,
-    RaftNodeInfo as ProtoRaftNodeInfo, Vote as ProtoVote, VoteRequest as ProtoVoteRequest,
+    RaftNodeInfo as ProtoRaftNodeInfo, VoteRequest as ProtoVoteRequest,
     VoteResponse as ProtoVoteResponse, raft_management_service_server::RaftManagementService,
     raft_service_server::RaftService,
 };

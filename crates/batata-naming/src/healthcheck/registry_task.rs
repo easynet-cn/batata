@@ -280,12 +280,12 @@ async fn execute_db_check(db_url: &str, timeout_duration: Duration) -> (bool, St
 
 /// Sanitize database URL for logging (hide password)
 fn sanitize_db_url(url: &str) -> String {
-    if let Some(at_pos) = url.find('@') {
-        if let Some(colon_pos) = url[..at_pos].rfind(':') {
-            let prefix = &url[..colon_pos + 1];
-            let suffix = &url[at_pos..];
-            return format!("{}***{}", prefix, suffix);
-        }
+    if let Some(at_pos) = url.find('@')
+        && let Some(colon_pos) = url[..at_pos].rfind(':')
+    {
+        let prefix = &url[..colon_pos + 1];
+        let suffix = &url[at_pos..];
+        return format!("{}***{}", prefix, suffix);
     }
     url.to_string()
 }

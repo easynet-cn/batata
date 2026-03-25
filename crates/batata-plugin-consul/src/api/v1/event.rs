@@ -8,7 +8,7 @@ use actix_web::{HttpRequest, HttpResponse, Scope, get, put, web};
 use crate::acl::AclService;
 use crate::event::ConsulEventServicePersistent;
 use crate::index_provider::ConsulIndexProvider;
-use crate::model::{EventFireParams, EventFireRequest, EventListParams};
+use crate::model::{EventFireParams, EventListParams};
 
 // ============================================================================
 // In-memory handlers

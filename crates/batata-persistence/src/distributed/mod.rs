@@ -139,11 +139,15 @@ impl ConfigPersistence for DistributedPersistService {
         encrypted_data_key: &str,
     ) -> anyhow::Result<bool> {
         let _ = (r#use, effect, schema, encrypted_data_key);
+        // Compute MD5 once here — passed through Raft to state machine and history
+        let md5_val = Self::compute_md5(content);
+
         let request = RaftRequest::ConfigPublish {
             data_id: data_id.to_string(),
             group: group_id.to_string(),
             tenant: tenant_id.to_string(),
             content: content.to_string(),
+            md5: md5_val.clone(),
             config_type: Some(r#type.to_string()),
             app_name: Some(app_name.to_string()),
             tag: if config_tags.is_empty() {
@@ -157,8 +161,7 @@ impl ConfigPersistence for DistributedPersistService {
 
         self.raft_write(request).await?;
 
-        // Also insert history through Raft
-        let md5_val = Self::compute_md5(content);
+        // Insert history through Raft (reuse pre-computed MD5)
         let now = chrono::Utc::now().timestamp_millis();
         let history_request = RaftRequest::ConfigHistoryInsert {
             id: now,

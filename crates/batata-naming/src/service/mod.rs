@@ -15,10 +15,7 @@ mod metadata;
 mod provider;
 mod subscription;
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
 
@@ -148,6 +145,7 @@ impl Default for NamingService {
 mod tests {
     use super::*;
     use batata_api::naming::{NamingServiceProvider, RegisterSource};
+    use std::collections::HashMap;
 
     fn create_test_instance(ip: &str, port: i32) -> Instance {
         Instance {
@@ -160,7 +158,7 @@ mod tests {
             ephemeral: true,
             cluster_name: "DEFAULT".to_string(),
             service_name: "test-service".to_string(),
-            metadata: std::collections::HashMap::new(),
+            metadata: HashMap::new(),
             register_source: RegisterSource::default(),
         }
     }

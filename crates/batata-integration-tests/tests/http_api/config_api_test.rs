@@ -283,7 +283,7 @@ async fn test_config_parameter_validation() {
         );
         // Nacos uses error codes in the 2xxxx or 4xxxx range for parameter errors
         assert!(
-            code == 400 || (code >= 20000 && code < 30000) || (code >= 40000 && code < 50000),
+            code == 400 || (20000..30000).contains(&code) || (40000..50000).contains(&code),
             "Expected a parameter validation error code, got {}",
             code
         );

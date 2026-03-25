@@ -128,10 +128,10 @@ impl ConsulStateMachine {
     }
 
     async fn save_last_applied(&self, log_id: ConsulLogId) -> Result<(), StorageError<NodeId>> {
-        let bytes = serde_json::to_vec(&log_id).map_err(|e| sm_error(e))?;
+        let bytes = serde_json::to_vec(&log_id).map_err(sm_error)?;
         self.db
             .put_cf(self.cf_meta(), KEY_LAST_APPLIED, &bytes)
-            .map_err(|e| sm_error(e))?;
+            .map_err(sm_error)?;
         *self.last_applied.write().await = Some(log_id);
         Ok(())
     }
@@ -140,10 +140,10 @@ impl ConsulStateMachine {
         &self,
         membership: ConsulStoredMembership,
     ) -> Result<(), StorageError<NodeId>> {
-        let bytes = serde_json::to_vec(&membership).map_err(|e| sm_error(e))?;
+        let bytes = serde_json::to_vec(&membership).map_err(sm_error)?;
         self.db
             .put_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP, &bytes)
-            .map_err(|e| sm_error(e))?;
+            .map_err(sm_error)?;
         *self.last_membership.write().await = membership;
         Ok(())
     }
@@ -576,7 +576,7 @@ impl RaftStateMachine<ConsulTypeConfig> for ConsulStateMachine {
     async fn applied_state(
         &mut self,
     ) -> Result<(Option<ConsulLogId>, ConsulStoredMembership), StorageError<NodeId>> {
-        let applied = self.last_applied.read().await.clone();
+        let applied = *self.last_applied.read().await;
         let membership = self.last_membership.read().await.clone();
         Ok((applied, membership))
     }
@@ -630,7 +630,7 @@ impl RaftStateMachine<ConsulTypeConfig> for ConsulStateMachine {
         // Currently returns an empty snapshot; full implementation TODO.
         ConsulStateMachine {
             db: self.db.clone(),
-            last_applied: RwLock::new(self.last_applied.read().await.clone()),
+            last_applied: RwLock::new(*self.last_applied.read().await),
             last_membership: RwLock::new(self.last_membership.read().await.clone()),
             table_index: self.table_index.clone(),
         }
@@ -665,7 +665,7 @@ impl openraft::RaftSnapshotBuilder<ConsulTypeConfig> for ConsulStateMachine {
         &mut self,
     ) -> Result<openraft::Snapshot<ConsulTypeConfig>, StorageError<NodeId>> {
         // TODO: Build actual snapshot from RocksDB
-        let applied = self.last_applied.read().await.clone();
+        let applied = *self.last_applied.read().await;
         let membership = self.last_membership.read().await.clone();
 
         let meta = ConsulSnapshotMeta {

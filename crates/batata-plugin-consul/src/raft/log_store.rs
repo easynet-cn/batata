@@ -8,7 +8,7 @@ use std::ops::RangeBounds;
 use std::path::Path;
 use std::sync::Arc;
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, WriteBytesExt};
 use openraft::storage::{LogFlushed, LogState, RaftLogStorage};
 use openraft::{ErrorSubject, ErrorVerb, OptionalSend, RaftLogReader, StorageError};
 use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Options};
@@ -90,24 +90,23 @@ impl ConsulLogStore {
     }
 
     async fn load_cached_values(&self) -> Result<(), StorageError<NodeId>> {
-        if let Ok(Some(bytes)) = self.db.get_cf(self.cf_state(), KEY_VOTE) {
-            if let Ok(v) = serde_json::from_slice(&bytes) {
-                *self.vote.write().await = Some(v);
-            }
+        if let Ok(Some(bytes)) = self.db.get_cf(self.cf_state(), KEY_VOTE)
+            && let Ok(v) = serde_json::from_slice(&bytes)
+        {
+            *self.vote.write().await = Some(v);
         }
-        if let Ok(Some(bytes)) = self.db.get_cf(self.cf_state(), KEY_LAST_PURGED) {
-            if let Ok(v) = serde_json::from_slice(&bytes) {
-                *self.last_purged.write().await = Some(v);
-            }
+        if let Ok(Some(bytes)) = self.db.get_cf(self.cf_state(), KEY_LAST_PURGED)
+            && let Ok(v) = serde_json::from_slice(&bytes)
+        {
+            *self.last_purged.write().await = Some(v);
         }
         let mut iter = self.db.raw_iterator_cf(self.cf_logs());
         iter.seek_to_last();
-        if iter.valid() {
-            if let Some(value) = iter.value() {
-                if let Ok(entry) = serde_json::from_slice::<ConsulEntry>(value) {
-                    *self.last_log_id.write().await = Some(entry.log_id);
-                }
-            }
+        if iter.valid()
+            && let Some(value) = iter.value()
+            && let Ok(entry) = serde_json::from_slice::<ConsulEntry>(value)
+        {
+            *self.last_log_id.write().await = Some(entry.log_id);
         }
         Ok(())
     }

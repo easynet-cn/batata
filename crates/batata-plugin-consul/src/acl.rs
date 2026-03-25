@@ -1496,10 +1496,10 @@ pub async fn acl_logout(
     };
 
     // Don't allow logging out the bootstrap token
-    if let Some(token) = acl_service.get_token(&secret_id) {
-        if token.accessor_id == BOOTSTRAP_ACCESSOR_ID {
-            return HttpResponse::Forbidden().json(AclError::new("Cannot logout bootstrap token"));
-        }
+    if let Some(token) = acl_service.get_token(&secret_id)
+        && token.accessor_id == BOOTSTRAP_ACCESSOR_ID
+    {
+        return HttpResponse::Forbidden().json(AclError::new("Cannot logout bootstrap token"));
     }
 
     // Find and delete the token

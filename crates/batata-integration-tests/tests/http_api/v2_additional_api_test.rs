@@ -445,7 +445,7 @@ async fn test_v2_catalog_instances() {
             inst["ip"].as_str() == Some("192.168.20.30")
                 || inst["addr"]
                     .as_str()
-                    .map_or(false, |a| a.contains("192.168.20.30"))
+                    .is_some_and(|a| a.contains("192.168.20.30"))
         });
         assert!(
             found,

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use openraft::BasicNode;
 use rocksdb::DB;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::log_store::ConsulLogStore;
 use super::network::ConsulRaftNetworkFactory;
@@ -198,15 +198,15 @@ impl ConsulRaftNode {
 
             // Wait for our local state machine to apply up to the leader's log index.
             // This ensures read-after-write consistency on this follower.
-            if let Some(local_idx) = self.last_applied_index() {
-                if local_idx < leader_log_index {
-                    // Wait up to 2 seconds for replication to catch up
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_secs(2),
-                        self.wait_for_applied(leader_log_index),
-                    )
-                    .await;
-                }
+            if let Some(local_idx) = self.last_applied_index()
+                && local_idx < leader_log_index
+            {
+                // Wait up to 2 seconds for replication to catch up
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    self.wait_for_applied(leader_log_index),
+                )
+                .await;
             }
 
             let idx = self.last_applied_index().unwrap_or(leader_log_index);
@@ -237,10 +237,10 @@ impl ConsulRaftNode {
         let mut rx = self.raft.metrics();
         loop {
             let m = rx.borrow().clone();
-            if let Some(applied) = m.last_applied {
-                if applied.index >= target_index {
-                    return;
-                }
+            if let Some(applied) = m.last_applied
+                && applied.index >= target_index
+            {
+                return;
             }
             // Wait for metrics change
             if rx.changed().await.is_err() {

@@ -2,8 +2,6 @@
 //!
 //! These delegate to the original handlers in `crate::acl`.
 
-use std::sync::Arc;
-
 use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
 
 use crate::acl::{

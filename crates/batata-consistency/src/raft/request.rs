@@ -14,6 +14,8 @@ pub enum RaftRequest {
         group: String,
         tenant: String,
         content: String,
+        /// Pre-computed MD5 of content (avoids recomputation in state machine apply)
+        md5: String,
         config_type: Option<String>,
         app_name: Option<String>,
         tag: Option<String>,
@@ -307,6 +309,7 @@ mod tests {
             group: "DEFAULT_GROUP".to_string(),
             tenant: "".to_string(),
             content: "key=value".to_string(),
+            md5: format!("{:x}", md5::compute("key=value")),
             config_type: Some("properties".to_string()),
             app_name: None,
             tag: None,

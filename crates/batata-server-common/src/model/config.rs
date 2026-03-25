@@ -1243,6 +1243,23 @@ impl Configuration {
             .unwrap_or_else(|_| "DEFAULT_GROUP".to_string())
     }
 
+    /// Get the number of HTTP workers for Consul server.
+    /// Defaults to min(4, cpu_cores/2) to avoid CPU contention with the main Nacos server.
+    pub fn consul_http_workers(&self) -> usize {
+        let v = self
+            .config
+            .get_int("batata.plugin.consul.http.workers")
+            .unwrap_or(0) as usize;
+        if v == 0 {
+            let cpus = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
+            std::cmp::min(4, cpus / 2).max(2)
+        } else {
+            v
+        }
+    }
+
     /// Get the default Nacos cluster for Consul API mapping (default: "DEFAULT")
     pub fn consul_default_cluster(&self) -> String {
         self.config

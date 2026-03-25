@@ -167,7 +167,7 @@ async fn test_console_server_serves_auth() {
         body.get("accessToken").is_some()
             || body
                 .get("data")
-                .map_or(false, |d| d.get("accessToken").is_some()),
+                .is_some_and(|d| d.get("accessToken").is_some()),
         "Auth response should contain an accessToken field, got: {:?}",
         body
     );
@@ -277,7 +277,7 @@ async fn test_main_server_serves_auth() {
         body.get("accessToken").is_some()
             || body
                 .get("data")
-                .map_or(false, |d| d.get("accessToken").is_some()),
+                .is_some_and(|d| d.get("accessToken").is_some()),
         "Auth response should contain an accessToken field, got: {:?}",
         body
     );

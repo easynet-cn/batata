@@ -23,7 +23,9 @@ impl TtlMonitor {
     /// Start the monitor loop (runs forever)
     pub async fn start(&self) {
         tracing::info!("TTL monitor started");
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        // Scan every 5 seconds (reduced from 1s to minimize lock contention)
+        // TTL checks typically have 10s+ TTL, so 5s scan interval is sufficient
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
         loop {
             interval.tick().await;

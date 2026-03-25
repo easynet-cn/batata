@@ -134,13 +134,11 @@ impl batata_common::ClusterContext for AppState {
     fn is_standalone(&self) -> bool {
         self.cluster_manager
             .as_ref()
-            .map_or(true, |m| m.is_standalone())
+            .is_none_or(|m| m.is_standalone())
     }
 
     fn is_leader(&self) -> bool {
-        self.cluster_manager
-            .as_ref()
-            .map_or(true, |m| m.is_leader())
+        self.cluster_manager.as_ref().is_none_or(|m| m.is_leader())
     }
 
     fn leader_address(&self) -> Option<String> {

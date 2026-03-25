@@ -263,9 +263,7 @@ async fn test_console_namespace_crud() {
         )
     });
     assert!(
-        create_json
-            .get("code")
-            .map_or(false, |c| c == 0 || c == 200)
+        create_json.get("code").is_some_and(|c| c == 0 || c == 200)
             || create_json.get("data").is_some(),
         "Create namespace response should indicate success, got: {}",
         create_body
@@ -383,9 +381,7 @@ async fn test_console_config_publish_and_get() {
             )
         });
     assert!(
-        publish_json
-            .get("code")
-            .map_or(false, |c| c == 0 || c == 200)
+        publish_json.get("code").is_some_and(|c| c == 0 || c == 200)
             || publish_json.get("data") == Some(&serde_json::Value::Bool(true)),
         "Publish config response should indicate success, got: {}",
         publish_body

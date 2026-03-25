@@ -29,7 +29,7 @@ use batata_api::{
 
 use batata_api::naming::NamingServiceProvider;
 
-use crate::handler::naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern};
+use crate::handler::naming_fuzzy_watch::NamingFuzzyWatchManager;
 
 // Handler for InstanceRequest - registers or deregisters a service instance
 #[derive(Clone)]

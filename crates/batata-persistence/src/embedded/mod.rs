@@ -14,8 +14,7 @@ use batata_consistency::raft::state_machine::{
 
 use crate::model::{
     CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
-    DeployTopology, NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageBackend, StorageMode,
-    UserInfo,
+    DeployTopology, NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageBackend, UserInfo,
 };
 use crate::traits::PersistenceService;
 use crate::traits::auth::AuthPersistence;
@@ -1241,6 +1240,7 @@ impl PersistenceService for EmbeddedPersistService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::StorageMode;
     use tempfile::TempDir;
 
     async fn create_test_service() -> (EmbeddedPersistService, TempDir) {

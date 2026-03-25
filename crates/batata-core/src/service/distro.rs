@@ -1106,7 +1106,7 @@ mod tests {
 
         // Each member should have at least some keys (not perfectly even, but distributed)
         assert_eq!(counts.len(), 3, "All 3 members should have keys assigned");
-        for (_, count) in &counts {
+        for count in counts.values() {
             assert!(*count > 0, "Each member should have at least one key");
         }
     }

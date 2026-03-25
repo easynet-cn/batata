@@ -125,7 +125,7 @@ impl ConnectionManager {
         }
     }
 
-    pub async fn register(&self, connection_id: &str, mut client: GrpcClient) -> bool {
+    pub async fn register(&self, connection_id: &str, client: GrpcClient) -> bool {
         if self.clients.contains_key(connection_id) {
             tracing::debug!(connection_id, "Connection already registered, skipping");
             return true;
