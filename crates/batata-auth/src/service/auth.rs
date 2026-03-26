@@ -3,7 +3,7 @@
 //! Provides JWT token encoding, decoding, caching, and revocation.
 
 use std::collections::HashSet;
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
@@ -12,6 +12,30 @@ use parking_lot::RwLock;
 
 use crate::model::NacosJwtPayload;
 
+/// Configuration for auth caches
+#[derive(Clone, Debug)]
+pub struct AuthCacheConfig {
+    /// Token cache max capacity (default: 50000)
+    pub token_capacity: u64,
+    /// Token cache TTL in seconds (default: 300)
+    pub token_ttl_secs: u64,
+    /// Token blacklist max capacity (default: 100000)
+    pub blacklist_capacity: u64,
+    /// Token blacklist TTL in seconds (default: 86400)
+    pub blacklist_ttl_secs: u64,
+}
+
+impl Default for AuthCacheConfig {
+    fn default() -> Self {
+        Self {
+            token_capacity: 50_000,
+            token_ttl_secs: 300,
+            blacklist_capacity: 100_000,
+            blacklist_ttl_secs: 86400,
+        }
+    }
+}
+
 /// Cached token data containing the full payload
 #[derive(Clone)]
 struct CachedTokenData {
@@ -19,26 +43,54 @@ struct CachedTokenData {
 }
 
 /// JWT Token cache to avoid repeated validation of the same token
-static TOKEN_CACHE: LazyLock<Cache<String, CachedTokenData>> = LazyLock::new(|| {
-    Cache::builder()
-        .max_capacity(50_000)
-        .time_to_live(Duration::from_secs(300)) // 5 minutes TTL
-        .build()
-});
+static TOKEN_CACHE: OnceLock<Cache<String, CachedTokenData>> = OnceLock::new();
 
 /// Token blacklist for revoked tokens (by token string)
-/// TTL of 24 hours to cover token expiration
-static TOKEN_BLACKLIST: LazyLock<Cache<String, ()>> = LazyLock::new(|| {
-    Cache::builder()
-        .max_capacity(100_000)
-        .time_to_live(Duration::from_secs(86400)) // 24 hours TTL
-        .build()
-});
+static TOKEN_BLACKLIST: OnceLock<Cache<String, ()>> = OnceLock::new();
 
 /// User blacklist for revoked users (all their tokens are invalid)
 /// This is cleared when the user logs in again
-static USER_BLACKLIST: LazyLock<RwLock<HashSet<String>>> =
-    LazyLock::new(|| RwLock::new(HashSet::new()));
+static USER_BLACKLIST: OnceLock<RwLock<HashSet<String>>> = OnceLock::new();
+
+fn token_cache() -> &'static Cache<String, CachedTokenData> {
+    TOKEN_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(50_000)
+            .time_to_live(Duration::from_secs(300))
+            .build()
+    })
+}
+
+fn token_blacklist() -> &'static Cache<String, ()> {
+    TOKEN_BLACKLIST.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(100_000)
+            .time_to_live(Duration::from_secs(86400))
+            .build()
+    })
+}
+
+fn user_blacklist() -> &'static RwLock<HashSet<String>> {
+    USER_BLACKLIST.get_or_init(|| RwLock::new(HashSet::new()))
+}
+
+/// Initialize auth caches with custom configuration.
+/// Must be called before any auth operations. If not called, default values are used.
+pub fn init_auth_caches(config: AuthCacheConfig) {
+    let _ = TOKEN_CACHE.set(
+        Cache::builder()
+            .max_capacity(config.token_capacity)
+            .time_to_live(Duration::from_secs(config.token_ttl_secs))
+            .build(),
+    );
+    let _ = TOKEN_BLACKLIST.set(
+        Cache::builder()
+            .max_capacity(config.blacklist_capacity)
+            .time_to_live(Duration::from_secs(config.blacklist_ttl_secs))
+            .build(),
+    );
+    let _ = USER_BLACKLIST.set(RwLock::new(HashSet::new()));
+}
 
 /// Decode and validate JWT token with caching
 ///
@@ -52,19 +104,19 @@ pub fn decode_jwt_token_cached(
     secret_key: &str,
 ) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<NacosJwtPayload>> {
     // Check if token is blacklisted (revoked)
-    if TOKEN_BLACKLIST.contains_key(token) {
+    if token_blacklist().contains_key(token) {
         return Err(jsonwebtoken::errors::Error::from(
             jsonwebtoken::errors::ErrorKind::InvalidToken,
         ));
     }
 
     // Check cache first - use token directly for lookup
-    if let Some(cached) = TOKEN_CACHE.get(token) {
+    if let Some(cached) = token_cache().get(token) {
         let now = chrono::Utc::now().timestamp();
         if cached.claims.exp > now {
             // Check if user is blacklisted
             if is_user_blacklisted(&cached.claims.sub) {
-                TOKEN_CACHE.invalidate(token);
+                token_cache().invalidate(token);
                 return Err(jsonwebtoken::errors::Error::from(
                     jsonwebtoken::errors::ErrorKind::InvalidToken,
                 ));
@@ -75,7 +127,7 @@ pub fn decode_jwt_token_cached(
             });
         }
         // Token expired in cache, invalidate it
-        TOKEN_CACHE.invalidate(token);
+        token_cache().invalidate(token);
     }
 
     // Cache miss or expired - perform actual validation
@@ -89,7 +141,7 @@ pub fn decode_jwt_token_cached(
     }
 
     // Only allocate String once when inserting to cache
-    TOKEN_CACHE.insert(
+    token_cache().insert(
         token.to_string(),
         CachedTokenData {
             claims: result.claims.clone(),
@@ -110,15 +162,15 @@ pub fn decode_jwt_token(
 
 /// Invalidate a token from the cache
 pub fn invalidate_token(token: &str) {
-    TOKEN_CACHE.invalidate(token);
+    token_cache().invalidate(token);
 }
 
 /// Revoke a specific token (add to blacklist)
 ///
 /// The token will be rejected for authentication until it expires from the blacklist.
 pub fn revoke_token(token: &str) {
-    TOKEN_CACHE.invalidate(token);
-    TOKEN_BLACKLIST.insert(token.to_string(), ());
+    token_cache().invalidate(token);
+    token_blacklist().insert(token.to_string(), ());
 }
 
 /// Revoke all tokens for a specific user
@@ -126,7 +178,7 @@ pub fn revoke_token(token: &str) {
 /// All existing tokens for this user will be rejected.
 /// Call `unblacklist_user` when the user logs in again to allow new tokens.
 pub fn revoke_user_tokens(username: &str) {
-    USER_BLACKLIST.write().insert(username.to_string());
+    user_blacklist().write().insert(username.to_string());
     // No need to invalidate_all(): decode_jwt_token_cached() already checks
     // USER_BLACKLIST and invalidates individual tokens for blacklisted users
     // on cache hit. New requests will be rejected immediately.
@@ -134,28 +186,28 @@ pub fn revoke_user_tokens(username: &str) {
 
 /// Remove a user from the blacklist (typically called after successful login)
 pub fn unblacklist_user(username: &str) {
-    USER_BLACKLIST.write().remove(username);
+    user_blacklist().write().remove(username);
 }
 
 /// Check if a user is blacklisted
 fn is_user_blacklisted(username: &str) -> bool {
-    USER_BLACKLIST.read().contains(username)
+    user_blacklist().read().contains(username)
 }
 
 /// Check if a token is blacklisted
 pub fn is_token_blacklisted(token: &str) -> bool {
-    TOKEN_BLACKLIST.contains_key(token)
+    token_blacklist().contains_key(token)
 }
 
 /// Clear the entire token cache
 pub fn clear_token_cache() {
-    TOKEN_CACHE.invalidate_all();
+    token_cache().invalidate_all();
 }
 
 /// Clear all blacklists (for testing or admin purposes)
 pub fn clear_all_blacklists() {
-    TOKEN_BLACKLIST.invalidate_all();
-    USER_BLACKLIST.write().clear();
+    token_blacklist().invalidate_all();
+    user_blacklist().write().clear();
 }
 
 /// Encode a JWT token
@@ -257,7 +309,7 @@ mod tests {
         assert!(decode_jwt_token(&token, TEST_SECRET).is_ok());
 
         revoke_token(&token);
-        assert!(TOKEN_BLACKLIST.contains_key(&token));
+        assert!(token_blacklist().contains_key(&token));
 
         // Cached decode should fail (blacklisted)
         assert!(decode_jwt_token_cached(&token, TEST_SECRET).is_err());
@@ -324,7 +376,7 @@ mod tests {
         // Prime cache
         assert!(decode_jwt_token_cached(&token, TEST_SECRET).is_ok());
         // Invalidate this specific token
-        TOKEN_CACHE.invalidate(&token);
+        token_cache().invalidate(&token);
         // Should still validate (just re-decodes)
         assert!(decode_jwt_token(&token, TEST_SECRET).is_ok());
     }
@@ -336,15 +388,15 @@ mod tests {
         let token = encode_jwt_token(&user, TEST_SECRET, 3600).unwrap();
 
         // Not blacklisted initially
-        assert!(!TOKEN_BLACKLIST.contains_key(&token));
+        assert!(!token_blacklist().contains_key(&token));
 
         // Add to blacklist
-        TOKEN_BLACKLIST.insert(token.clone(), ());
-        assert!(TOKEN_BLACKLIST.contains_key(&token));
+        token_blacklist().insert(token.clone(), ());
+        assert!(token_blacklist().contains_key(&token));
 
         // Remove just this token (clean up without affecting others)
-        TOKEN_BLACKLIST.invalidate(&token);
-        assert!(!TOKEN_BLACKLIST.contains_key(&token));
+        token_blacklist().invalidate(&token);
+        assert!(!token_blacklist().contains_key(&token));
     }
 
     #[test]

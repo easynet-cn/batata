@@ -54,6 +54,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     batata_server::metrics::init_metrics();
     let _rate_limit_cleanup_handle = rate_limit::start_cleanup_task();
 
+    // Initialize auth caches with configuration values
+    batata_auth::service::auth::init_auth_caches(batata_auth::service::auth::AuthCacheConfig {
+        token_capacity: configuration.auth_token_cache_capacity(),
+        token_ttl_secs: configuration.auth_token_cache_ttl_secs(),
+        blacklist_capacity: configuration.auth_blacklist_capacity(),
+        blacklist_ttl_secs: configuration.auth_blacklist_ttl_secs(),
+    });
+    batata_core::service::grpc_auth::init_grpc_auth_cache(
+        configuration.grpc_auth_cache_capacity(),
+        configuration.grpc_auth_cache_ttl_secs(),
+    );
+
     // ====================================================================
     // Phase 2: Determine deployment mode
     // ====================================================================
@@ -108,7 +120,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let health_check_manager: Option<Arc<HealthCheckManager>> = if let Some(ref ns) = naming_service
     {
-        let health_check_config = Arc::new(HealthCheckConfig::default());
+        let health_check_config = Arc::new(HealthCheckConfig {
+            heartbeat_interval_secs: configuration.naming_heartbeat_check_interval_secs(),
+            ttl_monitor_interval_secs: configuration.naming_ttl_monitor_interval_secs(),
+            deregister_monitor_interval_secs: configuration
+                .naming_deregister_monitor_interval_secs(),
+            ..HealthCheckConfig::default()
+        });
         let expire_enabled = configuration.expire_instance_enabled();
         let health_check_enabled = health_check_config.is_enabled();
         let manager = Arc::new(HealthCheckManager::new(
@@ -345,11 +363,21 @@ fn init_oauth_service(
 ) -> Result<Option<Arc<OAuthService>>, Box<dyn std::error::Error>> {
     if configuration.is_oauth_enabled() {
         let oauth_config = configuration.oauth_config();
+        let oauth_cache_config = batata_auth::service::oauth::OAuthCacheConfig {
+            discovery_ttl_secs: configuration.oauth_discovery_cache_ttl_secs(),
+            discovery_capacity: configuration.oauth_discovery_cache_capacity(),
+            state_ttl_secs: configuration.oauth_state_cache_ttl_secs(),
+            state_capacity: configuration.oauth_state_cache_capacity(),
+            http_timeout_secs: configuration.oauth_http_timeout_secs(),
+        };
         info!(
             "OAuth2/OIDC authentication enabled with {} providers",
             oauth_config.providers.len()
         );
-        Ok(Some(Arc::new(OAuthService::new(oauth_config)?)))
+        Ok(Some(Arc::new(OAuthService::with_cache_config(
+            oauth_config,
+            oauth_cache_config,
+        )?)))
     } else {
         Ok(None)
     }

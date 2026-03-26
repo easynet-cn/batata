@@ -54,6 +54,18 @@ impl Default for CircuitBreakerConfig {
     }
 }
 
+impl CircuitBreakerConfig {
+    /// Create from application Configuration
+    pub fn from_configuration(config: &crate::model::Configuration) -> Self {
+        Self {
+            failure_threshold: config.circuit_breaker_failure_threshold(),
+            reset_timeout: Duration::from_millis(config.circuit_breaker_reset_timeout_ms()),
+            success_threshold: config.circuit_breaker_success_threshold(),
+            failure_window: Duration::from_millis(config.circuit_breaker_failure_window_ms()),
+        }
+    }
+}
+
 /// Circuit breaker for protecting remote calls
 /// Uses lock-free atomics for high-performance concurrent access
 pub struct CircuitBreaker {

@@ -23,7 +23,17 @@ pub async fn create_datasource(
 ) -> anyhow::Result<Arc<dyn ConsoleDataSource>> {
     if configuration.is_console_remote_mode() {
         // Remote mode: use HTTP client to connect to server
-        let remote_datasource = remote::RemoteDataSource::new(configuration).await?;
+        let auto_refresh_config = remote::AutoRefreshConfig {
+            enabled: true,
+            interval: std::time::Duration::from_secs(
+                configuration.console_remote_refresh_interval_secs(),
+            ),
+            initial_delay: std::time::Duration::from_secs(
+                configuration.console_remote_initial_delay_secs(),
+            ),
+        };
+        let remote_datasource =
+            remote::RemoteDataSource::with_auto_refresh(configuration, auto_refresh_config).await?;
         Ok(Arc::new(remote_datasource))
     } else {
         // Local mode: direct PersistenceService access (works for all storage backends)

@@ -4,7 +4,7 @@
 //! similar to Nacos's GrpcProtocolAuthService.
 
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use moka::sync::Cache;
@@ -236,12 +236,27 @@ impl PermissionCheckResult {
 }
 
 /// Cache for permission check results
-static PERMISSION_CHECK_CACHE: LazyLock<Cache<String, bool>> = LazyLock::new(|| {
-    Cache::builder()
-        .max_capacity(10_000)
-        .time_to_live(Duration::from_secs(300)) // 5 minutes TTL
-        .build()
-});
+static PERMISSION_CHECK_CACHE: OnceLock<Cache<String, bool>> = OnceLock::new();
+
+fn permission_check_cache() -> &'static Cache<String, bool> {
+    PERMISSION_CHECK_CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(10_000)
+            .time_to_live(Duration::from_secs(300))
+            .build()
+    })
+}
+
+/// Initialize gRPC auth permission cache with custom configuration.
+/// Must be called before any gRPC auth operations. If not called, default values are used.
+pub fn init_grpc_auth_cache(capacity: u64, ttl_secs: u64) {
+    let _ = PERMISSION_CHECK_CACHE.set(
+        Cache::builder()
+            .max_capacity(capacity)
+            .time_to_live(Duration::from_secs(ttl_secs))
+            .build(),
+    );
+}
 
 /// gRPC Authentication Service
 /// Handles token validation and permission checking for gRPC requests
@@ -435,7 +450,7 @@ impl GrpcAuthService {
 
         // Check cache first
         let cache_key = format!("{}:{}:{}", auth_context.username, resource_str, action_str);
-        if let Some(result) = PERMISSION_CHECK_CACHE.get(&cache_key) {
+        if let Some(result) = permission_check_cache().get(&cache_key) {
             if result {
                 return PermissionCheckResult::pass();
             } else {
@@ -451,7 +466,7 @@ impl GrpcAuthService {
         });
 
         // Cache the result
-        PERMISSION_CHECK_CACHE.insert(cache_key, has_permission);
+        permission_check_cache().insert(cache_key, has_permission);
 
         if has_permission {
             PermissionCheckResult::pass()
@@ -488,7 +503,7 @@ impl GrpcAuthService {
     /// Invalidate permission cache for a user
     pub fn invalidate_cache_for_user(username: &str) {
         let prefix = format!("{}:", username);
-        let keys_to_invalidate: Vec<String> = PERMISSION_CHECK_CACHE
+        let keys_to_invalidate: Vec<String> = permission_check_cache()
             .iter()
             .filter_map(|(key, _)| {
                 if key.starts_with(&prefix) {
@@ -500,13 +515,13 @@ impl GrpcAuthService {
             .collect();
 
         for key in keys_to_invalidate {
-            PERMISSION_CHECK_CACHE.invalidate(&key);
+            permission_check_cache().invalidate(&key);
         }
     }
 
     /// Clear all permission cache
     pub fn clear_cache() {
-        PERMISSION_CHECK_CACHE.invalidate_all();
+        permission_check_cache().invalidate_all();
     }
 }
 

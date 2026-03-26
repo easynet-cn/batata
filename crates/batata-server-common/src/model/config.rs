@@ -1644,6 +1644,135 @@ impl Configuration {
             .unwrap_or(30000) as u64
     }
 
+    // ========================================================================
+    // Console Remote Polling Configuration
+    // ========================================================================
+
+    /// Console remote data source refresh interval in seconds (default: 30)
+    pub fn console_remote_refresh_interval_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.console.remote.refresh_interval_secs")
+            .unwrap_or(30) as u64
+    }
+
+    /// Console remote data source initial delay in seconds (default: 5)
+    pub fn console_remote_initial_delay_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.console.remote.initial_delay_secs")
+            .unwrap_or(5) as u64
+    }
+
+    // ========================================================================
+    // Webhook Configuration
+    // ========================================================================
+
+    /// Webhook HTTP client default timeout in seconds (default: 30)
+    pub fn webhook_default_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.plugin.webhook.default_timeout_secs")
+            .unwrap_or(30) as u64
+    }
+
+    // ========================================================================
+    // Consul Client Configuration
+    // ========================================================================
+
+    /// Consul client connect timeout in seconds (default: 5)
+    pub fn consul_client_connect_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.plugin.consul.client.connect_timeout_secs")
+            .unwrap_or(5) as u64
+    }
+
+    /// Consul client read timeout in seconds (default: 30)
+    pub fn consul_client_read_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.plugin.consul.client.read_timeout_secs")
+            .unwrap_or(30) as u64
+    }
+
+    // ========================================================================
+    // Naming Health Check Intervals
+    // ========================================================================
+
+    /// Naming heartbeat check interval in seconds (default: 5)
+    pub fn naming_heartbeat_check_interval_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.naming.healthcheck.heartbeat_interval_secs")
+            .unwrap_or(5) as u64
+    }
+
+    /// Naming TTL monitor interval in seconds (default: 5)
+    pub fn naming_ttl_monitor_interval_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.naming.healthcheck.ttl_monitor_interval_secs")
+            .unwrap_or(5) as u64
+    }
+
+    /// Naming deregister monitor interval in seconds (default: 10)
+    pub fn naming_deregister_monitor_interval_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.naming.healthcheck.deregister_monitor_interval_secs")
+            .unwrap_or(10) as u64
+    }
+
+    // ========================================================================
+    // OAuth Cache Configuration
+    // ========================================================================
+
+    /// OAuth provider discovery cache TTL in seconds (default: 3600)
+    pub fn oauth_discovery_cache_ttl_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.oauth.cache.discovery_ttl_secs")
+            .unwrap_or(3600) as u64
+    }
+
+    /// OAuth provider discovery cache max capacity (default: 100)
+    pub fn oauth_discovery_cache_capacity(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.oauth.cache.discovery_capacity")
+            .unwrap_or(100) as u64
+    }
+
+    /// OAuth state cache TTL in seconds (default: 600)
+    pub fn oauth_state_cache_ttl_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.oauth.cache.state_ttl_secs")
+            .unwrap_or(600) as u64
+    }
+
+    /// OAuth state cache max capacity (default: 10000)
+    pub fn oauth_state_cache_capacity(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.oauth.cache.state_capacity")
+            .unwrap_or(10000) as u64
+    }
+
+    /// OAuth HTTP client timeout in seconds (default: 30)
+    pub fn oauth_http_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.oauth.http_timeout_secs")
+            .unwrap_or(30) as u64
+    }
+
+    // ========================================================================
+    // gRPC Auth Cache Configuration
+    // ========================================================================
+
+    /// gRPC auth permission check cache max capacity (default: 10000)
+    pub fn grpc_auth_cache_capacity(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.cache.grpc_permission_capacity")
+            .unwrap_or(10000) as u64
+    }
+
+    /// gRPC auth permission check cache TTL in seconds (default: 300)
+    pub fn grpc_auth_cache_ttl_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.core.auth.cache.grpc_permission_ttl_secs")
+            .unwrap_or(300) as u64
+    }
+
     /// Build a RocksDB configuration struct from the current config values
     pub fn rocksdb_config(&self) -> RocksDbConfig {
         RocksDbConfig {

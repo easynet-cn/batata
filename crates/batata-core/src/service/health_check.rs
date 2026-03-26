@@ -46,6 +46,18 @@ impl Default for HealthCheckConfig {
     }
 }
 
+impl HealthCheckConfig {
+    /// Create from application Configuration
+    pub fn from_configuration(config: &crate::model::Configuration) -> Self {
+        Self {
+            check_interval: Duration::from_millis(config.cluster_health_check_interval_ms()),
+            check_timeout: Duration::from_millis(config.cluster_health_check_timeout_ms()),
+            max_fail_count: config.cluster_health_check_max_fail_count(),
+            suspicious_threshold: config.cluster_health_check_suspicious_threshold(),
+        }
+    }
+}
+
 /// Member health status tracker
 #[derive(Clone, Debug)]
 pub struct MemberHealthStatus {

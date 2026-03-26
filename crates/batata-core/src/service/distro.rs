@@ -59,6 +59,20 @@ impl Default for DistroConfig {
     }
 }
 
+impl DistroConfig {
+    /// Create from application Configuration
+    pub fn from_configuration(config: &crate::model::Configuration) -> Self {
+        Self {
+            sync_delay: Duration::from_millis(config.distro_sync_delay_ms()),
+            sync_timeout: Duration::from_millis(config.distro_sync_timeout_ms()),
+            sync_retry_delay: Duration::from_millis(config.distro_sync_retry_delay_ms()),
+            verify_interval: Duration::from_millis(config.distro_verify_interval_ms()),
+            verify_timeout: Duration::from_millis(config.distro_verify_timeout_ms()),
+            load_retry_delay: Duration::from_millis(config.distro_load_retry_delay_ms()),
+        }
+    }
+}
+
 /// Determines which cluster node is responsible for a given data key
 ///
 /// Uses hash-based partitioning over a sorted list of healthy member addresses.

@@ -326,9 +326,8 @@ fn create_distro_protocol(
     naming_service: Arc<batata_naming::NamingService>,
     members: Arc<DashMap<String, Member>>,
     cluster_client_manager: Arc<ClusterClientManager>,
+    distro_config: DistroConfig,
 ) -> Arc<DistroProtocol> {
-    // Create distro protocol with the real cluster members and client manager
-    let distro_config = DistroConfig::default();
     let distro_protocol = DistroProtocol::new(
         local_address.to_string(),
         distro_config,
@@ -527,6 +526,7 @@ pub fn start_grpc_servers(
     let naming_service = naming_service.unwrap_or_else(|| Arc::new(NamingService::new()));
 
     // Create and initialize distro protocol using the SAME naming service and real cluster members
+    let distro_config = DistroConfig::from_configuration(&core_config);
     let distro_protocol = create_distro_protocol(
         &local_address,
         naming_service.clone(),
@@ -537,6 +537,7 @@ pub fn start_grpc_servers(
                 cluster_client_config.clone(),
             ))
         }),
+        distro_config,
     );
 
     // Pass distro_protocol to naming handlers only in cluster mode

@@ -12,20 +12,31 @@ use super::ttl_processor::TtlHealthCheckProcessor;
 /// Background monitor that detects expired TTL checks
 pub struct TtlMonitor {
     registry: Arc<InstanceCheckRegistry>,
+    interval_secs: u64,
 }
 
 impl TtlMonitor {
     /// Create a new TTL monitor
     pub fn new(registry: Arc<InstanceCheckRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            interval_secs: 5,
+        }
+    }
+
+    /// Create a new TTL monitor with custom interval
+    pub fn with_interval(registry: Arc<InstanceCheckRegistry>, interval_secs: u64) -> Self {
+        Self {
+            registry,
+            interval_secs,
+        }
     }
 
     /// Start the monitor loop (runs forever)
     pub async fn start(&self) {
-        tracing::info!("TTL monitor started");
-        // Scan every 5 seconds (reduced from 1s to minimize lock contention)
-        // TTL checks typically have 10s+ TTL, so 5s scan interval is sufficient
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
+        tracing::info!("TTL monitor started (interval: {}s)", self.interval_secs);
+        let mut interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(self.interval_secs));
 
         loop {
             interval.tick().await;

@@ -80,6 +80,18 @@ pub struct HealthCheckConfig {
     /// HTTP health check parameters
     #[serde(default)]
     pub http_health_params: HttpHealthParams,
+
+    /// Heartbeat check interval in seconds (default: 5)
+    #[serde(default = "default_heartbeat_interval_secs")]
+    pub heartbeat_interval_secs: u64,
+
+    /// TTL monitor interval in seconds (default: 5)
+    #[serde(default = "default_ttl_monitor_interval_secs")]
+    pub ttl_monitor_interval_secs: u64,
+
+    /// Deregister monitor interval in seconds (default: 10)
+    #[serde(default = "default_deregister_monitor_interval_secs")]
+    pub deregister_monitor_interval_secs: u64,
 }
 
 impl Default for HealthCheckConfig {
@@ -90,6 +102,9 @@ impl Default for HealthCheckConfig {
             check_times: 3,
             tcp_health_params: TcpHealthParams::default(),
             http_health_params: HttpHealthParams::default(),
+            heartbeat_interval_secs: 5,
+            ttl_monitor_interval_secs: 5,
+            deregister_monitor_interval_secs: 10,
         }
     }
 }
@@ -194,6 +209,18 @@ fn default_factor() -> f64 {
 
 fn default_http_factor() -> f64 {
     0.85
+}
+
+fn default_heartbeat_interval_secs() -> u64 {
+    5
+}
+
+fn default_ttl_monitor_interval_secs() -> u64 {
+    5
+}
+
+fn default_deregister_monitor_interval_secs() -> u64 {
+    10
 }
 
 #[cfg(test)]

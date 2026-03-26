@@ -57,9 +57,9 @@ struct WebhookHttpClient {
 }
 
 impl WebhookHttpClient {
-    fn new() -> Self {
+    fn with_timeout(timeout_secs: u64) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(timeout_secs))
             .build()
             .expect("Failed to create HTTP client");
 
@@ -156,10 +156,17 @@ pub struct DefaultWebhookPlugin {
     max_deliveries: usize,
 }
 
+/// Default webhook HTTP client timeout in seconds
+const DEFAULT_WEBHOOK_TIMEOUT_SECS: u64 = 30;
+
 impl DefaultWebhookPlugin {
     pub fn new() -> Self {
+        Self::with_timeout(DEFAULT_WEBHOOK_TIMEOUT_SECS)
+    }
+
+    pub fn with_timeout(timeout_secs: u64) -> Self {
         let (queue_tx, queue_rx) = mpsc::channel::<(WebhookConfig, WebhookEvent)>(10000);
-        let http_client = Arc::new(WebhookHttpClient::new());
+        let http_client = Arc::new(WebhookHttpClient::with_timeout(timeout_secs));
 
         let deliveries = Arc::new(DashMap::new());
         let successful = Arc::new(AtomicU64::new(0));

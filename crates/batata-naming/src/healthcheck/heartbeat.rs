@@ -128,8 +128,8 @@ impl UnhealthyInstanceChecker {
         let naming_service = self.naming_service.clone();
         let heartbeat_map = self.heartbeat_map.clone();
 
-        // Check every 5 seconds (matches Nacos)
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut interval =
+            tokio::time::interval(Duration::from_secs(self.config.heartbeat_interval_secs));
 
         while running.load(std::sync::atomic::Ordering::SeqCst) {
             interval.tick().await;
@@ -264,8 +264,8 @@ impl ExpiredInstanceChecker {
         let naming_service = self.naming_service.clone();
         let heartbeat_map = self.heartbeat_map.clone();
 
-        // Check every 5 seconds (matches Nacos)
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut interval =
+            tokio::time::interval(Duration::from_secs(self.config.heartbeat_interval_secs));
 
         while running.load(std::sync::atomic::Ordering::SeqCst) {
             interval.tick().await;

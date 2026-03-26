@@ -482,4 +482,115 @@ impl Configuration {
             .get_string("batata.core.auth.server.identity.value")
             .unwrap_or_default()
     }
+
+    // ===================== Circuit Breaker Configuration =====================
+
+    /// Circuit breaker failure threshold (default: 5)
+    pub fn circuit_breaker_failure_threshold(&self) -> u32 {
+        self.config
+            .get_int("batata.cluster.circuit_breaker.failure_threshold")
+            .unwrap_or(5) as u32
+    }
+
+    /// Circuit breaker reset timeout in milliseconds (default: 30000)
+    pub fn circuit_breaker_reset_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.circuit_breaker.reset_timeout_ms")
+            .unwrap_or(30000) as u64
+    }
+
+    /// Circuit breaker success threshold for half-open → closed (default: 3)
+    pub fn circuit_breaker_success_threshold(&self) -> u32 {
+        self.config
+            .get_int("batata.cluster.circuit_breaker.success_threshold")
+            .unwrap_or(3) as u32
+    }
+
+    /// Circuit breaker failure window in milliseconds (default: 60000)
+    pub fn circuit_breaker_failure_window_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.circuit_breaker.failure_window_ms")
+            .unwrap_or(60000) as u64
+    }
+
+    // ===================== Distro Protocol Configuration =====================
+
+    /// Distro sync delay in milliseconds (default: 1000)
+    pub fn distro_sync_delay_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.distro.sync_delay_ms")
+            .unwrap_or(1000) as u64
+    }
+
+    /// Distro sync timeout in milliseconds (default: 3000)
+    pub fn distro_sync_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.distro.sync_timeout_ms")
+            .unwrap_or(3000) as u64
+    }
+
+    /// Distro sync retry delay in milliseconds (default: 3000)
+    pub fn distro_sync_retry_delay_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.distro.sync_retry_delay_ms")
+            .unwrap_or(3000) as u64
+    }
+
+    /// Distro verify interval in milliseconds (default: 5000)
+    pub fn distro_verify_interval_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.distro.verify_interval_ms")
+            .unwrap_or(5000) as u64
+    }
+
+    /// Distro verify timeout in milliseconds (default: 3000)
+    pub fn distro_verify_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.distro.verify_timeout_ms")
+            .unwrap_or(3000) as u64
+    }
+
+    /// Distro load retry delay in milliseconds (default: 30000)
+    pub fn distro_load_retry_delay_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.distro.load_retry_delay_ms")
+            .unwrap_or(30000) as u64
+    }
+
+    // ===================== Cluster Health Check Configuration =====================
+
+    /// Cluster health check interval in milliseconds (default: 5000)
+    pub fn cluster_health_check_interval_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.health_check.interval_ms")
+            .unwrap_or(5000) as u64
+    }
+
+    /// Cluster health check timeout in milliseconds (default: 3000)
+    pub fn cluster_health_check_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.health_check.timeout_ms")
+            .unwrap_or(3000) as u64
+    }
+
+    /// Cluster health check max fail count before marking node DOWN (default: 3)
+    pub fn cluster_health_check_max_fail_count(&self) -> i32 {
+        self.config
+            .get_int("batata.cluster.health_check.max_fail_count")
+            .unwrap_or(3) as i32
+    }
+
+    /// Cluster health check suspicious threshold (default: 1)
+    pub fn cluster_health_check_suspicious_threshold(&self) -> i32 {
+        self.config
+            .get_int("batata.cluster.health_check.suspicious_threshold")
+            .unwrap_or(1) as i32
+    }
+
+    /// Cluster event queue size (default: 1024)
+    pub fn cluster_event_queue_size(&self) -> usize {
+        self.config
+            .get_int("batata.cluster.event_queue_size")
+            .unwrap_or(1024) as usize
+    }
 }

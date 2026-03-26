@@ -45,6 +45,10 @@ batata.console.context_path:
 # Remote server address (fallback if batata.member.list and cluster.conf are not configured)
 #batata.console.remote.server_addr: http://127.0.0.1:8848
 
+# Remote data auto-refresh settings
+#batata.console.remote.refresh_interval_secs: 30     # polling interval for cluster info
+#batata.console.remote.initial_delay_secs: 5         # initial delay before first refresh
+
 # Remote server credentials (used as fallback when server identity is not configured)
 #batata.console.remote.username: nacos
 #batata.console.remote.password: nacos
@@ -168,6 +172,11 @@ batata.config.encryption.reload.interval.ms: 0
 # Enable data warmup (server waits for data sync before accepting requests)
 #batata.naming.data.warmup: false
 
+# --- Naming Health Check Intervals ---
+#batata.naming.healthcheck.heartbeat_interval_secs: 5         # heartbeat check interval
+#batata.naming.healthcheck.ttl_monitor_interval_secs: 5       # TTL monitor scan interval
+#batata.naming.healthcheck.deregister_monitor_interval_secs: 10  # deregister monitor interval
+
 # =============================================================================
 # Cluster
 # =============================================================================
@@ -178,6 +187,31 @@ batata.config.encryption.reload.interval.ms: 0
 
 # Member lookup type: file (default) or address-server
 #batata.core.member.lookup.type: file
+
+# =============================================================================
+# Cluster Internal (circuit breaker, distro, health check)
+# =============================================================================
+
+# --- Circuit Breaker (protects remote calls from cascading failures) ---
+#batata.cluster.circuit_breaker.failure_threshold: 5       # failures before opening circuit
+#batata.cluster.circuit_breaker.reset_timeout_ms: 30000    # time before half-open (30s)
+#batata.cluster.circuit_breaker.success_threshold: 3       # successes to close from half-open
+#batata.cluster.circuit_breaker.failure_window_ms: 60000   # failure counting window (60s)
+
+# --- Distro Protocol (ephemeral data sync across cluster nodes) ---
+#batata.cluster.distro.sync_delay_ms: 1000         # delay before syncing after change
+#batata.cluster.distro.sync_timeout_ms: 3000       # timeout for sync operations
+#batata.cluster.distro.sync_retry_delay_ms: 3000   # retry delay after sync failure
+#batata.cluster.distro.verify_interval_ms: 5000    # data verification interval
+#batata.cluster.distro.verify_timeout_ms: 3000     # timeout for verify operations
+#batata.cluster.distro.load_retry_delay_ms: 30000  # retry delay for snapshot loading
+
+# --- Cluster Health Check (monitors cluster member health) ---
+#batata.cluster.health_check.interval_ms: 5000     # interval between health checks
+#batata.cluster.health_check.timeout_ms: 3000      # timeout for health check requests
+#batata.cluster.health_check.max_fail_count: 3     # failures before marking node DOWN
+#batata.cluster.health_check.suspicious_threshold: 1  # failures before SUSPICIOUS
+#batata.cluster.event_queue_size: 1024              # cluster event queue capacity
 
 # =============================================================================
 # Raft Consensus (distributed embedded mode only)
@@ -264,6 +298,9 @@ batata.otel.export_timeout_secs: 10
 # Consul Compatibility Plugin
 # =============================================================================
 
+# --- Webhook Plugin ---
+#batata.plugin.webhook.default_timeout_secs: 30      # default HTTP client timeout for webhooks
+
 batata.plugin.consul.enabled: false
 batata.plugin.consul.port: 8500
 #batata.plugin.consul.raft.port: 7500
@@ -277,6 +314,10 @@ batata.plugin.consul.check_reap_interval: 30
 batata.plugin.consul.default_namespace: public
 batata.plugin.consul.default_group: DEFAULT_GROUP
 batata.plugin.consul.default_cluster: DEFAULT
+
+# Consul client HTTP timeouts
+#batata.plugin.consul.client.connect_timeout_secs: 5
+#batata.plugin.consul.client.read_timeout_secs: 30
 
 # =============================================================================
 # MCP Registry
@@ -362,6 +403,15 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.core.auth.cache.permissions_capacity: 20000
 #batata.core.auth.cache.blacklist_capacity: 100000    # token blacklist capacity
 #batata.core.auth.cache.blacklist_ttl_secs: 86400     # token blacklist TTL (24 hours)
+#batata.core.auth.cache.grpc_permission_capacity: 10000  # gRPC permission check cache
+#batata.core.auth.cache.grpc_permission_ttl_secs: 300    # gRPC permission cache TTL (5 minutes)
+
+# --- OAuth Cache ---
+#batata.core.auth.oauth.cache.discovery_ttl_secs: 3600     # OIDC discovery cache (1 hour)
+#batata.core.auth.oauth.cache.discovery_capacity: 100
+#batata.core.auth.oauth.cache.state_ttl_secs: 600          # OAuth state cache (10 minutes)
+#batata.core.auth.oauth.cache.state_capacity: 10000
+#batata.core.auth.oauth.http_timeout_secs: 30               # OAuth HTTP client timeout
 
 # =============================================================================
 # Version Information

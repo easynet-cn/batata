@@ -316,7 +316,8 @@ fn test_manager_concurrent_read_write() {
         handles.push(thread::spawn(move || {
             for j in 0..100 {
                 let conn_id = format!("writer-{}-{}", i, j);
-                let _ = manager_clone.register_watch(&conn_id, "public>>DEFAULT_GROUP>>app-*", "add");
+                let _ =
+                    manager_clone.register_watch(&conn_id, "public>>DEFAULT_GROUP>>app-*", "add");
             }
         }));
     }

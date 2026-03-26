@@ -276,6 +276,33 @@ pub struct OAuthState {
     pub code_verifier: Option<String>,
 }
 
+/// Configuration for OAuth cache tuning
+#[derive(Clone, Debug)]
+pub struct OAuthCacheConfig {
+    /// Discovery document cache TTL in seconds (default: 3600)
+    pub discovery_ttl_secs: u64,
+    /// Discovery document cache max capacity (default: 100)
+    pub discovery_capacity: u64,
+    /// State cache TTL in seconds (default: 600)
+    pub state_ttl_secs: u64,
+    /// State cache max capacity (default: 10000)
+    pub state_capacity: u64,
+    /// HTTP client timeout in seconds (default: 30)
+    pub http_timeout_secs: u64,
+}
+
+impl Default for OAuthCacheConfig {
+    fn default() -> Self {
+        Self {
+            discovery_ttl_secs: 3600,
+            discovery_capacity: 100,
+            state_ttl_secs: 600,
+            state_capacity: 10000,
+            http_timeout_secs: 30,
+        }
+    }
+}
+
 /// OAuth2 service for handling authentication
 pub struct OAuthService {
     config: OAuthConfig,
@@ -287,10 +314,18 @@ pub struct OAuthService {
 }
 
 impl OAuthService {
-    /// Create a new OAuth2 service
+    /// Create a new OAuth2 service with default cache config
     pub fn new(config: OAuthConfig) -> anyhow::Result<Self> {
+        Self::with_cache_config(config, OAuthCacheConfig::default())
+    }
+
+    /// Create a new OAuth2 service with custom cache configuration
+    pub fn with_cache_config(
+        config: OAuthConfig,
+        cache_config: OAuthCacheConfig,
+    ) -> anyhow::Result<Self> {
         let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(cache_config.http_timeout_secs))
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to create HTTP client: {}", e))?;
 
@@ -298,12 +333,12 @@ impl OAuthService {
             config,
             http_client,
             discovery_cache: Cache::builder()
-                .time_to_live(Duration::from_secs(3600)) // 1 hour
-                .max_capacity(100)
+                .time_to_live(Duration::from_secs(cache_config.discovery_ttl_secs))
+                .max_capacity(cache_config.discovery_capacity)
                 .build(),
             state_cache: Cache::builder()
-                .time_to_live(Duration::from_secs(600)) // 10 minutes
-                .max_capacity(10000)
+                .time_to_live(Duration::from_secs(cache_config.state_ttl_secs))
+                .max_capacity(cache_config.state_capacity)
                 .build(),
         })
     }
