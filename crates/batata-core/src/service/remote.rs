@@ -681,13 +681,18 @@ mod tests {
     async fn test_check_connections_ejects_stale() {
         let mgr = ConnectionManager::new();
 
-        // Create a client with last_active set to 0 (epoch), making it very stale
+        // Create and register a client
         let (tx, _rx) = tokio::sync::mpsc::channel(16);
-        let conn = Connection::default(); // last_active defaults to 0
+        let conn = Connection::default();
         let client = GrpcClient::new(conn, tx);
 
         mgr.register("stale-conn", client).await;
         assert_eq!(mgr.connection_count(), 1);
+
+        // After registration, set last_active to epoch-0 to simulate a stale connection.
+        // register() calls touch() which sets last_active to now, so we must reset it afterward.
+        let client = mgr.get_client("stale-conn").unwrap();
+        client.connection.last_active.set(0);
 
         // Check with a 1ms threshold; the connection with epoch-0 last_active is very stale
         mgr.check_connections(1).await;

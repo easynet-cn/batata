@@ -212,6 +212,11 @@ impl AtomicLastActive {
         self.inner.load(Ordering::Relaxed)
     }
 
+    /// Set the last active timestamp to a specific value (milliseconds since epoch).
+    pub fn set(&self, millis: i64) {
+        self.inner.store(millis, Ordering::Relaxed);
+    }
+
     /// Get the idle duration in milliseconds.
     pub fn idle_millis(&self) -> u64 {
         let now = SystemTime::now()
