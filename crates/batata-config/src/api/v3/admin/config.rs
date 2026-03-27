@@ -322,6 +322,7 @@ async fn create_config(
                 &src_ip,
                 &config_form.app_name,
                 &config_form.encrypted_data_key.unwrap_or_default(),
+                None,
             )
             .await
         {
@@ -981,6 +982,7 @@ async fn publish_beta_config(
             &src_ip,
             &form.app_name,
             &form.encrypted_data_key,
+            None,
         )
         .await
     {

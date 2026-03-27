@@ -1660,6 +1660,18 @@ impl Configuration {
     }
 
     // ========================================================================
+    // Config Gray Version Management
+    // ========================================================================
+
+    /// Maximum number of gray versions per config (default: 10).
+    /// Matches Nacos nacos.config.gray.version.max.count property.
+    pub fn config_gray_max_version_count(&self) -> usize {
+        self.config
+            .get_int("batata.config.gray.version.max_count")
+            .unwrap_or(10) as usize
+    }
+
+    // ========================================================================
     // Console Remote Polling Configuration
     // ========================================================================
 

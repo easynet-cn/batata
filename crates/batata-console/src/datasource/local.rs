@@ -276,6 +276,7 @@ impl ConsoleDataSource for LocalDataSource {
         src_ip: &str,
         app_name: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<()> {
         self.persistence
             .config_create_or_update_gray(
@@ -289,6 +290,7 @@ impl ConsoleDataSource for LocalDataSource {
                 src_ip,
                 app_name,
                 encrypted_data_key,
+                cas_md5,
             )
             .await?;
         Ok(())

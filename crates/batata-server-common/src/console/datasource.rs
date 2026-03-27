@@ -134,6 +134,7 @@ pub trait ConsoleDataSource: Send + Sync {
         src_ip: &str,
         app_name: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<()>;
 
     /// Delete a gray/beta config

@@ -226,6 +226,7 @@ impl ConfigPersistence for DistributedPersistService {
         src_ip: &str,
         app_name: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
         let request = RaftRequest::ConfigGrayPublish {
             data_id: data_id.to_string(),
@@ -238,6 +239,7 @@ impl ConfigPersistence for DistributedPersistService {
             encrypted_data_key: Some(encrypted_data_key.to_string()),
             src_user: Some(src_user.to_string()),
             src_ip: Some(src_ip.to_string()),
+            cas_md5: cas_md5.map(|s| s.to_string()),
         };
         self.raft_write(request).await?;
         Ok(true)

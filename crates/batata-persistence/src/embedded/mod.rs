@@ -428,10 +428,28 @@ impl ConfigPersistence for EmbeddedPersistService {
         src_ip: &str,
         app_name: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
         let key = RocksStateMachine::config_gray_key(data_id, group_id, tenant_id, gray_name);
         let now = chrono::Utc::now().timestamp_millis();
         let md5_val = Self::compute_md5(content);
+
+        // CAS check: if cas_md5 provided, verify current gray MD5 matches
+        if let Some(expected_md5) = cas_md5 {
+            let existing = self.reader.get_config_gray(data_id, group_id, tenant_id)?;
+            if let Some(ref ex) = existing {
+                let current_md5 = ex["md5"].as_str().unwrap_or("");
+                if current_md5 != expected_md5 {
+                    anyhow::bail!(
+                        "CAS conflict: expected md5={}, actual md5={}",
+                        expected_md5,
+                        current_md5
+                    );
+                }
+            } else if !expected_md5.is_empty() {
+                anyhow::bail!("CAS conflict: gray config does not exist");
+            }
+        }
 
         let value = serde_json::json!({
             "data_id": data_id,
@@ -1611,6 +1629,7 @@ mod tests {
                 "127.0.0.1",
                 "my-app",
                 "",
+                None,
             )
             .await
             .unwrap();

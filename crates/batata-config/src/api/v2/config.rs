@@ -20,9 +20,9 @@ use tracing::{info, warn};
 use crate::model::config::ConfigBasicInfo;
 use crate::service::notifier::ConfigChangeNotifier;
 
-/// Maximum number of gray versions per config (consistent with Nacos default)
-const MAX_GRAY_VERSION_COUNT: usize = 10;
-
+/// Default max gray versions per config (overridden by batata.config.gray.version.max_count)
+// Default max gray versions per config (overridden by batata.config.gray.version.max_count)
+// Kept as reference; actual value read from configuration at runtime.
 use super::model::{
     ConfigDeleteParam, ConfigGetParam, ConfigPublishParam, ConfigSearchDetailParam,
 };
@@ -252,6 +252,8 @@ pub async fn publish_config(
         .encrypt_if_needed(&form.data_id, &form.content)
         .await;
 
+    let max_gray_count = data.configuration.config_gray_max_version_count();
+
     // Handle gray (beta) publish if betaIps is provided
     if let Some(ref beta_ips) = beta_ips
         && !beta_ips.is_empty()
@@ -261,15 +263,12 @@ pub async fn publish_config(
             .config_find_all_grays(&form.data_id, &form.group, namespace_id)
             .await
             && !grays.iter().any(|g| g.gray_name == "beta")
-            && grays.len() >= MAX_GRAY_VERSION_COUNT
+            && grays.len() >= max_gray_count
         {
             return Result::<String>::http_response(
                 400,
                 error::CONFIG_GRAY_OVER_MAX_VERSION_COUNT.code,
-                format!(
-                    "gray config version is over max count: {}",
-                    MAX_GRAY_VERSION_COUNT
-                ),
+                format!("gray config version is over max count: {}", max_gray_count),
                 String::new(),
             );
         }
@@ -302,6 +301,7 @@ pub async fn publish_config(
                 &src_ip,
                 form.app_name.as_deref().unwrap_or(""),
                 &encrypted_key,
+                cas_md5.as_deref(),
             )
             .await
         {
@@ -336,15 +336,12 @@ pub async fn publish_config(
             .config_find_all_grays(&form.data_id, &form.group, namespace_id)
             .await
             && !grays.iter().any(|g| g.gray_name == gray_name)
-            && grays.len() >= MAX_GRAY_VERSION_COUNT
+            && grays.len() >= max_gray_count
         {
             return Result::<String>::http_response(
                 400,
                 error::CONFIG_GRAY_OVER_MAX_VERSION_COUNT.code,
-                format!(
-                    "gray config version is over max count: {}",
-                    MAX_GRAY_VERSION_COUNT
-                ),
+                format!("gray config version is over max count: {}", max_gray_count),
                 String::new(),
             );
         }
@@ -377,6 +374,7 @@ pub async fn publish_config(
                 &src_ip,
                 form.app_name.as_deref().unwrap_or(""),
                 &encrypted_key,
+                cas_md5.as_deref(),
             )
             .await
         {

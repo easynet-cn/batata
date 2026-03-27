@@ -77,7 +77,8 @@ pub trait ConfigPersistence: Send + Sync {
         namespace_id: &str,
     ) -> anyhow::Result<Option<ConfigGrayStorageData>>;
 
-    /// Create or update gray/beta config
+    /// Create or update gray/beta config.
+    /// If `cas_md5` is Some, performs Compare-And-Swap: only updates if current gray MD5 matches.
     #[allow(clippy::too_many_arguments)]
     async fn config_create_or_update_gray(
         &self,
@@ -91,6 +92,7 @@ pub trait ConfigPersistence: Send + Sync {
         src_ip: &str,
         app_name: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<bool>;
 
     /// Find all gray configs for a given data_id/group/namespace

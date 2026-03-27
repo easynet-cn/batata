@@ -45,8 +45,8 @@ use batata_core::handler::rpc::{AuthRequirement, PayloadHandler};
 use batata_core::{GrpcResource, PermissionAction};
 use batata_server_common::model::AppState;
 
-/// Maximum number of gray versions per config (consistent with Nacos default)
-const MAX_GRAY_VERSION_COUNT: usize = 10;
+/// Default max gray versions per config (overridden by batata.config.gray.version.max_count)
+const DEFAULT_MAX_GRAY_VERSION_COUNT: usize = 10;
 
 use crate::model::gray_rule::GrayRule;
 
@@ -80,6 +80,7 @@ async fn is_gray_version_over_max_count(
     group: &str,
     tenant: &str,
     gray_name: &str,
+    max_count: usize,
 ) -> bool {
     match persistence
         .config_find_all_grays(data_id, group, tenant)
@@ -90,7 +91,7 @@ async fn is_gray_version_over_max_count(
             if grays.iter().any(|g| g.gray_name == gray_name) {
                 return false;
             }
-            grays.len() >= MAX_GRAY_VERSION_COUNT
+            grays.len() >= max_count
         }
         Err(_) => false,
     }
@@ -409,20 +410,28 @@ impl PayloadHandler for ConfigPublishHandler {
         let encrypted_data_key = encrypted_data_key.as_str();
 
         let persistence = self.app_state.persistence();
+        let max_gray_count = self.app_state.configuration.config_gray_max_version_count();
 
         // Handle gray (beta/tag) publish
         if !beta_ips.is_empty() {
             // Check max gray version count
-            if is_gray_version_over_max_count(persistence, data_id, group, tenant, "beta").await {
+            if is_gray_version_over_max_count(
+                persistence,
+                data_id,
+                group,
+                tenant,
+                "beta",
+                max_gray_count,
+            )
+            .await
+            {
                 let mut response = ConfigPublishResponse::new();
                 response.response.request_id = request_id;
                 response.response.result_code = ResponseCode::Fail.code();
                 response.response.error_code = 20010; // CONFIG_GRAY_OVER_MAX_VERSION_COUNT
                 response.response.success = false;
-                response.response.message = format!(
-                    "gray config version is over max count: {}",
-                    MAX_GRAY_VERSION_COUNT
-                );
+                response.response.message =
+                    format!("gray config version is over max count: {}", max_gray_count);
                 return Ok(response.build_payload());
             }
             let gray_rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_beta(
@@ -454,6 +463,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     src_ip,
                     app_name,
                     encrypted_data_key,
+                    cas_md5,
                 )
                 .await
             {
@@ -477,17 +487,23 @@ impl PayloadHandler for ConfigPublishHandler {
         if !tag.is_empty() {
             let gray_name = format!("tag_{}", tag);
             // Check max gray version count
-            if is_gray_version_over_max_count(persistence, data_id, group, tenant, &gray_name).await
+            if is_gray_version_over_max_count(
+                persistence,
+                data_id,
+                group,
+                tenant,
+                &gray_name,
+                max_gray_count,
+            )
+            .await
             {
                 let mut response = ConfigPublishResponse::new();
                 response.response.request_id = request_id;
                 response.response.result_code = ResponseCode::Fail.code();
                 response.response.error_code = 20010; // CONFIG_GRAY_OVER_MAX_VERSION_COUNT
                 response.response.success = false;
-                response.response.message = format!(
-                    "gray config version is over max count: {}",
-                    MAX_GRAY_VERSION_COUNT
-                );
+                response.response.message =
+                    format!("gray config version is over max count: {}", max_gray_count);
                 return Ok(response.build_payload());
             }
 
@@ -520,6 +536,7 @@ impl PayloadHandler for ConfigPublishHandler {
                     src_ip,
                     app_name,
                     encrypted_data_key,
+                    cas_md5,
                 )
                 .await
             {

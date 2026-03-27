@@ -154,6 +154,11 @@ batata.plugin.control.max_connections: 50000
 # Config retention days
 #batata.config.retention.days: 30
 
+# --- Config Gray Version Management ---
+# Maximum number of gray (beta/tag) versions per config entry (default: 10)
+# Matches Nacos nacos.config.gray.version.max.count property.
+#batata.config.gray.version.max_count: 10
+
 # --- Config Encryption ---
 batata.config.encryption.enabled: false
 batata.config.encryption.plugin.type: aes-gcm

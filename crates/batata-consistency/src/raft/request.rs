@@ -106,6 +106,7 @@ pub enum RaftRequest {
         encrypted_data_key: Option<String>,
         src_user: Option<String>,
         src_ip: Option<String>,
+        cas_md5: Option<String>,
     },
 
     /// Remove gray (beta) configs for a data_id/group/tenant (optionally by gray_name)

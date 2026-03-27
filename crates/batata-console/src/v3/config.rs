@@ -481,6 +481,7 @@ async fn publish_beta(
             &src_ip,
             &form.app_name,
             &form.encrypted_data_key,
+            None,
         )
         .await
     {

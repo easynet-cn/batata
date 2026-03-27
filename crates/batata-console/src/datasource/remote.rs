@@ -614,6 +614,7 @@ impl ConsoleDataSource for RemoteDataSource {
         _src_ip: &str,
         app_name: &str,
         _encrypted_data_key: &str,
+        _cas_md5: Option<&str>,
     ) -> anyhow::Result<()> {
         // Remote mode delegates to MaintainerClient which calls the admin API
         // The admin API builds gray_rule from betaIps on the server side
