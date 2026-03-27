@@ -21,6 +21,11 @@ pub enum RaftRequest {
         tag: Option<String>,
         desc: Option<String>,
         src_user: Option<String>,
+        /// CAS (Compare-And-Swap) MD5: if set, only publish when current config MD5 matches.
+        /// Returns conflict error if MD5 mismatch. Prevents concurrent write data loss.
+        /// Nacos SDK sends this via `casMd5` header.
+        #[serde(default)]
+        cas_md5: Option<String>,
     },
 
     /// Remove a configuration
@@ -315,6 +320,7 @@ mod tests {
             tag: None,
             desc: None,
             src_user: None,
+            cas_md5: None,
         };
 
         let serialized = serde_json::to_string(&req).unwrap();

@@ -44,6 +44,12 @@ pub struct DistroConfig {
     pub verify_timeout: Duration,
     /// Retry delay for loading snapshot data
     pub load_retry_delay: Duration,
+    /// Max retry attempts for initial data loading from peers
+    pub load_max_retries: u32,
+    /// Whether to require successful initial data load before marking node ready.
+    /// false (default, Nacos-compatible): start immediately, verify cycle fills data.
+    /// true: node stays NOT_READY until initial sync completes.
+    pub require_initial_load: bool,
 }
 
 impl Default for DistroConfig {
@@ -55,6 +61,8 @@ impl Default for DistroConfig {
             verify_interval: Duration::from_millis(5000),
             verify_timeout: Duration::from_millis(3000),
             load_retry_delay: Duration::from_millis(30000),
+            load_max_retries: 5,
+            require_initial_load: false,
         }
     }
 }
@@ -69,6 +77,8 @@ impl DistroConfig {
             verify_interval: Duration::from_millis(config.distro_verify_interval_ms()),
             verify_timeout: Duration::from_millis(config.distro_verify_timeout_ms()),
             load_retry_delay: Duration::from_millis(config.distro_load_retry_delay_ms()),
+            load_max_retries: config.distro_load_max_retries(),
+            require_initial_load: config.distro_require_initial_load(),
         }
     }
 }
@@ -370,11 +380,28 @@ impl DistroProtocol {
         self.refresh_mapper();
 
         // Load initial data from peers (for new nodes joining the cluster)
-        self.load_initial_data().await;
+        let load_success = self.load_initial_data().await;
 
-        // Mark as initialized after initial data load
-        self.initialized.store(true, Ordering::Relaxed);
-        info!("Distro protocol initialized");
+        // Mark initialization based on load result and configuration.
+        // Nacos-compatible (require_initial_load=false): always mark initialized,
+        // verify cycle will fill missing data within seconds.
+        // Strict mode (require_initial_load=true): only mark initialized on success.
+        if load_success || !self.config.require_initial_load {
+            self.initialized.store(true, Ordering::Relaxed);
+            if !load_success {
+                warn!(
+                    "Distro initial data not fully loaded, node starting with partial data. \
+                     Verification cycle will reconcile within {}ms.",
+                    self.config.verify_interval.as_millis()
+                );
+            }
+            info!("Distro protocol initialized (data_loaded={})", load_success);
+        } else {
+            warn!(
+                "Distro initial data load failed and require_initial_load=true. \
+                 Node will NOT serve distro queries until data is loaded via verification."
+            );
+        }
 
         // Start sync task processor
         self.start_sync_task_processor().await;
@@ -732,16 +759,13 @@ impl DistroProtocol {
         });
     }
 
-    /// Maximum number of full retry rounds for initial data loading.
-    const LOAD_MAX_RETRIES: u32 = 5;
-
     /// Load initial data from peers when this node starts (snapshot load).
     ///
     /// For each registered data type, tries every peer in order. If no peer
     /// succeeds, waits `load_retry_delay` and retries the full round up to
-    /// [`LOAD_MAX_RETRIES`] times. This prevents the node from silently
-    /// starting with empty data when peers are temporarily unavailable.
-    async fn load_initial_data(&self) {
+    /// `load_max_retries` times. Returns true if all data types loaded
+    /// successfully, false if any failed.
+    async fn load_initial_data(&self) -> bool {
         // Skip if no peers (standalone mode)
         let other_members: Vec<String> = self
             .members
@@ -752,10 +776,11 @@ impl DistroProtocol {
 
         if other_members.is_empty() {
             debug!("No peers available, skipping initial data load");
-            return;
+            return true; // No peers = standalone, consider loaded
         }
 
         info!("Loading initial data from {} peers", other_members.len());
+        let mut all_loaded = true;
 
         // For each registered handler, request snapshot from a peer
         let handler_entries: Vec<(DistroDataType, Arc<dyn DistroDataHandler>)> = self
@@ -779,7 +804,7 @@ impl DistroProtocol {
 
             let mut loaded = false;
 
-            for attempt in 0..Self::LOAD_MAX_RETRIES {
+            for attempt in 0..self.config.load_max_retries {
                 // Refresh member list on retry — new nodes may have joined
                 let peers: Vec<String> = if attempt == 0 {
                     other_members.clone()
@@ -863,7 +888,7 @@ impl DistroProtocol {
                      retrying in {:?}",
                     data_type,
                     attempt + 1,
-                    Self::LOAD_MAX_RETRIES,
+                    self.config.load_max_retries,
                     self.config.load_retry_delay,
                 );
                 tokio::time::sleep(self.config.load_retry_delay).await;
@@ -872,13 +897,13 @@ impl DistroProtocol {
             if !loaded {
                 error!(
                     "CRITICAL: Could not load initial data for type {} after {} attempts. \
-                     Node is starting with EMPTY data — clients may see missing services \
-                     until the next verification cycle reconciles the state.",
-                    data_type,
-                    Self::LOAD_MAX_RETRIES,
+                     Node may serve incomplete data until verification cycle reconciles.",
+                    data_type, self.config.load_max_retries,
                 );
+                all_loaded = false;
             }
         }
+        all_loaded
     }
 
     /// Send sync data to a target node via gRPC

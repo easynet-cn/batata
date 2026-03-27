@@ -1644,6 +1644,21 @@ impl Configuration {
             .unwrap_or(30000) as u64
     }
 
+    /// Max retries when forwarding write to Raft leader (default: 3)
+    pub fn raft_forward_max_retries(&self) -> u32 {
+        self.config
+            .get_int("batata.raft.forward.max_retries")
+            .unwrap_or(3) as u32
+    }
+
+    /// Initial retry delay in ms for leader forwarding (default: 200)
+    /// Doubles each attempt with 25% jitter.
+    pub fn raft_forward_initial_delay_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.forward.initial_delay_ms")
+            .unwrap_or(200) as u64
+    }
+
     // ========================================================================
     // Console Remote Polling Configuration
     // ========================================================================

@@ -242,6 +242,7 @@ impl ConfigPersistence for EmbeddedPersistService {
         r#type: &str,
         schema: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
         let key = RocksStateMachine::config_key(data_id, group_id, tenant_id);
         let now = chrono::Utc::now().timestamp_millis();
@@ -250,6 +251,22 @@ impl ConfigPersistence for EmbeddedPersistService {
         // Check if config already exists
         let existing = self.reader.get_config(data_id, group_id, tenant_id)?;
         let is_update = existing.is_some();
+
+        // CAS check: if cas_md5 provided, verify current MD5 matches
+        if let Some(expected_md5) = cas_md5 {
+            if let Some(ref ex) = existing {
+                let current_md5 = ex["md5"].as_str().unwrap_or("");
+                if current_md5 != expected_md5 {
+                    anyhow::bail!(
+                        "CAS conflict: expected md5={}, actual md5={}",
+                        expected_md5,
+                        current_md5
+                    );
+                }
+            } else if !expected_md5.is_empty() {
+                anyhow::bail!("CAS conflict: config does not exist");
+            }
+        }
         let created_time = if let Some(ref ex) = existing {
             ex["created_time"].as_i64().unwrap_or(now)
         } else {
@@ -756,6 +773,7 @@ impl ConfigPersistence for EmbeddedPersistService {
                 &config.config_type,
                 &config.schema,
                 &config.encrypted_data_key,
+                None,
             )
             .await
         } else {
@@ -1273,6 +1291,7 @@ mod tests {
                 "properties",
                 "",
                 "",
+                None,
             )
             .await
             .unwrap();
@@ -1322,6 +1341,7 @@ mod tests {
             "text",
             "",
             "",
+            None,
         )
         .await
         .unwrap();
@@ -1350,6 +1370,7 @@ mod tests {
             "text",
             "",
             "",
+            None,
         )
         .await
         .unwrap();
@@ -1384,6 +1405,7 @@ mod tests {
             "text",
             "",
             "",
+            None,
         )
         .await
         .unwrap();
@@ -1428,6 +1450,7 @@ mod tests {
                 "properties",
                 "",
                 "",
+                None,
             )
             .await
             .unwrap();
@@ -1471,17 +1494,17 @@ mod tests {
         let (svc, _tmp) = create_test_service().await;
 
         svc.config_create_or_update(
-            "d1", "GROUP_A", "ns1", "c1", "", "", "", "", "", "", "", "text", "", "",
+            "d1", "GROUP_A", "ns1", "c1", "", "", "", "", "", "", "", "text", "", "", None,
         )
         .await
         .unwrap();
         svc.config_create_or_update(
-            "d2", "GROUP_A", "ns1", "c2", "", "", "", "", "", "", "", "text", "", "",
+            "d2", "GROUP_A", "ns1", "c2", "", "", "", "", "", "", "", "text", "", "", None,
         )
         .await
         .unwrap();
         svc.config_create_or_update(
-            "d3", "GROUP_B", "ns1", "c3", "", "", "", "", "", "", "", "text", "", "",
+            "d3", "GROUP_B", "ns1", "c3", "", "", "", "", "", "", "", "text", "", "", None,
         )
         .await
         .unwrap();
@@ -1516,6 +1539,7 @@ mod tests {
             "text",
             "",
             "",
+            None,
         )
         .await
         .unwrap();
@@ -1538,6 +1562,7 @@ mod tests {
             "text",
             "",
             "",
+            None,
         )
         .await
         .unwrap();
@@ -1677,12 +1702,12 @@ mod tests {
 
         // Add configs to namespace
         svc.config_create_or_update(
-            "d1", "G", "ns1", "c", "", "", "", "", "", "", "", "text", "", "",
+            "d1", "G", "ns1", "c", "", "", "", "", "", "", "", "text", "", "", None,
         )
         .await
         .unwrap();
         svc.config_create_or_update(
-            "d2", "G", "ns1", "c", "", "", "", "", "", "", "", "text", "", "",
+            "d2", "G", "ns1", "c", "", "", "", "", "", "", "", "text", "", "", None,
         )
         .await
         .unwrap();

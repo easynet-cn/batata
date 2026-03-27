@@ -205,6 +205,11 @@ batata.config.encryption.reload.interval.ms: 0
 #batata.cluster.distro.verify_interval_ms: 5000    # data verification interval
 #batata.cluster.distro.verify_timeout_ms: 3000     # timeout for verify operations
 #batata.cluster.distro.load_retry_delay_ms: 30000  # retry delay for snapshot loading
+#batata.cluster.distro.load_max_retries: 5         # max retry attempts for initial data load
+# Require successful initial data load before serving queries (default: false)
+# false = Nacos-compatible: start immediately, verify cycle fills data within seconds
+# true  = strict: node stays NOT_READY until initial sync from peers completes
+#batata.cluster.distro.require_initial_load: false
 
 # --- Cluster Health Check (monitors cluster member health) ---
 #batata.cluster.health_check.interval_ms: 5000     # interval between health checks
@@ -212,6 +217,11 @@ batata.config.encryption.reload.interval.ms: 0
 #batata.cluster.health_check.max_fail_count: 3     # failures before marking node DOWN
 #batata.cluster.health_check.suspicious_threshold: 1  # failures before SUSPICIOUS
 #batata.cluster.event_queue_size: 1024              # cluster event queue capacity
+
+# --- Member Info Report (periodic metadata exchange between cluster nodes) ---
+# Interval for reporting local member info to peers, round-robin (default: 5000ms)
+# Similar to Nacos MemberInfoReportTask. Set to 0 to disable.
+#batata.cluster.member_report.interval_ms: 5000
 
 # =============================================================================
 # Raft Consensus (distributed embedded mode only)
@@ -232,6 +242,12 @@ batata.config.encryption.reload.interval.ms: 0
 
 # Snapshot transfer timeout (ms). Should be larger than rpc_timeout for large snapshots.
 #batata.raft.snapshot_transfer_timeout_ms: 30000
+
+# --- Raft Leader Forwarding (follower → leader write forwarding) ---
+# Max retries when forwarding writes to leader. Uses exponential backoff with jitter.
+#batata.raft.forward.max_retries: 3
+# Initial retry delay in ms. Doubles each attempt: 200, 400, 800ms.
+#batata.raft.forward.initial_delay_ms: 200
 
 # =============================================================================
 # gRPC

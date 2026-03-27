@@ -165,6 +165,8 @@ async fn init_embedded_cluster(
         rpc_request_timeout_ms: configuration.raft_rpc_timeout_ms(),
         snapshot_threshold: configuration.raft_snapshot_threshold(),
         snapshot_transfer_timeout_ms: configuration.raft_snapshot_transfer_timeout_ms(),
+        forward_max_retries: configuration.raft_forward_max_retries(),
+        forward_initial_delay_ms: configuration.raft_forward_initial_delay_ms(),
         data_dir: std::path::PathBuf::from(&data_dir),
         ..Default::default()
     };

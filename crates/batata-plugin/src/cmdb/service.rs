@@ -322,9 +322,11 @@ impl CmdbPlugin for DefaultCmdbPlugin {
         entity_id: &str,
         labels: &HashMap<String, String>,
     ) -> anyhow::Result<HashMap<String, String>> {
-        let entity = self.entities.get(entity_id);
-        let entity_type = entity
-            .as_ref()
+        // Extract entity_type and drop the DashMap read ref immediately
+        // to avoid deadlock when get_mut() needs a write lock below.
+        let entity_type = self
+            .entities
+            .get(entity_id)
             .map(|e| e.entity_type.clone())
             .unwrap_or_default();
 

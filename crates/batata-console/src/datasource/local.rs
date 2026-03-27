@@ -207,6 +207,7 @@ impl ConsoleDataSource for LocalDataSource {
                 r#type,
                 schema,
                 encrypted_data_key,
+                None,
             )
             .await?;
         Ok(())
@@ -394,6 +395,7 @@ impl ConsoleDataSource for LocalDataSource {
                     &config.config_type,
                     &config.schema,
                     &config.encrypted_data_key,
+                    None,
                 )
                 .await
             {
@@ -1265,6 +1267,7 @@ impl LocalDataSource {
                     config_type,
                     "",
                     encrypted_data_key,
+                    None,
                 )
                 .await
             {

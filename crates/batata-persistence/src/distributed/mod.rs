@@ -137,6 +137,7 @@ impl ConfigPersistence for DistributedPersistService {
         r#type: &str,
         schema: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
         let _ = (r#use, effect, schema, encrypted_data_key);
         // Compute MD5 once here — passed through Raft to state machine and history
@@ -157,6 +158,7 @@ impl ConfigPersistence for DistributedPersistService {
             },
             desc: Some(desc.to_string()),
             src_user: Some(src_user.to_string()),
+            cas_md5: cas_md5.map(|s| s.to_string()),
         };
 
         self.raft_write(request).await?;
@@ -470,6 +472,7 @@ impl ConfigPersistence for DistributedPersistService {
                 &config.config_type,
                 &config.schema,
                 &config.encrypted_data_key,
+                None,
             )
             .await
         } else {

@@ -237,6 +237,13 @@ pub async fn publish_config(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    // Read casMd5 from request header for CAS (Compare-And-Swap) support
+    let cas_md5 = req
+        .headers()
+        .get("casMd5")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
     let persistence = data.persistence();
 
     // Encrypt content if needed (based on data_id pattern)
@@ -412,6 +419,7 @@ pub async fn publish_config(
             form.r#type.as_deref().unwrap_or(""),
             form.schema.as_deref().unwrap_or(""),
             &encrypted_key,
+            cas_md5.as_deref(),
         )
         .await
     {

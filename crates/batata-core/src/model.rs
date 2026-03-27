@@ -557,6 +557,22 @@ impl Configuration {
             .unwrap_or(30000) as u64
     }
 
+    /// Max retry attempts for initial data loading from peers (default: 5)
+    pub fn distro_load_max_retries(&self) -> u32 {
+        self.config
+            .get_int("batata.cluster.distro.load_max_retries")
+            .unwrap_or(5) as u32
+    }
+
+    /// Whether to require successful initial data load before marking node ready (default: false).
+    /// false = Nacos-compatible: start immediately, verify cycle fills data.
+    /// true  = strict: node stays NOT_READY until initial sync completes.
+    pub fn distro_require_initial_load(&self) -> bool {
+        self.config
+            .get_bool("batata.cluster.distro.require_initial_load")
+            .unwrap_or(false)
+    }
+
     // ===================== Cluster Health Check Configuration =====================
 
     /// Cluster health check interval in milliseconds (default: 5000)
@@ -592,5 +608,13 @@ impl Configuration {
         self.config
             .get_int("batata.cluster.event_queue_size")
             .unwrap_or(1024) as usize
+    }
+
+    /// Member info report interval in ms (default: 5000).
+    /// How often to report local member metadata to peers. Set to 0 to disable.
+    pub fn cluster_member_report_interval_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.cluster.member_report.interval_ms")
+            .unwrap_or(5000) as u64
     }
 }

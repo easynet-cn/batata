@@ -353,6 +353,7 @@ async fn create_config(
             &config_form.r#type,
             &config_form.schema.unwrap_or_default(),
             &config_form.encrypted_data_key.unwrap_or_default(),
+            None,
         )
         .await;
 
@@ -432,6 +433,7 @@ async fn update_config(
             &config_form.r#type,
             &config_form.schema.unwrap_or_default(),
             &config_form.encrypted_data_key.unwrap_or_default(),
+            None,
         )
         .await;
 
@@ -759,6 +761,7 @@ async fn import_with_persistence(
                 &item.config_type,
                 "",
                 &item.encrypted_data_key,
+                None,
             )
             .await
         {

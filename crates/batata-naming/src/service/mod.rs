@@ -142,6 +142,16 @@ impl NamingService {
             meta.revision = meta.revision.wrapping_add(1);
         }
     }
+
+    /// Get the current revision for a service.
+    /// Returns 0 if the service has no metadata entry yet.
+    /// Used by Distro verify to detect changes without timestamp drift.
+    pub fn get_service_revision(&self, service_key: &str) -> i64 {
+        self.service_metadata
+            .get(service_key)
+            .map(|m| m.revision as i64)
+            .unwrap_or(0)
+    }
 }
 
 impl Default for NamingService {

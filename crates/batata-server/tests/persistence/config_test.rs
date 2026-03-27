@@ -35,6 +35,7 @@ async fn test_config_history_tracking() {
             "text",
             "",
             "",
+            None,
         )
         .await
         .expect("Failed to create config");
@@ -75,6 +76,7 @@ async fn test_config_history_tracking() {
             "text",
             "",
             "",
+            None,
         )
         .await
         .expect("Failed to update config");
@@ -107,6 +109,7 @@ async fn test_config_history_tracking() {
             "text",
             "",
             "",
+            None,
         )
         .await
         .expect("Failed to re-update config");
@@ -151,6 +154,7 @@ async fn test_config_crud() {
             "properties",
             "",
             "",
+            None,
         )
         .await
         .expect("Failed to create config");

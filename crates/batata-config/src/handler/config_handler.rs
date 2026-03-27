@@ -366,6 +366,7 @@ impl PayloadHandler for ConfigPublishHandler {
         let mut src_user = "";
         let mut beta_ips = "";
         let mut tag = "";
+        let mut cas_md5: Option<&str> = None;
 
         for (key, value) in &request.addition_map {
             match key.as_str() {
@@ -380,6 +381,7 @@ impl PayloadHandler for ConfigPublishHandler {
                 "src_user" => src_user = value.as_str(),
                 "betaIps" => beta_ips = value.as_str(),
                 "tag" => tag = value.as_str(),
+                "casMd5" => cas_md5 = Some(value.as_str()),
                 _ => {}
             }
         }
@@ -555,6 +557,7 @@ impl PayloadHandler for ConfigPublishHandler {
                 r#type,
                 schema,
                 encrypted_data_key,
+                cas_md5,
             )
             .await
         {

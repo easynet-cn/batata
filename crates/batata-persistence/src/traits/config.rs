@@ -34,7 +34,9 @@ pub trait ConfigPersistence: Send + Sync {
         content: &str,
     ) -> anyhow::Result<Page<ConfigStorageData>>;
 
-    /// Create or update a config
+    /// Create or update a config.
+    /// If `cas_md5` is Some, performs Compare-And-Swap: only updates if current MD5 matches.
+    /// Returns Err on CAS conflict (Nacos error code 20005 RESOURCE_CONFLICT).
     #[allow(clippy::too_many_arguments)]
     async fn config_create_or_update(
         &self,
@@ -52,6 +54,7 @@ pub trait ConfigPersistence: Send + Sync {
         r#type: &str,
         schema: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<bool>;
 
     /// Delete a config

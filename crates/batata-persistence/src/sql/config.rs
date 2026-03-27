@@ -252,6 +252,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         r#type: &str,
         schema: &str,
         encrypted_data_key: &str,
+        cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
         let md5_hash = format!("{:x}", md5::compute(content));
         let tags = normalize_tags(config_tags);
@@ -263,6 +264,22 @@ impl ConfigPersistence for ExternalDbPersistService {
             .filter(config_info::Column::TenantId.eq(tenant_id))
             .one(&self.db)
             .await?;
+
+        // CAS check: if cas_md5 provided, verify current MD5 matches before update
+        if let Some(expected_md5) = cas_md5 {
+            if let Some(ref entity) = existing {
+                let current_md5 = entity.md5.as_deref().unwrap_or("");
+                if current_md5 != expected_md5 {
+                    anyhow::bail!(
+                        "CAS conflict: expected md5={}, actual md5={}",
+                        expected_md5,
+                        current_md5
+                    );
+                }
+            } else if !expected_md5.is_empty() {
+                anyhow::bail!("CAS conflict: config does not exist");
+            }
+        }
 
         let tx = self.db.begin().await?;
 

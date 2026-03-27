@@ -37,6 +37,13 @@ pub struct RaftConfig {
     /// Snapshot transfer timeout in milliseconds (default: 30000ms)
     /// Used for full snapshot transfer between nodes. Should be > rpc_request_timeout_ms.
     pub snapshot_transfer_timeout_ms: u64,
+
+    /// Max retries when forwarding write to leader (default: 3)
+    pub forward_max_retries: u32,
+
+    /// Initial retry delay in ms for leader forwarding (default: 200ms)
+    /// Doubles each attempt (exponential backoff) with 25% jitter.
+    pub forward_initial_delay_ms: u64,
 }
 
 impl Default for RaftConfig {
@@ -51,6 +58,8 @@ impl Default for RaftConfig {
             data_dir: PathBuf::from("./data/raft"),
             max_entry_size: 4 * 1024 * 1024, // 4MB
             snapshot_transfer_timeout_ms: 30000,
+            forward_max_retries: 3,
+            forward_initial_delay_ms: 200,
         }
     }
 }
@@ -74,6 +83,8 @@ impl RaftConfig {
             data_dir,
             max_entry_size: 4 * 1024 * 1024,
             snapshot_transfer_timeout_ms: 30000,
+            forward_max_retries: 3,
+            forward_initial_delay_ms: 200,
         }
     }
 

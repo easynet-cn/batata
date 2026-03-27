@@ -521,6 +521,7 @@ impl A2aServerOperationService {
                 AI_CONFIG_TYPE,
                 "",
                 "",
+                None,
             )
             .await?;
         Ok(())

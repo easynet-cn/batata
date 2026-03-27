@@ -317,6 +317,7 @@ impl RocksStateMachine {
                 tag,
                 desc,
                 src_user,
+                cas_md5,
             } => self.apply_config_publish(
                 &data_id,
                 &group,
@@ -328,6 +329,7 @@ impl RocksStateMachine {
                 tag,
                 desc,
                 src_user,
+                cas_md5.as_deref(),
             ),
 
             RaftRequest::ConfigRemove {
@@ -572,8 +574,43 @@ impl RocksStateMachine {
         tag: Option<String>,
         desc: Option<String>,
         src_user: Option<String>,
+        cas_md5: Option<&str>,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
+
+        // CAS (Compare-And-Swap) check: if cas_md5 is provided, verify current config
+        // MD5 matches before overwriting. Returns conflict error on mismatch.
+        // This prevents concurrent writes from silently losing data.
+        if let Some(expected_md5) = cas_md5 {
+            match self.db.get_cf(self.cf_config(), key.as_bytes()) {
+                Ok(Some(existing_bytes)) => {
+                    if let Ok(existing) =
+                        serde_json::from_slice::<serde_json::Value>(&existing_bytes)
+                    {
+                        let current_md5 =
+                            existing.get("md5").and_then(|v| v.as_str()).unwrap_or("");
+                        if current_md5 != expected_md5 {
+                            return RaftResponse::failure(format!(
+                                "CAS conflict: expected md5={}, actual md5={}",
+                                expected_md5, current_md5
+                            ));
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Config doesn't exist yet — CAS requires it to exist
+                    if !expected_md5.is_empty() {
+                        return RaftResponse::failure(
+                            "CAS conflict: config does not exist".to_string(),
+                        );
+                    }
+                }
+                Err(e) => {
+                    return RaftResponse::failure(format!("CAS check failed: {}", e));
+                }
+            }
+        }
+
         let value = serde_json::json!({
             "data_id": data_id,
             "group": group,

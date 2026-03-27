@@ -589,6 +589,7 @@ impl McpServerOperationService {
                 AI_CONFIG_TYPE,
                 "", // schema
                 "", // encrypted_data_key
+                None,
             )
             .await?;
         Ok(())

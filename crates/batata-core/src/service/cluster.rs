@@ -2,7 +2,6 @@
 // Manages cluster membership, health checks, and inter-node communication
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use std::{collections::HashSet, sync::Arc};
 
 use dashmap::DashMap;
@@ -60,21 +59,9 @@ impl ServerMemberManagerConfig {
     /// Create from application Configuration, reading all values from config
     pub fn from_configuration(config: &crate::model::Configuration) -> Self {
         Self {
-            health_check: HealthCheckConfig {
-                check_interval: Duration::from_millis(config.cluster_health_check_interval_ms()),
-                check_timeout: Duration::from_millis(config.cluster_health_check_timeout_ms()),
-                max_fail_count: config.cluster_health_check_max_fail_count(),
-                suspicious_threshold: config.cluster_health_check_suspicious_threshold(),
-            },
+            health_check: HealthCheckConfig::from_configuration(config),
             cluster_client: ClusterClientConfig::from_configuration(config),
-            distro: DistroConfig {
-                sync_delay: Duration::from_millis(config.distro_sync_delay_ms()),
-                sync_timeout: Duration::from_millis(config.distro_sync_timeout_ms()),
-                sync_retry_delay: Duration::from_millis(config.distro_sync_retry_delay_ms()),
-                verify_interval: Duration::from_millis(config.distro_verify_interval_ms()),
-                verify_timeout: Duration::from_millis(config.distro_verify_timeout_ms()),
-                load_retry_delay: Duration::from_millis(config.distro_load_retry_delay_ms()),
-            },
+            distro: DistroConfig::from_configuration(config),
             event_queue_size: config.cluster_event_queue_size(),
             health_check_enabled: true,
             distro_enabled: true,

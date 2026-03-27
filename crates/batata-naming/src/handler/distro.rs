@@ -124,12 +124,18 @@ impl DistroDataHandler for NamingInstanceDistroHandler {
 
         let content = serde_json::to_vec(&data).ok()?;
 
-        Some(DistroData::new(
-            DistroDataType::NamingInstance,
-            key.to_string(),
+        // Use service revision as version instead of Utc::now().
+        // This gives a stable version that only changes when data actually changes,
+        // enabling accurate verify comparisons between cluster nodes.
+        let revision = self.naming_service.get_service_revision(key);
+
+        Some(DistroData {
+            data_type: DistroDataType::NamingInstance,
+            key: key.to_string(),
             content,
-            self.local_address.clone(),
-        ))
+            version: revision,
+            source: self.local_address.clone(),
+        })
     }
 
     async fn process_sync_data(&self, data: DistroData) -> Result<(), String> {

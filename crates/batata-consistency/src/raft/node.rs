@@ -242,22 +242,24 @@ impl RaftNode {
                 Ok((result.data, log_index))
             }
             Err(e) => {
-                // Forward to leader with retry and re-discovery.
+                // Forward to leader with retry, exponential backoff, and re-discovery.
                 // If the leader has changed between attempts, we re-discover it
                 // from Raft metrics rather than retrying a stale address.
-                const MAX_FORWARD_RETRIES: u32 = 2;
+                let max_retries = self.config.forward_max_retries;
+                let initial_delay = self.config.forward_initial_delay_ms;
                 let mut last_err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
 
-                for attempt in 0..MAX_FORWARD_RETRIES {
+                for attempt in 0..max_retries {
                     let leader_addr = match self.leader_addr() {
                         Some(addr) => addr,
                         None => break, // No leader known, give up
                     };
 
                     debug!(
-                        "Forwarding write to Raft leader at {} (attempt {}): {}",
+                        "Forwarding write to Raft leader at {} (attempt {}/{}): {}",
                         leader_addr,
                         attempt + 1,
+                        max_retries,
                         request.op_type()
                     );
 
@@ -271,14 +273,28 @@ impl RaftNode {
                         }
                         Err(forward_err) => {
                             tracing::warn!(
-                                "Forward to leader {} failed (attempt {}): {}",
+                                "Forward to leader {} failed (attempt {}/{}): {}",
                                 leader_addr,
                                 attempt + 1,
+                                max_retries,
                                 forward_err
                             );
                             last_err = forward_err;
-                            // Brief pause before re-discovering leader
-                            tokio::time::sleep(Duration::from_millis(200)).await;
+                            // Exponential backoff with jitter before re-discovering leader
+                            let delay = initial_delay * (1u64 << attempt.min(4));
+                            let jitter = delay / 4;
+                            let actual_delay = if jitter > 0 {
+                                delay
+                                    + (std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .subsec_nanos()
+                                        as u64
+                                        % jitter)
+                            } else {
+                                delay
+                            };
+                            tokio::time::sleep(Duration::from_millis(actual_delay)).await;
                         }
                     }
                 }

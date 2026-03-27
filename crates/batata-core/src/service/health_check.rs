@@ -33,6 +33,10 @@ pub struct HealthCheckConfig {
     pub max_fail_count: i32,
     /// Number of failed checks before marking node as SUSPICIOUS
     pub suspicious_threshold: i32,
+    /// Interval for reporting local member info to peers.
+    /// Similar to Nacos MemberInfoReportTask (50s).
+    /// Set to 0 to disable member reporting.
+    pub member_report_interval: Duration,
 }
 
 impl Default for HealthCheckConfig {
@@ -42,6 +46,7 @@ impl Default for HealthCheckConfig {
             check_timeout: Duration::from_secs(3),
             max_fail_count: 3,
             suspicious_threshold: 1,
+            member_report_interval: Duration::from_secs(5),
         }
     }
 }
@@ -54,6 +59,9 @@ impl HealthCheckConfig {
             check_timeout: Duration::from_millis(config.cluster_health_check_timeout_ms()),
             max_fail_count: config.cluster_health_check_max_fail_count(),
             suspicious_threshold: config.cluster_health_check_suspicious_threshold(),
+            member_report_interval: Duration::from_millis(
+                config.cluster_member_report_interval_ms(),
+            ),
         }
     }
 }
@@ -206,6 +214,23 @@ impl MemberHealthChecker {
         let running = self.running.clone();
         let config = self.config.clone();
         let local_address = self.local_address.clone();
+
+        // Start the member report task (round-robin reports to peers)
+        if config.member_report_interval.as_millis() > 0 {
+            let report_members = self.members.clone();
+            let report_running = self.running.clone();
+            let report_config = config.clone();
+            let report_local = self.local_address.clone();
+            tokio::spawn(async move {
+                Self::member_report_loop(
+                    report_members,
+                    report_running,
+                    report_config,
+                    report_local,
+                )
+                .await;
+            });
+        }
 
         tokio::spawn(async move {
             Self::health_check_loop(
@@ -469,6 +494,115 @@ impl MemberHealthChecker {
                 false
             }
         }
+    }
+
+    /// Member info report loop — reports local member metadata to one peer per cycle
+    /// (round-robin), similar to Nacos MemberInfoReportTask.
+    async fn member_report_loop(
+        members: Arc<DashMap<String, Member>>,
+        running: Arc<AtomicBool>,
+        config: HealthCheckConfig,
+        local_address: String,
+    ) {
+        let mut cursor: usize = 0;
+        info!(
+            "Starting member report task (interval: {}ms)",
+            config.member_report_interval.as_millis()
+        );
+
+        loop {
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
+
+            tokio::time::sleep(config.member_report_interval).await;
+
+            let peers: Vec<String> = members
+                .iter()
+                .filter(|e| e.key() != &local_address)
+                .map(|e| e.key().clone())
+                .collect();
+
+            if peers.is_empty() {
+                continue;
+            }
+
+            // Round-robin: report to one peer per cycle
+            cursor = cursor % peers.len();
+            let target = &peers[cursor];
+            cursor = cursor.wrapping_add(1);
+
+            // Build and send MemberReportRequest
+            if let Err(e) = Self::send_member_report(target, &local_address, &config).await {
+                debug!("Member report to {} failed: {}", target, e);
+            }
+        }
+    }
+
+    /// Send a member report to a single peer via cluster gRPC.
+    async fn send_member_report(
+        target: &str,
+        local_address: &str,
+        config: &HealthCheckConfig,
+    ) -> Result<(), String> {
+        use batata_api::model::MemberBuilder;
+        use batata_api::remote::model::RequestTrait;
+
+        let parts: Vec<&str> = target.split(':').collect();
+        if parts.len() != 2 {
+            return Err("invalid address".to_string());
+        }
+        let main_port: u16 = parts[1].parse().map_err(|e| format!("{}", e))?;
+        let grpc_address = format!("http://{}:{}", parts[0], main_port + 1001);
+
+        let channel = tokio::time::timeout(
+            config.check_timeout,
+            Channel::from_shared(grpc_address.clone())
+                .map_err(|e| format!("{}", e))?
+                .connect(),
+        )
+        .await
+        .map_err(|_| "connect timeout".to_string())?
+        .map_err(|e| format!("connect: {}", e))?;
+
+        let mut client = RequestClient::new(channel);
+
+        // Build local member info from address
+        let local_parts: Vec<&str> = local_address.split(':').collect();
+        let (local_ip, local_port) = if local_parts.len() == 2 {
+            (
+                local_parts[0].to_string(),
+                local_parts[1].parse::<u16>().unwrap_or(8848),
+            )
+        } else {
+            (local_address.to_string(), 8848)
+        };
+
+        let local_member = MemberBuilder::new(local_ip, local_port).build();
+
+        let mut request = batata_api::remote::model::MemberReportRequest::default();
+        request.node = Some(local_member);
+
+        let metadata = Metadata {
+            r#type: request.request_type().to_string(),
+            ..Default::default()
+        };
+        let body = request.body();
+        let payload = Payload {
+            metadata: Some(metadata),
+            body: Some(Any {
+                type_url: String::default(),
+                value: body,
+            }),
+        };
+
+        tokio::time::timeout(config.check_timeout, client.request(payload))
+            .await
+            .map_err(|_| "request timeout".to_string())?
+            .map_err(|e| format!("request: {}", e))?;
+
+        debug!("Member report sent to {}", target);
+        Ok(())
     }
 
     /// Get health status for a member

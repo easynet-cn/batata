@@ -165,6 +165,7 @@ async fn import_with_persistence(
                 &item.config_type,
                 "",
                 &item.encrypted_data_key,
+                None,
             )
             .await
         {
