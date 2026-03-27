@@ -361,6 +361,47 @@ impl BatataConfigService {
         Ok(())
     }
 
+    /// Add a detailed change event listener that receives field-level diffs.
+    ///
+    /// When config changes, the change parser compares old and new content
+    /// and produces `ConfigChangeEvent` with individual `ConfigChangeItem`s
+    /// showing which properties were added, modified, or deleted.
+    ///
+    /// Equivalent to Nacos `AbstractConfigChangeListener`.
+    pub async fn add_change_event_listener(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        config_type: &str,
+        listener: Arc<dyn listener::ConfigChangeEventListener>,
+    ) -> Result<()> {
+        let key = build_cache_key(data_id, group, tenant);
+        let should_subscribe;
+
+        {
+            let mut entry = self
+                .cache_map
+                .entry(key.clone())
+                .or_insert_with(|| CacheData::new(data_id, group, tenant));
+            entry.change_event_listeners.push(listener);
+            if !config_type.is_empty() {
+                entry.config_type = config_type.to_string();
+            }
+            should_subscribe = !entry.is_listening;
+            if should_subscribe {
+                entry.is_listening = true;
+            }
+        }
+
+        if should_subscribe {
+            self.send_listen_request(data_id, group, tenant, true)
+                .await?;
+        }
+
+        Ok(())
+    }
+
     /// Remove all listeners for a config.
     ///
     /// If no listeners remain, a `ConfigBatchListenRequest` (listen=false)
@@ -402,18 +443,41 @@ impl BatataConfigService {
 
         // Re-fetch from server
         match self.get_config(data_id, group, tenant).await {
-            Ok(content) => {
+            Ok(new_content) => {
                 let key = build_cache_key(data_id, group, tenant);
                 if let Some(entry) = self.cache_map.get(&key) {
                     let response = ConfigResponse {
                         data_id: data_id.to_string(),
                         group: group.to_string(),
                         tenant: tenant.to_string(),
-                        content,
+                        content: new_content.clone(),
                     };
 
+                    // Notify basic listeners
                     for listener in &entry.listeners {
                         listener.receive_config_info(response.clone());
+                    }
+
+                    // Notify change event listeners with field-level diffs
+                    if !entry.change_event_listeners.is_empty() {
+                        let old_content = &entry.content;
+                        let config_type = &entry.config_type;
+                        let items = change_parser::parse_change_items(
+                            config_type,
+                            old_content,
+                            &new_content,
+                        );
+                        if !items.is_empty() {
+                            let event = change_parser::ConfigChangeEvent {
+                                data_id: data_id.to_string(),
+                                group: group.to_string(),
+                                tenant: tenant.to_string(),
+                                items,
+                            };
+                            for listener in &entry.change_event_listeners {
+                                listener.receive_config_change(event.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -471,6 +535,38 @@ impl BatataConfigService {
         );
 
         Ok(())
+    }
+
+    /// Get config and atomically register a listener in one call.
+    ///
+    /// This prevents the race condition where a config change happens between
+    /// `get_config()` and `add_listener()` — the listener is registered
+    /// before the initial content is returned, so no changes are missed.
+    ///
+    /// Equivalent to Nacos `getConfigAndSignListener()`.
+    pub async fn get_config_and_sign_listener(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        listener: Arc<dyn ConfigChangeListener>,
+    ) -> Result<String> {
+        // Register listener FIRST so we don't miss any changes
+        self.add_listener(data_id, group, tenant, listener).await?;
+        // Then fetch the current config
+        self.get_config(data_id, group, tenant).await
+    }
+
+    /// Check if the config server is healthy.
+    ///
+    /// Returns "UP" if the gRPC connection is active, "DOWN" otherwise.
+    /// Equivalent to Nacos `getServerStatus()`.
+    pub async fn get_server_status(&self) -> String {
+        if self.grpc_client.is_connected().await {
+            "UP".to_string()
+        } else {
+            "DOWN".to_string()
+        }
     }
 
     /// Gracefully shutdown the config service.

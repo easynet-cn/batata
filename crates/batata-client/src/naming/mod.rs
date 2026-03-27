@@ -339,19 +339,177 @@ impl BatataNamingService {
     }
 
     /// Get healthy instances only for a service.
-    pub async fn select_healthy_instances(
+    /// Select instances filtered by health status.
+    ///
+    /// Equivalent to Nacos `selectInstances(serviceName, healthy)`.
+    /// When `healthy=true`, returns only healthy & enabled instances.
+    /// When `healthy=false`, returns only unhealthy or disabled instances.
+    pub async fn select_instances(
         &self,
         namespace: &str,
         group_name: &str,
         service_name: &str,
+        healthy: bool,
     ) -> Result<Vec<Instance>> {
         let instances = self
             .get_all_instances(namespace, group_name, service_name)
             .await?;
         Ok(instances
             .into_iter()
-            .filter(|i| i.healthy && i.enabled)
+            .filter(|i| {
+                if healthy {
+                    i.healthy && i.enabled
+                } else {
+                    !i.healthy || !i.enabled
+                }
+            })
             .collect())
+    }
+
+    /// Select instances filtered by health status and clusters.
+    ///
+    /// Equivalent to Nacos `selectInstances(serviceName, clusters, healthy)`.
+    pub async fn select_instances_with_clusters(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        clusters: &[String],
+        healthy: bool,
+    ) -> Result<Vec<Instance>> {
+        let instances = self
+            .select_instances(namespace, group_name, service_name, healthy)
+            .await?;
+        if clusters.is_empty() {
+            return Ok(instances);
+        }
+        Ok(instances
+            .into_iter()
+            .filter(|i| clusters.iter().any(|c| c == &i.cluster_name))
+            .collect())
+    }
+
+    /// Select only healthy & enabled instances (convenience method).
+    pub async fn select_healthy_instances(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Result<Vec<Instance>> {
+        self.select_instances(namespace, group_name, service_name, true)
+            .await
+    }
+
+    /// Select one random healthy instance from the service.
+    ///
+    /// Uses weight-based random selection among healthy & enabled instances.
+    /// Returns `None` if no healthy instance is available.
+    /// Equivalent to Nacos `selectOneHealthyInstance()`.
+    pub async fn select_one_healthy_instance(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Result<Option<Instance>> {
+        let healthy = self
+            .select_healthy_instances(namespace, group_name, service_name)
+            .await?;
+        if healthy.is_empty() {
+            return Ok(None);
+        }
+        // Weight-based random selection
+        let total_weight: f64 = healthy.iter().map(|i| i.weight.max(0.0)).sum();
+        if total_weight <= 0.0 {
+            // All weights zero — uniform random
+            let idx = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .subsec_nanos() as usize)
+                % healthy.len();
+            return Ok(Some(healthy[idx].clone()));
+        }
+        // Weighted random
+        let rand_val = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as f64
+            / u32::MAX as f64)
+            * total_weight;
+        let mut accum = 0.0;
+        for inst in &healthy {
+            accum += inst.weight.max(0.0);
+            if accum >= rand_val {
+                return Ok(Some(inst.clone()));
+            }
+        }
+        Ok(Some(healthy.last().unwrap().clone()))
+    }
+
+    /// Select one healthy instance with cluster filter.
+    pub async fn select_one_healthy_instance_with_clusters(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        clusters: &[String],
+    ) -> Result<Option<Instance>> {
+        let all_healthy = self
+            .select_healthy_instances(namespace, group_name, service_name)
+            .await?;
+        let filtered: Vec<Instance> = if clusters.is_empty() {
+            all_healthy
+        } else {
+            all_healthy
+                .into_iter()
+                .filter(|i| clusters.iter().any(|c| c == &i.cluster_name))
+                .collect()
+        };
+        if filtered.is_empty() {
+            return Ok(None);
+        }
+        // Simple random for filtered list
+        let idx = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos() as usize)
+            % filtered.len();
+        Ok(Some(filtered[idx].clone()))
+    }
+
+    /// Get all currently subscribed service keys.
+    ///
+    /// Returns a list of (namespace, group, service_name) tuples.
+    /// Equivalent to Nacos `getSubscribeServices()`.
+    pub fn get_subscribe_services(&self) -> Vec<(String, String, String)> {
+        self.subscriptions
+            .iter()
+            .map(|e| {
+                let key = e.key().clone();
+                // key format: "namespace@@group@@service"
+                let parts: Vec<&str> = key.splitn(3, "@@").collect();
+                if parts.len() == 3 {
+                    (
+                        parts[0].to_string(),
+                        parts[1].to_string(),
+                        parts[2].to_string(),
+                    )
+                } else {
+                    (key, String::new(), String::new())
+                }
+            })
+            .collect()
+    }
+
+    /// Check if the naming server is healthy.
+    ///
+    /// Returns "UP" if the gRPC connection is active, "DOWN" otherwise.
+    /// Equivalent to Nacos `getServerStatus()`.
+    pub async fn get_server_status(&self) -> String {
+        if self.grpc_client.is_connected().await {
+            "UP".to_string()
+        } else {
+            "DOWN".to_string()
+        }
     }
 
     /// Gracefully shutdown the naming service.

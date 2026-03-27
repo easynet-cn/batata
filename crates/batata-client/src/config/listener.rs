@@ -17,6 +17,16 @@ pub trait ConfigChangeListener: Send + Sync + 'static {
     fn receive_config_info(&self, config_info: ConfigResponse);
 }
 
+/// Trait for receiving detailed config change events with field-level diffs.
+///
+/// Equivalent to Nacos `AbstractConfigChangeListener`.
+/// Use this when you need to know which properties changed (added/modified/deleted),
+/// not just that the content changed.
+pub trait ConfigChangeEventListener: Send + Sync + 'static {
+    /// Called when config content changes, with parsed change details.
+    fn receive_config_change(&self, event: super::change_parser::ConfigChangeEvent);
+}
+
 /// A simple listener that invokes a closure.
 pub struct FnConfigChangeListener<F>
 where

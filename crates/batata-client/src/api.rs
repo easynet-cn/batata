@@ -1164,6 +1164,491 @@ impl BatataApiClient {
             .await?;
         Ok(response.data)
     }
+    // ============== Instance Admin APIs ==============
+
+    /// Register a new instance via HTTP Admin API
+    pub async fn instance_create(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        cluster_name: &str,
+        ephemeral: bool,
+    ) -> anyhow::Result<String> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            ip: &'a str,
+            port: i32,
+            cluster_name: &'a str,
+            ephemeral: bool,
+        }
+        let response: ApiResponse<String> = self
+            .http_client
+            .post_form(
+                "/v3/admin/ns/instance",
+                &Body {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    ip,
+                    port,
+                    cluster_name,
+                    ephemeral,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Deregister an instance via HTTP Admin API
+    pub async fn instance_delete(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        cluster_name: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            ip: &'a str,
+            port: i32,
+            cluster_name: &'a str,
+        }
+        let response: ApiResponse<bool> = self
+            .http_client
+            .delete_with_query(
+                "/v3/admin/ns/instance",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    ip,
+                    port,
+                    cluster_name,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get instance detail
+    pub async fn instance_get(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        cluster_name: &str,
+    ) -> anyhow::Result<InstanceInfo> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            ip: &'a str,
+            port: i32,
+            cluster_name: &'a str,
+        }
+        let response: ApiResponse<InstanceInfo> = self
+            .http_client
+            .get_with_query(
+                "/v3/admin/ns/instance",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    ip,
+                    port,
+                    cluster_name,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Update instance health status (for persistent instances)
+    pub async fn instance_health_update(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+        healthy: bool,
+    ) -> anyhow::Result<String> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+            ip: &'a str,
+            port: i32,
+            healthy: bool,
+        }
+        let response: ApiResponse<String> = self
+            .http_client
+            .put_form(
+                "/v3/admin/ns/health/instance",
+                &Body {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                    ip,
+                    port,
+                    healthy,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    // ============== Client Introspection APIs ==============
+
+    /// List all connected client IDs
+    pub async fn client_list(&self) -> anyhow::Result<Vec<serde_json::Value>> {
+        let response: ApiResponse<Vec<serde_json::Value>> =
+            self.http_client.get("/v3/admin/ns/client/list").await?;
+        Ok(response.data)
+    }
+
+    /// Get client detail by connection ID
+    pub async fn client_detail(&self, client_id: &str) -> anyhow::Result<serde_json::Value> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            client_id: &'a str,
+        }
+        let response: ApiResponse<serde_json::Value> = self
+            .http_client
+            .get_with_query("/v3/admin/ns/client", &Query { client_id })
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get services published by a client
+    pub async fn client_published_services(
+        &self,
+        client_id: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            client_id: &'a str,
+        }
+        let response: ApiResponse<Vec<serde_json::Value>> = self
+            .http_client
+            .get_with_query("/v3/admin/ns/client/publish/list", &Query { client_id })
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get services subscribed by a client
+    pub async fn client_subscribed_services(
+        &self,
+        client_id: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            client_id: &'a str,
+        }
+        let response: ApiResponse<Vec<serde_json::Value>> = self
+            .http_client
+            .get_with_query("/v3/admin/ns/client/subscribe/list", &Query { client_id })
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get publishers of a service
+    pub async fn service_publisher_clients(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+        }
+        let response: ApiResponse<Vec<serde_json::Value>> = self
+            .http_client
+            .get_with_query(
+                "/v3/admin/ns/client/service/publisher/list",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get subscribers of a service
+    pub async fn service_subscriber_clients(
+        &self,
+        namespace_id: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            namespace_id: &'a str,
+            group_name: &'a str,
+            service_name: &'a str,
+        }
+        let response: ApiResponse<Vec<serde_json::Value>> = self
+            .http_client
+            .get_with_query(
+                "/v3/admin/ns/client/service/subscriber/list",
+                &Query {
+                    namespace_id,
+                    group_name,
+                    service_name,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    // ============== Core Server Admin APIs ==============
+
+    /// Get server state (key-value map)
+    pub async fn server_state(&self) -> anyhow::Result<serde_json::Value> {
+        let response: ApiResponse<serde_json::Value> =
+            self.http_client.get("/v3/admin/core/state").await?;
+        Ok(response.data)
+    }
+
+    /// Liveness probe (for K8s)
+    pub async fn liveness(&self) -> anyhow::Result<String> {
+        let response: ApiResponse<String> = self
+            .http_client
+            .get("/v3/admin/core/state/liveness")
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Readiness probe (for K8s)
+    pub async fn readiness(&self) -> anyhow::Result<String> {
+        let response: ApiResponse<String> = self
+            .http_client
+            .get("/v3/admin/core/state/readiness")
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get naming metrics
+    pub async fn naming_metrics(&self) -> anyhow::Result<serde_json::Value> {
+        let response: ApiResponse<serde_json::Value> =
+            self.http_client.get("/v3/admin/ns/ops/metrics").await?;
+        Ok(response.data)
+    }
+
+    /// Get available health checkers
+    pub async fn health_checkers(&self) -> anyhow::Result<Vec<String>> {
+        let response: ApiResponse<Vec<String>> =
+            self.http_client.get("/v3/admin/ns/health/checkers").await?;
+        Ok(response.data)
+    }
+
+    // ============== Config Admin Extension APIs ==============
+
+    /// Update config metadata (description, tags) without changing content
+    pub async fn config_update_metadata(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        desc: &str,
+        config_tags: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body<'a> {
+            data_id: &'a str,
+            group: &'a str,
+            namespace_id: &'a str,
+            desc: &'a str,
+            config_tags: &'a str,
+        }
+        let response: ApiResponse<bool> = self
+            .http_client
+            .put_form(
+                "/v3/admin/cs/config/metadata",
+                &Body {
+                    data_id,
+                    group,
+                    namespace_id,
+                    desc,
+                    config_tags,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get previous config history entry
+    pub async fn history_previous(
+        &self,
+        data_id: &str,
+        group: &str,
+        namespace_id: &str,
+        id: i64,
+    ) -> anyhow::Result<ConfigHistoryDetailInfo> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            data_id: &'a str,
+            group: &'a str,
+            namespace_id: &'a str,
+            id: i64,
+        }
+        let response: ApiResponse<ConfigHistoryDetailInfo> = self
+            .http_client
+            .get_with_query(
+                "/v3/admin/cs/history/previous",
+                &Query {
+                    data_id,
+                    group,
+                    namespace_id,
+                    id,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    // ============== Server Loader/Connection Management APIs ==============
+
+    /// Get current connected clients with connection info
+    pub async fn loader_current(&self) -> anyhow::Result<serde_json::Value> {
+        let response: ApiResponse<serde_json::Value> = self
+            .http_client
+            .get("/v3/admin/core/loader/current")
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get cluster-wide loader metrics
+    pub async fn loader_cluster_metrics(&self) -> anyhow::Result<serde_json::Value> {
+        let response: ApiResponse<serde_json::Value> = self
+            .http_client
+            .get("/v3/admin/core/loader/cluster")
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Reload SDK connections (migrate connections to balance load)
+    pub async fn loader_reload_current(
+        &self,
+        count: i32,
+        redirect_address: &str,
+    ) -> anyhow::Result<String> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body<'a> {
+            count: i32,
+            redirect_address: &'a str,
+        }
+        let response: ApiResponse<String> = self
+            .http_client
+            .post_form(
+                "/v3/admin/core/loader/reloadCurrent",
+                &Body {
+                    count,
+                    redirect_address,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Smart reload cluster (balance connections across nodes)
+    pub async fn loader_smart_reload(&self, loader_factor: &str) -> anyhow::Result<String> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body<'a> {
+            loader_factor: &'a str,
+        }
+        let response: ApiResponse<String> = self
+            .http_client
+            .post_form(
+                "/v3/admin/core/loader/smartReloadCluster",
+                &Body { loader_factor },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Reload a single client connection
+    pub async fn loader_reload_client(
+        &self,
+        connection_id: &str,
+        redirect_address: &str,
+    ) -> anyhow::Result<String> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body<'a> {
+            connection_id: &'a str,
+            redirect_address: &'a str,
+        }
+        let response: ApiResponse<String> = self
+            .http_client
+            .post_form(
+                "/v3/admin/core/loader/reloadClient",
+                &Body {
+                    connection_id,
+                    redirect_address,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Update log level dynamically
+    pub async fn update_log_level(
+        &self,
+        log_name: &str,
+        log_level: &str,
+    ) -> anyhow::Result<String> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Body<'a> {
+            log_name: &'a str,
+            log_level: &'a str,
+        }
+        let response: ApiResponse<String> = self
+            .http_client
+            .put_form(
+                "/v3/admin/core/ops/log",
+                &Body {
+                    log_name,
+                    log_level,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
 }
 
 #[cfg(test)]

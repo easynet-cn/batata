@@ -397,6 +397,21 @@ impl Default for ConfigChangeHandler {
     }
 }
 
+/// Convenience function: parse field-level changes between old and new config content.
+///
+/// Uses the default set of parsers (Properties, YAML, JSON, TOML, XML).
+/// Returns an empty HashMap if the content is identical.
+pub fn parse_change_items(
+    config_type: &str,
+    old_content: &str,
+    new_content: &str,
+) -> HashMap<String, ConfigChangeItem> {
+    if old_content == new_content {
+        return HashMap::new();
+    }
+    ConfigChangeHandler::new().parse_change(config_type, old_content, new_content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

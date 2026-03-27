@@ -150,6 +150,53 @@ impl NamingFuzzyWatchService {
         Ok(())
     }
 
+    /// Watch and wait for initial sync to complete, then return all matched service keys.
+    ///
+    /// Equivalent to Nacos `fuzzyWatchWithServiceKeys()`.
+    /// The returned set contains all service keys matching the pattern that exist on the server.
+    pub async fn watch_with_keys(
+        &self,
+        namespace: &str,
+        group_name_pattern: &str,
+        service_name_pattern: &str,
+        listener: Arc<dyn NamingFuzzyWatchListener>,
+        timeout: std::time::Duration,
+    ) -> Result<HashSet<String>> {
+        self.watch(
+            namespace,
+            group_name_pattern,
+            service_name_pattern,
+            listener,
+        )
+        .await?;
+
+        let string_key = WatchKey {
+            namespace: namespace.to_string(),
+            group_name_pattern: group_name_pattern.to_string(),
+            service_name_pattern: service_name_pattern.to_string(),
+        }
+        .to_string_key();
+
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if let Some(entry) = self.watches.get(&string_key) {
+                if !entry.is_initializing {
+                    return Ok(entry.received_service_keys.clone());
+                }
+            } else {
+                return Ok(HashSet::new());
+            }
+            if tokio::time::Instant::now() > deadline {
+                return Ok(self
+                    .watches
+                    .get(&string_key)
+                    .map(|e| e.received_service_keys.clone())
+                    .unwrap_or_default());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     /// Stop watching services matching the given patterns
     pub async fn unwatch(
         &self,

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use md5::{Digest, Md5};
 
-use super::listener::ConfigChangeListener;
+use super::listener::{ConfigChangeEventListener, ConfigChangeListener};
 
 /// Cache entry for a single config item, tracking content, MD5, and listeners.
 pub struct CacheData {
@@ -13,7 +13,11 @@ pub struct CacheData {
     pub tenant: String,
     pub content: String,
     pub md5: String,
+    /// Config type (e.g., "properties", "yaml", "json") for change parsing
+    pub config_type: String,
     pub listeners: Vec<Arc<dyn ConfigChangeListener>>,
+    /// Listeners that receive detailed field-level change events
+    pub change_event_listeners: Vec<Arc<dyn ConfigChangeEventListener>>,
     pub is_listening: bool,
 }
 
@@ -26,7 +30,9 @@ impl CacheData {
             tenant: tenant.to_string(),
             content: String::new(),
             md5: String::new(),
+            config_type: String::new(),
             listeners: Vec::new(),
+            change_event_listeners: Vec::new(),
             is_listening: false,
         }
     }

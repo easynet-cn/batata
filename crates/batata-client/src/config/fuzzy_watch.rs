@@ -122,6 +122,40 @@ impl ConfigFuzzyWatchService {
         Ok(())
     }
 
+    /// Watch and wait for initial sync to complete, then return all matched group keys.
+    ///
+    /// Equivalent to Nacos `fuzzyWatchWithGroupKeys()`.
+    /// The returned set contains all group keys matching the pattern that exist on the server.
+    pub async fn watch_with_keys(
+        &self,
+        group_key_pattern: &str,
+        listener: Arc<dyn ConfigFuzzyWatchListener>,
+        timeout: std::time::Duration,
+    ) -> Result<HashSet<String>> {
+        self.watch(group_key_pattern, listener).await?;
+
+        // Wait for initialization to complete (server sends FINISH_FUZZY_WATCH_INIT_NOTIFY)
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if let Some(entry) = self.watches.get(group_key_pattern) {
+                if !entry.is_initializing {
+                    return Ok(entry.received_group_keys.clone());
+                }
+            } else {
+                return Ok(HashSet::new());
+            }
+            if tokio::time::Instant::now() > deadline {
+                // Timeout: return whatever keys we have so far
+                return Ok(self
+                    .watches
+                    .get(group_key_pattern)
+                    .map(|e| e.received_group_keys.clone())
+                    .unwrap_or_default());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
     /// Stop watching configs matching the given pattern
     pub async fn unwatch(&self, group_key_pattern: &str) -> Result<()> {
         if self.watches.remove(group_key_pattern).is_some() {
