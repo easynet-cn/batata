@@ -54,6 +54,7 @@ impl AuthProvider {
         let http_client = Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10))
+            .no_proxy() // Skip system proxy for direct server communication
             .build()
             .map_err(|e| ClientError::Other(e.into()))?;
 

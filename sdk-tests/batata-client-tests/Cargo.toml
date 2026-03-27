@@ -1,0 +1,39 @@
+[workspace]
+
+[package]
+name = "batata-client-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Integration tests only — no library code
+[[test]]
+name = "config_service_test"
+path = "tests/config_service_test.rs"
+
+[[test]]
+name = "naming_service_test"
+path = "tests/naming_service_test.rs"
+
+[[test]]
+name = "fuzzy_watch_test"
+path = "tests/fuzzy_watch_test.rs"
+
+[[test]]
+name = "auth_test"
+path = "tests/auth_test.rs"
+
+[[test]]
+name = "change_event_test"
+path = "tests/change_event_test.rs"
+
+[dev-dependencies]
+batata-client = { path = "../../crates/batata-client" }
+batata-api = { path = "../../crates/batata-api" }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+md5 = "0.7"

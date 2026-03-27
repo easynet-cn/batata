@@ -107,6 +107,7 @@ impl ClientAuthService for JwtAuthProvider {
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
+            .no_proxy() // Skip system proxy for direct server communication
             .build()
             .unwrap_or_default();
 

@@ -124,6 +124,7 @@ impl BatataHttpClient {
         let client = Client::builder()
             .connect_timeout(Duration::from_millis(config.connect_timeout_ms))
             .timeout(Duration::from_millis(config.read_timeout_ms))
+            .no_proxy() // Skip system proxy for direct server communication
             .build()?;
 
         let use_identity = config.has_server_identity();
