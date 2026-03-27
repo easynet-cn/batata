@@ -11,7 +11,13 @@
 pub mod ai;
 pub mod api;
 pub mod auth;
+pub mod client;
+pub mod client_config;
 pub mod config;
+
+// Re-export unified entry points at crate root
+pub use client::BatataClient;
+pub use client_config::{ClientConfig, ProxyConfig};
 pub mod error;
 pub mod grpc;
 pub mod http;

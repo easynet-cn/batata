@@ -59,6 +59,26 @@ impl ServerListManager {
         }
     }
 
+    /// Create from a Vec of addresses with custom max_failures.
+    pub fn from_addrs(addrs: &[String], max_failures: u32) -> Self {
+        let servers = DashMap::new();
+        for addr in addrs {
+            servers.insert(
+                addr.clone(),
+                ServerHealth {
+                    failures: 0,
+                    healthy: true,
+                },
+            );
+        }
+        Self {
+            servers,
+            server_list: RwLock::new(addrs.to_vec()),
+            current_index: AtomicUsize::new(0),
+            max_failures,
+        }
+    }
+
     /// Get the next healthy server using round-robin
     pub fn next_server(&self) -> Option<String> {
         let list = self.server_list.read().unwrap();

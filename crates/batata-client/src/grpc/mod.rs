@@ -134,6 +134,48 @@ pub struct GrpcClient {
 }
 
 impl GrpcClient {
+    /// Create a GrpcClient from the unified `ClientConfig`.
+    ///
+    /// This is the preferred constructor — it uses `ClientConfig` for all settings
+    /// including proxy, context_path, auth_endpoint, and timeouts.
+    pub fn from_config(client_config: &crate::ClientConfig) -> Result<Self> {
+        let grpc_config = GrpcClientConfig {
+            server_addrs: client_config.server_addrs.clone(),
+            context_path: client_config.context_path.clone(),
+            username: client_config.username.clone(),
+            password: client_config.password.clone(),
+            module: client_config.module.clone(),
+            tenant: client_config.namespace.clone(),
+            labels: client_config.labels.clone(),
+            tls_enabled: client_config.tls_enabled,
+            tls_ca_cert: client_config.tls_ca_path.clone(),
+            tls_client_cert: None,
+            tls_client_key: None,
+        };
+
+        let auth_provider = if client_config.has_jwt_auth() {
+            let auth_url = client_config.full_auth_url(&client_config.server_addrs[0]);
+            // Extract base URL (up to port) for auth provider
+            let base_and_path = auth_url.rsplitn(2, "/v3/").last().unwrap_or(&auth_url);
+            AuthProvider::with_context_path(
+                base_and_path,
+                "", // context_path already included in full_auth_url
+                &client_config.username,
+                &client_config.password,
+            )?
+        } else {
+            AuthProvider::none()
+        };
+
+        Ok(Self {
+            config: grpc_config,
+            connection: Arc::new(RwLock::new(None)),
+            auth_provider,
+            push_handlers: Arc::new(DashMap::new()),
+            current_server_index: std::sync::atomic::AtomicUsize::new(0),
+        })
+    }
+
     /// Create a new GrpcClient with the given configuration.
     pub fn new(config: GrpcClientConfig) -> Result<Self> {
         let auth_provider = if config.username.is_empty() {

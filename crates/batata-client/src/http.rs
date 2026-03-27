@@ -119,6 +119,48 @@ pub struct BatataHttpClient {
 }
 
 impl BatataHttpClient {
+    /// Create an HTTP client from the unified `ClientConfig`.
+    ///
+    /// This is the preferred constructor — uses `ClientConfig` for proxy,
+    /// timeouts, auth_endpoint, and context_path settings.
+    pub async fn from_config(client_config: &crate::ClientConfig) -> anyhow::Result<Self> {
+        let http_config = HttpClientConfig {
+            server_addrs: client_config.server_addrs.clone(),
+            context_path: client_config.context_path.clone(),
+            auth_endpoint: format!(
+                "{}{}",
+                client_config.context_path, client_config.auth_endpoint
+            ),
+            username: client_config.username.clone(),
+            password: client_config.password.clone(),
+            connect_timeout_ms: client_config.connect_timeout.as_millis() as u64,
+            read_timeout_ms: client_config.request_timeout.as_millis() as u64,
+            ..Default::default()
+        };
+
+        let reqwest_client = client_config.build_reqwest_client()?;
+
+        let use_identity = http_config.has_server_identity();
+
+        let instance = Self {
+            client: reqwest_client,
+            config: http_config,
+            current_server_index: RwLock::new(0),
+            token: RwLock::new(None),
+        };
+
+        if !use_identity && !client_config.username.is_empty() {
+            if let Err(e) = instance.authenticate().await {
+                tracing::warn!(
+                    "Initial authentication failed (will retry on demand): {}",
+                    e
+                );
+            }
+        }
+
+        Ok(instance)
+    }
+
     /// Create a new HTTP client
     pub async fn new(config: HttpClientConfig) -> anyhow::Result<Self> {
         let client = Client::builder()
