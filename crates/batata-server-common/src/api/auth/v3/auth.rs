@@ -25,22 +25,30 @@ const LOCKOUT_DURATION_SECS: u64 = 300; // 5 minutes
 const ATTEMPT_WINDOW_SECS: u64 = 600; // 10 minutes
 
 fn check_login_rate_limit(client_ip: &str) -> Result<(), String> {
+    // Fast path: read-only check first (no mutable lock)
+    if let Some(attempt) = LOGIN_ATTEMPTS.get(client_ip)
+        && let Some(locked_until) = attempt.locked_until
+    {
+        let now = Instant::now();
+        if now < locked_until {
+            let remaining = locked_until.duration_since(now).as_secs();
+            return Err(format!(
+                "Account locked. Try again in {} seconds.",
+                remaining
+            ));
+        }
+    }
+
+    // Slow path: mutable lock only when state needs updating
     if let Some(mut attempt) = LOGIN_ATTEMPTS.get_mut(client_ip) {
-        // Check if locked out
-        if let Some(locked_until) = attempt.locked_until {
-            if Instant::now() < locked_until {
-                let remaining = locked_until.duration_since(Instant::now()).as_secs();
-                return Err(format!(
-                    "Account locked. Try again in {} seconds.",
-                    remaining
-                ));
-            }
+        if let Some(locked_until) = attempt.locked_until
+            && Instant::now() >= locked_until
+        {
             // Lockout expired, reset
             attempt.count = 0;
             attempt.locked_until = None;
             attempt.first_attempt = Instant::now();
         }
-
         // Check if window expired, reset if so
         if attempt.first_attempt.elapsed().as_secs() > ATTEMPT_WINDOW_SECS {
             attempt.count = 0;

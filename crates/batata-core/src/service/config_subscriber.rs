@@ -26,23 +26,27 @@ impl ConfigKey {
         }
     }
 
-    /// Create a unique key string for internal storage
+    /// Create a unique key string for internal storage (pre-allocated)
     pub fn to_key_string(&self) -> String {
-        format!("{}@@{}@@{}", self.tenant, self.group, self.data_id)
+        let mut key =
+            String::with_capacity(self.tenant.len() + self.group.len() + self.data_id.len() + 4);
+        key.push_str(&self.tenant);
+        key.push_str("@@");
+        key.push_str(&self.group);
+        key.push_str("@@");
+        key.push_str(&self.data_id);
+        key
     }
 
     /// Parse a key string back into a ConfigKey
     pub fn from_key_string(key: &str) -> Option<Self> {
-        let parts: Vec<&str> = key.splitn(3, "@@").collect();
-        if parts.len() == 3 {
-            Some(Self {
-                tenant: parts[0].to_string(),
-                group: parts[1].to_string(),
-                data_id: parts[2].to_string(),
-            })
-        } else {
-            None
-        }
+        let (tenant, rest) = key.split_once("@@")?;
+        let (group, data_id) = rest.split_once("@@")?;
+        Some(Self {
+            tenant: tenant.to_string(),
+            group: group.to_string(),
+            data_id: data_id.to_string(),
+        })
     }
 }
 
@@ -228,16 +232,7 @@ impl ConfigSubscriberManager {
 
     /// Parse a key string back to ConfigKey
     fn parse_key_string(key_string: &str) -> Option<ConfigKey> {
-        let parts: Vec<&str> = key_string.splitn(3, "@@").collect();
-        if parts.len() == 3 {
-            Some(ConfigKey {
-                tenant: parts[0].to_string(),
-                group: parts[1].to_string(),
-                data_id: parts[2].to_string(),
-            })
-        } else {
-            None
-        }
+        ConfigKey::from_key_string(key_string)
     }
 }
 

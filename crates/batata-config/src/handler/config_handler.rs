@@ -5,6 +5,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
+/// Build config group key: dataId+group+tenant (pre-allocated capacity)
+#[inline]
+fn build_group_key(data_id: &str, group: &str, tenant: &str) -> String {
+    let mut key = String::with_capacity(data_id.len() + group.len() + tenant.len() + 2);
+    key.push_str(data_id);
+    key.push('+');
+    key.push_str(group);
+    key.push('+');
+    key.push_str(tenant);
+    key
+}
+
 use futures::future::join_all;
 use tonic::Status;
 use tracing::{debug, info, warn};
@@ -667,7 +679,7 @@ impl ConfigPublishHandler {
 
         if !fuzzy_watchers.is_empty() {
             // Build group key in Nacos GroupKey format: dataId+group+tenant
-            let group_key = format!("{}+{}+{}", data_id, group, tenant);
+            let group_key = build_group_key(data_id, group, tenant);
 
             // Use ConfigFuzzyWatchChangeNotifyRequest (not ConfigChangeNotifyRequest)
             // — the SDK expects this specific type for fuzzy watch notifications
@@ -682,30 +694,21 @@ impl ConfigPublishHandler {
                 group_key
             );
 
-            // Push notification to each fuzzy watcher in parallel
-            let futs: Vec<_> = fuzzy_watchers
-                .iter()
-                .map(|connection_id| {
-                    self.fuzzy_watch_manager
-                        .mark_received(connection_id, &group_key);
-                    let cm = &self.connection_manager;
-                    let p = payload.clone();
-                    let cid = connection_id.clone();
-                    let gk = group_key.clone();
-                    async move {
-                        if !cm.push_message(&cid, p).await {
-                            warn!(
-                                "Failed to push config change notification to connection {}: {}",
-                                cid, gk
-                            );
-                        }
-                    }
-                })
-                .collect();
-            join_all(futs).await;
+            // Mark all watchers as received before sending
+            for connection_id in &fuzzy_watchers {
+                self.fuzzy_watch_manager
+                    .mark_received(connection_id, &group_key);
+            }
+
+            // Push notification to all fuzzy watchers using batch API
+            let sent = self
+                .connection_manager
+                .push_message_to_many(&fuzzy_watchers, payload)
+                .await;
 
             info!(
-                "Notified {} fuzzy watchers for config change: {}",
+                "Notified {}/{} fuzzy watchers for config change: {}",
+                sent,
                 fuzzy_watchers.len(),
                 group_key
             );
@@ -926,7 +929,7 @@ impl ConfigRemoveHandler {
 
         if !fuzzy_watchers.is_empty() {
             // Build group key in Nacos GroupKey format: dataId+group+tenant
-            let group_key = format!("{}+{}+{}", data_id, group, tenant);
+            let group_key = build_group_key(data_id, group, tenant);
 
             // Use DELETE_CONFIG for removal notifications
             let mut notification = ConfigFuzzyWatchChangeNotifyRequest::new();
@@ -940,30 +943,21 @@ impl ConfigRemoveHandler {
                 group_key
             );
 
-            // Push notification to each fuzzy watcher in parallel
-            let futs: Vec<_> = fuzzy_watchers
-                .iter()
-                .map(|connection_id| {
-                    self.fuzzy_watch_manager
-                        .mark_received(connection_id, &group_key);
-                    let cm = &self.connection_manager;
-                    let p = payload.clone();
-                    let cid = connection_id.clone();
-                    let gk = group_key.clone();
-                    async move {
-                        if !cm.push_message(&cid, p).await {
-                            warn!(
-                                "Failed to push config removal notification to connection {}: {}",
-                                cid, gk
-                            );
-                        }
-                    }
-                })
-                .collect();
-            join_all(futs).await;
+            // Mark all watchers as received before sending
+            for connection_id in &fuzzy_watchers {
+                self.fuzzy_watch_manager
+                    .mark_received(connection_id, &group_key);
+            }
+
+            // Push notification to all fuzzy watchers using batch API
+            let sent = self
+                .connection_manager
+                .push_message_to_many(&fuzzy_watchers, payload)
+                .await;
 
             info!(
-                "Notified {} fuzzy watchers for config removal: {}",
+                "Notified {}/{} fuzzy watchers for config removal: {}",
+                sent,
                 fuzzy_watchers.len(),
                 group_key
             );
@@ -1435,7 +1429,7 @@ impl PayloadHandler for ConfigFuzzyWatchHandler {
                     for config in &configs {
                         if pat.matches(&pat.namespace, &config.group, &config.data_id) {
                             let group_key =
-                                format!("{}+{}+{}", config.data_id, config.group, pat.namespace);
+                                build_group_key(&config.data_id, &config.group, &pat.namespace);
                             let mut notification = ConfigFuzzyWatchChangeNotifyRequest::new();
                             notification.group_key = group_key;
                             notification.change_type = "ADD_CONFIG".to_string();

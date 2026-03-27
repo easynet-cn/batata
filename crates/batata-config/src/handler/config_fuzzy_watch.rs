@@ -41,23 +41,21 @@ impl ConfigFuzzyWatchPattern {
     /// Parse a groupKeyPattern in format: namespace>>group>>dataIdPattern
     /// Nacos uses ">>" as FUZZY_WATCH_PATTERN_SPLITTER
     pub fn from_group_key_pattern(group_key_pattern: &str) -> Option<Self> {
-        let parts: Vec<&str> = group_key_pattern.split(">>").collect();
-        if parts.len() >= 3 {
+        let (namespace, rest) = group_key_pattern.split_once(">>")?;
+        if let Some((group, data_id)) = rest.split_once(">>") {
             Some(Self {
-                namespace: parts[0].to_string(),
-                group_pattern: parts[1].to_string(),
-                data_id_pattern: parts[2..].join(">>"),
-                watch_type: String::new(),
-            })
-        } else if parts.len() == 2 {
-            Some(Self {
-                namespace: parts[0].to_string(),
-                group_pattern: parts[1].to_string(),
-                data_id_pattern: "*".to_string(),
+                namespace: namespace.to_string(),
+                group_pattern: group.to_string(),
+                data_id_pattern: data_id.to_string(),
                 watch_type: String::new(),
             })
         } else {
-            None
+            Some(Self {
+                namespace: namespace.to_string(),
+                group_pattern: rest.to_string(),
+                data_id_pattern: "*".to_string(),
+                watch_type: String::new(),
+            })
         }
     }
 
@@ -303,12 +301,17 @@ impl ConfigFuzzyWatchManager {
         self.received_keys.remove(connection_id);
     }
 
-    /// Mark a group key as received by a connection
+    /// Mark a group key as received by a connection.
+    /// Optimized to avoid connection_id clone when entry already exists.
     pub fn mark_received(&self, connection_id: &str, group_key: &str) {
-        self.received_keys
-            .entry(connection_id.to_string())
-            .or_default()
-            .insert(group_key.to_string());
+        if let Some(mut keys) = self.received_keys.get_mut(connection_id) {
+            keys.insert(group_key.to_string());
+        } else {
+            self.received_keys
+                .entry(connection_id.to_string())
+                .or_default()
+                .insert(group_key.to_string());
+        }
     }
 
     /// Mark multiple group keys as received

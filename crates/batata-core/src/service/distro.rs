@@ -523,19 +523,16 @@ impl DistroProtocol {
 
                 let now = chrono::Utc::now().timestamp_millis();
 
-                // Atomically claim ready tasks by removing them from the map.
-                // This prevents race conditions where a task could be modified
-                // between collection and removal by a concurrent thread.
-                let ready_tasks: Vec<(String, DistroSyncTask)> = sync_tasks
+                // Atomically claim ready tasks: collect keys first, then remove.
+                // Only clone keys (not values) during iteration to reduce overhead.
+                let ready_keys: Vec<String> = sync_tasks
                     .iter()
                     .filter(|e| e.value().scheduled_time <= now)
-                    .map(|e| (e.key().clone(), e.value().clone()))
-                    .collect::<Vec<_>>()
+                    .map(|e| e.key().clone())
+                    .collect();
+                let ready_tasks: Vec<(String, DistroSyncTask)> = ready_keys
                     .into_iter()
-                    .filter_map(|(key, _)| {
-                        // Atomically remove — if another thread already claimed it, skip
-                        sync_tasks.remove(&key)
-                    })
+                    .filter_map(|key| sync_tasks.remove(&key))
                     .collect();
 
                 for (task_key, task) in ready_tasks {

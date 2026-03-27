@@ -80,10 +80,11 @@ impl PayloadHandler for InstanceRequestHandler {
         instance.register_source = batata_api::naming::RegisterSource::Batata;
 
         // Build keys for tracking before the instance is moved
-        let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
-        let instance_key = format!(
-            "{}#{}#{}",
-            instance.ip, instance.port, instance.cluster_name
+        let service_key = crate::service::build_service_key(namespace, group_name, service_name);
+        let instance_key = crate::service::build_instance_key_parts(
+            &instance.ip,
+            instance.port,
+            &instance.cluster_name,
         );
 
         let result = if req_type == REGISTER_INSTANCE {
@@ -160,7 +161,8 @@ impl PayloadHandler for InstanceRequestHandler {
 
             // Trigger distro sync to other cluster nodes (ephemeral instances only)
             if let Some(ref distro) = self.distro_protocol {
-                let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
+                let service_key =
+                    crate::service::build_service_key(namespace, group_name, service_name);
                 let distro = distro.clone();
                 tokio::spawn(async move {
                     distro
@@ -250,8 +252,10 @@ impl InstanceRequestHandler {
             NotifySubscriberRequest::for_service(namespace, group_name, service_name, service_info);
 
         // Debug: log the exact JSON being sent so we can compare with Nacos
-        if let Ok(json) = serde_json::to_string(&notification) {
-            info!("NotifySubscriberRequest JSON: {}", json);
+        if tracing::enabled!(tracing::Level::DEBUG)
+            && let Ok(json) = serde_json::to_string(&notification)
+        {
+            debug!("NotifySubscriberRequest JSON: {}", json);
         }
 
         let payload = notification.build_server_push_payload();
@@ -306,7 +310,7 @@ impl InstanceRequestHandler {
         }
 
         // Build service key in Nacos format: namespace@@group@@serviceName
-        let service_key = format!("{}@@{}@@{}", namespace, group, service_name);
+        let service_key = crate::service::build_service_key(namespace, group, service_name);
 
         // Build notification payload using NamingFuzzyWatchChangeNotifyRequest
         let mut notification =
@@ -386,7 +390,7 @@ impl PayloadHandler for BatchInstanceRequestHandler {
             );
         }
 
-        let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
+        let service_key = crate::service::build_service_key(namespace, group_name, service_name);
 
         let result = if req_type == REGISTER_INSTANCE || req_type == BATCH_REGISTER_INSTANCE {
             // Build instance keys before instances are moved
@@ -466,7 +470,8 @@ impl PayloadHandler for BatchInstanceRequestHandler {
 
             // Trigger distro sync to other cluster nodes (ephemeral instances only)
             if let Some(ref distro) = self.distro_protocol {
-                let service_key = format!("{}@@{}@@{}", namespace, group_name, service_name);
+                let service_key =
+                    crate::service::build_service_key(namespace, group_name, service_name);
                 let distro = distro.clone();
                 tokio::spawn(async move {
                     distro

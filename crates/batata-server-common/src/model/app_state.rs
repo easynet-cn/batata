@@ -4,8 +4,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use batata_auth::service::oauth::OAuthService;
-use batata_common::{AuthPlugin, ClusterManager, ConfigSubscriptionService};
+use batata_common::{AuthPlugin, ClusterManager, ConfigSubscriptionService, OAuthProvider};
 use batata_consistency::RaftNode;
 use batata_persistence::PersistenceService;
 use batata_plugin::ControlPlugin;
@@ -41,8 +40,8 @@ pub struct AppState {
     pub cluster_manager: Option<Arc<dyn ClusterManager>>,
     pub config_subscriber_manager: Arc<dyn ConfigSubscriptionService>,
     pub console_datasource: Arc<dyn ConsoleDataSource>,
-    /// OAuth2/OIDC service for external authentication
-    pub oauth_service: Option<Arc<OAuthService>>,
+    /// OAuth2/OIDC provider for external authentication
+    pub oauth_service: Option<Arc<dyn OAuthProvider>>,
     /// Auth plugin for pluggable authentication and authorization
     pub auth_plugin: Option<Arc<dyn AuthPlugin>>,
     /// Unified persistence service (SQL, embedded RocksDB, or distributed Raft)

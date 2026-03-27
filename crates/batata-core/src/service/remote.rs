@@ -25,15 +25,17 @@ pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Sta
         None => ("unknown".to_string(), 0),
     };
 
-    connection.meta_info.remote_ip = remote_ip.clone();
-    connection.meta_info.remote_port = remote_port;
     // Use deterministic connection_id based on remote address only.
     // In gRPC over HTTP/2, both unary RPCs and bidirectional streams share
     // the same TCP connection (same remote IP:port), so this ensures
     // consistent connection_id across all request types from the same client.
-    // Note: Nacos uses timestamp prefix but generates it once per connection,
-    // not per RPC call. We use ip_port for simplicity and determinism.
-    connection.meta_info.connection_id = format!("{}_{}", remote_ip, remote_port);
+    let mut conn_id = String::with_capacity(remote_ip.len() + 6);
+    conn_id.push_str(&remote_ip);
+    conn_id.push('_');
+    conn_id.push_str(&remote_port.to_string());
+    connection.meta_info.connection_id = conn_id;
+    connection.meta_info.remote_ip = remote_ip;
+    connection.meta_info.remote_port = remote_port;
 
     let local_port = request.local_addr().map(|a| a.port()).unwrap_or(0);
 
@@ -109,18 +111,21 @@ impl ConnectionManager {
         }
     }
 
+    /// Collect listener Arc clones (cheap) under a short read-lock, then call outside the lock.
+    fn snapshot_listeners(&self) -> Vec<Arc<dyn ConnectionEventListener>> {
+        self.listeners.read().map(|l| l.clone()).unwrap_or_default()
+    }
+
     /// Notify all listeners of a new connection.
     async fn fire_connected(&self, connection_id: &str, meta: &ConnectionMeta) {
-        let listeners = self.listeners.read().map(|l| l.clone()).unwrap_or_default();
-        for listener in &listeners {
+        for listener in &self.snapshot_listeners() {
             listener.on_connected(connection_id, meta).await;
         }
     }
 
     /// Notify all listeners of a disconnection.
     async fn fire_disconnected(&self, connection_id: &str, meta: &ConnectionMeta) {
-        let listeners = self.listeners.read().map(|l| l.clone()).unwrap_or_default();
-        for listener in &listeners {
+        for listener in &self.snapshot_listeners() {
             listener.on_disconnected(connection_id, meta).await;
         }
     }
@@ -191,7 +196,7 @@ impl ConnectionManager {
         if let Some(client) = self.clients.get(connection_id) {
             match client.tx.send(Ok(payload)).await {
                 Ok(_) => {
-                    tracing::info!(connection_id, "Message pushed successfully");
+                    tracing::debug!(connection_id, "Message pushed successfully");
                     true
                 }
                 Err(e) => {
@@ -200,7 +205,7 @@ impl ConnectionManager {
                 }
             }
         } else {
-            tracing::warn!(connection_id, "Connection not found for push");
+            tracing::debug!(connection_id, "Connection not found for push");
             false
         }
     }

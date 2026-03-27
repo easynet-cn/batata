@@ -26,7 +26,7 @@
 #   CONNECTIONS=100         Concurrent connections
 # ==============================================================================
 
-set -euo pipefail
+set -uo pipefail
 cd "$(dirname "$0")/.."
 
 # Configuration
@@ -85,18 +85,20 @@ run_wrk() {
 
     local lua_script=""
     if [ "$method" = "POST" ] || [ "$method" = "PUT" ]; then
-        lua_script=$(mktemp /tmp/wrk_XXXXXX.lua)
-        cat > "$lua_script" <<LUA
-wrk.method = "${method}"
-wrk.headers["Content-Type"] = "application/x-www-form-urlencoded"
-${extra_headers}
-wrk.body = "${body}"
-LUA
+        lua_script=$(mktemp /tmp/wrk_benchXXXXXX)
+        mv "$lua_script" "${lua_script}.lua"
+        lua_script="${lua_script}.lua"
+        {
+            echo "wrk.method = \"${method}\""
+            echo 'wrk.headers["Content-Type"] = "application/x-www-form-urlencoded"'
+            [ -n "$extra_headers" ] && echo "$extra_headers"
+            echo "wrk.body = \"${body}\""
+        } > "$lua_script"
     elif [ -n "$extra_headers" ]; then
-        lua_script=$(mktemp /tmp/wrk_XXXXXX.lua)
-        cat > "$lua_script" <<LUA
-${extra_headers}
-LUA
+        lua_script=$(mktemp /tmp/wrk_benchXXXXXX)
+        mv "$lua_script" "${lua_script}.lua"
+        lua_script="${lua_script}.lua"
+        echo "$extra_headers" > "$lua_script"
     fi
 
     echo -e "  ${YELLOW}▶${NC} $name ($method $url)"
@@ -109,13 +111,11 @@ LUA
     local result
     result=$(wrk ${wrk_args} "$url" 2>&1)
 
-    # Extract key metrics
-    local rps
-    rps=$(echo "$result" | grep "Requests/sec" | awk '{print $2}')
-    local latency_avg
-    latency_avg=$(echo "$result" | grep "Latency" | awk '{print $2}')
-    local latency_p99
-    latency_p99=$(echo "$result" | grep "99%" | awk '{print $2}')
+    # Extract key metrics (use || true to prevent set -e from aborting on missing lines)
+    local rps latency_avg latency_p99
+    rps=$(echo "$result" | grep "Requests/sec" | awk '{print $2}' || true)
+    latency_avg=$(echo "$result" | grep "Latency" | head -1 | awk '{print $2}' || true)
+    latency_p99=$(echo "$result" | grep "99%" | awk '{print $2}' || true)
 
     log_result "RPS" "${rps:-N/A}"
     log_result "Avg Latency" "${latency_avg:-N/A}"
@@ -160,7 +160,7 @@ run_hey() {
 
 # Setup test data
 setup_data() {
-    log_info "Setting up benchmark data..."
+    log_info "Setting up benchmark data..." >&2
     local token
     token=$(get_token)
 
@@ -183,7 +183,7 @@ setup_data() {
         -d '{"ID":"bench-svc","Name":"bench-service","Port":8080,"Address":"10.0.0.1"}' > /dev/null 2>&1
 
     sleep 1
-    log_info "Data ready"
+    log_info "Data ready" >&2
     echo "$token"
 }
 
@@ -205,10 +205,10 @@ bench_config() {
     local token="$1"
     log_section "Config Center Benchmark"
 
-    # Config Write (POST)
+    # Config Write (POST) — uses a fixed dataId for repeated writes (upsert benchmark)
     run_wrk "Config Write" "POST" \
         "http://${SERVER}/nacos/v2/cs/config?accessToken=${token}" \
-        "dataId=bench-write-\${request.id}&group=DEFAULT_GROUP&content=value-\${request.id}&type=text"
+        "dataId=bench-write&group=DEFAULT_GROUP&content=benchmark-value&type=text"
 
     # Config Read (GET)
     run_wrk "Config Read" "GET" \

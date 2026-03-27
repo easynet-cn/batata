@@ -30,22 +30,37 @@ pub struct ParamInfo {
 
 /// Validate extracted parameters. Returns Ok(()) if all valid.
 pub fn validate_params(params: &ParamInfo) -> Result<(), String> {
-    if let Some(ref ns) = params.namespace_id
+    validate_params_ref(
+        params.namespace_id.as_deref(),
+        params.group.as_deref(),
+        params.data_id.as_deref(),
+        params.service_name.as_deref(),
+    )
+}
+
+/// Zero-allocation parameter validation using string references.
+fn validate_params_ref(
+    namespace_id: Option<&str>,
+    group: Option<&str>,
+    data_id: Option<&str>,
+    service_name: Option<&str>,
+) -> Result<(), String> {
+    if let Some(ns) = namespace_id
         && !ns.is_empty()
     {
         validate_namespace_id(ns)?;
     }
-    if let Some(ref group) = params.group
+    if let Some(group) = group
         && !group.is_empty()
     {
         validate_group(group)?;
     }
-    if let Some(ref data_id) = params.data_id
+    if let Some(data_id) = data_id
         && !data_id.is_empty()
     {
         validate_data_id(data_id)?;
     }
-    if let Some(ref service_name) = params.service_name
+    if let Some(service_name) = service_name
         && !service_name.is_empty()
     {
         validate_service_name(service_name)?;
@@ -115,46 +130,49 @@ pub fn check_request_params(
     message_type: &str,
     payload: &crate::api::grpc::Payload,
 ) -> Result<(), tonic::Status> {
-    let headers = payload
-        .metadata
-        .as_ref()
-        .map(|m| &m.headers)
-        .cloned()
-        .unwrap_or_default();
+    let headers = match payload.metadata.as_ref() {
+        Some(m) => &m.headers,
+        None => return Ok(()),
+    };
 
-    let params = match message_type {
-        "ConfigPublishRequest" | "ConfigQueryRequest" | "ConfigRemoveRequest" => ParamInfo {
-            namespace_id: headers.get("tenant").or(headers.get("namespace")).cloned(),
-            group: headers.get("group").cloned(),
-            data_id: headers.get("dataId").cloned(),
-            ..Default::default()
-        },
-        "ConfigBatchListenRequest" | "ConfigFuzzyWatchRequest" => ParamInfo {
-            namespace_id: headers.get("tenant").or(headers.get("namespace")).cloned(),
-            ..Default::default()
-        },
-        "InstanceRequest" | "BatchInstanceRequest" | "PersistentInstanceRequest" => ParamInfo {
-            namespace_id: headers
+    let result = match message_type {
+        "ConfigPublishRequest" | "ConfigQueryRequest" | "ConfigRemoveRequest" => {
+            let ns = headers
+                .get("tenant")
+                .or(headers.get("namespace"))
+                .map(|s| s.as_str());
+            let group = headers.get("group").map(|s| s.as_str());
+            let data_id = headers.get("dataId").map(|s| s.as_str());
+            validate_params_ref(ns, group, data_id, None)
+        }
+        "ConfigBatchListenRequest" | "ConfigFuzzyWatchRequest" => {
+            let ns = headers
+                .get("tenant")
+                .or(headers.get("namespace"))
+                .map(|s| s.as_str());
+            validate_params_ref(ns, None, None, None)
+        }
+        "InstanceRequest"
+        | "BatchInstanceRequest"
+        | "PersistentInstanceRequest"
+        | "ServiceQueryRequest"
+        | "SubscribeServiceRequest"
+        | "ServiceListRequest" => {
+            let ns = headers
                 .get("namespace")
                 .or(headers.get("namespaceId"))
-                .cloned(),
-            group: headers.get("groupName").or(headers.get("group")).cloned(),
-            service_name: headers.get("serviceName").cloned(),
-            ..Default::default()
-        },
-        "ServiceQueryRequest" | "SubscribeServiceRequest" | "ServiceListRequest" => ParamInfo {
-            namespace_id: headers
-                .get("namespace")
-                .or(headers.get("namespaceId"))
-                .cloned(),
-            group: headers.get("groupName").or(headers.get("group")).cloned(),
-            service_name: headers.get("serviceName").cloned(),
-            ..Default::default()
-        },
+                .map(|s| s.as_str());
+            let group = headers
+                .get("groupName")
+                .or(headers.get("group"))
+                .map(|s| s.as_str());
+            let svc = headers.get("serviceName").map(|s| s.as_str());
+            validate_params_ref(ns, group, None, svc)
+        }
         _ => return Ok(()),
     };
 
-    validate_params(&params).map_err(|msg| {
+    result.map_err(|msg| {
         tracing::warn!(
             message_type = message_type,
             "Parameter validation failed: {}",

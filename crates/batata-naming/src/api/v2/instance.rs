@@ -483,7 +483,8 @@ pub async fn get_instance(
         Some(batata_api::naming::RegisterSource::Batata),
     );
 
-    let instance_key = format!("{}#{}#{}", params.ip, params.port, cluster_name);
+    let instance_key =
+        crate::service::build_instance_key_parts(&params.ip, params.port, &cluster_name);
 
     if let Some(instance) = instances.into_iter().find(|i| i.key() == instance_key) {
         let response = InstanceResponse {
@@ -907,7 +908,7 @@ pub async fn patch_instance(
         Some(batata_api::naming::RegisterSource::Batata),
     );
 
-    let instance_key = format!("{}#{}#{}", form.ip, form.port, cluster_name);
+    let instance_key = crate::service::build_instance_key_parts(&form.ip, form.port, &cluster_name);
 
     if let Some(mut existing) = instances.into_iter().find(|i| i.key() == instance_key) {
         // Patch only provided fields

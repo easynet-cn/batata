@@ -7,7 +7,7 @@ use std::{
 
 use crate::model::{Instance, Service};
 
-use super::{NamingService, build_instance_key, build_service_key};
+use super::{NamingService, build_instance_key, build_instance_key_parts, build_service_key};
 
 impl NamingService {
     /// Register a service instance
@@ -495,7 +495,7 @@ impl NamingService {
         cluster_name: &str,
     ) -> bool {
         let service_key = build_service_key(namespace, group_name, service_name);
-        let instance_key = format!("{}#{}#{}", ip, port, cluster_name);
+        let instance_key = build_instance_key_parts(ip, port, cluster_name);
 
         if let Some(instances) = self.services.get(&service_key)
             && let Some(entry) = instances.get(&instance_key)
@@ -524,7 +524,7 @@ impl NamingService {
         healthy: bool,
     ) -> bool {
         let service_key = build_service_key(namespace, group_name, service_name);
-        let instance_key = format!("{}#{}#{}", ip, port, cluster_name);
+        let instance_key = build_instance_key_parts(ip, port, cluster_name);
 
         if let Some(instances) = self.services.get(&service_key)
             && let Some(entry) = instances.get(&instance_key)

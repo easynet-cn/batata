@@ -616,6 +616,65 @@ impl OAuthService {
     }
 }
 
+#[async_trait::async_trait]
+impl batata_common::OAuthProvider for OAuthService {
+    fn is_enabled(&self) -> bool {
+        self.config.enabled
+    }
+
+    fn get_enabled_providers(&self) -> Vec<String> {
+        self.config
+            .enabled_providers()
+            .iter()
+            .map(|(name, _)| (*name).clone())
+            .collect()
+    }
+
+    async fn get_authorization_url(
+        &self,
+        provider_name: &str,
+        redirect_uri: &str,
+    ) -> anyhow::Result<(String, String)> {
+        self.get_authorization_url(provider_name, redirect_uri)
+            .await
+    }
+
+    async fn exchange_code(
+        &self,
+        provider_name: &str,
+        code: &str,
+        redirect_uri: &str,
+        state: &str,
+    ) -> anyhow::Result<batata_common::OAuthTokenResponse> {
+        let resp = self
+            .exchange_code(provider_name, code, redirect_uri, state)
+            .await?;
+        Ok(batata_common::OAuthTokenResponse {
+            access_token: resp.access_token,
+            token_type: resp.token_type,
+            expires_in: resp.expires_in,
+            refresh_token: resp.refresh_token,
+            id_token: resp.id_token,
+            scope: resp.scope,
+        })
+    }
+
+    async fn get_user_info(
+        &self,
+        provider_name: &str,
+        access_token: &str,
+    ) -> anyhow::Result<batata_common::OAuthUserProfile> {
+        let info = self.get_user_info(provider_name, access_token).await?;
+        Ok(batata_common::OAuthUserProfile {
+            provider_user_id: info.provider_user_id,
+            username: info.username,
+            email: info.email,
+            name: info.name,
+            groups: info.groups,
+        })
+    }
+}
+
 /// Generate a random string for state/nonce
 fn generate_random_string(len: usize) -> String {
     use std::iter;

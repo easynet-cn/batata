@@ -48,7 +48,7 @@ struct OAuthLoginResult {
 /// Get available OAuth providers
 #[get("oauth/providers")]
 pub async fn get_providers(data: web::Data<AppState>, req: HttpRequest) -> impl Responder {
-    let oauth_service = match data.oauth_service.as_ref() {
+    let oauth_service: &dyn batata_common::OAuthProvider = match data.oauth_service.as_deref() {
         Some(service) => service,
         None => {
             return HttpResponse::Ok().json(OAuthProvidersResponse {
@@ -90,7 +90,7 @@ pub async fn oauth_login(
 ) -> impl Responder {
     let provider_name = path.into_inner();
 
-    let oauth_service = match data.oauth_service.as_ref() {
+    let oauth_service: &dyn batata_common::OAuthProvider = match data.oauth_service.as_deref() {
         Some(service) => service,
         None => {
             return HttpResponse::BadRequest().json(serde_json::json!({
@@ -133,7 +133,7 @@ pub async fn oauth_callback(
 ) -> impl Responder {
     let provider_name = path.into_inner();
 
-    let oauth_service = match data.oauth_service.as_ref() {
+    let oauth_service: &dyn batata_common::OAuthProvider = match data.oauth_service.as_deref() {
         Some(service) => service,
         None => {
             return HttpResponse::BadRequest().json(serde_json::json!({

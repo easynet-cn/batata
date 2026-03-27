@@ -26,7 +26,7 @@ pub trait GrpcAuthRoleProvider: Send + Sync {
     async fn find_roles_by_username(&self, username: &str) -> Vec<GrpcRoleInfo>;
 
     /// Find permissions for a set of roles
-    async fn find_permissions_by_roles(&self, roles: Vec<String>) -> Vec<GrpcPermissionInfo>;
+    async fn find_permissions_by_roles(&self, roles: &[String]) -> Vec<GrpcPermissionInfo>;
 }
 
 /// Role info for gRPC auth
@@ -397,7 +397,7 @@ impl GrpcAuthService {
 
     /// Load permissions for the given roles from the database.
     /// Used when checking non-admin users' specific resource permissions.
-    pub async fn load_permissions_for_roles(&self, roles: Vec<String>) -> Vec<GrpcPermissionInfo> {
+    pub async fn load_permissions_for_roles(&self, roles: &[String]) -> Vec<GrpcPermissionInfo> {
         if let Some(ref provider) = self.role_provider {
             provider.find_permissions_by_roles(roles).await
         } else {
@@ -678,7 +678,7 @@ mod tests {
                     role: GLOBAL_ADMIN_ROLE.to_string(),
                 }]
             }
-            async fn find_permissions_by_roles(&self, _: Vec<String>) -> Vec<GrpcPermissionInfo> {
+            async fn find_permissions_by_roles(&self, _: &[String]) -> Vec<GrpcPermissionInfo> {
                 vec![]
             }
         }
@@ -729,7 +729,7 @@ mod tests {
                     }]
                 }
             }
-            async fn find_permissions_by_roles(&self, _: Vec<String>) -> Vec<GrpcPermissionInfo> {
+            async fn find_permissions_by_roles(&self, _: &[String]) -> Vec<GrpcPermissionInfo> {
                 vec![]
             }
         }
@@ -753,7 +753,7 @@ mod tests {
 
         // Test load_permissions_for_roles
         let perms = service
-            .load_permissions_for_roles(vec!["ROLE_USER".to_string()])
+            .load_permissions_for_roles(&vec!["ROLE_USER".to_string()])
             .await;
         assert!(perms.is_empty()); // mock returns empty
 

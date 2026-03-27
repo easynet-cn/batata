@@ -77,8 +77,12 @@ pub trait RequestTrait {
     where
         T: for<'a> Deserialize<'a> + Default,
     {
-        let bytes = value.body.clone().unwrap_or_default().value.to_vec();
-        match serde_json::from_slice::<T>(&bytes) {
+        // Access body bytes by reference — avoid cloning Option<Any> and copying bytes
+        let bytes: &[u8] = match value.body.as_ref() {
+            Some(any) => &any.value,
+            None => &[],
+        };
+        match serde_json::from_slice::<T>(bytes) {
             Ok(v) => v,
             Err(e) => {
                 let payload_type = value
@@ -86,11 +90,10 @@ pub trait RequestTrait {
                     .as_ref()
                     .map(|m| m.r#type.as_str())
                     .unwrap_or("unknown");
-                let body_str = String::from_utf8_lossy(&bytes);
                 tracing::error!(
                     payload_type = %payload_type,
                     error = %e,
-                    body = %body_str,
+                    body = %String::from_utf8_lossy(bytes),
                     "Failed to deserialize gRPC payload"
                 );
                 T::default()

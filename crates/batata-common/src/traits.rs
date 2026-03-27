@@ -532,6 +532,106 @@ pub trait ConfigEncryptionProvider: Send + Sync {
     async fn decrypt(&self, content: &str, encrypted_data_key: &str) -> CryptoResult<String>;
 }
 
+// ============================================================================
+// OAuth Provider Trait
+// ============================================================================
+
+/// OAuth/OIDC provider trait for pluggable external authentication.
+///
+/// Abstracts the OAuth2/OIDC service so that AppState can hold a trait object
+/// instead of a concrete `OAuthService` type. This decouples `batata-server-common`
+/// from `batata-auth`'s OAuth implementation.
+#[async_trait::async_trait]
+pub trait OAuthProvider: Send + Sync {
+    /// Check if OAuth is enabled
+    fn is_enabled(&self) -> bool;
+
+    /// Get all enabled provider names
+    fn get_enabled_providers(&self) -> Vec<String>;
+
+    /// Generate authorization URL for a provider
+    async fn get_authorization_url(
+        &self,
+        provider_name: &str,
+        redirect_uri: &str,
+    ) -> anyhow::Result<(String, String)>;
+
+    /// Exchange authorization code for tokens
+    async fn exchange_code(
+        &self,
+        provider_name: &str,
+        code: &str,
+        redirect_uri: &str,
+        state: &str,
+    ) -> anyhow::Result<OAuthTokenResponse>;
+
+    /// Get user info from provider using access token
+    async fn get_user_info(
+        &self,
+        provider_name: &str,
+        access_token: &str,
+    ) -> anyhow::Result<OAuthUserProfile>;
+}
+
+/// OAuth token response (provider-agnostic)
+#[derive(Debug, Clone)]
+pub struct OAuthTokenResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_in: Option<i64>,
+    pub refresh_token: Option<String>,
+    pub id_token: Option<String>,
+    pub scope: Option<String>,
+}
+
+/// OAuth user profile (provider-agnostic)
+#[derive(Debug, Clone)]
+pub struct OAuthUserProfile {
+    pub provider_user_id: String,
+    pub username: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub groups: Vec<String>,
+}
+
+// ============================================================================
+// gRPC Connection Manager Trait
+// ============================================================================
+
+/// Trait for managing gRPC client connections.
+///
+/// Abstracts connection registration, lookup, and lifecycle management,
+/// allowing naming handlers and other components to depend on the trait
+/// rather than the concrete `ConnectionManager` type.
+#[async_trait::async_trait]
+pub trait GrpcConnectionManager: Send + Sync {
+    /// Register a new gRPC client connection.
+    /// Returns true if successfully registered, false if rejected.
+    async fn register_connection(&self, connection_id: &str, client: GrpcClientInfo) -> bool;
+
+    /// Unregister a gRPC client connection
+    async fn unregister_connection(&self, connection_id: &str);
+
+    /// Get a connection's client IP by connection ID
+    fn get_client_ip(&self, connection_id: &str) -> Option<String>;
+
+    /// Get all connection IDs
+    fn get_all_connection_ids(&self) -> Vec<String>;
+
+    /// Get the number of active connections
+    fn connection_count(&self) -> usize;
+}
+
+/// Minimal gRPC client info for the trait boundary
+#[derive(Debug, Clone)]
+pub struct GrpcClientInfo {
+    pub client_ip: String,
+    pub client_port: u16,
+    pub app_name: String,
+    pub sdk: String,
+    pub labels: std::collections::HashMap<String, String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

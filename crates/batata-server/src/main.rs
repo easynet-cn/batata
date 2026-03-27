@@ -99,50 +99,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService> =
         Arc::new(batata_core::ConfigSubscriberManager::new());
 
-    let naming_service: Option<Arc<batata_naming::NamingService>> = if !is_console_remote {
+    let naming_service_concrete: Option<Arc<batata_naming::NamingService>> = if !is_console_remote {
         Some(Arc::new(batata_naming::NamingService::new()))
     } else {
         None
     };
+    let naming_service: Option<Arc<dyn batata_api::naming::NamingServiceProvider>> =
+        naming_service_concrete
+            .clone()
+            .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>);
 
     let console_datasource = batata_console::create_datasource(
         &configuration,
         persistence_ctx.cluster_manager.clone(),
         config_subscriber_manager.clone(),
-        naming_service
-            .clone()
-            .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>),
+        naming_service.clone(),
         persistence_ctx.persistence.clone(),
     )
     .await?;
 
     let oauth_service = init_oauth_service(&configuration)?;
 
-    let health_check_manager: Option<Arc<HealthCheckManager>> = if let Some(ref ns) = naming_service
-    {
-        let health_check_config = Arc::new(HealthCheckConfig {
-            heartbeat_interval_secs: configuration.naming_heartbeat_check_interval_secs(),
-            ttl_monitor_interval_secs: configuration.naming_ttl_monitor_interval_secs(),
-            deregister_monitor_interval_secs: configuration
-                .naming_deregister_monitor_interval_secs(),
-            ..HealthCheckConfig::default()
-        });
-        let expire_enabled = configuration.expire_instance_enabled();
-        let health_check_enabled = health_check_config.is_enabled();
-        let manager = Arc::new(HealthCheckManager::new(
-            ns.clone(),
-            health_check_config,
-            expire_enabled,
-        ));
-        info!(
-            "Health check manager created (expire_enabled={}, health_check_enabled={})",
-            expire_enabled, health_check_enabled
-        );
-        Some(manager)
-    } else {
-        info!("No naming service available - skipping health check manager");
-        None
-    };
+    let health_check_manager: Option<Arc<HealthCheckManager>> =
+        if let Some(ref ns) = naming_service_concrete {
+            let health_check_config = Arc::new(HealthCheckConfig {
+                heartbeat_interval_secs: configuration.naming_heartbeat_check_interval_secs(),
+                ttl_monitor_interval_secs: configuration.naming_ttl_monitor_interval_secs(),
+                deregister_monitor_interval_secs: configuration
+                    .naming_deregister_monitor_interval_secs(),
+                ..HealthCheckConfig::default()
+            });
+            let expire_enabled = configuration.expire_instance_enabled();
+            let health_check_enabled = health_check_config.is_enabled();
+            let manager = Arc::new(HealthCheckManager::new(
+                ns.clone(),
+                health_check_config,
+                expire_enabled,
+            ));
+            info!(
+                "Health check manager created (expire_enabled={}, health_check_enabled={})",
+                expire_enabled, health_check_enabled
+            );
+            Some(manager)
+        } else {
+            info!("No naming service available - skipping health check manager");
+            None
+        };
 
     let server_status = Arc::new(ServerStatusManager::new());
 
@@ -205,10 +207,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ai_services = match (&app_state.persistence, &naming_service) {
         (Some(persist), Some(ns)) => {
             info!("AI services using config-backed persistence");
-            AIServices::with_persistence(
-                persist.clone(),
-                ns.clone() as Arc<dyn batata_api::naming::NamingServiceProvider>,
-            )
+            AIServices::with_persistence(persist.clone(), ns.clone())
         }
         _ => {
             info!("AI services using in-memory storage (no persistence)");
@@ -235,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ====================================================================
     let grpc_servers = startup::start_grpc_servers(
         app_state.clone(),
-        naming_service.clone(),
+        naming_service_concrete.clone(),
         &ai_services,
         app_state.configuration.sdk_server_port(),
         app_state.configuration.cluster_server_port(),
@@ -360,7 +359,7 @@ fn validate_config(configuration: &model::common::Configuration) {
 /// Initialize OAuth service if enabled.
 fn init_oauth_service(
     configuration: &model::common::Configuration,
-) -> Result<Option<Arc<OAuthService>>, Box<dyn std::error::Error>> {
+) -> Result<Option<Arc<dyn batata_common::OAuthProvider>>, Box<dyn std::error::Error>> {
     if configuration.is_oauth_enabled() {
         let oauth_config = configuration.oauth_config();
         let oauth_cache_config = batata_auth::service::oauth::OAuthCacheConfig {
@@ -374,10 +373,11 @@ fn init_oauth_service(
             "OAuth2/OIDC authentication enabled with {} providers",
             oauth_config.providers.len()
         );
-        Ok(Some(Arc::new(OAuthService::with_cache_config(
+        let service = Arc::new(OAuthService::with_cache_config(
             oauth_config,
             oauth_cache_config,
-        )?)))
+        )?);
+        Ok(Some(service as Arc<dyn batata_common::OAuthProvider>))
     } else {
         Ok(None)
     }

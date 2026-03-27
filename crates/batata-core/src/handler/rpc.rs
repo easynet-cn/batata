@@ -44,7 +44,11 @@ pub enum AuthRequirement {
 #[tonic::async_trait]
 pub trait PayloadHandler: Send + Sync {
     async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
-        let message_type = payload.metadata.clone().unwrap_or_default().r#type;
+        let message_type = payload
+            .metadata
+            .as_ref()
+            .map(|m| m.r#type.as_str())
+            .unwrap_or("");
 
         Err(Status::unimplemented(format!(
             "Unknown message type '{}'",
@@ -96,18 +100,26 @@ pub trait ConnectionCleanupHandler: Send + Sync {
     fn remove_subscriber(&self, connection_id: &str);
 }
 
+/// Empty headers constant to avoid repeated allocations
+static EMPTY_HEADERS: std::sync::LazyLock<HashMap<String, String>> =
+    std::sync::LazyLock::new(HashMap::new);
+
+/// Extract headers reference from payload without cloning
+#[inline]
+fn payload_headers(payload: &Payload) -> &HashMap<String, String> {
+    payload
+        .metadata
+        .as_ref()
+        .map(|m| &m.headers)
+        .unwrap_or(&EMPTY_HEADERS)
+}
+
 /// Helper functions for extracting auth context from payload (sync, no role lookup)
 pub fn extract_auth_context_from_payload(
     auth_service: &GrpcAuthService,
     payload: &Payload,
 ) -> GrpcAuthContext {
-    let headers = payload
-        .metadata
-        .as_ref()
-        .map(|m| m.headers.clone())
-        .unwrap_or_default();
-
-    auth_service.parse_identity(&headers)
+    auth_service.parse_identity(payload_headers(payload))
 }
 
 /// Resolve full auth context from payload (async, with role lookup from database)
@@ -115,13 +127,9 @@ pub async fn resolve_auth_context_from_payload(
     auth_service: &GrpcAuthService,
     payload: &Payload,
 ) -> GrpcAuthContext {
-    let headers = payload
-        .metadata
-        .as_ref()
-        .map(|m| m.headers.clone())
-        .unwrap_or_default();
-
-    auth_service.resolve_auth_context(&headers).await
+    auth_service
+        .resolve_auth_context(payload_headers(payload))
+        .await
 }
 
 /// Check if authentication should be enabled for this request
@@ -185,13 +193,7 @@ pub fn check_server_identity(
         return Ok(());
     }
 
-    let headers = payload
-        .metadata
-        .as_ref()
-        .map(|m| m.headers.clone())
-        .unwrap_or_default();
-
-    if auth_service.check_server_identity(&headers) {
+    if auth_service.check_server_identity(payload_headers(payload)) {
         Ok(())
     } else {
         Err(Status::permission_denied(
@@ -209,28 +211,26 @@ pub struct DefaultHandler;
 impl PayloadHandler for DefaultHandler {
     async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
         let metadata = payload.metadata.as_ref();
-        let message_type = metadata.map(|m| m.r#type.clone()).unwrap_or_default();
-        let client_ip = metadata.map(|m| m.client_ip.clone()).unwrap_or_default();
+        let message_type = metadata.map(|m| m.r#type.as_str()).unwrap_or_default();
+        let client_ip = metadata.map(|m| m.client_ip.as_str()).unwrap_or_default();
 
-        // Log unknown message type with client information for debugging
         warn!(
             message_type = %message_type,
             client_ip = %client_ip,
             "Received unknown message type in DefaultHandler - no handler registered"
         );
 
-        // Provide informative error message to client
-        let error_message = if message_type.is_empty() {
-            "Message type is empty or missing. Please ensure your client is sending valid gRPC requests."
+        if message_type.is_empty() {
+            Err(Status::invalid_argument(
+                "Message type is empty or missing. Please ensure your client is sending valid gRPC requests.",
+            ))
         } else {
-            &format!(
+            Err(Status::invalid_argument(format!(
                 "Unknown message type '{}'. This message type is not supported by the server. \
                 Please check the client SDK version and ensure compatibility with the server API.",
                 message_type
-            )
-        };
-
-        Err(Status::invalid_argument(error_message))
+            )))
+        }
     }
 
     fn can_handle(&self) -> &'static str {
@@ -405,21 +405,23 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             let message_type = &metadata.r#type;
             let payload = request.get_ref();
 
-            // Log all unary gRPC requests for debugging
-            tracing::info!(
+            // Log all unary gRPC requests at debug level
+            tracing::debug!(
                 "[GRPC-UNARY] type={}, conn={}",
                 message_type,
                 connection.meta_info.connection_id
             );
 
-            // Log FuzzyWatch requests at INFO level for debugging
-            if message_type.contains("FuzzyWatch") || message_type.contains("FuzzySubscribe") {
+            // Log FuzzyWatch requests only when debug is enabled (avoids UTF-8 decode cost)
+            if tracing::enabled!(tracing::Level::DEBUG)
+                && (message_type.contains("FuzzyWatch") || message_type.contains("FuzzySubscribe"))
+            {
                 let body = payload
                     .body
                     .as_ref()
-                    .map(|b| String::from_utf8_lossy(&b.value).to_string())
+                    .map(|b| String::from_utf8_lossy(&b.value))
                     .unwrap_or_default();
-                tracing::info!(
+                tracing::debug!(
                     "[FUZZY-DIAG] Received unary request: type={}, connection={}, body={}",
                     message_type,
                     connection.meta_info.connection_id,
@@ -436,22 +438,12 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                 .check_tps(message_type, client_ip)
                 .await
             {
-                if message_type.contains("FuzzyWatch") {
-                    tracing::error!("[FUZZY-DIAG] TPS check failed for {}: {}", message_type, e);
-                }
                 return Err(e);
             }
 
             // Validate request parameters
             if let Err(e) = crate::handler::param_check::check_request_params(message_type, payload)
             {
-                if message_type.contains("FuzzyWatch") {
-                    tracing::error!(
-                        "[FUZZY-DIAG] Param check failed for {}: {}",
-                        message_type,
-                        e
-                    );
-                }
                 return Err(e);
             }
 
@@ -475,13 +467,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                     let auth_service = self.handler_registry.auth_service();
 
                     // Check server identity first (MATCHED case skips remaining auth)
-                    if auth_service.check_server_identity(
-                        &payload
-                            .metadata
-                            .as_ref()
-                            .map(|m| m.headers.clone())
-                            .unwrap_or_default(),
-                    ) {
+                    if auth_service.check_server_identity(payload_headers(payload)) {
                         // Server identity matched - skip remaining auth checks
                     } else {
                         // Check if auth should be enabled for this sign type
@@ -493,14 +479,6 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                             let auth_context =
                                 resolve_auth_context_from_payload(auth_service, payload).await;
                             if let Err(e) = check_authentication(&auth_context) {
-                                if message_type.contains("FuzzyWatch") {
-                                    tracing::error!(
-                                        "[FUZZY-DIAG] Auth failed for {}: {}, user={:?}",
-                                        message_type,
-                                        e,
-                                        auth_context.username
-                                    );
-                                }
                                 return Err(e);
                             }
 
@@ -511,7 +489,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                                 if !auth_context.has_admin_role() {
                                     // Load permissions from database for non-admin users
                                     let permissions = auth_service
-                                        .load_permissions_for_roles(auth_context.roles.clone())
+                                        .load_permissions_for_roles(&auth_context.roles)
                                         .await;
                                     check_authority(
                                         auth_service,
@@ -528,22 +506,8 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             }
 
             return match handler.handle(&connection, payload).await {
-                Ok(reponse_payload) => {
-                    if message_type.contains("FuzzyWatch") {
-                        tracing::info!("[FUZZY-DIAG] Handler succeeded for {}", message_type);
-                    }
-                    Ok(Response::new(reponse_payload))
-                }
-                Err(err) => {
-                    if message_type.contains("FuzzyWatch") {
-                        tracing::error!(
-                            "[FUZZY-DIAG] Handler FAILED for {}: {}",
-                            message_type,
-                            err
-                        );
-                    }
-                    Err(err)
-                }
+                Ok(response_payload) => Ok(Response::new(response_payload)),
+                Err(err) => Err(err),
             };
         }
 
@@ -637,7 +601,8 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     .meta_info
                                     .labels
                                     .get(APPNAME)
-                                    .map_or("-".to_string(), |e| e.to_string());
+                                    .cloned()
+                                    .unwrap_or_else(|| "-".to_string());
                                 con.meta_info.namespace_id = request.tenant;
 
                                 let connection_id = con.meta_info.connection_id.clone();
@@ -654,19 +619,24 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                 // Always send SetupAckRequest with server abilities to client.
                                 // Nacos 3.x SDK requires this to enable FuzzyWatch, LockService, etc.
                                 {
-                                    let mut abilities = std::collections::HashMap::new();
-                                    abilities.insert("fuzzyWatch".to_string(), true);
-                                    abilities.insert("lock".to_string(), true);
-                                    abilities.insert("mcp".to_string(), true);
-                                    abilities.insert("agent".to_string(), true);
-                                    abilities.insert(
-                                        "supportPersistentInstanceByGrpc".to_string(),
-                                        true,
-                                    );
+                                    static SERVER_ABILITIES: std::sync::LazyLock<
+                                        HashMap<String, bool>,
+                                    > = std::sync::LazyLock::new(|| {
+                                        let mut m = HashMap::with_capacity(5);
+                                        m.insert("fuzzyWatch".to_string(), true);
+                                        m.insert("lock".to_string(), true);
+                                        m.insert("mcp".to_string(), true);
+                                        m.insert("agent".to_string(), true);
+                                        m.insert(
+                                            "supportPersistentInstanceByGrpc".to_string(),
+                                            true,
+                                        );
+                                        m
+                                    });
 
                                     let mut ack =
                                         batata_api::remote::model::SetupAckRequest::default();
-                                    ack.ability_table = Some(abilities);
+                                    ack.ability_table = Some(SERVER_ABILITIES.clone());
                                     let ack_payload = ack.build_server_push_payload();
                                     info!(
                                         "Sending SetupAckRequest to {}, type={}",
@@ -756,13 +726,8 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     let auth_service = handler_registry.auth_service();
 
                                     // Check server identity first
-                                    if auth_service.check_server_identity(
-                                        &payload
-                                            .metadata
-                                            .as_ref()
-                                            .map(|m| m.headers.clone())
-                                            .unwrap_or_default(),
-                                    ) {
+                                    if auth_service.check_server_identity(payload_headers(&payload))
+                                    {
                                         // Server identity matched - skip remaining auth checks
                                         Ok(())
                                     } else {
@@ -791,7 +756,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                                     // Load permissions from database
                                                     let permissions = auth_service
                                                         .load_permissions_for_roles(
-                                                            auth_context.roles.clone(),
+                                                            &auth_context.roles,
                                                         )
                                                         .await;
                                                     check_authority(

@@ -364,9 +364,9 @@ impl GrpcAuthRoleProvider for PersistenceRoleProvider {
             .collect()
     }
 
-    async fn find_permissions_by_roles(&self, roles: Vec<String>) -> Vec<GrpcPermissionInfo> {
+    async fn find_permissions_by_roles(&self, roles: &[String]) -> Vec<GrpcPermissionInfo> {
         self.persistence
-            .permission_find_by_roles(roles)
+            .permission_find_by_roles(roles.to_vec())
             .await
             .unwrap_or_default()
             .into_iter()

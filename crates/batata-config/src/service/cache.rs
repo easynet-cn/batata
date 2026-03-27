@@ -60,9 +60,15 @@ impl ConfigCacheService {
         }
     }
 
-    /// Build cache key from components (Nacos groupKey format)
+    /// Build cache key from components (Nacos groupKey format, pre-allocated)
     pub fn build_key(tenant: &str, group: &str, data_id: &str) -> String {
-        format!("{}+{}+{}", tenant, group, data_id)
+        let mut key = String::with_capacity(tenant.len() + group.len() + data_id.len() + 2);
+        key.push_str(tenant);
+        key.push('+');
+        key.push_str(group);
+        key.push('+');
+        key.push_str(data_id);
+        key
     }
 
     /// Dump (update) a config entry in the cache.
@@ -207,10 +213,11 @@ impl ConfigCacheService {
         self.cache.get(&key).map(|item| item.clone())
     }
 
-    /// Check if a config has changed by comparing MD5
+    /// Check if a config has changed by comparing MD5 (no allocation)
     pub fn has_changed(&self, tenant: &str, group: &str, data_id: &str, client_md5: &str) -> bool {
-        match self.get_md5(tenant, group, data_id) {
-            Some(server_md5) => server_md5 != client_md5,
+        let key = Self::build_key(tenant, group, data_id);
+        match self.cache.get(&key) {
+            Some(item) => item.md5 != client_md5,
             None => true, // Not in cache means it might be new or deleted
         }
     }

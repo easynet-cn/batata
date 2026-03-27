@@ -25,7 +25,11 @@ pub trait Plugin: Send + Sync {
     }
 }
 
-/// Authentication plugin for custom auth providers
+/// Authentication plugin for custom auth providers (SPI interface).
+///
+/// NOTE: This is the plugin SPI interface for potential external auth providers.
+/// The **active** auth trait used by the application is `batata_common::AuthPlugin`,
+/// which has a different API shape suited for the middleware pipeline.
 #[async_trait::async_trait]
 pub trait AuthPlugin: Plugin {
     /// Authenticate a user with credentials

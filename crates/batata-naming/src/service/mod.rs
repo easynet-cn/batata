@@ -25,7 +25,7 @@ use crate::model::Instance;
 pub use batata_api::naming::{ClusterConfig, ClusterStatistics, ProtectionInfo, ServiceMetadata};
 
 /// Build service key format: namespace@@groupName@@serviceName
-fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {
+pub fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {
     let mut key =
         String::with_capacity(namespace.len() + group_name.len() + service_name.len() + 4);
     key.push_str(namespace);
@@ -45,12 +45,21 @@ fn parse_service_key(key: &str) -> Option<(&str, &str, &str)> {
     Some((ns, group, service))
 }
 
-/// Build instance key format: ip#port#clusterName
+/// Build instance key format: ip#port#clusterName (pre-allocated)
 fn build_instance_key(instance: &Instance) -> String {
-    format!(
-        "{}#{}#{}",
-        instance.ip, instance.port, instance.cluster_name
-    )
+    build_instance_key_parts(&instance.ip, instance.port, &instance.cluster_name)
+}
+
+/// Build instance key from individual parts (pre-allocated)
+pub fn build_instance_key_parts(ip: &str, port: i32, cluster_name: &str) -> String {
+    // port is typically 1-65535, max 5 digits
+    let mut key = String::with_capacity(ip.len() + 7 + cluster_name.len());
+    key.push_str(ip);
+    key.push('#');
+    let _ = std::fmt::Write::write_fmt(&mut key, format_args!("{}", port));
+    key.push('#');
+    key.push_str(cluster_name);
+    key
 }
 
 /// Fuzzy watch pattern for service discovery
