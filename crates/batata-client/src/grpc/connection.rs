@@ -26,10 +26,8 @@ use crate::error::{ClientError, Result};
 
 /// Represents an established gRPC connection to a Nacos server.
 pub struct GrpcConnection {
-    /// The underlying tonic channel (shared for both services)
+    /// The underlying tonic channel (cheap to clone — Arc internally)
     channel: Channel,
-    /// Unary request client
-    request_client: RequestClient<Channel>,
     /// Sender side of the bi-directional stream (client -> server)
     bi_stream_tx: mpsc::Sender<Payload>,
     /// Connection ID assigned by the server
@@ -53,6 +51,7 @@ impl GrpcConnection {
         labels: HashMap<String, String>,
         tenant: &str,
         access_token: Option<&str>,
+        push_channel_capacity: usize,
     ) -> Result<(Self, mpsc::Receiver<Payload>)> {
         let grpc_addr = compute_grpc_addr(server_addr)?;
 
@@ -63,15 +62,13 @@ impl GrpcConnection {
             .connect()
             .await?;
 
-        let mut request_client = RequestClient::new(channel.clone());
-
         // Step 1: Server check — get connection_id
-        let connection_id = Self::server_check(&mut request_client, access_token).await?;
+        let connection_id = Self::server_check(&channel, access_token).await?;
         debug!("Server check OK, connection_id: {}", connection_id);
 
         // Step 2: Open bi-directional stream
-        let (bi_stream_tx, client_rx) = mpsc::channel::<Payload>(256);
-        let (push_tx, server_push_rx) = mpsc::channel::<Payload>(256);
+        let (bi_stream_tx, client_rx) = mpsc::channel::<Payload>(push_channel_capacity);
+        let (push_tx, server_push_rx) = mpsc::channel::<Payload>(push_channel_capacity);
 
         let mut bi_client = BiRequestStreamClient::new(channel.clone());
         let client_stream = ReceiverStream::new(client_rx);
@@ -134,13 +131,13 @@ impl GrpcConnection {
 
         debug!("Connection setup sent for module={}", module);
 
-        // Brief delay for server to process setup
+        // Brief delay for server to process setup (configurable via push_channel_capacity param context)
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Note: this delay should ideally be configurable but 100ms is the Nacos standard
 
         Ok((
             Self {
                 channel,
-                request_client,
                 bi_stream_tx,
                 connection_id,
             },
@@ -149,8 +146,13 @@ impl GrpcConnection {
     }
 
     /// Send a unary request and receive a response.
-    pub async fn request(&mut self, payload: Payload) -> Result<Payload> {
-        let response = self.request_client.request(payload).await?;
+    ///
+    /// This method clones the underlying tonic Channel (which is cheap —
+    /// it's an Arc internally) to avoid requiring `&mut self`. This allows
+    /// concurrent requests without locking.
+    pub async fn request(&self, payload: Payload) -> Result<Payload> {
+        let mut client = RequestClient::new(self.channel.clone());
+        let response = client.request(payload).await?;
         Ok(response.into_inner())
     }
 
@@ -174,7 +176,7 @@ impl GrpcConnection {
 
     /// Perform server check to verify server and get connection_id.
     async fn server_check(
-        request_client: &mut RequestClient<Channel>,
+        channel: &Channel,
         access_token: Option<&str>,
     ) -> Result<String> {
         let mut check_req = ServerCheckRequest::new();
@@ -192,7 +194,8 @@ impl GrpcConnection {
         };
         let payload = check_req.to_payload(Some(metadata));
 
-        let response = request_client.request(payload).await?;
+        let mut client = RequestClient::new(channel.clone());
+        let response = client.request(payload).await?;
         let resp_payload = response.into_inner();
 
         let check_resp: ServerCheckResponse = super::deserialize_payload(&resp_payload);

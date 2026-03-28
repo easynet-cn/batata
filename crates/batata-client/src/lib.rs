@@ -32,6 +32,7 @@ pub mod redo;
 pub mod retry;
 pub mod server_list;
 pub mod signing;
+pub mod transport;
 
 // AI/MCP client re-exports
 pub use ai::{AgentCardInfo, BatataAiService, McpServerBasicInfo, McpServerDetailInfo};

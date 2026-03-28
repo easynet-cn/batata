@@ -20,6 +20,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 7. **Reference Implementation**: The original Nacos project is located at `~/work/github/easynet-cn/nacos`. When uncertain about behavior or API contracts, always check the original Nacos source code first to ensure consistency.
 
+8. **No Hardcoded Parameters**: All configurable parameters (timeouts, intervals, buffer sizes, thresholds, retry counts, etc.) MUST be settable via constructor/config, with sensible defaults. Never use magic numbers directly in code — define them as named constants with `Default` trait implementation, and expose them in the config struct so users can override.
+
 ## Nacos 3.x Architecture Rules
 
 Batata follows the **Nacos 3.x architecture** where Server and Console are **separated**. All behavior MUST be consistent with the original Nacos 3.x implementation.

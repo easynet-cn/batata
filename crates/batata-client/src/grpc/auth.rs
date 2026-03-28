@@ -27,13 +27,23 @@ pub struct AuthProvider {
     username: String,
     password: String,
     token: Arc<RwLock<Option<TokenInfo>>>,
+    /// Token refresh buffer in seconds
+    token_refresh_buffer_secs: u64,
+    /// Token refresh check interval in seconds
+    token_refresh_interval_secs: u64,
 }
 
-/// Token refresh buffer: refresh 5 minutes before expiry
-const TOKEN_REFRESH_BUFFER_SECS: u64 = 300;
+/// Default token refresh buffer: refresh 5 minutes before expiry
+const DEFAULT_TOKEN_REFRESH_BUFFER_SECS: u64 = 300;
 
-/// Background token refresh check interval (matches Nacos Java SDK: 5 seconds)
-const TOKEN_REFRESH_CHECK_INTERVAL_SECS: u64 = 5;
+/// Default background token refresh check interval (matches Nacos Java SDK: 5 seconds)
+const DEFAULT_TOKEN_REFRESH_CHECK_INTERVAL_SECS: u64 = 5;
+
+/// Default auth HTTP connect timeout in seconds
+const DEFAULT_AUTH_CONNECT_TIMEOUT_SECS: u64 = 5;
+
+/// Default auth HTTP request timeout in seconds
+const DEFAULT_AUTH_REQUEST_TIMEOUT_SECS: u64 = 10;
 
 impl AuthProvider {
     /// Create a new AuthProvider.
@@ -77,6 +87,8 @@ impl AuthProvider {
             username: username.to_string(),
             password: password.to_string(),
             token: Arc::new(RwLock::new(None)),
+            token_refresh_buffer_secs: DEFAULT_TOKEN_REFRESH_BUFFER_SECS,
+            token_refresh_interval_secs: DEFAULT_TOKEN_REFRESH_CHECK_INTERVAL_SECS,
         })
     }
 
@@ -89,6 +101,8 @@ impl AuthProvider {
             username: String::new(),
             password: String::new(),
             token: Arc::new(RwLock::new(None)),
+            token_refresh_buffer_secs: DEFAULT_TOKEN_REFRESH_BUFFER_SECS,
+            token_refresh_interval_secs: DEFAULT_TOKEN_REFRESH_CHECK_INTERVAL_SECS,
         }
     }
 
@@ -108,7 +122,7 @@ impl AuthProvider {
             let guard = self.token.read().unwrap_or_else(|e| e.into_inner());
             if let Some(ref info) = *guard {
                 let now = Instant::now();
-                if info.expires_at > now + Duration::from_secs(TOKEN_REFRESH_BUFFER_SECS) {
+                if info.expires_at > now + Duration::from_secs(self.token_refresh_buffer_secs) {
                     return Ok(Some(info.access_token.clone()));
                 }
             }
@@ -215,11 +229,11 @@ impl AuthProvider {
         let password = self.password.clone();
         let http_client = self.http_client.clone();
         let token = self.token.clone();
+        let refresh_interval = self.token_refresh_interval_secs;
+        let refresh_buffer = self.token_refresh_buffer_secs;
 
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(
-                TOKEN_REFRESH_CHECK_INTERVAL_SECS,
-            ));
+            let mut interval = tokio::time::interval(Duration::from_secs(refresh_interval));
             loop {
                 interval.tick().await;
 
@@ -230,7 +244,7 @@ impl AuthProvider {
                         Some(info) => {
                             // Refresh when token is within TOKEN_REFRESH_BUFFER_SECS of expiry
                             info.expires_at
-                                <= Instant::now() + Duration::from_secs(TOKEN_REFRESH_BUFFER_SECS)
+                                <= Instant::now() + Duration::from_secs(refresh_buffer)
                         }
                         None => true,
                     }

@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod connection;
 pub mod health;
+pub mod metrics;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -85,6 +86,24 @@ pub struct GrpcClientConfig {
     pub tls_client_key: Option<String>,
     /// Whether to enable TLS
     pub tls_enabled: bool,
+    /// gRPC request timeout in seconds. Default: 10.
+    pub request_timeout_secs: u64,
+    /// Push message channel capacity. Default: 256.
+    pub push_channel_capacity: usize,
+    /// Auth HTTP connect timeout in seconds. Default: 5.
+    pub auth_connect_timeout_secs: u64,
+    /// Auth HTTP request timeout in seconds. Default: 10.
+    pub auth_request_timeout_secs: u64,
+    /// Token refresh check interval in seconds. Default: 5 (matches Nacos).
+    pub token_refresh_interval_secs: u64,
+    /// Token refresh buffer: refresh this many seconds before expiry. Default: 300.
+    pub token_refresh_buffer_secs: u64,
+    /// Connection setup delay in milliseconds. Default: 100.
+    pub connection_setup_delay_ms: u64,
+    /// Health check max failures before triggering reconnect. Default: 3.
+    pub health_check_max_failures: u32,
+    /// Health check interval in seconds. Default: 5.
+    pub health_check_interval_secs: u64,
 }
 
 impl GrpcClientConfig {
@@ -117,8 +136,39 @@ impl Default for GrpcClientConfig {
             tls_client_cert: None,
             tls_client_key: None,
             tls_enabled: false,
+            request_timeout_secs: 10,
+            push_channel_capacity: 256,
+            auth_connect_timeout_secs: 5,
+            auth_request_timeout_secs: 10,
+            token_refresh_interval_secs: 5,
+            token_refresh_buffer_secs: 300,
+            connection_setup_delay_ms: 100,
+            health_check_max_failures: 3,
+            health_check_interval_secs: 5,
         }
     }
+}
+
+/// Connection state machine (matches Nacos RpcClient states)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ConnectionState {
+    Starting = 0,
+    Running = 1,
+    Unhealthy = 2,
+    Reconnecting = 3,
+    Shutdown = 4,
+}
+
+/// Listener for connection lifecycle events.
+///
+/// Services implement this to automatically redo state on reconnect.
+#[async_trait::async_trait]
+pub trait ConnectionEventListener: Send + Sync + 'static {
+    /// Called when connection is (re-)established.
+    async fn on_connected(&self);
+    /// Called when connection is lost.
+    async fn on_disconnected(&self);
 }
 
 /// gRPC client facade for Nacos SDK communication.
@@ -131,6 +181,14 @@ pub struct GrpcClient {
     auth_provider: AuthProvider,
     push_handlers: Arc<DashMap<String, Box<dyn ServerPushHandler>>>,
     current_server_index: std::sync::atomic::AtomicUsize,
+    /// Connection state (lock-free query)
+    state: Arc<std::sync::atomic::AtomicU8>,
+    /// Shutdown signal for background tasks
+    shutdown: Arc<std::sync::atomic::AtomicBool>,
+    /// Connection event listeners (notified on connect/disconnect)
+    event_listeners: Arc<std::sync::RwLock<Vec<Arc<dyn ConnectionEventListener>>>>,
+    /// Connection and request metrics
+    pub metrics: Arc<metrics::ClientMetrics>,
 }
 
 impl GrpcClient {
@@ -149,8 +207,7 @@ impl GrpcClient {
             labels: client_config.labels.clone(),
             tls_enabled: client_config.tls_enabled,
             tls_ca_cert: client_config.tls_ca_path.clone(),
-            tls_client_cert: None,
-            tls_client_key: None,
+            ..Default::default()
         };
 
         let auth_provider = if client_config.has_jwt_auth() {
@@ -173,6 +230,10 @@ impl GrpcClient {
             auth_provider,
             push_handlers: Arc::new(DashMap::new()),
             current_server_index: std::sync::atomic::AtomicUsize::new(0),
+            state: Arc::new(std::sync::atomic::AtomicU8::new(ConnectionState::Starting as u8)),
+            shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            event_listeners: Arc::new(std::sync::RwLock::new(Vec::new())),
+            metrics: Arc::new(metrics::ClientMetrics::new()),
         })
     }
 
@@ -201,6 +262,10 @@ impl GrpcClient {
             auth_provider,
             push_handlers: Arc::new(DashMap::new()),
             current_server_index: std::sync::atomic::AtomicUsize::new(0),
+            state: Arc::new(std::sync::atomic::AtomicU8::new(ConnectionState::Starting as u8)),
+            shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            event_listeners: Arc::new(std::sync::RwLock::new(Vec::new())),
+            metrics: Arc::new(metrics::ClientMetrics::new()),
         })
     }
 
@@ -217,6 +282,7 @@ impl GrpcClient {
             self.config.labels.clone(),
             &self.config.tenant,
             token.as_deref(),
+            self.config.push_channel_capacity,
         )
         .await?;
 
@@ -233,8 +299,10 @@ impl GrpcClient {
         // Start push dispatch loop with the separate push receiver
         self.start_push_dispatch(push_rx);
 
-        // Start background token refresh task (Nacos-compatible: checks every 5s)
+        // Start background token refresh task
         self.auth_provider.start_token_refresh_task();
+
+        self.set_state(ConnectionState::Running);
 
         Ok(())
     }
@@ -247,8 +315,10 @@ impl GrpcClient {
     where
         R: RequestTrait + serde::Serialize,
     {
-        let mut guard = self.connection.write().await;
-        let conn = guard.as_mut().ok_or(ClientError::NotConnected)?;
+        // Use read lock only — GrpcConnection::request() now clones Channel
+        // internally so no &mut self needed. This enables concurrent requests.
+        let guard = self.connection.read().await;
+        let conn = guard.as_ref().ok_or(ClientError::NotConnected)?;
 
         let mut metadata = Metadata {
             r#type: req.request_type().to_string(),
@@ -261,7 +331,17 @@ impl GrpcClient {
         }
 
         let payload = req.to_payload(Some(metadata));
-        conn.request(payload).await
+
+        // Apply configurable request timeout
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(self.config.request_timeout_secs),
+            conn.request(payload),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(ClientError::Other(anyhow::anyhow!("gRPC request timeout"))),
+        }
     }
 
     /// Send a typed request and deserialize the response.
@@ -322,17 +402,76 @@ impl GrpcClient {
     }
 
     /// Check if the client is connected.
+    /// Get a reference to the connection RwLock (for Transport trait impl).
+    pub fn connection_ref(&self) -> &RwLock<Option<GrpcConnection>> {
+        &self.connection
+    }
+
     pub async fn is_connected(&self) -> bool {
         self.connection.read().await.is_some()
     }
 
+    /// Get current connection state.
+    pub fn connection_state(&self) -> ConnectionState {
+        match self.state.load(std::sync::atomic::Ordering::Relaxed) {
+            0 => ConnectionState::Starting,
+            1 => ConnectionState::Running,
+            2 => ConnectionState::Unhealthy,
+            3 => ConnectionState::Reconnecting,
+            _ => ConnectionState::Shutdown,
+        }
+    }
+
+    fn set_state(&self, state: ConnectionState) {
+        self.state
+            .store(state as u8, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Register a connection event listener.
+    pub fn add_connection_listener(&self, listener: Arc<dyn ConnectionEventListener>) {
+        if let Ok(mut listeners) = self.event_listeners.write() {
+            listeners.push(listener);
+        }
+    }
+
+    /// Notify all listeners of connection event.
+    async fn fire_connected(&self) {
+        let listeners = self
+            .event_listeners
+            .read()
+            .map(|l| l.clone())
+            .unwrap_or_default();
+        for listener in &listeners {
+            listener.on_connected().await;
+        }
+    }
+
+    async fn fire_disconnected(&self) {
+        let listeners = self
+            .event_listeners
+            .read()
+            .map(|l| l.clone())
+            .unwrap_or_default();
+        for listener in &listeners {
+            listener.on_disconnected().await;
+        }
+    }
+
     /// Reconnect to the server (e.g., after connection loss).
+    ///
+    /// Fires disconnected/connected events and triggers service redo.
     pub async fn reconnect(&self) -> Result<()> {
+        self.set_state(ConnectionState::Reconnecting);
+        self.fire_disconnected().await;
         {
             let mut guard = self.connection.write().await;
             *guard = None;
         }
-        self.connect().await
+        let result = self.connect().await;
+        if result.is_ok() {
+            self.fire_connected().await;
+        }
+        result
     }
 
     /// Reconnect to a specific server (e.g., after ConnectResetRequest).
@@ -351,6 +490,7 @@ impl GrpcClient {
             self.config.labels.clone(),
             &self.config.tenant,
             token.as_deref(),
+            self.config.push_channel_capacity,
         )
         .await?;
 
@@ -396,9 +536,15 @@ impl GrpcClient {
     fn start_push_dispatch(&self, mut push_rx: mpsc::Receiver<Payload>) {
         let connection = self.connection.clone();
         let handlers = self.push_handlers.clone();
+        let shutdown = self.shutdown.clone();
 
         tokio::spawn(async move {
             loop {
+                if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    debug!("Push dispatch: shutdown signal received");
+                    break;
+                }
+
                 let payload = push_rx.recv().await;
 
                 let Some(payload) = payload else {
@@ -417,9 +563,18 @@ impl GrpcClient {
                 // Built-in handlers for connection management
                 let ack = match payload_type.as_str() {
                     "ConnectResetRequest" => {
-                        let _req: ConnectResetRequest = deserialize_payload(&payload);
-                        // ConnectResetRequest is handled by the reconnect logic externally
-                        warn!("Received ConnectResetRequest — connection should be reset");
+                        let req: ConnectResetRequest = deserialize_payload(&payload);
+                        warn!(
+                            "Received ConnectResetRequest, server_ip={}, server_port={}",
+                            req.server_ip, req.server_port
+                        );
+                        // Signal that reconnection is needed
+                        // The connection will be re-established by the next request
+                        // or by the health check loop
+                        {
+                            let mut guard = connection.write().await;
+                            *guard = None;
+                        }
                         None
                     }
                     "ClientDetectionRequest" => {
