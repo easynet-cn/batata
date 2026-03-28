@@ -387,6 +387,11 @@ impl PayloadHandler for ConfigPublishHandler {
             }
         }
 
+        // Also check the dedicated cas_md5 field (Rust SDK sets it here, not in addition_map)
+        if cas_md5.is_none() && !request.cas_md5.is_empty() {
+            cas_md5 = Some(request.cas_md5.as_str());
+        }
+
         let src_ip = payload
             .metadata
             .as_ref()

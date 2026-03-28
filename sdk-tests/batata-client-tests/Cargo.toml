@@ -16,6 +16,10 @@ name = "naming_service_test"
 path = "tests/naming_service_test.rs"
 
 [[test]]
+name = "naming_advanced_test"
+path = "tests/naming_advanced_test.rs"
+
+[[test]]
 name = "fuzzy_watch_test"
 path = "tests/fuzzy_watch_test.rs"
 
@@ -26,6 +30,10 @@ path = "tests/auth_test.rs"
 [[test]]
 name = "change_event_test"
 path = "tests/change_event_test.rs"
+
+[[test]]
+name = "config_advanced_test"
+path = "tests/config_advanced_test.rs"
 
 [dev-dependencies]
 batata-client = { path = "../../crates/batata-client" }

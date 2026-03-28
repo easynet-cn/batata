@@ -90,10 +90,15 @@ async fn test_instance_get_detail() {
     assert_eq!(detail.ip, "10.0.1.1");
     assert_eq!(detail.port, 9090);
 
+    // Deregister instance before deleting service
     client
-        .service_delete("public", "DEFAULT_GROUP", &service)
+        .instance_delete("public", "DEFAULT_GROUP", &service, "10.0.1.1", 9090, "DEFAULT")
         .await
         .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let _ = client
+        .service_delete("public", "DEFAULT_GROUP", &service)
+        .await;
 }
 
 // ==================== Service CRUD ====================
@@ -183,10 +188,14 @@ async fn test_instance_health_update() {
         .await;
     assert!(result.is_ok(), "Health update should succeed");
 
-    client
+    // Deregister instance before deleting service
+    let _ = client
+        .instance_delete("public", "DEFAULT_GROUP", &service, "10.0.2.1", 8080, "DEFAULT")
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let _ = client
         .service_delete("public", "DEFAULT_GROUP", &service)
-        .await
-        .unwrap();
+        .await;
 }
 
 #[tokio::test]

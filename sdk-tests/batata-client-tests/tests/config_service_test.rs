@@ -6,7 +6,7 @@
 mod common;
 
 use std::sync::{Arc, atomic::{AtomicBool, AtomicU32, Ordering}};
-use batata_client::config::{BatataConfigService, listener::{ConfigChangeListener, ConfigResponse}};
+use batata_client::config::listener::{ConfigChangeListener, ConfigResponse};
 
 const TENANT: &str = "";
 const GROUP: &str = "DEFAULT_GROUP";
@@ -17,8 +17,7 @@ const GROUP: &str = "DEFAULT_GROUP";
 #[ignore] // Requires running server
 async fn test_publish_and_get_config() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = BatataConfigService::new(grpc);
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-crud-{}", common::test_id());
     let content = "server.port=8080";
@@ -40,8 +39,7 @@ async fn test_publish_and_get_config() {
 #[ignore]
 async fn test_publish_config_with_type() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = BatataConfigService::new(grpc);
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-type-{}.yaml", common::test_id());
     let content = "server:\n  port: 8080";
@@ -60,8 +58,7 @@ async fn test_publish_config_with_type() {
 #[ignore]
 async fn test_remove_config() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = BatataConfigService::new(grpc);
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-rm-{}", common::test_id());
 
@@ -82,8 +79,7 @@ async fn test_remove_config() {
 #[ignore]
 async fn test_publish_config_cas_success() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = BatataConfigService::new(grpc);
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-cas-ok-{}", common::test_id());
 
@@ -109,8 +105,7 @@ async fn test_publish_config_cas_success() {
 #[ignore]
 async fn test_publish_config_cas_conflict() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = BatataConfigService::new(grpc);
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-cas-fail-{}", common::test_id());
 
@@ -134,8 +129,7 @@ async fn test_publish_config_cas_conflict() {
 #[ignore]
 async fn test_config_listener() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = Arc::new(BatataConfigService::new(grpc));
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-listen-{}", common::test_id());
     let received = Arc::new(AtomicBool::new(false));
@@ -171,8 +165,7 @@ async fn test_config_listener() {
 #[ignore]
 async fn test_get_config_and_sign_listener() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = Arc::new(BatataConfigService::new(grpc));
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-sign-{}", common::test_id());
     let notify_count = Arc::new(AtomicU32::new(0));
@@ -211,8 +204,7 @@ async fn test_get_config_and_sign_listener() {
 #[ignore]
 async fn test_get_server_status() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = BatataConfigService::new(grpc);
+    let svc = common::create_config_service().await.unwrap();
 
     let status = svc.get_server_status().await;
     assert_eq!(status, "UP");

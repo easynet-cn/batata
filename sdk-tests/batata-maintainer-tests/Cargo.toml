@@ -22,6 +22,18 @@ path = "tests/naming_admin_test.rs"
 name = "client_introspection_test"
 path = "tests/client_introspection_test.rs"
 
+[[test]]
+name = "auth_rbac_test"
+path = "tests/auth_rbac_test.rs"
+
+[[test]]
+name = "config_extended_test"
+path = "tests/config_extended_test.rs"
+
+[[test]]
+name = "cluster_extended_test"
+path = "tests/cluster_extended_test.rs"
+
 [dev-dependencies]
 batata-client = { path = "../../crates/batata-client" }
 batata-api = { path = "../../crates/batata-api" }

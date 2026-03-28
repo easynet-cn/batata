@@ -40,6 +40,14 @@ pub async fn create_config_grpc_client() -> anyhow::Result<Arc<GrpcClient>> {
     Ok(client)
 }
 
+/// Create a config service with push handlers registered
+pub async fn create_config_service() -> anyhow::Result<Arc<batata_client::config::BatataConfigService>> {
+    let grpc = create_config_grpc_client().await?;
+    let svc = Arc::new(batata_client::config::BatataConfigService::new(grpc));
+    svc.register_push_handlers();
+    Ok(svc)
+}
+
 /// Create a gRPC client for naming module
 pub async fn create_naming_grpc_client() -> anyhow::Result<Arc<GrpcClient>> {
     let config = GrpcClientConfig {
@@ -53,6 +61,14 @@ pub async fn create_naming_grpc_client() -> anyhow::Result<Arc<GrpcClient>> {
     let client = Arc::new(GrpcClient::new(config)?);
     client.connect().await?;
     Ok(client)
+}
+
+/// Create a naming service with push handlers registered
+pub async fn create_naming_service() -> anyhow::Result<Arc<batata_client::naming::BatataNamingService>> {
+    let grpc = create_naming_grpc_client().await?;
+    let svc = Arc::new(batata_client::naming::BatataNamingService::new(grpc));
+    svc.register_push_handlers();
+    Ok(svc)
 }
 
 /// Generate a unique test ID to avoid collisions

@@ -56,9 +56,9 @@ async fn test_namespace_lifecycle() {
     assert_eq!(ns.namespace, ns_id);
     assert_eq!(ns.namespace_show_name, ns_name);
 
-    // Exists
-    let exists = client.namespace_exists(&ns_id).await.unwrap();
-    assert!(exists, "Namespace should exist");
+    // Verify exists via list
+    let all = client.namespace_list().await.unwrap();
+    assert!(all.iter().any(|n| n.namespace == ns_id), "Namespace should exist after creation");
 
     // Update
     let updated = client
@@ -75,8 +75,8 @@ async fn test_namespace_lifecycle() {
     let deleted = client.namespace_delete(&ns_id).await.unwrap();
     assert!(deleted);
 
-    let exists_after = client.namespace_exists(&ns_id).await.unwrap();
-    assert!(!exists_after, "Namespace should be deleted");
+    let all_after = client.namespace_list().await.unwrap();
+    assert!(!all_after.iter().any(|n| n.namespace == ns_id), "Namespace should be deleted");
 }
 
 // ==================== Cluster ====================
@@ -98,7 +98,9 @@ async fn test_cluster_self() {
     let client = common::create_api_client().await.unwrap();
 
     let self_info = client.cluster_self().await.unwrap();
-    assert!(!self_info.member.address.is_empty(), "Self member should have address");
+    assert!(!self_info.address.is_empty(), "Self member should have address");
+    assert!(!self_info.ip.is_empty(), "Self member should have IP");
+    assert_eq!(self_info.state, "UP", "Self member should be UP");
 }
 
 // ==================== Log Level ====================

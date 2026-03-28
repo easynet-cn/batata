@@ -3,7 +3,7 @@
 //! Handles HTTP-based JWT authentication against the Nacos server,
 //! caching the token and refreshing before expiry.
 
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
@@ -26,11 +26,14 @@ pub struct AuthProvider {
     context_path: String,
     username: String,
     password: String,
-    token: RwLock<Option<TokenInfo>>,
+    token: Arc<RwLock<Option<TokenInfo>>>,
 }
 
 /// Token refresh buffer: refresh 5 minutes before expiry
 const TOKEN_REFRESH_BUFFER_SECS: u64 = 300;
+
+/// Background token refresh check interval (matches Nacos Java SDK: 5 seconds)
+const TOKEN_REFRESH_CHECK_INTERVAL_SECS: u64 = 5;
 
 impl AuthProvider {
     /// Create a new AuthProvider.
@@ -73,7 +76,7 @@ impl AuthProvider {
             context_path: normalized_context_path,
             username: username.to_string(),
             password: password.to_string(),
-            token: RwLock::new(None),
+            token: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -85,7 +88,7 @@ impl AuthProvider {
             context_path: String::new(),
             username: String::new(),
             password: String::new(),
-            token: RwLock::new(None),
+            token: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -183,12 +186,106 @@ impl AuthProvider {
         Ok(())
     }
 
-    /// Force re-authentication (e.g., after a reconnect).
+    /// Force re-authentication (e.g., after a reconnect or 403 response).
     pub async fn refresh(&self) -> Result<()> {
         if !self.is_enabled() {
             return Ok(());
         }
+        // Clear cached token to force re-login
+        {
+            let mut guard = self.token.write().unwrap_or_else(|e| e.into_inner());
+            *guard = None;
+        }
         self.login().await
+    }
+
+    /// Start a background task that periodically checks and refreshes the token.
+    ///
+    /// Follows Nacos Java SDK pattern: `scheduleWithFixedDelay(login, 0, 5s)`.
+    /// The actual HTTP login only happens when the token is close to expiry
+    /// (within `tokenRefreshWindow` of the TTL), so most calls are cheap no-ops.
+    pub fn start_token_refresh_task(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+
+        let server_addr = self.server_addr.clone();
+        let context_path = self.context_path.clone();
+        let username = self.username.clone();
+        let password = self.password.clone();
+        let http_client = self.http_client.clone();
+        let token = self.token.clone();
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(
+                TOKEN_REFRESH_CHECK_INTERVAL_SECS,
+            ));
+            loop {
+                interval.tick().await;
+
+                // Check if token needs refresh
+                let needs_refresh = {
+                    let guard = token.read().unwrap_or_else(|e| e.into_inner());
+                    match guard.as_ref() {
+                        Some(info) => {
+                            // Refresh when token is within TOKEN_REFRESH_BUFFER_SECS of expiry
+                            info.expires_at
+                                <= Instant::now() + Duration::from_secs(TOKEN_REFRESH_BUFFER_SECS)
+                        }
+                        None => true,
+                    }
+                };
+
+                if !needs_refresh {
+                    continue;
+                }
+
+                // Perform login
+                let url = format!("{}{}/v3/auth/user/login", server_addr, context_path);
+                match http_client
+                    .post(&url)
+                    .form(&[("username", &username), ("password", &password)])
+                    .send()
+                    .await
+                {
+                    Ok(response) if response.status().is_success() => {
+                        if let Ok(result) = response.json::<serde_json::Value>().await {
+                            let access_token = result
+                                .get("data")
+                                .and_then(|d| d.get("accessToken"))
+                                .or_else(|| result.get("accessToken"))
+                                .and_then(|v| v.as_str());
+                            let ttl = result
+                                .get("data")
+                                .and_then(|d| d.get("tokenTtl"))
+                                .or_else(|| result.get("tokenTtl"))
+                                .and_then(|v| v.as_i64())
+                                .unwrap_or(18000);
+
+                            if let Some(at) = access_token {
+                                let mut guard =
+                                    token.write().unwrap_or_else(|e| e.into_inner());
+                                *guard = Some(TokenInfo {
+                                    access_token: at.to_string(),
+                                    expires_at: Instant::now()
+                                        + Duration::from_secs(ttl as u64),
+                                });
+                                debug!("Token refreshed, expires in {}s", ttl);
+                            }
+                        }
+                    }
+                    Ok(response) => {
+                        tracing::warn!(
+                            "Token refresh login failed with status {}",
+                            response.status()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Token refresh login error: {}", e);
+                    }
+                }
+            }
+        });
     }
 }
 

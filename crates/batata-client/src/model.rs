@@ -12,6 +12,27 @@ pub struct ApiResponse<T> {
     pub data: T,
 }
 
+/// A boolean-like type that also accepts string "ok" from V3 console APIs.
+/// Many Nacos V3 console endpoints return `"ok"` instead of `true`.
+#[derive(Debug)]
+pub struct OkOrBool(pub bool);
+
+impl<'de> serde::Deserialize<'de> for OkOrBool {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Bool(b) => Ok(OkOrBool(b)),
+            serde_json::Value::String(s) => Ok(OkOrBool(
+                s == "ok" || s == "true" || s.contains("ok") || s.contains("success"),
+            )),
+            _ => Ok(OkOrBool(false)),
+        }
+    }
+}
+
 /// Namespace information
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,23 +65,39 @@ pub struct ConfigBasicInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigAllInfo {
+    #[serde(default)]
     pub id: i64,
     pub data_id: String,
+    #[serde(alias = "groupName")]
     pub group: String,
     pub content: String,
+    #[serde(default)]
     pub md5: String,
+    #[serde(alias = "namespaceId", default)]
     pub tenant: String,
+    #[serde(default)]
     pub app_name: String,
+    #[serde(default)]
     pub r#type: String,
+    #[serde(default)]
     pub create_time: i64,
+    #[serde(default)]
     pub modify_time: i64,
+    #[serde(default)]
     pub create_user: String,
+    #[serde(default)]
     pub create_ip: String,
+    #[serde(default)]
     pub desc: String,
+    #[serde(default)]
     pub r#use: String,
+    #[serde(default)]
     pub effect: String,
+    #[serde(default)]
     pub schema: String,
+    #[serde(alias = "configTags", default)]
     pub config_tags: String,
+    #[serde(default)]
     pub encrypted_data_key: String,
 }
 
@@ -68,15 +105,24 @@ pub struct ConfigAllInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGrayInfo {
+    #[serde(default)]
     pub id: i64,
     pub data_id: String,
+    #[serde(alias = "groupName")]
     pub group: String,
+    #[serde(default)]
     pub content: String,
+    #[serde(default)]
     pub md5: String,
+    #[serde(alias = "namespaceId", default)]
     pub tenant: String,
+    #[serde(default)]
     pub gray_name: String,
+    #[serde(default)]
     pub gray_rule: String,
+    #[serde(default)]
     pub src_user: String,
+    #[serde(default)]
     pub r#type: String,
 }
 
@@ -84,16 +130,26 @@ pub struct ConfigGrayInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryBasicInfo {
+    #[serde(default)]
     pub id: u64,
     pub data_id: String,
+    #[serde(alias = "groupName")]
     pub group: String,
+    #[serde(alias = "namespaceId", default)]
     pub tenant: String,
+    #[serde(default)]
     pub op_type: String,
+    #[serde(default)]
     pub publish_type: String,
+    #[serde(default)]
     pub gray_name: String,
+    #[serde(default)]
     pub src_user: String,
+    #[serde(default)]
     pub src_ip: String,
+    #[serde(default)]
     pub created_time: i64,
+    #[serde(default)]
     pub last_modified_time: i64,
 }
 
@@ -101,21 +157,36 @@ pub struct ConfigHistoryBasicInfo {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigHistoryDetailInfo {
+    #[serde(default)]
     pub id: u64,
     pub data_id: String,
+    #[serde(alias = "groupName")]
     pub group: String,
+    #[serde(alias = "namespaceId", default)]
     pub tenant: String,
+    #[serde(default)]
     pub content: String,
+    #[serde(default)]
     pub md5: String,
+    #[serde(default)]
     pub app_name: String,
+    #[serde(default)]
     pub op_type: String,
+    #[serde(default)]
     pub publish_type: String,
+    #[serde(default)]
     pub gray_name: String,
+    #[serde(default)]
     pub ext_info: String,
+    #[serde(default)]
     pub src_user: String,
+    #[serde(default)]
     pub src_ip: String,
+    #[serde(default)]
     pub created_time: i64,
+    #[serde(default)]
     pub last_modified_time: i64,
+    #[serde(default)]
     pub encrypted_data_key: String,
 }
 
@@ -178,27 +249,57 @@ pub struct Member {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterHealthResponse {
+    #[serde(default)]
     pub healthy: bool,
+    #[serde(default)]
     pub member_count: usize,
+    #[serde(default)]
     pub healthy_count: usize,
+    #[serde(default)]
     pub unhealthy_count: usize,
+    #[serde(default)]
+    pub server_status: String,
+    #[serde(default)]
+    pub standalone: bool,
 }
 
-/// Self member response
+/// Self member response (flat structure matching server's NodeSelfResponse)
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SelfMemberResponse {
-    pub member: Member,
-    pub is_leader: bool,
+    pub ip: String,
+    pub port: u16,
+    pub address: String,
+    pub state: String,
+    #[serde(default)]
+    pub extend_info: serde_json::Value,
+    #[serde(default)]
+    pub fail_access_cnt: u64,
+    #[serde(default)]
+    pub abilities: serde_json::Value,
+}
+
+/// Client list response from `/v3/admin/ns/client/list`
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientListResponse {
+    #[serde(default)]
+    pub count: i32,
+    #[serde(alias = "clients", default)]
+    pub client_ids: Vec<String>,
 }
 
 /// Paginated response
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
+    #[serde(alias = "count", default)]
     pub total_count: u64,
+    #[serde(default)]
     pub page_number: u64,
+    #[serde(default)]
     pub pages_available: u64,
+    #[serde(alias = "serviceList", alias = "configList", alias = "hosts", alias = "subscribers", alias = "list", default)]
     pub page_items: Vec<T>,
 }
 
@@ -208,13 +309,28 @@ pub struct Page<T> {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDetail {
+    #[serde(default)]
     pub namespace_id: String,
+    #[serde(alias = "groupName", default)]
     pub group_name: String,
+    #[serde(alias = "name", default)]
     pub service_name: String,
+    #[serde(default)]
     pub protect_threshold: f32,
-    pub metadata: std::collections::HashMap<String, String>,
-    pub selector: ServiceSelector,
+    #[serde(default)]
+    pub metadata: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    pub selector: Option<ServiceSelector>,
+    #[serde(default)]
     pub clusters: Vec<ClusterInfo>,
+    #[serde(default)]
+    pub ip_count: i32,
+    #[serde(default)]
+    pub healthy_instance_count: i32,
+    #[serde(default)]
+    pub cluster_count: i32,
+    #[serde(default)]
+    pub trigger_flag: bool,
 }
 
 /// Service selector
@@ -230,18 +346,23 @@ pub struct ServiceSelector {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClusterInfo {
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub health_checker: HealthChecker,
-    pub metadata: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub metadata: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Health checker configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthChecker {
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     pub check_type: String,
+    #[serde(default)]
     pub port: i32,
+    #[serde(default)]
     pub use_instance_port: bool,
 }
 
@@ -249,21 +370,31 @@ pub struct HealthChecker {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceListItem {
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub group_name: String,
+    #[serde(default)]
     pub cluster_count: u32,
+    #[serde(default)]
     pub ip_count: u32,
+    #[serde(default)]
     pub healthy_instance_count: u32,
+    #[serde(default)]
     pub trigger_flag: bool,
-    pub metadata: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub metadata: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Subscriber info for API response
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscriberInfo {
+    #[serde(default)]
     pub address: String,
+    #[serde(default)]
     pub agent: String,
+    #[serde(default)]
     pub app: String,
 }
 
@@ -271,17 +402,29 @@ pub struct SubscriberInfo {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceInfo {
+    #[serde(default)]
     pub ip: String,
+    #[serde(default)]
     pub port: i32,
+    #[serde(default)]
     pub weight: f64,
+    #[serde(default)]
     pub healthy: bool,
+    #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
     pub ephemeral: bool,
+    #[serde(default)]
     pub cluster_name: String,
+    #[serde(default)]
     pub service_name: String,
-    pub metadata: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub metadata: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
     pub instance_heart_beat_interval: i64,
+    #[serde(default)]
     pub instance_heart_beat_timeout: i64,
+    #[serde(default)]
     pub ip_delete_timeout: i64,
 }
 
@@ -292,7 +435,9 @@ pub struct ConfigListenerInfo {
     pub connection_id: String,
     pub client_ip: String,
     pub data_id: String,
+    #[serde(alias = "groupName")]
     pub group: String,
+    #[serde(alias = "namespaceId", default)]
     pub tenant: String,
     pub md5: String,
 }
@@ -321,6 +466,7 @@ pub struct ImportResult {
 #[serde(rename_all = "camelCase")]
 pub struct ImportFailItem {
     pub data_id: String,
+    #[serde(alias = "groupName")]
     pub group: String,
     pub reason: String,
 }

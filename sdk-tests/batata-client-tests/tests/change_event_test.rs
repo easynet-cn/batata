@@ -6,7 +6,6 @@ mod common;
 
 use std::sync::{Arc, Mutex};
 use batata_client::config::{
-    BatataConfigService,
     change_parser::{ConfigChangeEvent, PropertyChangeType},
     listener::ConfigChangeEventListener,
 };
@@ -28,8 +27,7 @@ impl ConfigChangeEventListener for CaptureChangeListener {
 #[ignore]
 async fn test_change_event_added_property() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = Arc::new(BatataConfigService::new(grpc));
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-chg-add-{}", common::test_id());
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -72,8 +70,7 @@ async fn test_change_event_added_property() {
 #[ignore]
 async fn test_change_event_modified_property() {
     common::init_tracing();
-    let grpc = common::create_config_grpc_client().await.unwrap();
-    let svc = Arc::new(BatataConfigService::new(grpc));
+    let svc = common::create_config_service().await.unwrap();
 
     let data_id = format!("cfg-chg-mod-{}", common::test_id());
     let events = Arc::new(Mutex::new(Vec::new()));

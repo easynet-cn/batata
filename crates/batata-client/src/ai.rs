@@ -17,7 +17,7 @@ use crate::model::{ApiResponse, Page};
 // ============================================================================
 
 /// MCP Server basic information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerBasicInfo {
     pub mcp_name: String,
@@ -66,7 +66,7 @@ pub struct McpToolSpec {
 }
 
 /// Agent Card information (A2A)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCardInfo {
     pub agent_name: String,

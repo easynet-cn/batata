@@ -32,8 +32,6 @@ pub struct GrpcConnection {
     request_client: RequestClient<Channel>,
     /// Sender side of the bi-directional stream (client -> server)
     bi_stream_tx: mpsc::Sender<Payload>,
-    /// Receiver for server push messages (server -> client)
-    server_push_rx: mpsc::Receiver<Payload>,
     /// Connection ID assigned by the server
     connection_id: String,
 }
@@ -45,13 +43,17 @@ impl GrpcConnection {
     /// The gRPC port is computed as `http_port + 1000`.
     /// `module` should be "config", "naming", or both.
     /// `labels` are additional connection labels.
+    ///
+    /// Returns the connection and a separate push receiver channel.
+    /// The push receiver is returned separately to avoid holding the connection
+    /// lock while waiting for server push messages.
     pub async fn connect(
         server_addr: &str,
         module: &str,
         labels: HashMap<String, String>,
         tenant: &str,
         access_token: Option<&str>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, mpsc::Receiver<Payload>)> {
         let grpc_addr = compute_grpc_addr(server_addr)?;
 
         info!("Connecting to gRPC server at {}", grpc_addr);
@@ -135,13 +137,15 @@ impl GrpcConnection {
         // Brief delay for server to process setup
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        Ok(Self {
-            channel,
-            request_client,
-            bi_stream_tx,
+        Ok((
+            Self {
+                channel,
+                request_client,
+                bi_stream_tx,
+                connection_id,
+            },
             server_push_rx,
-            connection_id,
-        })
+        ))
     }
 
     /// Send a unary request and receive a response.
@@ -156,16 +160,6 @@ impl GrpcConnection {
             .send(payload)
             .await
             .map_err(|_| ClientError::NotConnected)
-    }
-
-    /// Try to receive the next server push message (non-blocking).
-    pub fn try_recv_push(&mut self) -> Option<Payload> {
-        self.server_push_rx.try_recv().ok()
-    }
-
-    /// Receive the next server push message (blocking).
-    pub async fn recv_push(&mut self) -> Option<Payload> {
-        self.server_push_rx.recv().await
     }
 
     /// Get the connection ID.

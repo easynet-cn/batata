@@ -273,7 +273,10 @@ impl BatataHttpClient {
 
     /// Authenticate with the server
     pub async fn authenticate(&self) -> anyhow::Result<()> {
-        let url = self.build_url(&self.config.auth_endpoint);
+        // Auth endpoint is an absolute path (already includes context path),
+        // so use current_server() directly instead of build_url() which would
+        // double the context path.
+        let url = format!("{}{}", self.current_server(), self.config.auth_endpoint);
 
         debug!("Authenticating with server: {}", url);
 

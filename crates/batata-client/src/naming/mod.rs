@@ -79,6 +79,17 @@ impl BatataNamingService {
         }
     }
 
+    /// Register server push handlers on the gRPC client.
+    ///
+    /// Must be called after wrapping in `Arc` to enable the push handler
+    /// to call back into the naming service when subscriber notifications arrive.
+    pub fn register_push_handlers(self: &Arc<Self>) {
+        self.grpc_client.register_push_handler(
+            "NotifySubscriberRequest",
+            NotifySubscriberHandler::new(self.clone()),
+        );
+    }
+
     /// Get the service info holder (for external access to cached data).
     pub fn service_info_holder(&self) -> &Arc<ServiceInfoHolder> {
         &self.service_info_holder

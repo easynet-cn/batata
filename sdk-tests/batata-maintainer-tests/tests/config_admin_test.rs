@@ -97,15 +97,14 @@ async fn test_config_gray_publish_and_stop() {
         .await
         .unwrap();
 
-    // Publish gray (beta)
+    // Publish gray (beta) with betaIps
     client
         .config_gray_publish(
             &data_id,
             "DEFAULT_GROUP",
             "public",
             "gray-content",
-            "beta",
-            r#"{"type":"beta","version":"1.0.0","priority":2147483647,"expression":"127.0.0.1"}"#,
+            "127.0.0.1",
             "",
             "",
         )

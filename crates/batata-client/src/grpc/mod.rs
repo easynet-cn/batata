@@ -18,7 +18,7 @@ use batata_api::{
     },
 };
 use dashmap::DashMap;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 
 use crate::error::{ClientError, Result};
@@ -211,7 +211,7 @@ impl GrpcClient {
 
         let server_addr = self.current_server_addr();
 
-        let conn = GrpcConnection::connect(
+        let (conn, push_rx) = GrpcConnection::connect(
             &server_addr,
             &self.config.module,
             self.config.labels.clone(),
@@ -228,9 +228,13 @@ impl GrpcClient {
 
         let mut guard = self.connection.write().await;
         *guard = Some(conn);
+        drop(guard);
 
-        // Start push dispatch loop
-        self.start_push_dispatch();
+        // Start push dispatch loop with the separate push receiver
+        self.start_push_dispatch(push_rx);
+
+        // Start background token refresh task (Nacos-compatible: checks every 5s)
+        self.auth_provider.start_token_refresh_task();
 
         Ok(())
     }
@@ -261,6 +265,10 @@ impl GrpcClient {
     }
 
     /// Send a typed request and deserialize the response.
+    ///
+    /// If the server returns an auth error (403/UNAUTHENTICATED), the token
+    /// is refreshed and the request is retried once — matching Nacos Java SDK
+    /// behavior (see `ConfigRpcTransportClient.requestProxy`).
     pub async fn request_typed<Req, Resp>(&self, req: &Req) -> Result<Resp>
     where
         Req: RequestTrait + serde::Serialize,
@@ -269,6 +277,25 @@ impl GrpcClient {
         let resp_payload = self.request(req).await?;
 
         let resp: Resp = deserialize_payload(&resp_payload);
+
+        // Check for auth error — refresh token and retry once (Nacos reLogin pattern)
+        if resp.error_code() == 403 || resp.result_code() == 403 {
+            warn!("Auth error (403), refreshing token and retrying...");
+            if let Err(e) = self.auth_provider.refresh().await {
+                warn!("Token refresh failed: {}", e);
+            } else {
+                // Retry the request with new token
+                let resp_payload = self.request(req).await?;
+                let resp: Resp = deserialize_payload(&resp_payload);
+                if resp.result_code() != 200 && resp.error_code() != 0 {
+                    return Err(ClientError::ServerError {
+                        code: resp.error_code(),
+                        message: resp.message(),
+                    });
+                }
+                return Ok(resp);
+            }
+        }
 
         // Check for server error
         if resp.result_code() != 200 && resp.error_code() != 0 {
@@ -318,7 +345,7 @@ impl GrpcClient {
         let token = self.auth_provider.get_token().await?;
         let server_addr = format!("{}:{}", server_ip, server_port);
 
-        let conn = GrpcConnection::connect(
+        let (conn, push_rx) = GrpcConnection::connect(
             &server_addr,
             &self.config.module,
             self.config.labels.clone(),
@@ -335,8 +362,9 @@ impl GrpcClient {
 
         let mut guard = self.connection.write().await;
         *guard = Some(conn);
+        drop(guard);
 
-        self.start_push_dispatch();
+        self.start_push_dispatch(push_rx);
 
         Ok(())
     }
@@ -362,19 +390,16 @@ impl GrpcClient {
     }
 
     /// Start the server push dispatch loop.
-    fn start_push_dispatch(&self) {
+    ///
+    /// The push receiver is passed separately so the dispatch loop does not
+    /// need to hold the connection lock while waiting for messages.
+    fn start_push_dispatch(&self, mut push_rx: mpsc::Receiver<Payload>) {
         let connection = self.connection.clone();
         let handlers = self.push_handlers.clone();
 
         tokio::spawn(async move {
             loop {
-                let payload = {
-                    let mut guard = connection.write().await;
-                    match guard.as_mut() {
-                        Some(conn) => conn.recv_push().await,
-                        None => break,
-                    }
-                };
+                let payload = push_rx.recv().await;
 
                 let Some(payload) = payload else {
                     debug!("Push dispatch: stream ended");

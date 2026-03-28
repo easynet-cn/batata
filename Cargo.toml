@@ -113,7 +113,7 @@ reqwest = { version = "0.13", features = ["json", "stream", "query", "form"] }
 
 # Utils
 chrono = "0.4"
-uuid = { version = "1.22", features = ["v4"] }
+uuid = { version = "1.23", features = ["v4"] }
 regex = "1.11"
 base64 = "0.22"
 # md5 v0.8: simple API via md5::compute(). md-5 v0.10: RustCrypto Digest trait (md5::Md5, md5::Digest)

@@ -104,6 +104,17 @@ impl BatataConfigService {
         }
     }
 
+    /// Register server push handlers on the gRPC client.
+    ///
+    /// Must be called after wrapping in `Arc` to enable the push handler
+    /// to call back into the config service when config change notifications arrive.
+    pub fn register_push_handlers(self: &Arc<Self>) {
+        self.grpc_client.register_push_handler(
+            "ConfigChangeNotifyRequest",
+            ConfigChangeNotifyHandler::new(self.clone()),
+        );
+    }
+
     /// Add a filter to the chain
     pub async fn add_filter(&self, filter: Arc<dyn filter::IConfigFilter>) {
         let mut chain = self.filter_chain.write().await;
@@ -337,6 +348,10 @@ impl BatataConfigService {
         let key = build_cache_key(data_id, group, tenant);
         let should_subscribe;
 
+        // Pre-populate cache with current content so the MD5 in the listen
+        // request matches the server and no spurious notification fires.
+        self.ensure_cache_populated(data_id, group, tenant).await;
+
         {
             let mut entry = self
                 .cache_map
@@ -378,6 +393,10 @@ impl BatataConfigService {
     ) -> Result<()> {
         let key = build_cache_key(data_id, group, tenant);
         let should_subscribe;
+
+        // Pre-populate cache with current content so the MD5 in the listen
+        // request matches the server and no spurious notification fires.
+        self.ensure_cache_populated(data_id, group, tenant).await;
 
         {
             let mut entry = self
@@ -441,10 +460,19 @@ impl BatataConfigService {
             data_id, group, tenant
         );
 
-        // Re-fetch from server
+        let key = build_cache_key(data_id, group, tenant);
+
+        // Snapshot old content and config_type BEFORE re-fetching,
+        // because get_config() updates the cache and would make old == new.
+        let (old_content, config_type) = self
+            .cache_map
+            .get(&key)
+            .map(|entry| (entry.content.clone(), entry.config_type.clone()))
+            .unwrap_or_default();
+
+        // Re-fetch from server (this also updates the cache)
         match self.get_config(data_id, group, tenant).await {
             Ok(new_content) => {
-                let key = build_cache_key(data_id, group, tenant);
                 if let Some(entry) = self.cache_map.get(&key) {
                     let response = ConfigResponse {
                         data_id: data_id.to_string(),
@@ -460,11 +488,9 @@ impl BatataConfigService {
 
                     // Notify change event listeners with field-level diffs
                     if !entry.change_event_listeners.is_empty() {
-                        let old_content = &entry.content;
-                        let config_type = &entry.config_type;
                         let items = change_parser::parse_change_items(
-                            config_type,
-                            old_content,
+                            &config_type,
+                            &old_content,
                             &new_content,
                         );
                         if !items.is_empty() {
@@ -576,6 +602,30 @@ impl BatataConfigService {
         // Clear all cached config data (including listeners within each CacheData)
         self.cache_map.clear();
         info!("Config service shutdown complete");
+    }
+
+    /// Pre-fetch config into the cache if not already present.
+    /// This ensures the MD5 in subsequent listen requests matches the server
+    /// so no spurious change notification is triggered on first subscribe.
+    async fn ensure_cache_populated(&self, data_id: &str, group: &str, tenant: &str) {
+        let key = build_cache_key(data_id, group, tenant);
+        let already_has_content = self
+            .cache_map
+            .get(&key)
+            .map(|e| !e.content.is_empty())
+            .unwrap_or(false);
+
+        if !already_has_content {
+            if let Ok(content) = self.get_config(data_id, group, tenant).await {
+                debug!(
+                    "Pre-populated cache for: data_id={}, group={}, tenant={}, len={}",
+                    data_id,
+                    group,
+                    tenant,
+                    content.len()
+                );
+            }
+        }
     }
 
     /// Send a ConfigBatchListenRequest.

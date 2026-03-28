@@ -10,7 +10,7 @@ use batata_client::config::{
     fuzzy_watch::{ConfigFuzzyWatchEvent, ConfigFuzzyWatchListener, ConfigFuzzyWatchService},
 };
 
-const TENANT: &str = "";
+const TENANT: &str = "public";
 const GROUP: &str = "DEFAULT_GROUP";
 
 struct CountFuzzyListener {
@@ -29,7 +29,8 @@ async fn test_config_fuzzy_watch_with_keys() {
     common::init_tracing();
     let grpc = common::create_config_grpc_client().await.unwrap();
     let config_svc = BatataConfigService::new(grpc.clone());
-    let fuzzy_svc = ConfigFuzzyWatchService::new(grpc.clone());
+    let fuzzy_svc = Arc::new(ConfigFuzzyWatchService::new(grpc.clone()));
+    fuzzy_svc.register_push_handlers();
 
     let id = common::test_id();
     let data_id1 = format!("fz-cfg1-{}", id);

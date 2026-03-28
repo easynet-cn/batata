@@ -8,8 +8,8 @@ use crate::http::BatataHttpClient;
 use crate::model::{
     ApiResponse, CloneResult, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo,
     ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, ConfigListenerInfo,
-    ImportResult, InstanceInfo, Member, Namespace, Page, SelfMemberResponse, ServiceDetail,
-    ServiceListItem, SubscriberInfo,
+    ImportResult, InstanceInfo, Member, Namespace, OkOrBool, Page, SelfMemberResponse,
+    ServiceDetail, ServiceListItem, SubscriberInfo,
 };
 
 /// API client wrapper providing typed access to Batata/Nacos APIs
@@ -34,7 +34,7 @@ impl BatataApiClient {
     pub async fn namespace_list(&self) -> anyhow::Result<Vec<Namespace>> {
         let response: ApiResponse<Vec<Namespace>> = self
             .http_client
-            .get("/v3/console/core/namespace/list")
+            .get("/v3/admin/core/namespace/list")
             .await?;
         Ok(response.data)
     }
@@ -49,7 +49,7 @@ impl BatataApiClient {
 
         let response: ApiResponse<Namespace> = self
             .http_client
-            .get_with_query("/v3/console/core/namespace", &Query { namespace_id })
+            .get_with_query("/v3/admin/core/namespace", &Query { namespace_id })
             .await?;
         Ok(response.data)
     }
@@ -69,10 +69,10 @@ impl BatataApiClient {
             namespace_desc: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .post_form(
-                "/v3/console/core/namespace",
+                "/v3/admin/core/namespace",
                 &Form {
                     custom_namespace_id: namespace_id,
                     namespace_name,
@@ -80,7 +80,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Update an existing namespace
@@ -98,10 +98,10 @@ impl BatataApiClient {
             namespace_desc: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .put_form(
-                "/v3/console/core/namespace",
+                "/v3/admin/core/namespace",
                 &Form {
                     namespace_id,
                     namespace_name,
@@ -109,7 +109,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Delete a namespace
@@ -120,11 +120,11 @@ impl BatataApiClient {
             namespace_id: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
-            .delete_with_query("/v3/console/core/namespace", &Query { namespace_id })
+            .delete_with_query("/v3/admin/core/namespace", &Query { namespace_id })
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Check if namespace exists
@@ -135,16 +135,16 @@ impl BatataApiClient {
             custom_namespace_id: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .get_with_query(
-                "/v3/console/core/namespace/exist",
+                "/v3/admin/core/namespace/exist",
                 &Query {
                     custom_namespace_id: namespace_id,
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     // ============== Config APIs ==============
@@ -167,7 +167,7 @@ impl BatataApiClient {
         let response: ApiResponse<Option<ConfigAllInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/cs/config",
+                "/v3/admin/cs/config",
                 &Query {
                     data_id,
                     group_name,
@@ -209,7 +209,7 @@ impl BatataApiClient {
         let response: ApiResponse<Page<ConfigBasicInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/cs/config/list",
+                "/v3/admin/cs/config/list",
                 &Query {
                     page_no,
                     page_size,
@@ -260,10 +260,10 @@ impl BatataApiClient {
             encrypted_data_key: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .post_form(
-                "/v3/console/cs/config",
+                "/v3/admin/cs/config",
                 &Form {
                     data_id,
                     group_name,
@@ -280,7 +280,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Delete a configuration
@@ -298,10 +298,10 @@ impl BatataApiClient {
             tenant: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .delete_with_query(
-                "/v3/console/cs/config",
+                "/v3/admin/cs/config",
                 &Query {
                     data_id,
                     group_name,
@@ -309,7 +309,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Get gray/beta configuration
@@ -330,7 +330,7 @@ impl BatataApiClient {
         let response: ApiResponse<Option<ConfigGrayInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/cs/config/beta",
+                "/v3/admin/cs/config/beta",
                 &Query {
                     data_id,
                     group_name,
@@ -368,7 +368,7 @@ impl BatataApiClient {
             app_name,
         };
         let query_string = serde_urlencoded::to_string(&query)?;
-        let path = format!("/v3/console/cs/config/export?{}", query_string);
+        let path = format!("/v3/admin/cs/config/export?{}", query_string);
 
         self.http_client.get_bytes(&path).await
     }
@@ -383,7 +383,7 @@ impl BatataApiClient {
         // Build query parameters
         let query_string =
             serde_urlencoded::to_string([("namespace_id", namespace_id), ("policy", policy)])?;
-        let path = format!("/v3/console/cs/config/import?{}", query_string);
+        let path = format!("/v3/admin/cs/config/import?{}", query_string);
 
         // Create multipart form
         let part = reqwest::multipart::Part::bytes(file_data)
@@ -412,7 +412,7 @@ impl BatataApiClient {
         let response: ApiResponse<usize> = self
             .http_client
             .delete_with_query(
-                "/v3/console/cs/config/batchDelete",
+                "/v3/admin/cs/config/batch",
                 &Query { ids: &ids_str },
             )
             .await?;
@@ -434,10 +434,10 @@ impl BatataApiClient {
             namespace_id: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .delete_with_query(
-                "/v3/console/cs/config/beta",
+                "/v3/admin/cs/config/beta",
                 &Query {
                     data_id,
                     group_name,
@@ -445,7 +445,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Publish gray/beta configuration
@@ -456,41 +456,38 @@ impl BatataApiClient {
         group_name: &str,
         namespace_id: &str,
         content: &str,
-        gray_name: &str,
-        gray_rule: &str,
+        beta_ips: &str,
         app_name: &str,
         encrypted_data_key: &str,
     ) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
-        struct Body<'a> {
+        struct Form<'a> {
             data_id: &'a str,
             group_name: &'a str,
             namespace_id: &'a str,
             content: &'a str,
-            gray_name: &'a str,
-            gray_rule: &'a str,
+            beta_ips: &'a str,
             app_name: &'a str,
             encrypted_data_key: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
-            .post_json(
-                "/v3/console/cs/config/beta",
-                &Body {
+            .post_form(
+                "/v3/admin/cs/config/beta",
+                &Form {
                     data_id,
                     group_name,
                     namespace_id,
                     content,
-                    gray_name,
-                    gray_rule,
+                    beta_ips,
                     app_name,
                     encrypted_data_key,
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Search gray/beta configurations with pagination
@@ -517,7 +514,7 @@ impl BatataApiClient {
         let response: ApiResponse<Page<ConfigGrayInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/cs/config/beta/list",
+                "/v3/admin/cs/config/beta/list",
                 &Query {
                     page_no,
                     page_size,
@@ -549,7 +546,7 @@ impl BatataApiClient {
         let response: ApiResponse<Vec<ConfigGrayInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/cs/config/beta/versions",
+                "/v3/admin/cs/config/beta/versions",
                 &Query {
                     data_id,
                     group_name,
@@ -576,18 +573,16 @@ impl BatataApiClient {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
-            ids: &'a str,
-            target_namespace_id: &'a str,
+            namespace_id: &'a str,
             policy: &'a str,
         }
 
         let response: ApiResponse<CloneResult> = self
             .http_client
             .post_with_query(
-                "/v3/console/cs/config/clone",
+                "/v3/admin/cs/config/clone",
                 &Query {
-                    ids: &ids_str,
-                    target_namespace_id,
+                    namespace_id: target_namespace_id,
                     policy,
                 },
             )
@@ -617,7 +612,7 @@ impl BatataApiClient {
         let response: ApiResponse<Option<ConfigHistoryDetailInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/cs/history",
+                "/v3/admin/cs/history",
                 &Query {
                     nid,
                     data_id,
@@ -651,7 +646,7 @@ impl BatataApiClient {
         let response: ApiResponse<Page<ConfigHistoryBasicInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/cs/history/list",
+                "/v3/admin/cs/history/list",
                 &Query {
                     data_id,
                     group_name,
@@ -677,7 +672,7 @@ impl BatataApiClient {
 
         let response: ApiResponse<Vec<ConfigBasicInfo>> = self
             .http_client
-            .get_with_query("/v3/console/cs/history/configs", &Query { namespace_id })
+            .get_with_query("/v3/admin/cs/history/configs", &Query { namespace_id })
             .await?;
         Ok(response.data)
     }
@@ -688,7 +683,7 @@ impl BatataApiClient {
     pub async fn cluster_members(&self) -> anyhow::Result<Vec<Member>> {
         let response: ApiResponse<Vec<Member>> = self
             .http_client
-            .get("/v3/console/core/cluster/nodes")
+            .get("/v3/admin/core/cluster/node/list")
             .await?;
         Ok(response.data)
     }
@@ -697,7 +692,7 @@ impl BatataApiClient {
     pub async fn cluster_healthy_members(&self) -> anyhow::Result<Vec<Member>> {
         let response: ApiResponse<Vec<Member>> = self
             .http_client
-            .get("/v3/console/core/cluster/nodes/healthy")
+            .get("/v3/admin/core/cluster/node/list")
             .await?;
         Ok(response.data)
     }
@@ -706,7 +701,7 @@ impl BatataApiClient {
     pub async fn cluster_health(&self) -> anyhow::Result<ClusterHealthResponse> {
         let response: ApiResponse<ClusterHealthResponse> = self
             .http_client
-            .get("/v3/console/core/cluster/health")
+            .get("/v3/admin/core/cluster/health")
             .await?;
         Ok(response.data)
     }
@@ -715,45 +710,36 @@ impl BatataApiClient {
     pub async fn cluster_self(&self) -> anyhow::Result<SelfMemberResponse> {
         let response: ApiResponse<SelfMemberResponse> = self
             .http_client
-            .get("/v3/console/core/cluster/self")
+            .get("/v3/admin/core/cluster/node/self")
             .await?;
         Ok(response.data)
     }
 
-    /// Get a specific member by address
+    /// Get a specific member by address (filters from member list)
     pub async fn cluster_member(&self, address: &str) -> anyhow::Result<Option<Member>> {
-        let path = format!("/v3/console/core/cluster/node/{}", address);
-        match self.http_client.get::<ApiResponse<Member>>(&path).await {
-            Ok(response) => Ok(Some(response.data)),
-            Err(_) => Ok(None),
-        }
+        let members = self.cluster_members().await?;
+        Ok(members.into_iter().find(|m| m.address == address))
     }
 
     /// Get cluster member count
     pub async fn cluster_member_count(&self) -> anyhow::Result<usize> {
-        let response: ApiResponse<usize> = self
-            .http_client
-            .get("/v3/console/core/cluster/count")
-            .await?;
-        Ok(response.data)
+        let health = self.cluster_health().await?;
+        Ok(health.member_count)
     }
 
-    /// Check if running in standalone mode
+    /// Check if running in standalone mode (derived from cluster health)
     pub async fn cluster_is_standalone(&self) -> anyhow::Result<bool> {
-        let response: ApiResponse<bool> = self
-            .http_client
-            .get("/v3/console/core/cluster/standalone")
-            .await?;
-        Ok(response.data)
+        let health = self.cluster_health().await?;
+        Ok(health.standalone)
     }
 
-    /// Refresh self member info
+    /// Check self member health
     pub async fn cluster_refresh_self(&self) -> anyhow::Result<bool> {
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<serde_json::Value> = self
             .http_client
-            .post_form("/v3/console/core/cluster/self/refresh", &())
+            .get("/v3/admin/core/cluster/node/self/health")
             .await?;
-        Ok(response.data)
+        Ok(response.data.is_object())
     }
 
     // ============== Service APIs ==============
@@ -780,10 +766,10 @@ impl BatataApiClient {
             selector: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .post_json(
-                "/v3/console/ns/service",
+                "/v3/admin/ns/service",
                 &Form {
                     namespace_id,
                     group_name,
@@ -794,7 +780,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Delete a service
@@ -812,10 +798,10 @@ impl BatataApiClient {
             service_name: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .delete_with_query(
-                "/v3/console/ns/service",
+                "/v3/admin/ns/service",
                 &Query {
                     namespace_id,
                     group_name,
@@ -823,7 +809,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Update a service
@@ -848,10 +834,10 @@ impl BatataApiClient {
             selector: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .put_json(
-                "/v3/console/ns/service",
+                "/v3/admin/ns/service",
                 &Form {
                     namespace_id,
                     group_name,
@@ -862,7 +848,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Get service detail
@@ -883,7 +869,7 @@ impl BatataApiClient {
         let response: ApiResponse<ServiceDetail> = self
             .http_client
             .get_with_query(
-                "/v3/console/ns/service",
+                "/v3/admin/ns/service",
                 &Query {
                     namespace_id,
                     group_name,
@@ -919,7 +905,7 @@ impl BatataApiClient {
         let response: ApiResponse<Page<ServiceListItem>> = self
             .http_client
             .get_with_query(
-                "/v3/console/ns/service/list",
+                "/v3/admin/ns/service/list",
                 &Query {
                     namespace_id,
                     group_name,
@@ -955,7 +941,7 @@ impl BatataApiClient {
         let response: ApiResponse<Page<SubscriberInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/ns/service/subscribers",
+                "/v3/admin/ns/service/subscribers",
                 &Query {
                     namespace_id,
                     group_name,
@@ -972,7 +958,7 @@ impl BatataApiClient {
     pub async fn service_selector_types(&self) -> anyhow::Result<Vec<String>> {
         let response: ApiResponse<Vec<String>> = self
             .http_client
-            .get("/v3/console/ns/service/selector/types")
+            .get("/v3/admin/ns/service/selector/types")
             .await?;
         Ok(response.data)
     }
@@ -1003,10 +989,10 @@ impl BatataApiClient {
             metadata: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .put_json(
-                "/v3/console/ns/service/cluster",
+                "/v3/admin/ns/service/cluster",
                 &Form {
                     namespace_id,
                     group_name,
@@ -1019,7 +1005,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     // ============== Instance APIs ==============
@@ -1048,7 +1034,7 @@ impl BatataApiClient {
         let response: ApiResponse<Page<InstanceInfo>> = self
             .http_client
             .get_with_query(
-                "/v3/console/ns/instance/list",
+                "/v3/admin/ns/instance/list",
                 &Query {
                     namespace_id,
                     group_name,
@@ -1094,10 +1080,10 @@ impl BatataApiClient {
             metadata: &'a str,
         }
 
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .put_json(
-                "/v3/console/ns/instance",
+                "/v3/admin/ns/instance",
                 &Form {
                     namespace_id,
                     group_name,
@@ -1113,7 +1099,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     // ============== Config Listener APIs ==============
@@ -1124,7 +1110,7 @@ impl BatataApiClient {
         data_id: &str,
         group_name: &str,
         namespace_id: &str,
-    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+    ) -> anyhow::Result<serde_json::Value> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
@@ -1133,10 +1119,10 @@ impl BatataApiClient {
             namespace_id: &'a str,
         }
 
-        let response: ApiResponse<Vec<ConfigListenerInfo>> = self
+        let response: ApiResponse<serde_json::Value> = self
             .http_client
             .get_with_query(
-                "/v3/console/cs/config/listener",
+                "/v3/admin/cs/listener",
                 &Query {
                     data_id,
                     group_name,
@@ -1151,16 +1137,16 @@ impl BatataApiClient {
     pub async fn config_listeners_by_ip(
         &self,
         ip: &str,
-    ) -> anyhow::Result<Vec<ConfigListenerInfo>> {
+    ) -> anyhow::Result<serde_json::Value> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
             ip: &'a str,
         }
 
-        let response: ApiResponse<Vec<ConfigListenerInfo>> = self
+        let response: ApiResponse<serde_json::Value> = self
             .http_client
-            .get_with_query("/v3/console/cs/config/listener/ip", &Query { ip })
+            .get_with_query("/v3/admin/cs/listener/ip", &Query { ip })
             .await?;
         Ok(response.data)
     }
@@ -1176,7 +1162,7 @@ impl BatataApiClient {
         port: i32,
         cluster_name: &str,
         ephemeral: bool,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Body<'a> {
@@ -1188,9 +1174,9 @@ impl BatataApiClient {
             cluster_name: &'a str,
             ephemeral: bool,
         }
-        let response: ApiResponse<String> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
-            .post_form(
+            .post_json(
                 "/v3/admin/ns/instance",
                 &Body {
                     namespace_id,
@@ -1203,7 +1189,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Deregister an instance via HTTP Admin API
@@ -1226,7 +1212,7 @@ impl BatataApiClient {
             port: i32,
             cluster_name: &'a str,
         }
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .delete_with_query(
                 "/v3/admin/ns/instance",
@@ -1240,7 +1226,7 @@ impl BatataApiClient {
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Get instance detail
@@ -1289,39 +1275,23 @@ impl BatataApiClient {
         ip: &str,
         port: i32,
         healthy: bool,
-    ) -> anyhow::Result<String> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Body<'a> {
-            namespace_id: &'a str,
-            group_name: &'a str,
-            service_name: &'a str,
-            ip: &'a str,
-            port: i32,
-            healthy: bool,
-        }
-        let response: ApiResponse<String> = self
+    ) -> anyhow::Result<bool> {
+        let path = format!(
+            "/v3/admin/ns/health/instance?namespaceId={}&groupName={}&serviceName={}&ip={}&port={}&healthy={}",
+            namespace_id, group_name, service_name, ip, port, healthy
+        );
+        let response: ApiResponse<OkOrBool> = self
             .http_client
-            .put_form(
-                "/v3/admin/ns/health/instance",
-                &Body {
-                    namespace_id,
-                    group_name,
-                    service_name,
-                    ip,
-                    port,
-                    healthy,
-                },
-            )
+            .put_form(&path, &())
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     // ============== Client Introspection APIs ==============
 
     /// List all connected client IDs
-    pub async fn client_list(&self) -> anyhow::Result<Vec<serde_json::Value>> {
-        let response: ApiResponse<Vec<serde_json::Value>> =
+    pub async fn client_list(&self) -> anyhow::Result<crate::model::ClientListResponse> {
+        let response: ApiResponse<crate::model::ClientListResponse> =
             self.http_client.get("/v3/admin/ns/client/list").await?;
         Ok(response.data)
     }
@@ -1344,13 +1314,13 @@ impl BatataApiClient {
     pub async fn client_published_services(
         &self,
         client_id: &str,
-    ) -> anyhow::Result<Vec<serde_json::Value>> {
+    ) -> anyhow::Result<serde_json::Value> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
             client_id: &'a str,
         }
-        let response: ApiResponse<Vec<serde_json::Value>> = self
+        let response: ApiResponse<serde_json::Value> = self
             .http_client
             .get_with_query("/v3/admin/ns/client/publish/list", &Query { client_id })
             .await?;
@@ -1361,13 +1331,13 @@ impl BatataApiClient {
     pub async fn client_subscribed_services(
         &self,
         client_id: &str,
-    ) -> anyhow::Result<Vec<serde_json::Value>> {
+    ) -> anyhow::Result<serde_json::Value> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
             client_id: &'a str,
         }
-        let response: ApiResponse<Vec<serde_json::Value>> = self
+        let response: ApiResponse<serde_json::Value> = self
             .http_client
             .get_with_query("/v3/admin/ns/client/subscribe/list", &Query { client_id })
             .await?;
@@ -1380,7 +1350,7 @@ impl BatataApiClient {
         namespace_id: &str,
         group_name: &str,
         service_name: &str,
-    ) -> anyhow::Result<Vec<serde_json::Value>> {
+    ) -> anyhow::Result<serde_json::Value> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
@@ -1388,7 +1358,7 @@ impl BatataApiClient {
             group_name: &'a str,
             service_name: &'a str,
         }
-        let response: ApiResponse<Vec<serde_json::Value>> = self
+        let response: ApiResponse<serde_json::Value> = self
             .http_client
             .get_with_query(
                 "/v3/admin/ns/client/service/publisher/list",
@@ -1465,8 +1435,8 @@ impl BatataApiClient {
     }
 
     /// Get available health checkers
-    pub async fn health_checkers(&self) -> anyhow::Result<Vec<String>> {
-        let response: ApiResponse<Vec<String>> =
+    pub async fn health_checkers(&self) -> anyhow::Result<Vec<serde_json::Value>> {
+        let response: ApiResponse<Vec<serde_json::Value>> =
             self.http_client.get("/v3/admin/ns/health/checkers").await?;
         Ok(response.data)
     }
@@ -1477,41 +1447,41 @@ impl BatataApiClient {
     pub async fn config_update_metadata(
         &self,
         data_id: &str,
-        group: &str,
+        group_name: &str,
         namespace_id: &str,
         desc: &str,
         config_tags: &str,
     ) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
-        struct Body<'a> {
+        struct Form<'a> {
             data_id: &'a str,
-            group: &'a str,
+            group_name: &'a str,
             namespace_id: &'a str,
             desc: &'a str,
             config_tags: &'a str,
         }
-        let response: ApiResponse<bool> = self
+        let response: ApiResponse<OkOrBool> = self
             .http_client
             .put_form(
                 "/v3/admin/cs/config/metadata",
-                &Body {
+                &Form {
                     data_id,
-                    group,
+                    group_name,
                     namespace_id,
                     desc,
                     config_tags,
                 },
             )
             .await?;
-        Ok(response.data)
+        Ok(response.data.0)
     }
 
     /// Get previous config history entry
     pub async fn history_previous(
         &self,
         data_id: &str,
-        group: &str,
+        group_name: &str,
         namespace_id: &str,
         id: i64,
     ) -> anyhow::Result<ConfigHistoryDetailInfo> {
@@ -1519,7 +1489,7 @@ impl BatataApiClient {
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
             data_id: &'a str,
-            group: &'a str,
+            group_name: &'a str,
             namespace_id: &'a str,
             id: i64,
         }
@@ -1529,7 +1499,7 @@ impl BatataApiClient {
                 "/v3/admin/cs/history/previous",
                 &Query {
                     data_id,
-                    group,
+                    group_name,
                     namespace_id,
                     id,
                 },
@@ -1630,24 +1600,182 @@ impl BatataApiClient {
         &self,
         log_name: &str,
         log_level: &str,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<bool> {
+        let path = format!(
+            "/v3/admin/core/ops/log?logName={}&logLevel={}",
+            log_name, log_level
+        );
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .put_form(&path, &())
+            .await?;
+        Ok(response.data.0)
+    }
+
+    // ============== Auth / RBAC APIs ==============
+
+    /// List users with pagination
+    pub async fn user_list(
+        &self,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<serde_json::Value>> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
-        struct Body<'a> {
-            log_name: &'a str,
-            log_level: &'a str,
+        struct Query {
+            page_no: u64,
+            page_size: u64,
         }
-        let response: ApiResponse<String> = self
+        let response: ApiResponse<Page<serde_json::Value>> = self
             .http_client
-            .put_form(
-                "/v3/admin/core/ops/log",
-                &Body {
-                    log_name,
-                    log_level,
-                },
-            )
+            .get_with_query("/v3/auth/user/list", &Query { page_no, page_size })
             .await?;
         Ok(response.data)
+    }
+
+    /// Create a user
+    pub async fn user_create(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        struct Form<'a> {
+            username: &'a str,
+            password: &'a str,
+        }
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .post_form("/v3/auth/user", &Form { username, password })
+            .await?;
+        Ok(response.data.0)
+    }
+
+    /// Delete a user
+    pub async fn user_delete(&self, username: &str) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        struct Query<'a> {
+            username: &'a str,
+        }
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .delete_with_query("/v3/auth/user", &Query { username })
+            .await?;
+        Ok(response.data.0)
+    }
+
+    /// List roles with pagination
+    pub async fn role_list(
+        &self,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<serde_json::Value>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query {
+            page_no: u64,
+            page_size: u64,
+        }
+        let response: ApiResponse<Page<serde_json::Value>> = self
+            .http_client
+            .get_with_query("/v3/auth/role/list", &Query { page_no, page_size })
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Assign a role to a user
+    pub async fn role_create(
+        &self,
+        username: &str,
+        role: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        struct Form<'a> {
+            username: &'a str,
+            role: &'a str,
+        }
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .post_form("/v3/auth/role", &Form { username, role })
+            .await?;
+        Ok(response.data.0)
+    }
+
+    /// Remove a role from a user
+    pub async fn role_delete(
+        &self,
+        username: &str,
+        role: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        struct Query<'a> {
+            username: &'a str,
+            role: &'a str,
+        }
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .delete_with_query("/v3/auth/role", &Query { username, role })
+            .await?;
+        Ok(response.data.0)
+    }
+
+    /// List permissions with pagination
+    pub async fn permission_list(
+        &self,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<Page<serde_json::Value>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query {
+            page_no: u64,
+            page_size: u64,
+        }
+        let response: ApiResponse<Page<serde_json::Value>> = self
+            .http_client
+            .get_with_query("/v3/auth/permission/list", &Query { page_no, page_size })
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Add a permission
+    pub async fn permission_create(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        struct Form<'a> {
+            role: &'a str,
+            resource: &'a str,
+            action: &'a str,
+        }
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .post_form("/v3/auth/permission", &Form { role, resource, action })
+            .await?;
+        Ok(response.data.0)
+    }
+
+    /// Remove a permission
+    pub async fn permission_delete(
+        &self,
+        role: &str,
+        resource: &str,
+        action: &str,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        struct Query<'a> {
+            role: &'a str,
+            resource: &'a str,
+            action: &'a str,
+        }
+        let response: ApiResponse<OkOrBool> = self
+            .http_client
+            .delete_with_query("/v3/auth/permission", &Query { role, resource, action })
+            .await?;
+        Ok(response.data.0)
     }
 }
 

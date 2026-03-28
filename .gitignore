@@ -27,8 +27,12 @@ target/
 
 .DS_Store
 .vscode/*
+
 .VSCodeCounter
 Cargo.lock
 
 /data
 /logs
+
+*.pid
+*.log

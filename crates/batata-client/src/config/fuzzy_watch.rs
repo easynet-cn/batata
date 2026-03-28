@@ -93,6 +93,19 @@ impl ConfigFuzzyWatchService {
         }
     }
 
+    /// Register server push handlers on the gRPC client.
+    /// Must be called after wrapping in `Arc`.
+    pub fn register_push_handlers(self: &Arc<Self>) {
+        self.grpc_client.register_push_handler(
+            "ConfigFuzzyWatchChangeNotifyRequest",
+            ConfigFuzzyWatchChangeNotifyHandler::new(self.clone()),
+        );
+        self.grpc_client.register_push_handler(
+            "ConfigFuzzyWatchSyncRequest",
+            ConfigFuzzyWatchSyncHandler::new(self.clone()),
+        );
+    }
+
     /// Start watching configs matching the given pattern
     pub async fn watch(
         &self,
@@ -165,16 +178,27 @@ impl ConfigFuzzyWatchService {
         Ok(())
     }
 
-    /// Handle a fuzzy watch change notification from the server
+    /// Handle a fuzzy watch change notification from the server.
+    ///
+    /// `group_key` is in Nacos GroupKey format: `dataId+group+namespace`.
     pub fn handle_change_notify(&self, group_key: &str, change_type: &str) {
         let event = ConfigFuzzyWatchEvent {
             group_key: group_key.to_string(),
             change_type: change_type.to_string(),
         };
 
-        // Track the received key
+        // Parse group_key (format: dataId+group+namespace)
+        let (data_id, group, namespace) = match parse_group_key(group_key) {
+            Some(parts) => parts,
+            None => {
+                debug!("Cannot parse group_key: {}", group_key);
+                return;
+            }
+        };
+
+        // Track the received key for each matching watch pattern
         for mut entry in self.watches.iter_mut() {
-            if matches_pattern(&entry.pattern, group_key) {
+            if matches_structured_pattern(&entry.pattern, &namespace, &group, &data_id) {
                 entry.received_group_keys.insert(group_key.to_string());
                 for listener in &entry.listeners {
                     listener.on_change(event.clone());
@@ -247,6 +271,65 @@ impl ConfigFuzzyWatchService {
         let _resp: ConfigFuzzyWatchResponse = self.grpc_client.request_typed(&req).await?;
         Ok(())
     }
+}
+
+/// Parse a Nacos GroupKey (format: "dataId+group+namespace") into components.
+fn parse_group_key(group_key: &str) -> Option<(String, String, String)> {
+    // Nacos GroupKey format: dataId+group+namespace
+    let parts: Vec<&str> = group_key.splitn(3, '+').collect();
+    if parts.len() >= 2 {
+        let data_id = parts[0].to_string();
+        let group = parts[1].to_string();
+        let namespace = if parts.len() > 2 {
+            parts[2].to_string()
+        } else {
+            "public".to_string()
+        };
+        Some((data_id, group, namespace))
+    } else {
+        None
+    }
+}
+
+/// Structured pattern matching against a fuzzy watch pattern.
+///
+/// Pattern format: "namespace>>group>>dataIdPattern" (Nacos FuzzyGroupKeyPattern)
+/// Each segment is matched independently. `*` means match anything.
+fn matches_structured_pattern(pattern: &str, namespace: &str, group: &str, data_id: &str) -> bool {
+    let parts: Vec<&str> = pattern.splitn(3, ">>").collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    let pat_ns = parts[0];
+    let pat_group = parts[1];
+    let pat_data_id = parts[2];
+
+    // Namespace: exact match (normalized)
+    let ns = if namespace.is_empty() {
+        "public"
+    } else {
+        namespace
+    };
+    let pns = if pat_ns.is_empty() { "public" } else { pat_ns };
+    if pns != ns {
+        return false;
+    }
+
+    // Group: wildcard or exact
+    if !item_matches(pat_group, group) {
+        return false;
+    }
+
+    // DataId: wildcard or pattern match
+    item_matches(pat_data_id, data_id)
+}
+
+/// Match a single segment with simple glob pattern (supports `*`)
+fn item_matches(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    matches_pattern(pattern, value)
 }
 
 /// Simple pattern matching: supports * as wildcard

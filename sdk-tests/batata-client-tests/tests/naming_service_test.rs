@@ -7,7 +7,7 @@ mod common;
 
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use batata_api::naming::model::Instance;
-use batata_client::naming::{BatataNamingService, listener::{EventListener, NamingEvent}};
+use batata_client::naming::listener::{EventListener, NamingEvent};
 
 const NS: &str = "";
 const GROUP: &str = "DEFAULT_GROUP";
@@ -33,8 +33,7 @@ fn test_instance(ip: &str, port: i32) -> Instance {
 #[ignore]
 async fn test_register_and_discover() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = BatataNamingService::new(grpc);
+    let svc = common::create_naming_service().await.unwrap();
 
     let service = format!("svc-reg-{}", common::test_id());
     let inst = test_instance("10.0.0.1", 8080);
@@ -55,8 +54,7 @@ async fn test_register_and_discover() {
 #[ignore]
 async fn test_deregister_instance() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = BatataNamingService::new(grpc);
+    let svc = common::create_naming_service().await.unwrap();
 
     let service = format!("svc-dereg-{}", common::test_id());
     let inst = test_instance("10.0.0.2", 8080);
@@ -77,8 +75,7 @@ async fn test_deregister_instance() {
 #[ignore]
 async fn test_batch_register() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = BatataNamingService::new(grpc);
+    let svc = common::create_naming_service().await.unwrap();
 
     let service = format!("svc-batch-{}", common::test_id());
     let instances: Vec<Instance> = (1..=5)
@@ -100,8 +97,7 @@ async fn test_batch_register() {
 #[ignore]
 async fn test_select_instances_healthy() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = BatataNamingService::new(grpc);
+    let svc = common::create_naming_service().await.unwrap();
 
     let service = format!("svc-sel-h-{}", common::test_id());
     svc.register_instance(NS, GROUP, &service, test_instance("10.0.2.1", 8080)).await.unwrap();
@@ -118,8 +114,7 @@ async fn test_select_instances_healthy() {
 #[ignore]
 async fn test_select_one_healthy_instance() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = BatataNamingService::new(grpc);
+    let svc = common::create_naming_service().await.unwrap();
 
     let service = format!("svc-sel1-{}", common::test_id());
     for i in 1..=3 {
@@ -141,8 +136,7 @@ async fn test_select_one_healthy_instance() {
 #[ignore]
 async fn test_subscribe_and_notify() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = Arc::new(BatataNamingService::new(grpc));
+    let svc = common::create_naming_service().await.unwrap();
 
     let service = format!("svc-sub-{}", common::test_id());
     let notified = Arc::new(AtomicBool::new(false));
@@ -174,8 +168,7 @@ async fn test_subscribe_and_notify() {
 #[ignore]
 async fn test_get_subscribe_services() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = Arc::new(BatataNamingService::new(grpc));
+    let svc = common::create_naming_service().await.unwrap();
 
     let svc1 = format!("svc-gsub1-{}", common::test_id());
     let svc2 = format!("svc-gsub2-{}", common::test_id());
@@ -200,8 +193,7 @@ async fn test_get_subscribe_services() {
 #[ignore]
 async fn test_list_services() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = BatataNamingService::new(grpc);
+    let svc = common::create_naming_service().await.unwrap();
 
     let service = format!("svc-list-{}", common::test_id());
     svc.register_instance(NS, GROUP, &service, test_instance("10.0.5.1", 8080)).await.unwrap();
@@ -219,8 +211,7 @@ async fn test_list_services() {
 #[ignore]
 async fn test_naming_server_status() {
     common::init_tracing();
-    let grpc = common::create_naming_grpc_client().await.unwrap();
-    let svc = BatataNamingService::new(grpc);
+    let svc = common::create_naming_service().await.unwrap();
 
     let status = svc.get_server_status().await;
     assert_eq!(status, "UP");
