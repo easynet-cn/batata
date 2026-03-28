@@ -224,6 +224,19 @@ pub struct IntentionQueryParams {
 #[derive(Debug, Deserialize)]
 pub struct CARootQueryParams {
     pub pem: Option<bool>,
+    /// Blocking query: minimum index to wait for
+    pub index: Option<u64>,
+    /// Blocking query: max wait time (e.g. "5s", "30s", "5m")
+    pub wait: Option<String>,
+}
+
+/// Query parameters for leaf certificate
+#[derive(Debug, Default, Deserialize)]
+pub struct LeafCertQueryParams {
+    /// Blocking query: minimum index to wait for
+    pub index: Option<u64>,
+    /// Blocking query: max wait time (e.g. "5s", "30s", "5m")
+    pub wait: Option<String>,
 }
 
 // ============================================================================
@@ -639,11 +652,20 @@ pub async fn get_ca_roots(
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
-    _query: web::Query<CARootQueryParams>,
+    query: web::Query<CARootQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    // Support blocking queries (Watch API)
+    if let Some(target_index) = query.index {
+        let timeout = query.wait.as_deref()
+            .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
+        index_provider
+            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .await;
     }
 
     HttpResponse::Ok()
@@ -711,10 +733,20 @@ pub async fn get_leaf_cert(
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
+    query: web::Query<LeafCertQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    // Support blocking queries (Watch API)
+    if let Some(target_index) = query.index {
+        let timeout = query.wait.as_deref()
+            .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
+        index_provider
+            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .await;
     }
 
     let service = path.into_inner();
@@ -1026,11 +1058,20 @@ pub async fn get_ca_roots_persistent(
     acl_service: web::Data<AclService>,
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
-    _query: web::Query<CARootQueryParams>,
+    query: web::Query<CARootQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    // Support blocking queries (Watch API)
+    if let Some(target_index) = query.index {
+        let timeout = query.wait.as_deref()
+            .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
+        index_provider
+            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .await;
     }
 
     HttpResponse::Ok()
@@ -1098,10 +1139,20 @@ pub async fn get_leaf_cert_persistent(
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
+    query: web::Query<LeafCertQueryParams>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
+    }
+
+    // Support blocking queries (Watch API)
+    if let Some(target_index) = query.index {
+        let timeout = query.wait.as_deref()
+            .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
+        index_provider
+            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .await;
     }
 
     let service = path.into_inner();

@@ -156,6 +156,7 @@ pub trait NamingServiceProvider: Send + Sync {
         instance: Instance,
     ) -> bool;
 
+    #[allow(clippy::too_many_arguments)]
     fn update_instance_health(
         &self,
         namespace: &str,
@@ -296,7 +297,7 @@ pub trait NamingServiceProvider: Send + Sync {
         group_name: &str,
         service_name: &str,
     ) -> Vec<ClusterConfig>;
-
+    #[allow(clippy::too_many_arguments)]
     fn update_cluster_health_check(
         &self,
         namespace: &str,
@@ -325,6 +326,7 @@ pub trait NamingServiceProvider: Send + Sync {
         cluster_name: &str,
     );
 
+    #[allow(clippy::too_many_arguments)]
     fn create_cluster_config(
         &self,
         namespace: &str,

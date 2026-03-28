@@ -18,7 +18,7 @@ impl ConsulClient {
         value: Option<&[u8]>,
         opts: &WriteOptions,
     ) -> Result<(bool, WriteMeta)> {
-        let extra = vec![("acquire".to_string(), session.to_string())];
+        let extra = vec![("acquire", session.to_string())];
         let val = value.unwrap_or(b"").to_vec();
         self.put_bytes(&format!("/v1/kv/{}", key), val, opts, &extra)
             .await
@@ -31,7 +31,7 @@ impl ConsulClient {
         session: &str,
         opts: &WriteOptions,
     ) -> Result<(bool, WriteMeta)> {
-        let extra = vec![("release".to_string(), session.to_string())];
+        let extra = vec![("release", session.to_string())];
         self.put_bytes(&format!("/v1/kv/{}", key), vec![], opts, &extra)
             .await
     }
@@ -46,7 +46,7 @@ impl ConsulClient {
     ) -> Result<(bool, WriteMeta)> {
         let contender_key = format!("{}/{}", prefix, session);
         let body = serde_json::json!({"Limit": limit, "Session": session}).to_string();
-        let extra = vec![("acquire".to_string(), session.to_string())];
+        let extra = vec![("acquire", session.to_string())];
         self.put_bytes(
             &format!("/v1/kv/{}", contender_key),
             body.into_bytes(),
@@ -64,7 +64,7 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<(bool, WriteMeta)> {
         let contender_key = format!("{}/{}", prefix, session);
-        let extra = vec![("release".to_string(), session.to_string())];
+        let extra = vec![("release", session.to_string())];
         self.put_bytes(&format!("/v1/kv/{}", contender_key), vec![], opts, &extra)
             .await
     }

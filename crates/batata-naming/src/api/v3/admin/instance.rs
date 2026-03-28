@@ -429,7 +429,7 @@ async fn get_instance(
     );
 
     let instance_key =
-        crate::service::build_instance_key_parts(&params.ip, params.port, &cluster_name);
+        crate::service::build_instance_key_parts(&params.ip, params.port, cluster_name);
 
     if let Some(instance) = instances.into_iter().find(|i| i.key() == instance_key) {
         let response = InstanceResponse {
@@ -646,7 +646,7 @@ async fn partial_update_instance(
         Some(batata_api::naming::RegisterSource::Batata),
     );
 
-    let instance_key = crate::service::build_instance_key_parts(&form.ip, form.port, &cluster_name);
+    let instance_key = crate::service::build_instance_key_parts(&form.ip, form.port, cluster_name);
 
     if let Some(mut existing) = instances.into_iter().find(|i| i.key() == instance_key) {
         if let Some(weight) = form.weight {

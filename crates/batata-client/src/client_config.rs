@@ -18,8 +18,10 @@ use std::time::Duration;
 
 /// Proxy configuration for HTTP/gRPC connections.
 #[derive(Clone, Debug)]
+#[derive(Default)]
 pub enum ProxyConfig {
     /// No proxy — direct connection. Best for local/intranet.
+    #[default]
     NoProxy,
     /// Use system proxy settings (reads HTTP_PROXY, HTTPS_PROXY, macOS settings, etc.)
     SystemProxy,
@@ -27,13 +29,6 @@ pub enum ProxyConfig {
     Custom(String),
 }
 
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        // Default to NoProxy for SDK usage — avoids unexpected system proxy interference.
-        // Users who need system proxy can explicitly set ProxyConfig::SystemProxy.
-        ProxyConfig::NoProxy
-    }
-}
 
 /// Unified client configuration for Batata SDK.
 ///
@@ -287,12 +282,11 @@ impl ClientConfig {
         let addr = server_addr
             .trim_start_matches("http://")
             .trim_start_matches("https://");
-        if let Some(colon_pos) = addr.rfind(':') {
-            if let Ok(port) = addr[colon_pos + 1..].parse::<u16>() {
+        if let Some(colon_pos) = addr.rfind(':')
+            && let Ok(port) = addr[colon_pos + 1..].parse::<u16>() {
                 let host = &addr[..colon_pos];
                 return format!("http://{}:{}", host, port + self.grpc_port_offset);
             }
-        }
         format!("http://{}:{}", addr, 8848 + self.grpc_port_offset)
     }
 

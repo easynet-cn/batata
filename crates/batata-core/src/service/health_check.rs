@@ -528,7 +528,7 @@ impl MemberHealthChecker {
             }
 
             // Round-robin: report to one peer per cycle
-            cursor = cursor % peers.len();
+            cursor %= peers.len();
             let target = &peers[cursor];
             cursor = cursor.wrapping_add(1);
 
@@ -580,8 +580,10 @@ impl MemberHealthChecker {
 
         let local_member = MemberBuilder::new(local_ip, local_port).build();
 
-        let mut request = batata_api::remote::model::MemberReportRequest::default();
-        request.node = Some(local_member);
+        let request = batata_api::remote::model::MemberReportRequest {
+            node: Some(local_member),
+            ..Default::default()
+        };
 
         let metadata = Metadata {
             r#type: request.request_type().to_string(),

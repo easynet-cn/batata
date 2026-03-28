@@ -24,6 +24,7 @@ pub mod event;
 pub mod health;
 pub mod kv;
 pub mod lock;
+pub mod metrics;
 pub mod model;
 pub mod operator;
 pub mod peering;
@@ -32,6 +33,7 @@ pub mod session;
 pub mod snapshot;
 pub mod status;
 pub mod txn;
+pub mod watch;
 
 pub use client::ConsulClient;
 pub use config::ConsulClientConfig;

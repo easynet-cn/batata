@@ -56,12 +56,11 @@ impl BatataClient {
         ));
 
         // Start address server refresh if configured
-        if let Some(ref endpoint) = config.address_server_url {
-            if config.server_list_refresh_interval.as_millis() > 0 {
+        if let Some(ref endpoint) = config.address_server_url
+            && config.server_list_refresh_interval.as_millis() > 0 {
                 server_list
                     .start_refresh_task(endpoint.clone(), config.server_list_refresh_interval);
             }
-        }
 
         Ok(Self {
             config,

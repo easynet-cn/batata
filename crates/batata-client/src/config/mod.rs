@@ -615,8 +615,8 @@ impl BatataConfigService {
             .map(|e| !e.content.is_empty())
             .unwrap_or(false);
 
-        if !already_has_content {
-            if let Ok(content) = self.get_config(data_id, group, tenant).await {
+        if !already_has_content
+            && let Ok(content) = self.get_config(data_id, group, tenant).await {
                 debug!(
                     "Pre-populated cache for: data_id={}, group={}, tenant={}, len={}",
                     data_id,
@@ -625,7 +625,6 @@ impl BatataConfigService {
                     content.len()
                 );
             }
-        }
     }
 
     /// Send a ConfigBatchListenRequest.

@@ -17,13 +17,13 @@ impl ConsulClient {
         let path = format!("/v1/event/fire/{}", name);
         let mut params = Vec::new();
         if !node_filter.is_empty() {
-            params.push(("node".to_string(), node_filter.to_string()));
+            params.push(("node", node_filter.to_string()));
         }
         if !service_filter.is_empty() {
-            params.push(("service".to_string(), service_filter.to_string()));
+            params.push(("service", service_filter.to_string()));
         }
         if !tag_filter.is_empty() {
-            params.push(("tag".to_string(), tag_filter.to_string()));
+            params.push(("tag", tag_filter.to_string()));
         }
 
         let start = std::time::Instant::now();
@@ -74,8 +74,27 @@ impl ConsulClient {
     ) -> Result<(Vec<UserEvent>, QueryMeta)> {
         let mut extra = Vec::new();
         if !name.is_empty() {
-            extra.push(("name".to_string(), name.to_string()));
+            extra.push(("name", name.to_string()));
         }
         self.get_with_extra("/v1/event/list", opts, &extra).await
+    }
+
+    /// Convert an event UUID to a Consul index.
+    ///
+    /// This is a pure computation (no HTTP call). It takes the UUID string
+    /// (e.g., "b54fe110-7af5-cafc-d1eb-2c6a526ab502") and XORs the lower
+    /// and upper halves to produce a 64-bit index, matching the Go client's
+    /// `IDToIndex` behavior.
+    pub fn event_id_to_index(uuid: &str) -> u64 {
+        // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        // lower = [0:8] + [9:13] + [14:18] = 16 hex chars
+        // upper = [19:23] + [24:36] = 16 hex chars
+        let lower = format!("{}{}{}", &uuid[0..8], &uuid[9..13], &uuid[14..18]);
+        let upper = format!("{}{}", &uuid[19..23], &uuid[24..36]);
+
+        let low_val = u64::from_str_radix(&lower, 16).expect("failed to parse lower UUID half");
+        let high_val = u64::from_str_radix(&upper, 16).expect("failed to parse upper UUID half");
+
+        low_val ^ high_val
     }
 }

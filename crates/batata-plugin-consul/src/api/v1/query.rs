@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 //! Consul Prepared Query API handlers with scope-relative route macros.
 //!
 //! These use `#[get("/{uuid}")]` style macros under a "/query" scope.

@@ -35,10 +35,10 @@ impl ConsulClient {
         let path = format!("/v1/health/service/{}", service);
         let mut extra = Vec::new();
         if !tag.is_empty() {
-            extra.push(("tag".to_string(), tag.to_string()));
+            extra.push(("tag", tag.to_string()));
         }
         if passing_only {
-            extra.push(("passing".to_string(), String::new()));
+            extra.push(("passing", String::new()));
         }
         self.get_with_extra(&path, opts, &extra).await
     }
@@ -64,10 +64,48 @@ impl ConsulClient {
         let path = format!("/v1/health/connect/{}", service);
         let mut extra = Vec::new();
         if !tag.is_empty() {
-            extra.push(("tag".to_string(), tag.to_string()));
+            extra.push(("tag", tag.to_string()));
         }
         if passing_only {
-            extra.push(("passing".to_string(), String::new()));
+            extra.push(("passing", String::new()));
+        }
+        self.get_with_extra(&path, opts, &extra).await
+    }
+
+    /// Get service instances with health info, filtering by multiple tags
+    pub async fn health_service_multiple_tags(
+        &self,
+        service: &str,
+        tags: &[&str],
+        passing_only: bool,
+        opts: &QueryOptions,
+    ) -> Result<(Vec<ServiceEntry>, QueryMeta)> {
+        let path = format!("/v1/health/service/{}", service);
+        let mut extra = Vec::new();
+        for tag in tags {
+            extra.push(("tag", tag.to_string()));
+        }
+        if passing_only {
+            extra.push(("passing", String::new()));
+        }
+        self.get_with_extra(&path, opts, &extra).await
+    }
+
+    /// Get connect-capable service instances with health info, filtering by multiple tags
+    pub async fn health_connect_multiple_tags(
+        &self,
+        service: &str,
+        tags: &[&str],
+        passing_only: bool,
+        opts: &QueryOptions,
+    ) -> Result<(Vec<ServiceEntry>, QueryMeta)> {
+        let path = format!("/v1/health/connect/{}", service);
+        let mut extra = Vec::new();
+        for tag in tags {
+            extra.push(("tag", tag.to_string()));
+        }
+        if passing_only {
+            extra.push(("passing", String::new()));
         }
         self.get_with_extra(&path, opts, &extra).await
     }

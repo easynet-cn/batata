@@ -93,16 +93,16 @@ impl ConsulClient {
     ) -> Result<(Vec<ACLTokenListEntry>, QueryMeta)> {
         let mut extra = Vec::new();
         if let Some(ref am) = filter_opts.auth_method {
-            extra.push(("authmethod".to_string(), am.clone()));
+            extra.push(("authmethod", am.clone()));
         }
         if let Some(ref policy) = filter_opts.policy {
-            extra.push(("policy".to_string(), policy.clone()));
+            extra.push(("policy", policy.clone()));
         }
         if let Some(ref role) = filter_opts.role {
-            extra.push(("role".to_string(), role.clone()));
+            extra.push(("role", role.clone()));
         }
         if let Some(ref svc) = filter_opts.service_name {
-            extra.push(("servicename".to_string(), svc.clone()));
+            extra.push(("servicename", svc.clone()));
         }
         self.get_with_extra("/v1/acl/tokens", opts, &extra).await
     }
@@ -322,7 +322,7 @@ impl ConsulClient {
     ) -> Result<(Vec<ACLBindingRule>, QueryMeta)> {
         let mut extra = Vec::new();
         if !auth_method.is_empty() {
-            extra.push(("authmethod".to_string(), auth_method.to_string()));
+            extra.push(("authmethod", auth_method.to_string()));
         }
         self.get_with_extra("/v1/acl/binding-rules", opts, &extra)
             .await
@@ -409,5 +409,42 @@ impl ConsulClient {
             &[],
         )
         .await
+    }
+
+    /// Read an ACL token by accessor ID with expanded information.
+    ///
+    /// This returns the token along with expanded details about its policies,
+    /// roles, and other associated objects. Uses the `?expanded=true` query parameter.
+    pub async fn acl_token_read_expanded(
+        &self,
+        accessor_id: &str,
+        opts: &QueryOptions,
+    ) -> Result<(serde_json::Value, QueryMeta)> {
+        let path = format!("/v1/acl/token/{}", accessor_id);
+        let extra = vec![("expanded", "true".to_string())];
+        self.get_with_extra(&path, opts, &extra).await
+    }
+
+    /// Translate legacy ACL rules to the current syntax.
+    ///
+    /// NOTE: Legacy ACL rules were deprecated in Consul 1.4.
+    /// This method always returns an error for compatibility.
+    pub async fn acl_rules_translate(&self) -> Result<String> {
+        Err(crate::error::ConsulError::Other(
+            "Legacy ACL rules were deprecated in Consul 1.4".to_string(),
+        ))
+    }
+
+    /// Bootstrap the ACL system with a specific bootstrap token.
+    ///
+    /// Unlike `acl_bootstrap()`, this allows specifying the initial
+    /// secret to use as the bootstrap token.
+    pub async fn acl_bootstrap_with_token(
+        &self,
+        bootstrap_secret: &str,
+        opts: &WriteOptions,
+    ) -> Result<(ACLToken, WriteMeta)> {
+        let body = serde_json::json!({ "BootstrapSecret": bootstrap_secret });
+        self.put("/v1/acl/bootstrap", Some(&body), opts, &[]).await
     }
 }

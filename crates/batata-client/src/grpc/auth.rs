@@ -40,9 +40,11 @@ const DEFAULT_TOKEN_REFRESH_BUFFER_SECS: u64 = 300;
 const DEFAULT_TOKEN_REFRESH_CHECK_INTERVAL_SECS: u64 = 5;
 
 /// Default auth HTTP connect timeout in seconds
+#[allow(dead_code)]
 const DEFAULT_AUTH_CONNECT_TIMEOUT_SECS: u64 = 5;
 
 /// Default auth HTTP request timeout in seconds
+#[allow(dead_code)]
 const DEFAULT_AUTH_REQUEST_TIMEOUT_SECS: u64 = 10;
 
 impl AuthProvider {

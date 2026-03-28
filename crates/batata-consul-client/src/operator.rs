@@ -19,7 +19,7 @@ impl ConsulClient {
         address: &str,
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
-        let extra = vec![("address".to_string(), address.to_string())];
+        let extra = vec![("address", address.to_string())];
         self.delete("/v1/operator/raft/peer", opts, &extra)
             .await
             .map(|(_, meta)| meta)
@@ -31,7 +31,7 @@ impl ConsulClient {
         id: &str,
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
-        let extra = vec![("id".to_string(), id.to_string())];
+        let extra = vec![("id", id.to_string())];
         self.delete("/v1/operator/raft/peer", opts, &extra)
             .await
             .map(|(_, meta)| meta)
@@ -116,10 +116,29 @@ impl ConsulClient {
         key: &str,
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
-        let extra = vec![("key".to_string(), key.to_string())];
+        let extra = vec![("key", key.to_string())];
         self.delete("/v1/operator/keyring", opts, &extra)
             .await
             .map(|(_, meta)| meta)
+    }
+
+    /// Set Autopilot configuration with CAS (Compare-And-Swap).
+    ///
+    /// Uses the `ModifyIndex` from the configuration to perform a CAS operation.
+    /// Returns `true` if the update was applied, `false` if the CAS check failed.
+    pub async fn operator_autopilot_cas_configuration(
+        &self,
+        config: &AutopilotConfiguration,
+        opts: &WriteOptions,
+    ) -> Result<(bool, WriteMeta)> {
+        let extra = vec![("cas", config.modify_index.to_string())];
+        self.put(
+            "/v1/operator/autopilot/configuration",
+            Some(config),
+            opts,
+            &extra,
+        )
+        .await
     }
 
     /// Get operator usage

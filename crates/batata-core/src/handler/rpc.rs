@@ -433,19 +433,13 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 
             // Check TPS limits before processing
             let client_ip = &connection.meta_info.remote_ip;
-            if let Err(e) = self
+            self
                 .handler_registry
                 .check_tps(message_type, client_ip)
-                .await
-            {
-                return Err(e);
-            }
+                .await?;
 
             // Validate request parameters
-            if let Err(e) = crate::handler::param_check::check_request_params(message_type, payload)
-            {
-                return Err(e);
-            }
+            crate::handler::param_check::check_request_params(message_type, payload)?;
 
             // Check authentication based on handler's auth requirement
             // Following Nacos RemoteRequestAuthFilter logic:
@@ -478,9 +472,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                             // Validate identity and load roles from database
                             let auth_context =
                                 resolve_auth_context_from_payload(auth_service, payload).await;
-                            if let Err(e) = check_authentication(&auth_context) {
-                                return Err(e);
-                            }
+                            check_authentication(&auth_context)?;
 
                             // Validate authority (permission)
                             if let Some((resource, action)) = handler.resource_from_payload(payload)

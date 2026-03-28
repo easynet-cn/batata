@@ -1,0 +1,66 @@
+[workspace]
+
+[package]
+name = "batata-consul-client-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Integration tests only — no library code
+
+[[test]]
+name = "kv_test"
+path = "tests/kv_test.rs"
+
+[[test]]
+name = "agent_test"
+path = "tests/agent_test.rs"
+
+[[test]]
+name = "catalog_test"
+path = "tests/catalog_test.rs"
+
+[[test]]
+name = "health_test"
+path = "tests/health_test.rs"
+
+[[test]]
+name = "session_test"
+path = "tests/session_test.rs"
+
+[[test]]
+name = "event_test"
+path = "tests/event_test.rs"
+
+[[test]]
+name = "status_test"
+path = "tests/status_test.rs"
+
+[[test]]
+name = "connect_test"
+path = "tests/connect_test.rs"
+
+[[test]]
+name = "operator_test"
+path = "tests/operator_test.rs"
+
+[[test]]
+name = "lock_test"
+path = "tests/lock_test.rs"
+
+[[test]]
+name = "watch_test"
+path = "tests/watch_test.rs"
+
+[[test]]
+name = "client_test"
+path = "tests/client_test.rs"
+
+[dev-dependencies]
+batata-consul-client = { path = "../../crates/batata-consul-client" }
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = { version = "0.22" }

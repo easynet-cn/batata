@@ -85,8 +85,8 @@ impl ConsulClient {
         opts: &QueryOptions,
     ) -> Result<(Intention, QueryMeta)> {
         let extra = vec![
-            ("source".to_string(), source.to_string()),
-            ("destination".to_string(), destination.to_string()),
+            ("source", source.to_string()),
+            ("destination", destination.to_string()),
         ];
         self.get_with_extra("/v1/connect/intentions/exact", opts, &extra)
             .await
@@ -101,10 +101,10 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
         let extra = vec![
-            ("source".to_string(), source.to_string()),
-            ("destination".to_string(), destination.to_string()),
+            ("source", source.to_string()),
+            ("destination", destination.to_string()),
         ];
-        self.put::<bool, _>(
+        self.put::<serde_json::Value, _>(
             "/v1/connect/intentions/exact",
             Some(intention),
             opts,
@@ -122,8 +122,8 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<(bool, WriteMeta)> {
         let extra = vec![
-            ("source".to_string(), source.to_string()),
-            ("destination".to_string(), destination.to_string()),
+            ("source", source.to_string()),
+            ("destination", destination.to_string()),
         ];
         self.delete("/v1/connect/intentions/exact", opts, &extra)
             .await
@@ -136,10 +136,7 @@ impl ConsulClient {
         name: &str,
         opts: &QueryOptions,
     ) -> Result<(serde_json::Value, QueryMeta)> {
-        let extra = vec![
-            ("by".to_string(), by.to_string()),
-            ("name".to_string(), name.to_string()),
-        ];
+        let extra = vec![("by", by.to_string()), ("name", name.to_string())];
         self.get_with_extra("/v1/connect/intentions/match", opts, &extra)
             .await
     }
@@ -152,8 +149,8 @@ impl ConsulClient {
         opts: &QueryOptions,
     ) -> Result<(IntentionCheck, QueryMeta)> {
         let extra = vec![
-            ("source".to_string(), source.to_string()),
-            ("destination".to_string(), destination.to_string()),
+            ("source", source.to_string()),
+            ("destination", destination.to_string()),
         ];
         self.get_with_extra("/v1/connect/intentions/check", opts, &extra)
             .await

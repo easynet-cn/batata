@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 //! Consul Agent API handlers with scope-relative route macros.
 //!
 //! Thin wrappers that delegate to the original handler functions in

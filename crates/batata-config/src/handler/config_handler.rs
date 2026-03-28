@@ -46,6 +46,7 @@ use batata_core::{GrpcResource, PermissionAction};
 use batata_server_common::model::AppState;
 
 /// Default max gray versions per config (overridden by batata.config.gray.version.max_count)
+#[allow(dead_code)]
 const DEFAULT_MAX_GRAY_VERSION_COUNT: usize = 10;
 
 use crate::model::gray_rule::GrayRule;

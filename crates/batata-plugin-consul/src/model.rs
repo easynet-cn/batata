@@ -1533,6 +1533,10 @@ pub struct EventListParams {
     pub service: Option<String>,
     /// Filter by tag (regex)
     pub tag: Option<String>,
+    /// Blocking query: minimum index to wait for
+    pub index: Option<u64>,
+    /// Blocking query: max wait time (e.g. "5s", "30s", "5m")
+    pub wait: Option<String>,
 }
 
 // ============================================================================

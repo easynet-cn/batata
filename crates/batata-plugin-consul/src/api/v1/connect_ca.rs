@@ -396,8 +396,10 @@ async fn get_leaf_cert(
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
+    query: web::Query<crate::connect_ca::LeafCertQueryParams>,
 ) -> HttpResponse {
-    crate::connect_ca::get_leaf_cert(req, acl_service, ca_service, index_provider, path).await
+    crate::connect_ca::get_leaf_cert(req, acl_service, ca_service, index_provider, path, query)
+        .await
 }
 
 #[post("/authorize")]
@@ -418,9 +420,17 @@ async fn get_leaf_cert_persistent(
     ca_service: web::Data<ConsulConnectCAService>,
     index_provider: web::Data<ConsulIndexProvider>,
     path: web::Path<String>,
+    query: web::Query<crate::connect_ca::LeafCertQueryParams>,
 ) -> HttpResponse {
-    crate::connect_ca::get_leaf_cert_persistent(req, acl_service, ca_service, index_provider, path)
-        .await
+    crate::connect_ca::get_leaf_cert_persistent(
+        req,
+        acl_service,
+        ca_service,
+        index_provider,
+        path,
+        query,
+    )
+    .await
 }
 
 #[post("/authorize")]

@@ -41,7 +41,7 @@ impl ConsulClient {
         cas_index: u64,
         opts: &WriteOptions,
     ) -> Result<(bool, WriteMeta)> {
-        let extra = vec![("cas".to_string(), cas_index.to_string())];
+        let extra = vec![("cas", cas_index.to_string())];
         self.put("/v1/config", Some(entry), opts, &extra).await
     }
 
@@ -53,6 +53,19 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<(bool, WriteMeta)> {
         self.delete(&format!("/v1/config/{}/{}", kind, name), opts, &[])
+            .await
+    }
+
+    /// Delete a config entry with CAS (Compare-And-Swap)
+    pub async fn config_entry_delete_cas(
+        &self,
+        kind: &str,
+        name: &str,
+        cas_index: u64,
+        opts: &WriteOptions,
+    ) -> Result<(bool, WriteMeta)> {
+        let extra = vec![("cas", cas_index.to_string())];
+        self.delete(&format!("/v1/config/{}/{}", kind, name), opts, &extra)
             .await
     }
 }

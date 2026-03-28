@@ -149,8 +149,6 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
 
         if resp.success {
             Ok(AppendEntriesResponse::Success)
-        } else if resp.conflict.is_some() {
-            Ok(AppendEntriesResponse::Conflict)
         } else {
             Ok(AppendEntriesResponse::Conflict)
         }

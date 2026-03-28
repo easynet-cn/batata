@@ -372,6 +372,14 @@ pub async fn list_events(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Support blocking queries (Watch API)
+    if let Some(target_index) = query.index {
+        let timeout = query.wait.as_deref().and_then(ConsulIndexProvider::parse_wait_duration);
+        index_provider
+            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .await;
+    }
+
     let service = ConsulEventService::new();
     let events = service.list_events(
         query.name.as_deref(),
@@ -449,6 +457,14 @@ pub async fn list_events_persistent(
     let authz = acl_service.authorize_request(&req, ResourceType::Query, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    // Support blocking queries (Watch API)
+    if let Some(target_index) = query.index {
+        let timeout = query.wait.as_deref().and_then(ConsulIndexProvider::parse_wait_duration);
+        index_provider
+            .wait_for_change(ConsulTable::Catalog, target_index, timeout)
+            .await;
     }
 
     let events = event_service

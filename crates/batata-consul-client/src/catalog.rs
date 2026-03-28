@@ -40,7 +40,7 @@ impl ConsulClient {
         let path = format!("/v1/catalog/service/{}", service);
         let mut extra = Vec::new();
         if !tag.is_empty() {
-            extra.push(("tag".to_string(), tag.to_string()));
+            extra.push(("tag", tag.to_string()));
         }
         self.get_with_extra(&path, opts, &extra).await
     }
@@ -83,6 +83,36 @@ impl ConsulClient {
     ) -> Result<(Option<CatalogNode>, QueryMeta)> {
         let path = format!("/v1/catalog/node-services/{}", node);
         self.get_optional(&path, opts).await
+    }
+
+    /// List nodes providing a specific service, filtering by multiple tags
+    pub async fn catalog_service_multiple_tags(
+        &self,
+        service: &str,
+        tags: &[&str],
+        opts: &QueryOptions,
+    ) -> Result<(Vec<CatalogService>, QueryMeta)> {
+        let path = format!("/v1/catalog/service/{}", service);
+        let mut extra = Vec::new();
+        for tag in tags {
+            extra.push(("tag", tag.to_string()));
+        }
+        self.get_with_extra(&path, opts, &extra).await
+    }
+
+    /// Get Connect-capable service nodes, filtering by multiple tags
+    pub async fn catalog_connect_multiple_tags(
+        &self,
+        service: &str,
+        tags: &[&str],
+        opts: &QueryOptions,
+    ) -> Result<(Vec<CatalogService>, QueryMeta)> {
+        let path = format!("/v1/catalog/connect/{}", service);
+        let mut extra = Vec::new();
+        for tag in tags {
+            extra.push(("tag", tag.to_string()));
+        }
+        self.get_with_extra(&path, opts, &extra).await
     }
 
     /// Get Connect-capable service nodes

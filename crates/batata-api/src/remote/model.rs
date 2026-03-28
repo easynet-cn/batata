@@ -536,7 +536,6 @@ impl ServerRequest {
                 request_id: id.to_string(),
                 headers: HashMap::new(),
             },
-            ..Default::default()
         }
     }
 }

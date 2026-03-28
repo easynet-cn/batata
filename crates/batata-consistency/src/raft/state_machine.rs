@@ -680,9 +680,7 @@ impl RocksStateMachine {
 
         // CAS check: if cas_md5 provided, verify current gray MD5 matches
         if let Some(ref expected_md5) = cas_md5 {
-            let cf = match self.cf_config_gray() {
-                cf => cf,
-            };
+            let cf = self.cf_config_gray();
             match self.db.get_cf(cf, key.as_bytes()) {
                 Ok(Some(bytes)) => {
                     if let Ok(existing) = serde_json::from_slice::<serde_json::Value>(&bytes) {

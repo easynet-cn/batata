@@ -293,6 +293,7 @@ pub trait PayloadHandler: Send + Sync {
 /// allowing AppState to hold a trait object instead of `Arc<dyn Any>`.
 pub trait HeartbeatService: Send + Sync {
     /// Record a heartbeat for an instance
+    #[allow(clippy::too_many_arguments)]
     fn record_heartbeat(
         &self,
         namespace: &str,

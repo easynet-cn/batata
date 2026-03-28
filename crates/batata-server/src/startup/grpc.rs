@@ -388,6 +388,7 @@ impl GrpcAuthRoleProvider for PersistenceRoleProvider {
 ///
 /// # Returns
 /// A `GrpcServers` struct containing the spawned server handles and naming service.
+#[allow(clippy::too_many_arguments)]
 pub fn start_grpc_servers(
     app_state: Arc<AppState>,
     naming_service: Option<Arc<NamingService>>,

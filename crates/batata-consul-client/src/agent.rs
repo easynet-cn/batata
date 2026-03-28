@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
+use tokio::sync::mpsc;
+
 use crate::client::ConsulClient;
-use crate::error::Result;
+use crate::error::{ConsulError, Result};
 use crate::model::{
     AgentCheck, AgentCheckRegistration, AgentCheckUpdate, AgentMember, AgentService,
     AgentServiceRegistration, QueryMeta, QueryOptions, WriteMeta, WriteOptions,
@@ -56,9 +58,9 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
         let path = format!("/v1/agent/service/maintenance/{}", service_id);
-        let mut params = vec![("enable".to_string(), enable.to_string())];
+        let mut params = vec![("enable", enable.to_string())];
         if !reason.is_empty() {
-            params.push(("reason".to_string(), reason.to_string()));
+            params.push(("reason", reason.to_string()));
         }
         self.put_no_response(&path, opts, &params).await
     }
@@ -79,7 +81,7 @@ impl ConsulClient {
     ) -> Result<(Vec<AgentMember>, QueryMeta)> {
         let mut extra = Vec::new();
         if wan {
-            extra.push(("wan".to_string(), "1".to_string()));
+            extra.push(("wan", "1".to_string()));
         }
         self.get_with_extra("/v1/agent/members", opts, &extra).await
     }
@@ -99,7 +101,7 @@ impl ConsulClient {
         let path = format!("/v1/agent/join/{}", address);
         let mut params = Vec::new();
         if wan {
-            params.push(("wan".to_string(), "1".to_string()));
+            params.push(("wan", "1".to_string()));
         }
         self.put_no_response(&path, opts, &params).await
     }
@@ -122,9 +124,9 @@ impl ConsulClient {
         reason: &str,
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
-        let mut params = vec![("enable".to_string(), enable.to_string())];
+        let mut params = vec![("enable", enable.to_string())];
         if !reason.is_empty() {
-            params.push(("reason".to_string(), reason.to_string()));
+            params.push(("reason", reason.to_string()));
         }
         self.put_no_response("/v1/agent/maintenance", opts, &params)
             .await
@@ -171,7 +173,7 @@ impl ConsulClient {
         let extra = if note.is_empty() {
             vec![]
         } else {
-            vec![("note".to_string(), note.to_string())]
+            vec![("note", note.to_string())]
         };
         self.put_no_response(&format!("/v1/agent/check/pass/{}", check_id), opts, &extra)
             .await
@@ -187,7 +189,7 @@ impl ConsulClient {
         let extra = if note.is_empty() {
             vec![]
         } else {
-            vec![("note".to_string(), note.to_string())]
+            vec![("note", note.to_string())]
         };
         self.put_no_response(&format!("/v1/agent/check/warn/{}", check_id), opts, &extra)
             .await
@@ -203,7 +205,7 @@ impl ConsulClient {
         let extra = if note.is_empty() {
             vec![]
         } else {
-            vec![("note".to_string(), note.to_string())]
+            vec![("note", note.to_string())]
         };
         self.put_no_response(&format!("/v1/agent/check/fail/{}", check_id), opts, &extra)
             .await
@@ -231,8 +233,8 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
         let extra = vec![
-            ("enable".to_string(), "true".to_string()),
-            ("reason".to_string(), reason.to_string()),
+            ("enable", "true".to_string()),
+            ("reason", reason.to_string()),
         ];
         self.put_no_response("/v1/agent/maintenance", opts, &extra)
             .await
@@ -240,7 +242,7 @@ impl ConsulClient {
 
     /// Disable node maintenance mode
     pub async fn agent_disable_node_maintenance(&self, opts: &WriteOptions) -> Result<WriteMeta> {
-        let extra = vec![("enable".to_string(), "false".to_string())];
+        let extra = vec![("enable", "false".to_string())];
         self.put_no_response("/v1/agent/maintenance", opts, &extra)
             .await
     }
@@ -253,8 +255,8 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
         let extra = vec![
-            ("enable".to_string(), "true".to_string()),
-            ("reason".to_string(), reason.to_string()),
+            ("enable", "true".to_string()),
+            ("reason", reason.to_string()),
         ];
         self.put_no_response(
             &format!("/v1/agent/service/maintenance/{}", service_id),
@@ -270,7 +272,7 @@ impl ConsulClient {
         service_id: &str,
         opts: &WriteOptions,
     ) -> Result<WriteMeta> {
-        let extra = vec![("enable".to_string(), "false".to_string())];
+        let extra = vec![("enable", "false".to_string())];
         self.put_no_response(
             &format!("/v1/agent/service/maintenance/{}", service_id),
             opts,
@@ -344,6 +346,198 @@ impl ConsulClient {
     ) -> Result<(serde_json::Value, QueryMeta)> {
         self.get(&format!("/v1/agent/connect/ca/leaf/{}", service), opts)
             .await
+    }
+
+    // ========== ACL Token Update Variants ==========
+    // These match the Consul Go client's UpdateACL*Token methods.
+    // Each updates a different type of agent ACL token.
+
+    /// Update the default ACL token used by the agent
+    pub async fn agent_update_default_acl_token(
+        &self,
+        token: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let body = serde_json::json!({ "Token": token });
+        self.put_no_response_with_body("/v1/agent/token/default", &body, opts)
+            .await
+    }
+
+    /// Update the agent ACL token (used for internal agent operations)
+    pub async fn agent_update_agent_acl_token(
+        &self,
+        token: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let body = serde_json::json!({ "Token": token });
+        self.put_no_response_with_body("/v1/agent/token/agent", &body, opts)
+            .await
+    }
+
+    /// Update the agent recovery ACL token
+    pub async fn agent_update_agent_recovery_acl_token(
+        &self,
+        token: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let body = serde_json::json!({ "Token": token });
+        self.put_no_response_with_body("/v1/agent/token/agent_recovery", &body, opts)
+            .await
+    }
+
+    /// Update the replication ACL token
+    pub async fn agent_update_replication_acl_token(
+        &self,
+        token: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let body = serde_json::json!({ "Token": token });
+        self.put_no_response_with_body("/v1/agent/token/replication", &body, opts)
+            .await
+    }
+
+    /// Update the config file registration ACL token
+    pub async fn agent_update_config_file_registration_token(
+        &self,
+        token: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let body = serde_json::json!({ "Token": token });
+        self.put_no_response_with_body(
+            "/v1/agent/token/config_file_service_registration",
+            &body,
+            opts,
+        )
+        .await
+    }
+
+    /// Update the DNS ACL token
+    pub async fn agent_update_dns_token(
+        &self,
+        token: &str,
+        opts: &WriteOptions,
+    ) -> Result<WriteMeta> {
+        let body = serde_json::json!({ "Token": token });
+        self.put_no_response_with_body("/v1/agent/token/dns", &body, opts)
+            .await
+    }
+
+    /// Get the node name of the local agent.
+    ///
+    /// Calls the `/v1/agent/self` endpoint and extracts the `NodeName`
+    /// from the `Config` section of the response.
+    pub async fn agent_node_name(&self, opts: &QueryOptions) -> Result<String> {
+        let (info, _): (serde_json::Value, QueryMeta) = self.get("/v1/agent/self", opts).await?;
+        let name = info
+            .get("Config")
+            .and_then(|c| c.get("NodeName"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .to_string();
+        Ok(name)
+    }
+
+    /// List services registered with the local agent, filtered by a filter expression.
+    ///
+    /// The filter is applied server-side using Consul's filtering syntax.
+    pub async fn agent_services_with_filter(
+        &self,
+        filter: &str,
+        opts: &QueryOptions,
+    ) -> Result<(HashMap<String, AgentService>, QueryMeta)> {
+        let mut extra = Vec::new();
+        if !filter.is_empty() {
+            extra.push(("filter", filter.to_string()));
+        }
+        self.get_with_extra("/v1/agent/services", opts, &extra)
+            .await
+    }
+
+    /// List checks registered with the local agent, filtered by a filter expression.
+    ///
+    /// The filter is applied server-side using Consul's filtering syntax.
+    pub async fn agent_checks_with_filter(
+        &self,
+        filter: &str,
+        opts: &QueryOptions,
+    ) -> Result<(HashMap<String, AgentCheck>, QueryMeta)> {
+        let mut extra = Vec::new();
+        if !filter.is_empty() {
+            extra.push(("filter", filter.to_string()));
+        }
+        self.get_with_extra("/v1/agent/checks", opts, &extra).await
+    }
+
+    /// Stream agent logs at the given log level.
+    ///
+    /// Returns an mpsc receiver that yields log lines. The streaming continues
+    /// until the response stream ends or the receiver is dropped.
+    /// This calls `GET /v1/agent/monitor?loglevel=<level>` which returns a
+    /// streaming response.
+    pub async fn agent_monitor(
+        &self,
+        log_level: &str,
+        opts: &QueryOptions,
+    ) -> Result<(mpsc::Receiver<String>, tokio::task::JoinHandle<()>)> {
+        let mut params = Vec::new();
+        self.apply_query_options(&mut params, opts);
+        if !log_level.is_empty() {
+            params.push(("loglevel", log_level.to_string()));
+        }
+
+        let token = self.effective_token(&opts.token);
+        let url = self.url("/v1/agent/monitor");
+
+        let mut req = self.client.get(&url);
+        if !token.is_empty() {
+            req = req.header("X-Consul-Token", token);
+        }
+        if !params.is_empty() {
+            req = req.query(&params);
+        }
+
+        let response = req.send().await.map_err(ConsulError::Http)?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(ConsulError::Api {
+                status,
+                message: body,
+            });
+        }
+
+        let (tx, rx) = mpsc::channel(64);
+        let handle = tokio::spawn(async move {
+            use futures::StreamExt;
+            let mut stream = response.bytes_stream();
+
+            let mut buffer = String::new();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        if let Ok(text) = String::from_utf8(bytes.to_vec()) {
+                            buffer.push_str(&text);
+                            // Process complete lines
+                            while let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].trim_end().to_string();
+                                buffer = buffer[pos + 1..].to_string();
+                                if !line.is_empty() && tx.send(line).await.is_err() {
+                                    return; // receiver dropped
+                                }
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            // Flush remaining buffer
+            let line = buffer.trim_end().to_string();
+            if !line.is_empty() {
+                let _ = tx.send(line).await;
+            }
+        });
+
+        Ok((rx, handle))
     }
 }
 

@@ -26,7 +26,7 @@ impl ConsulClient {
     ) -> Result<(Vec<KVPair>, QueryMeta)> {
         let path = format!("/v1/kv/{}", prefix);
         match self
-            .get_with_extra(&path, opts, &[("recurse".to_string(), String::new())])
+            .get_with_extra(&path, opts, &[("recurse", String::new())])
             .await
         {
             Ok((pairs, meta)) => Ok((pairs, meta)),
@@ -43,9 +43,9 @@ impl ConsulClient {
         opts: &QueryOptions,
     ) -> Result<(Vec<String>, QueryMeta)> {
         let path = format!("/v1/kv/{}", prefix);
-        let mut extra = vec![("keys".to_string(), String::new())];
+        let mut extra = vec![("keys", String::new())];
         if !separator.is_empty() {
-            extra.push(("separator".to_string(), separator.to_string()));
+            extra.push(("separator", separator.to_string()));
         }
         match self
             .get_with_extra::<Vec<String>>(&path, opts, &extra)
@@ -62,7 +62,7 @@ impl ConsulClient {
         let path = format!("/v1/kv/{}", pair.key);
         let mut extra = Vec::new();
         if pair.flags > 0 {
-            extra.push(("flags".to_string(), pair.flags.to_string()));
+            extra.push(("flags", pair.flags.to_string()));
         }
         let value = pair.value_bytes().unwrap_or_default();
         self.put_bytes(&path, value, opts, &extra).await
@@ -71,9 +71,9 @@ impl ConsulClient {
     /// Put a KV entry with CAS (Check-And-Set). Returns true if the CAS succeeded.
     pub async fn kv_cas(&self, pair: &KVPair, opts: &WriteOptions) -> Result<(bool, WriteMeta)> {
         let path = format!("/v1/kv/{}", pair.key);
-        let mut extra = vec![("cas".to_string(), pair.modify_index.to_string())];
+        let mut extra = vec![("cas", pair.modify_index.to_string())];
         if pair.flags > 0 {
-            extra.push(("flags".to_string(), pair.flags.to_string()));
+            extra.push(("flags", pair.flags.to_string()));
         }
         let value = pair.value_bytes().unwrap_or_default();
         self.put_bytes(&path, value, opts, &extra).await
@@ -87,9 +87,9 @@ impl ConsulClient {
     ) -> Result<(bool, WriteMeta)> {
         let path = format!("/v1/kv/{}", pair.key);
         let session = pair.session.as_deref().unwrap_or("");
-        let mut extra = vec![("acquire".to_string(), session.to_string())];
+        let mut extra = vec![("acquire", session.to_string())];
         if pair.flags > 0 {
-            extra.push(("flags".to_string(), pair.flags.to_string()));
+            extra.push(("flags", pair.flags.to_string()));
         }
         let value = pair.value_bytes().unwrap_or_default();
         self.put_bytes(&path, value, opts, &extra).await
@@ -103,9 +103,9 @@ impl ConsulClient {
     ) -> Result<(bool, WriteMeta)> {
         let path = format!("/v1/kv/{}", pair.key);
         let session = pair.session.as_deref().unwrap_or("");
-        let mut extra = vec![("release".to_string(), session.to_string())];
+        let mut extra = vec![("release", session.to_string())];
         if pair.flags > 0 {
-            extra.push(("flags".to_string(), pair.flags.to_string()));
+            extra.push(("flags", pair.flags.to_string()));
         }
         let value = pair.value_bytes().unwrap_or_default();
         self.put_bytes(&path, value, opts, &extra).await
@@ -124,7 +124,7 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<(bool, WriteMeta)> {
         let path = format!("/v1/kv/{}", prefix);
-        self.delete(&path, opts, &[("recurse".to_string(), String::new())])
+        self.delete(&path, opts, &[("recurse", String::new())])
             .await
     }
 
@@ -136,12 +136,8 @@ impl ConsulClient {
         opts: &WriteOptions,
     ) -> Result<(bool, WriteMeta)> {
         let path = format!("/v1/kv/{}", key);
-        self.delete(
-            &path,
-            opts,
-            &[("cas".to_string(), modify_index.to_string())],
-        )
-        .await
+        self.delete(&path, opts, &[("cas", modify_index.to_string())])
+            .await
     }
 }
 
@@ -151,13 +147,13 @@ impl ConsulClient {
         &self,
         path: &str,
         opts: &QueryOptions,
-        extra_params: &[(String, String)],
+        extra_params: &[(&'static str, String)],
     ) -> Result<(T, QueryMeta)> {
         use reqwest::StatusCode;
 
         let mut params = Vec::new();
         self.apply_query_options(&mut params, opts);
-        params.extend_from_slice(extra_params);
+        params.extend(extra_params.iter().map(|(k, v)| (*k, v.clone())));
 
         let token = self.effective_token(&opts.token);
         let url = self.url(path);

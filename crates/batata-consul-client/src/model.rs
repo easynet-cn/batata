@@ -368,9 +368,9 @@ pub struct Node {
     pub tagged_addresses: Option<HashMap<String, String>>,
     #[serde(rename = "Meta", default)]
     pub meta: Option<HashMap<String, String>>,
-    #[serde(rename = "CreateIndex")]
+    #[serde(rename = "CreateIndex", default)]
     pub create_index: u64,
-    #[serde(rename = "ModifyIndex")]
+    #[serde(rename = "ModifyIndex", default)]
     pub modify_index: u64,
 }
 

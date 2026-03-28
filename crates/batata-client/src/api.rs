@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::http::BatataHttpClient;
 use crate::model::{
     ApiResponse, CloneResult, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo,
-    ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, ConfigListenerInfo,
+    ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
     ImportResult, InstanceInfo, Member, Namespace, OkOrBool, Page, SelfMemberResponse,
     ServiceDetail, ServiceListItem, SubscriberInfo,
 };
@@ -564,7 +564,7 @@ impl BatataApiClient {
         target_namespace_id: &str,
         policy: &str,
     ) -> anyhow::Result<CloneResult> {
-        let ids_str = ids
+        let _ids_str = ids
             .iter()
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
@@ -1153,6 +1153,7 @@ impl BatataApiClient {
     // ============== Instance Admin APIs ==============
 
     /// Register a new instance via HTTP Admin API
+    #[allow(clippy::too_many_arguments)]
     pub async fn instance_create(
         &self,
         namespace_id: &str,
