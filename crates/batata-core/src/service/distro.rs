@@ -262,6 +262,20 @@ impl DistroCounters {
 }
 
 /// Distro protocol manager
+///
+/// # Lock Ordering
+///
+/// To prevent deadlocks, locks MUST be acquired in the following order:
+///
+/// 1. `running` (RwLock) — controls lifecycle, acquired first
+/// 2. `members` (DashMap) — cluster membership, read frequently
+/// 3. `handlers` (DashMap) — handler registry, iterated during verify/sync
+/// 4. `sync_tasks` (DashMap) — pending sync tasks, written by verify loop
+/// 5. `mapper.healthy_members` (std::sync::RwLock) — updated on membership change
+///
+/// Within the verify loop, `handlers` is iterated first to collect entries,
+/// then `members` is read for peer addresses. Never hold a `handlers` reference
+/// while calling into `client_manager` (which may acquire its own connection locks).
 pub struct DistroProtocol {
     config: DistroConfig,
     local_address: String,

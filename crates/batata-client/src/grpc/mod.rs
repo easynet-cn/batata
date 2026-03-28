@@ -19,7 +19,7 @@ use batata_api::{
     },
 };
 use dashmap::DashMap;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 use crate::error::{ClientError, Result};
@@ -230,7 +230,9 @@ impl GrpcClient {
             auth_provider,
             push_handlers: Arc::new(DashMap::new()),
             current_server_index: std::sync::atomic::AtomicUsize::new(0),
-            state: Arc::new(std::sync::atomic::AtomicU8::new(ConnectionState::Starting as u8)),
+            state: Arc::new(std::sync::atomic::AtomicU8::new(
+                ConnectionState::Starting as u8,
+            )),
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             event_listeners: Arc::new(std::sync::RwLock::new(Vec::new())),
             metrics: Arc::new(metrics::ClientMetrics::new()),
@@ -262,7 +264,9 @@ impl GrpcClient {
             auth_provider,
             push_handlers: Arc::new(DashMap::new()),
             current_server_index: std::sync::atomic::AtomicUsize::new(0),
-            state: Arc::new(std::sync::atomic::AtomicU8::new(ConnectionState::Starting as u8)),
+            state: Arc::new(std::sync::atomic::AtomicU8::new(
+                ConnectionState::Starting as u8,
+            )),
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             event_listeners: Arc::new(std::sync::RwLock::new(Vec::new())),
             metrics: Arc::new(metrics::ClientMetrics::new()),

@@ -165,7 +165,7 @@ impl LocalEncryptedDataKeyProcessor {
     }
 
     fn hash_string(s: &str) -> String {
-        hex::encode(&md5::Md5::digest(s.as_bytes())[..4])
+        const_hex::encode(&md5::Md5::digest(s.as_bytes())[..4])
     }
 }
 
@@ -222,8 +222,8 @@ impl super::filter::IConfigFilter for SimpleEncryptionFilter {
             encrypted.push(byte ^ key[i % key.len()]);
         }
 
-        request.content = hex::encode(&encrypted);
-        request.encrypted_data_key = hex::encode(key);
+        request.content = const_hex::encode(&encrypted);
+        request.encrypted_data_key = const_hex::encode(key);
 
         debug!("Encrypted config for dataId={}", request.data_id);
         Ok(())
@@ -238,7 +238,7 @@ impl super::filter::IConfigFilter for SimpleEncryptionFilter {
         }
 
         let key = &self.secret_key;
-        let encrypted = hex::decode(&response.content)?;
+        let encrypted = const_hex::decode(&response.content)?;
 
         let mut decrypted = Vec::with_capacity(encrypted.len());
         for (i, byte) in encrypted.iter().enumerate() {

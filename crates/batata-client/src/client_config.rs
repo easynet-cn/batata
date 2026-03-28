@@ -17,8 +17,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 /// Proxy configuration for HTTP/gRPC connections.
-#[derive(Clone, Debug)]
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub enum ProxyConfig {
     /// No proxy — direct connection. Best for local/intranet.
     #[default]
@@ -28,7 +27,6 @@ pub enum ProxyConfig {
     /// Custom proxy URL (e.g., "http://proxy.corp:8080" or "socks5://proxy:1080")
     Custom(String),
 }
-
 
 /// Unified client configuration for Batata SDK.
 ///
@@ -283,10 +281,11 @@ impl ClientConfig {
             .trim_start_matches("http://")
             .trim_start_matches("https://");
         if let Some(colon_pos) = addr.rfind(':')
-            && let Ok(port) = addr[colon_pos + 1..].parse::<u16>() {
-                let host = &addr[..colon_pos];
-                return format!("http://{}:{}", host, port + self.grpc_port_offset);
-            }
+            && let Ok(port) = addr[colon_pos + 1..].parse::<u16>()
+        {
+            let host = &addr[..colon_pos];
+            return format!("http://{}:{}", host, port + self.grpc_port_offset);
+        }
         format!("http://{}:{}", addr, 8848 + self.grpc_port_offset)
     }
 

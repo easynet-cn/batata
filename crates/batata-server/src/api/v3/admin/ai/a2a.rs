@@ -16,7 +16,7 @@ use crate::{
             AgentVersionListQuery,
         },
     },
-    model::{common::AppState, response::RestResult},
+    model::{common::AppState, response::Result},
     secured,
 };
 
@@ -50,14 +50,19 @@ async fn register_agent(
         {
             Ok(_) => {
                 let _ = registry.register(registration);
-                HttpResponse::Ok().json(RestResult::ok(Some(true)))
+                HttpResponse::Ok().json(Result::success(true))
             }
-            Err(e) => HttpResponse::BadRequest().json(RestResult::<()>::err(400, &e.to_string())),
+            Err(e) => Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e.to_string(),
+            ),
         }
     } else {
         match registry.register(registration) {
-            Ok(agent) => HttpResponse::Ok().json(RestResult::ok(Some(agent))),
-            Err(e) => HttpResponse::BadRequest().json(RestResult::<()>::err(400, &e)),
+            Ok(agent) => HttpResponse::Ok().json(Result::success(agent)),
+            Err(e) => {
+                Result::<()>::http_bad_request(&batata_common::error::PARAMETER_VALIDATE_ERROR, e)
+            }
         }
     }
 }
@@ -84,18 +89,20 @@ async fn get_agent(
         let namespace = q.namespace_id.as_deref().unwrap_or("public");
         let name = q.agent_name.as_deref().unwrap_or("");
         match svc.get_agent_card(namespace, name, None).await {
-            Ok(Some(agent)) => HttpResponse::Ok().json(RestResult::ok(Some(agent))),
-            Ok(None) => {
-                HttpResponse::NotFound().json(RestResult::<()>::err(404, "Agent not found"))
-            }
-            Err(e) => {
-                HttpResponse::InternalServerError().json(RestResult::<()>::err(500, &e.to_string()))
-            }
+            Ok(Some(agent)) => HttpResponse::Ok().json(Result::success(agent)),
+            Ok(None) => Result::<()>::http_not_found(
+                &batata_common::error::AGENT_NOT_FOUND,
+                "Agent not found",
+            ),
+            Err(e) => Result::<()>::http_internal_error(e),
         }
     } else {
         match registry.get_by_query(&q) {
-            Some(agent) => HttpResponse::Ok().json(RestResult::ok(Some(agent))),
-            None => HttpResponse::NotFound().json(RestResult::<()>::err(404, "Agent not found")),
+            Some(agent) => HttpResponse::Ok().json(Result::success(agent)),
+            None => Result::<()>::http_not_found(
+                &batata_common::error::AGENT_NOT_FOUND,
+                "Agent not found",
+            ),
         }
     }
 }
@@ -132,14 +139,16 @@ async fn update_agent(
         {
             Ok(()) => {
                 let _ = registry.update(namespace, &name, registration);
-                HttpResponse::Ok().json(RestResult::ok(Some(true)))
+                HttpResponse::Ok().json(Result::success(true))
             }
-            Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e.to_string())),
+            Err(e) => {
+                Result::<()>::http_not_found(&batata_common::error::AGENT_NOT_FOUND, e.to_string())
+            }
         }
     } else {
         match registry.update(namespace, &name, registration) {
-            Ok(agent) => HttpResponse::Ok().json(RestResult::ok(Some(agent))),
-            Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+            Ok(agent) => HttpResponse::Ok().json(Result::success(agent)),
+            Err(e) => Result::<()>::http_not_found(&batata_common::error::AGENT_NOT_FOUND, e),
         }
     }
 }
@@ -172,14 +181,16 @@ async fn delete_agent(
         {
             Ok(()) => {
                 let _ = registry.delete_by_query(&q);
-                HttpResponse::Ok().json(RestResult::ok(Some(true)))
+                HttpResponse::Ok().json(Result::success(true))
             }
-            Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e.to_string())),
+            Err(e) => {
+                Result::<()>::http_not_found(&batata_common::error::AGENT_NOT_FOUND, e.to_string())
+            }
         }
     } else {
         match registry.delete_by_query(&q) {
-            Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
-            Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+            Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+            Err(e) => Result::<()>::http_not_found(&batata_common::error::AGENT_NOT_FOUND, e),
         }
     }
 }
@@ -217,14 +228,12 @@ async fn list_agents(
             )
             .await
         {
-            Ok(result) => HttpResponse::Ok().json(RestResult::ok(Some(result))),
-            Err(e) => {
-                HttpResponse::InternalServerError().json(RestResult::<()>::err(500, &e.to_string()))
-            }
+            Ok(result) => HttpResponse::Ok().json(Result::success(result)),
+            Err(e) => Result::<()>::http_internal_error(e),
         }
     } else {
         let result = registry.list_with_search(&q);
-        HttpResponse::Ok().json(RestResult::ok(Some(result)))
+        HttpResponse::Ok().json(Result::success(result))
     }
 }
 
@@ -251,14 +260,12 @@ async fn list_versions(
 
     if let Some(svc) = a2a_service {
         match svc.list_versions(namespace, name).await {
-            Ok(versions) => HttpResponse::Ok().json(RestResult::ok(Some(versions))),
-            Err(e) => {
-                HttpResponse::InternalServerError().json(RestResult::<()>::err(500, &e.to_string()))
-            }
+            Ok(versions) => HttpResponse::Ok().json(Result::success(versions)),
+            Err(e) => Result::<()>::http_internal_error(e),
         }
     } else {
         let versions = registry.list_versions(namespace, name);
-        HttpResponse::Ok().json(RestResult::ok(Some(versions)))
+        HttpResponse::Ok().json(Result::success(versions))
     }
 }
 
@@ -292,14 +299,16 @@ async fn register_agent_endpoint(
     let endpoint_url = match q.endpoint_url {
         Some(url) => url,
         None => {
-            return HttpResponse::BadRequest()
-                .json(RestResult::<()>::err(400, "endpointUrl is required"));
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "endpointUrl is required",
+            );
         }
     };
 
     match registry.register_endpoint(namespace, &q.agent_name, &endpoint_url) {
-        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
-        Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_not_found(&batata_common::error::AGENT_NOT_FOUND, e),
     }
 }
 
@@ -323,8 +332,8 @@ async fn deregister_agent_endpoint(
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
 
     match registry.deregister_endpoint(namespace, &q.agent_name) {
-        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
-        Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_not_found(&batata_common::error::AGENT_NOT_FOUND, e),
     }
 }
 

@@ -44,7 +44,8 @@ config = { workspace = true }
 
 # Encoding
 base64 = { workspace = true }
-md5 = { workspace = true }
+md-5 = { workspace = true }
+const-hex = { workspace = true }
 
 # Time
 chrono = { workspace = true }

@@ -156,19 +156,51 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
 
     async fn install_snapshot(
         &mut self,
-        _rpc: InstallSnapshotRequest<ConsulTypeConfig>,
+        rpc: InstallSnapshotRequest<ConsulTypeConfig>,
         _option: RPCOption,
     ) -> Result<
         InstallSnapshotResponse<NodeId>,
         RPCError<NodeId, BasicNode, RaftError<NodeId, InstallSnapshotError>>,
     > {
-        // TODO: Implement snapshot transfer
-        Err(RPCError::Unreachable(Unreachable::new(
-            &std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "Consul Raft snapshot not yet implemented",
-            ),
-        )))
+        let channel = self.get_channel().await.map_err(RPCError::Unreachable)?;
+        let mut client = ConsulRaftServiceClient::new(channel);
+
+        let meta = Some(proto::SnapshotMeta {
+            last_log_id: proto_convert::to_proto_log_id(rpc.meta.last_log_id),
+            last_membership: None,
+            snapshot_id: rpc.meta.snapshot_id.clone(),
+        });
+
+        let vote_proto = proto_convert::to_proto_vote(&rpc.vote);
+        let data = rpc.data.to_vec();
+
+        // Send snapshot as a single chunk (Consul state is typically small)
+        let req = proto::InstallSnapshotRequest {
+            term: rpc.vote.leader_id().term,
+            leader_id: rpc.vote.leader_id().node_id,
+            meta,
+            offset: rpc.offset,
+            data,
+            done: rpc.done,
+            vote: Some(vote_proto),
+        };
+
+        let resp = client
+            .install_snapshot(futures::stream::once(futures::future::ready(req)))
+            .await
+            .map_err(|e| {
+                warn!(
+                    "Consul Raft: snapshot transfer to node {} failed: {}",
+                    self.target, e
+                );
+                RPCError::Unreachable(Unreachable::new(&e))
+            })?
+            .into_inner();
+
+        let vote = proto_convert::from_proto_vote(resp.vote)
+            .unwrap_or_else(|| openraft::Vote::new(resp.term, 0));
+
+        Ok(InstallSnapshotResponse { vote })
     }
 
     async fn vote(

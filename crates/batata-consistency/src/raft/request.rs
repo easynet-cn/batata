@@ -307,6 +307,7 @@ impl RaftResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use md5::Digest;
 
     #[test]
     fn test_raft_request_serialization() {
@@ -315,7 +316,7 @@ mod tests {
             group: "DEFAULT_GROUP".to_string(),
             tenant: "".to_string(),
             content: "key=value".to_string(),
-            md5: format!("{:x}", md5::compute("key=value")),
+            md5: const_hex::encode(md5::Md5::digest("key=value")),
             config_type: Some("properties".to_string()),
             app_name: None,
             tag: None,

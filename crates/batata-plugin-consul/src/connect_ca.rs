@@ -661,7 +661,9 @@ pub async fn get_ca_roots(
 
     // Support blocking queries (Watch API)
     if let Some(target_index) = query.index {
-        let timeout = query.wait.as_deref()
+        let timeout = query
+            .wait
+            .as_deref()
             .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
         index_provider
             .wait_for_change(ConsulTable::Catalog, target_index, timeout)
@@ -742,7 +744,9 @@ pub async fn get_leaf_cert(
 
     // Support blocking queries (Watch API)
     if let Some(target_index) = query.index {
-        let timeout = query.wait.as_deref()
+        let timeout = query
+            .wait
+            .as_deref()
             .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
         index_provider
             .wait_for_change(ConsulTable::Catalog, target_index, timeout)
@@ -1067,7 +1071,9 @@ pub async fn get_ca_roots_persistent(
 
     // Support blocking queries (Watch API)
     if let Some(target_index) = query.index {
-        let timeout = query.wait.as_deref()
+        let timeout = query
+            .wait
+            .as_deref()
             .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
         index_provider
             .wait_for_change(ConsulTable::Catalog, target_index, timeout)
@@ -1148,7 +1154,9 @@ pub async fn get_leaf_cert_persistent(
 
     // Support blocking queries (Watch API)
     if let Some(target_index) = query.index {
-        let timeout = query.wait.as_deref()
+        let timeout = query
+            .wait
+            .as_deref()
             .and_then(crate::index_provider::ConsulIndexProvider::parse_wait_duration);
         index_provider
             .wait_for_change(ConsulTable::Catalog, target_index, timeout)

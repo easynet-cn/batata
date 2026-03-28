@@ -245,8 +245,7 @@ impl AuthProvider {
                     match guard.as_ref() {
                         Some(info) => {
                             // Refresh when token is within TOKEN_REFRESH_BUFFER_SECS of expiry
-                            info.expires_at
-                                <= Instant::now() + Duration::from_secs(refresh_buffer)
+                            info.expires_at <= Instant::now() + Duration::from_secs(refresh_buffer)
                         }
                         None => true,
                     }
@@ -279,12 +278,10 @@ impl AuthProvider {
                                 .unwrap_or(18000);
 
                             if let Some(at) = access_token {
-                                let mut guard =
-                                    token.write().unwrap_or_else(|e| e.into_inner());
+                                let mut guard = token.write().unwrap_or_else(|e| e.into_inner());
                                 *guard = Some(TokenInfo {
                                     access_token: at.to_string(),
-                                    expires_at: Instant::now()
-                                        + Duration::from_secs(ttl as u64),
+                                    expires_at: Instant::now() + Duration::from_secs(ttl as u64),
                                 });
                                 debug!("Token refreshed, expires in {}s", ttl);
                             }
@@ -367,7 +364,7 @@ mod tests {
 
     #[test]
     fn test_token_refresh_buffer() {
-        assert_eq!(TOKEN_REFRESH_BUFFER_SECS, 300);
+        assert_eq!(DEFAULT_TOKEN_REFRESH_BUFFER_SECS, 300);
     }
 
     #[test]

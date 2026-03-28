@@ -175,10 +175,7 @@ impl GrpcConnection {
     }
 
     /// Perform server check to verify server and get connection_id.
-    async fn server_check(
-        channel: &Channel,
-        access_token: Option<&str>,
-    ) -> Result<String> {
+    async fn server_check(channel: &Channel, access_token: Option<&str>) -> Result<String> {
         let mut check_req = ServerCheckRequest::new();
         check_req.internal_request.request.request_id = Uuid::new_v4().to_string();
 

@@ -1,6 +1,7 @@
 // Distributed persistence backend using Raft + RocksDB
 // Provides multi-node consistency through Raft consensus
 
+use md5::Digest;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -72,7 +73,7 @@ impl DistributedPersistService {
 
     /// Compute MD5 hash
     fn compute_md5(content: &str) -> String {
-        format!("{:x}", md5::compute(content.as_bytes()))
+        const_hex::encode(md5::Md5::digest(content.as_bytes()))
     }
 }
 

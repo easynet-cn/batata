@@ -2,6 +2,7 @@
 // Provides unified interface for Nacos Config and Consul KV
 
 use async_trait::async_trait;
+use md5::Digest;
 
 use super::types::{ChangeType, ConfigItem, ConfigQuery, PagedResult};
 
@@ -249,7 +250,7 @@ pub mod consul {
             };
 
             let content = kv.decoded_value().unwrap_or_default();
-            let md5 = format!("{:x}", md5::compute(&content));
+            let md5 = const_hex::encode(md5::Md5::digest(&content));
 
             ConfigItem {
                 key,

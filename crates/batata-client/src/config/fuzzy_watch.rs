@@ -502,23 +502,25 @@ mod tests {
         let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
         let service = ConfigFuzzyWatchService::new(client);
 
-        // Manually insert a watch entry
+        // Pattern: namespace>>group>>dataIdPattern (Nacos structured format)
+        let pattern = "public>>DEFAULT_GROUP>>config-*";
         service.watches.insert(
-            "config-*".to_string(),
+            pattern.to_string(),
             FuzzyWatchData {
-                pattern: "config-*".to_string(),
+                pattern: pattern.to_string(),
                 listeners: vec![],
                 received_group_keys: HashSet::new(),
                 is_initializing: false,
             },
         );
 
-        // Notify with matching key
-        service.handle_change_notify("config-db", CHANGE_TYPE_ADD);
+        // group_key format: dataId+group+namespace
+        let group_key = "config-db+DEFAULT_GROUP+public";
+        service.handle_change_notify(group_key, CHANGE_TYPE_ADD);
 
         // Check that the key was tracked
-        let entry = service.watches.get("config-*").unwrap();
-        assert!(entry.received_group_keys.contains("config-db"));
+        let entry = service.watches.get(pattern).unwrap();
+        assert!(entry.received_group_keys.contains(group_key));
     }
 
     #[test]
@@ -527,20 +529,21 @@ mod tests {
         let client = Arc::new(crate::grpc::GrpcClient::new(config).unwrap());
         let service = ConfigFuzzyWatchService::new(client);
 
+        let pattern = "public>>DEFAULT_GROUP>>config-*";
         service.watches.insert(
-            "config-*".to_string(),
+            pattern.to_string(),
             FuzzyWatchData {
-                pattern: "config-*".to_string(),
+                pattern: pattern.to_string(),
                 listeners: vec![],
                 received_group_keys: HashSet::new(),
                 is_initializing: false,
             },
         );
 
-        // Notify with non-matching key
-        service.handle_change_notify("other-key", CHANGE_TYPE_ADD);
+        // Notify with non-matching dataId
+        service.handle_change_notify("other-key+DEFAULT_GROUP+public", CHANGE_TYPE_ADD);
 
-        let entry = service.watches.get("config-*").unwrap();
+        let entry = service.watches.get(pattern).unwrap();
         assert!(entry.received_group_keys.is_empty());
     }
 
@@ -552,24 +555,27 @@ mod tests {
 
         let call_count = Arc::new(AtomicUsize::new(0));
         let count_clone = call_count.clone();
+        let group_key = "config-db+DEFAULT_GROUP+public";
         let listener: Arc<dyn ConfigFuzzyWatchListener> =
             Arc::new(FnConfigFuzzyWatchListener::new(move |event| {
-                assert_eq!(event.group_key, "config-db");
+                assert_eq!(event.group_key, "config-db+DEFAULT_GROUP+public");
                 assert_eq!(event.change_type, CHANGE_TYPE_ADD);
                 count_clone.fetch_add(1, Ordering::SeqCst);
             }));
 
+        // Wildcard pattern: match all in public namespace, any group, any dataId
+        let pattern = "public>>*>>*";
         service.watches.insert(
-            "*".to_string(),
+            pattern.to_string(),
             FuzzyWatchData {
-                pattern: "*".to_string(),
+                pattern: pattern.to_string(),
                 listeners: vec![listener],
                 received_group_keys: HashSet::new(),
                 is_initializing: false,
             },
         );
 
-        service.handle_change_notify("config-db", CHANGE_TYPE_ADD);
+        service.handle_change_notify(group_key, CHANGE_TYPE_ADD);
         assert_eq!(call_count.load(Ordering::SeqCst), 1);
     }
 
@@ -681,17 +687,18 @@ mod tests {
                 c2.fetch_add(1, Ordering::SeqCst);
             }));
 
+        let pattern = "public>>*>>*";
         service.watches.insert(
-            "*".to_string(),
+            pattern.to_string(),
             FuzzyWatchData {
-                pattern: "*".to_string(),
+                pattern: pattern.to_string(),
                 listeners: vec![l1, l2],
                 received_group_keys: HashSet::new(),
                 is_initializing: false,
             },
         );
 
-        service.handle_change_notify("any-key", CHANGE_TYPE_DELETE);
+        service.handle_change_notify("any-key+DEFAULT_GROUP+public", CHANGE_TYPE_DELETE);
 
         assert_eq!(count1.load(Ordering::SeqCst), 1);
         assert_eq!(count2.load(Ordering::SeqCst), 1);

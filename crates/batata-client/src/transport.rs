@@ -51,7 +51,9 @@ pub trait Transport: Send + Sync {
 impl Transport for crate::grpc::GrpcClient {
     async fn request_raw(&self, payload: Payload) -> Result<Payload> {
         let guard = self.connection_ref().read().await;
-        let conn = guard.as_ref().ok_or(crate::error::ClientError::NotConnected)?;
+        let conn = guard
+            .as_ref()
+            .ok_or(crate::error::ClientError::NotConnected)?;
         conn.request(payload).await
     }
 

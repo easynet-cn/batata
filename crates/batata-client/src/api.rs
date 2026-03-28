@@ -7,9 +7,9 @@ use serde::Serialize;
 use crate::http::BatataHttpClient;
 use crate::model::{
     ApiResponse, CloneResult, ClusterHealthResponse, ConfigAllInfo, ConfigBasicInfo,
-    ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
-    ImportResult, InstanceInfo, Member, Namespace, OkOrBool, Page, SelfMemberResponse,
-    ServiceDetail, ServiceListItem, SubscriberInfo,
+    ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo, ImportResult, InstanceInfo,
+    Member, Namespace, OkOrBool, Page, SelfMemberResponse, ServiceDetail, ServiceListItem,
+    SubscriberInfo,
 };
 
 /// API client wrapper providing typed access to Batata/Nacos APIs
@@ -411,10 +411,7 @@ impl BatataApiClient {
 
         let response: ApiResponse<usize> = self
             .http_client
-            .delete_with_query(
-                "/v3/admin/cs/config/batch",
-                &Query { ids: &ids_str },
-            )
+            .delete_with_query("/v3/admin/cs/config/batch", &Query { ids: &ids_str })
             .await?;
         Ok(response.data)
     }
@@ -1134,10 +1131,7 @@ impl BatataApiClient {
     }
 
     /// Get config listeners by IP
-    pub async fn config_listeners_by_ip(
-        &self,
-        ip: &str,
-    ) -> anyhow::Result<serde_json::Value> {
+    pub async fn config_listeners_by_ip(&self, ip: &str) -> anyhow::Result<serde_json::Value> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
@@ -1281,10 +1275,7 @@ impl BatataApiClient {
             "/v3/admin/ns/health/instance?namespaceId={}&groupName={}&serviceName={}&ip={}&port={}&healthy={}",
             namespace_id, group_name, service_name, ip, port, healthy
         );
-        let response: ApiResponse<OkOrBool> = self
-            .http_client
-            .put_form(&path, &())
-            .await?;
+        let response: ApiResponse<OkOrBool> = self.http_client.put_form(&path, &()).await?;
         Ok(response.data.0)
     }
 
@@ -1597,19 +1588,12 @@ impl BatataApiClient {
     }
 
     /// Update log level dynamically
-    pub async fn update_log_level(
-        &self,
-        log_name: &str,
-        log_level: &str,
-    ) -> anyhow::Result<bool> {
+    pub async fn update_log_level(&self, log_name: &str, log_level: &str) -> anyhow::Result<bool> {
         let path = format!(
             "/v3/admin/core/ops/log?logName={}&logLevel={}",
             log_name, log_level
         );
-        let response: ApiResponse<OkOrBool> = self
-            .http_client
-            .put_form(&path, &())
-            .await?;
+        let response: ApiResponse<OkOrBool> = self.http_client.put_form(&path, &()).await?;
         Ok(response.data.0)
     }
 
@@ -1635,11 +1619,7 @@ impl BatataApiClient {
     }
 
     /// Create a user
-    pub async fn user_create(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> anyhow::Result<bool> {
+    pub async fn user_create(&self, username: &str, password: &str) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         struct Form<'a> {
             username: &'a str,
@@ -1685,11 +1665,7 @@ impl BatataApiClient {
     }
 
     /// Assign a role to a user
-    pub async fn role_create(
-        &self,
-        username: &str,
-        role: &str,
-    ) -> anyhow::Result<bool> {
+    pub async fn role_create(&self, username: &str, role: &str) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         struct Form<'a> {
             username: &'a str,
@@ -1703,11 +1679,7 @@ impl BatataApiClient {
     }
 
     /// Remove a role from a user
-    pub async fn role_delete(
-        &self,
-        username: &str,
-        role: &str,
-    ) -> anyhow::Result<bool> {
+    pub async fn role_delete(&self, username: &str, role: &str) -> anyhow::Result<bool> {
         #[derive(Serialize)]
         struct Query<'a> {
             username: &'a str,
@@ -1754,7 +1726,14 @@ impl BatataApiClient {
         }
         let response: ApiResponse<OkOrBool> = self
             .http_client
-            .post_form("/v3/auth/permission", &Form { role, resource, action })
+            .post_form(
+                "/v3/auth/permission",
+                &Form {
+                    role,
+                    resource,
+                    action,
+                },
+            )
             .await?;
         Ok(response.data.0)
     }
@@ -1774,7 +1753,14 @@ impl BatataApiClient {
         }
         let response: ApiResponse<OkOrBool> = self
             .http_client
-            .delete_with_query("/v3/auth/permission", &Query { role, resource, action })
+            .delete_with_query(
+                "/v3/auth/permission",
+                &Query {
+                    role,
+                    resource,
+                    action,
+                },
+            )
             .await?;
         Ok(response.data.0)
     }

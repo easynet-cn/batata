@@ -209,6 +209,24 @@ pub async fn publish_config(
         );
     }
 
+    if batata_api::validation::validate_data_id(&form.data_id).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid dataId : {}", form.data_id),
+            String::new(),
+        );
+    }
+
+    if batata_api::validation::validate_group(&form.group).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid group : {}", form.group),
+            String::new(),
+        );
+    }
+
     let namespace_id = form.namespace_id_or_default();
 
     // Check authorization
@@ -472,6 +490,24 @@ pub async fn delete_config(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'group' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    if batata_api::validation::validate_data_id(&params.data_id).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid dataId : {}", params.data_id),
+            String::new(),
+        );
+    }
+
+    if batata_api::validation::validate_group(&params.group).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid group : {}", params.group),
             String::new(),
         );
     }

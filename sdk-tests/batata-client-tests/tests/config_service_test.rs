@@ -1,3 +1,4 @@
+use md5::Digest;
 //! Config Service Functional Tests
 //!
 //! Tests BatataConfigService: CRUD, CAS, listeners, server status.
@@ -88,7 +89,7 @@ async fn test_publish_config_cas_success() {
 
     // Get MD5
     let content = svc.get_config(&data_id, GROUP, TENANT).await.unwrap();
-    let md5 = format!("{:x}", md5::compute(content.as_bytes()));
+    let md5 = const_hex::encode(md5::Md5::digest(content.as_bytes()));
 
     // CAS update with correct MD5
     let ok = svc.publish_config_cas(&data_id, GROUP, TENANT, "v2", &md5).await.unwrap();

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, Responder, delete, get, post, put, web};
 use tracing::info;
 
+use batata_api::validation;
 use batata_common::{ActionTypes, ApiType, SignType};
 use batata_server_common::error;
 use batata_server_common::model::app_state::AppState;
@@ -45,6 +46,15 @@ pub async fn create_service(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    if validation::validate_service_name(&form.service_name).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", form.service_name),
             String::new(),
         );
     }
@@ -146,6 +156,15 @@ pub async fn delete_service(
         );
     }
 
+    if validation::validate_service_name(&params.service_name).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", params.service_name),
+            String::new(),
+        );
+    }
+
     let namespace_id = params.namespace_id_or_default();
     let group_name = params.group_name_or_default();
 
@@ -220,6 +239,15 @@ pub async fn update_service(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    if validation::validate_service_name(&form.service_name).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", form.service_name),
             String::new(),
         );
     }
@@ -315,6 +343,15 @@ pub async fn get_service(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    if validation::validate_service_name(&params.service_name).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", params.service_name),
             String::new(),
         );
     }

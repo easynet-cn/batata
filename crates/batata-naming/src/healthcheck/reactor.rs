@@ -12,10 +12,8 @@ use super::registry_task::RegistryCheckTask;
 use super::task::HealthCheckTask;
 use crate::service::{ClusterConfig, NamingService};
 use dashmap::DashMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
@@ -53,8 +51,8 @@ pub struct HealthCheckReactor {
     /// Message sender
     sender: mpsc::UnboundedSender<ReactorMessage>,
 
-    /// Task handles (Arc<DashMap> doesn't support JoinHandle, so we use a simple RwLock wrapper)
-    task_handles: Arc<tokio::sync::RwLock<std::collections::HashMap<String, JoinHandle<()>>>>,
+    /// Task handles for cancellation
+    task_handles: Arc<DashMap<String, JoinHandle<()>>>,
 
     /// Optional registry for unified health checks
     registry: Option<Arc<InstanceCheckRegistry>>,
@@ -70,7 +68,7 @@ impl HealthCheckReactor {
             config,
             tasks: Arc::new(DashMap::new()),
             sender,
-            task_handles: Arc::new(RwLock::new(HashMap::new())),
+            task_handles: Arc::new(DashMap::new()),
             registry: None,
         };
 
@@ -103,11 +101,8 @@ impl HealthCheckReactor {
                         let task_id = task.get_task_id().to_string();
 
                         // Cancel existing task if present
-                        {
-                            let mut handles = task_handles.write().await;
-                            if let Some(handle) = handles.remove(&task_id) {
-                                handle.abort();
-                            }
+                        if let Some((_, handle)) = task_handles.remove(&task_id) {
+                            handle.abort();
                         }
 
                         // Store the task
@@ -125,11 +120,8 @@ impl HealthCheckReactor {
                     }
                     ReactorMessage::Cancel { task_id } => {
                         // Cancel the task
-                        {
-                            let mut handles = task_handles.write().await;
-                            if let Some(handle) = handles.remove(&task_id) {
-                                handle.abort();
-                            }
+                        if let Some((_, handle)) = task_handles.remove(&task_id) {
+                            handle.abort();
                         }
                         tasks.remove(&task_id);
                         debug!("Cancelled health check task: {}", task_id);
@@ -140,14 +132,12 @@ impl HealthCheckReactor {
                             let check_key_clone = check_key.clone();
 
                             // Cancel existing handle if present
-                            {
-                                let mut handles = task_handles.write().await;
-                                if let Some(handle) = handles.remove(&check_key) {
-                                    handle.abort();
-                                }
+                            if let Some((_, handle)) = task_handles.remove(&check_key) {
+                                handle.abort();
                             }
 
                             let task_handles_clone = task_handles.clone();
+                            let check_key_for_handle = check_key.clone();
                             let handle = tokio::spawn(async move {
                                 let task = RegistryCheckTask::new(check_key_clone, reg_clone);
                                 loop {
@@ -169,8 +159,7 @@ impl HealthCheckReactor {
                                 }
                             });
 
-                            let mut handles = task_handles_clone.write().await;
-                            handles.insert(check_key, handle);
+                            task_handles_clone.insert(check_key_for_handle, handle);
                         } else {
                             debug!(
                                 "Registry not set, skipping ScheduleRegistryCheck for {}",
@@ -180,11 +169,10 @@ impl HealthCheckReactor {
                     }
                     ReactorMessage::Shutdown => {
                         // Cancel all tasks
-                        let mut handles = task_handles.write().await;
-                        for handle in handles.values_mut() {
-                            handle.abort();
+                        for entry in task_handles.iter() {
+                            entry.value().abort();
                         }
-                        handles.clear();
+                        task_handles.clear();
                         tasks.clear();
                         info!("Health check reactor shutdown");
                         break;
@@ -200,7 +188,7 @@ impl HealthCheckReactor {
         _naming_service: Arc<NamingService>,
         _config: Arc<HealthCheckConfig>,
         tasks: Arc<DashMap<String, HealthCheckTask>>,
-        task_handles: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
+        task_handles: Arc<DashMap<String, JoinHandle<()>>>,
     ) {
         let task_id = task.get_task_id().to_string();
         let task_id_clone = task_id.clone();
@@ -246,8 +234,7 @@ impl HealthCheckReactor {
         });
 
         // Store handle
-        let mut handles = task_handles.write().await;
-        handles.insert(task_id, handle);
+        task_handles.insert(task_id, handle);
     }
 
     /// Schedule a health check task for an instance

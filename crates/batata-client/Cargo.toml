@@ -40,7 +40,7 @@ futures = { workspace = true }
 # Utilities
 uuid = { workspace = true }
 md-5 = { workspace = true }
-hex = { workspace = true }
+const-hex = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
@@ -65,3 +65,10 @@ chrono = { workspace = true }
 
 # Metrics
 prometheus = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "client_bench"
+harness = false

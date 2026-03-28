@@ -787,7 +787,7 @@ impl Default for K8sServiceSync {
 // =============================================================================
 
 use actix_web::{HttpResponse, delete, get, post, put, web};
-use batata_server_common::model::response::RestResult;
+use batata_server_common::model::response::Result as ApiResult;
 
 /// Get Kubernetes sync status
 #[get("/v1/cloud/k8s/status")]
@@ -807,27 +807,27 @@ pub async fn k8s_status(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -> Http
         namespace: sync.config.namespace.clone(),
     };
 
-    HttpResponse::Ok().json(RestResult::ok(Some(status)))
+    HttpResponse::Ok().json(ApiResult::success(status))
 }
 
 /// Get Kubernetes sync statistics
 #[get("/v1/cloud/k8s/stats")]
 pub async fn k8s_stats(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -> HttpResponse {
     let stats = sync.stats().await;
-    HttpResponse::Ok().json(RestResult::ok(Some(stats)))
+    HttpResponse::Ok().json(ApiResult::success(stats))
 }
 
 /// Get Kubernetes sync configuration
 #[get("/v1/cloud/k8s/config")]
 pub async fn k8s_config(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -> HttpResponse {
-    HttpResponse::Ok().json(RestResult::ok(Some(sync.config.clone())))
+    HttpResponse::Ok().json(ApiResult::success(sync.config.clone()))
 }
 
 /// List watched Kubernetes services
 #[get("/v1/cloud/k8s/services")]
 pub async fn k8s_list_services(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -> HttpResponse {
     let services = sync.list_services();
-    HttpResponse::Ok().json(RestResult::ok(Some(services)))
+    HttpResponse::Ok().json(ApiResult::success(services))
 }
 
 /// Get a specific Kubernetes service
@@ -838,8 +838,13 @@ pub async fn k8s_get_service(
 ) -> HttpResponse {
     let (namespace, name) = path.into_inner();
     match sync.get_service(&namespace, &name) {
-        Some(service) => HttpResponse::Ok().json(RestResult::ok(Some(service))),
-        None => HttpResponse::NotFound().json(RestResult::<()>::err(404, "Service not found")),
+        Some(service) => HttpResponse::Ok().json(ApiResult::success(service)),
+        None => ApiResult::<String>::http_response(
+            404,
+            404,
+            "Service not found".to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -851,7 +856,7 @@ pub async fn k8s_get_endpoints(
 ) -> HttpResponse {
     let (namespace, name) = path.into_inner();
     let endpoints = sync.get_endpoints(&namespace, &name);
-    HttpResponse::Ok().json(RestResult::ok(Some(endpoints)))
+    HttpResponse::Ok().json(ApiResult::success(endpoints))
 }
 
 /// Get pod metadata
@@ -862,8 +867,10 @@ pub async fn k8s_get_pod(
 ) -> HttpResponse {
     let (namespace, name) = path.into_inner();
     match sync.get_pod(&namespace, &name) {
-        Some(pod) => HttpResponse::Ok().json(RestResult::ok(Some(pod))),
-        None => HttpResponse::NotFound().json(RestResult::<()>::err(404, "Pod not found")),
+        Some(pod) => HttpResponse::Ok().json(ApiResult::success(pod)),
+        None => {
+            ApiResult::<String>::http_response(404, 404, "Pod not found".to_string(), String::new())
+        }
     }
 }
 
@@ -871,7 +878,7 @@ pub async fn k8s_get_pod(
 #[get("/v1/cloud/k8s/sync-status")]
 pub async fn k8s_list_sync_status(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -> HttpResponse {
     let status = sync.list_sync_status();
-    HttpResponse::Ok().json(RestResult::ok(Some(status)))
+    HttpResponse::Ok().json(ApiResult::success(status))
 }
 
 /// Get sync status for a specific service
@@ -882,8 +889,13 @@ pub async fn k8s_get_sync_status(
 ) -> HttpResponse {
     let (namespace, name) = path.into_inner();
     match sync.get_sync_status(&namespace, &name) {
-        Some(status) => HttpResponse::Ok().json(RestResult::ok(Some(status))),
-        None => HttpResponse::NotFound().json(RestResult::<()>::err(404, "Sync status not found")),
+        Some(status) => HttpResponse::Ok().json(ApiResult::success(status)),
+        None => ApiResult::<String>::http_response(
+            404,
+            404,
+            "Sync status not found".to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -896,11 +908,11 @@ pub async fn k8s_trigger_sync(sync: web::Data<std::sync::Arc<K8sServiceSync>>) -
             struct SyncResponse {
                 synced_count: u32,
             }
-            HttpResponse::Ok().json(RestResult::ok(Some(SyncResponse {
+            HttpResponse::Ok().json(ApiResult::success(SyncResponse {
                 synced_count: count,
-            })))
+            }))
         }
-        Err(e) => HttpResponse::BadRequest().json(RestResult::<()>::err(400, &e)),
+        Err(e) => ApiResult::<String>::http_response(400, 400, e.to_string(), String::new()),
     }
 }
 
@@ -911,7 +923,7 @@ pub async fn k8s_register_service(
     body: web::Json<K8sService>,
 ) -> HttpResponse {
     sync.register_service(body.into_inner());
-    HttpResponse::Ok().json(RestResult::ok(Some("Service registered")))
+    HttpResponse::Ok().json(ApiResult::success("Service registered"))
 }
 
 /// Unregister a Kubernetes service
@@ -922,7 +934,7 @@ pub async fn k8s_unregister_service(
 ) -> HttpResponse {
     let (namespace, name) = path.into_inner();
     sync.unregister_service(&namespace, &name);
-    HttpResponse::Ok().json(RestResult::ok(Some("Service unregistered")))
+    HttpResponse::Ok().json(ApiResult::success("Service unregistered"))
 }
 
 /// Update endpoints for a service (manual update)
@@ -934,7 +946,7 @@ pub async fn k8s_update_endpoints(
 ) -> HttpResponse {
     let (namespace, name) = path.into_inner();
     sync.update_endpoints(&namespace, &name, body.into_inner());
-    HttpResponse::Ok().json(RestResult::ok(Some("Endpoints updated")))
+    HttpResponse::Ok().json(ApiResult::success("Endpoints updated"))
 }
 
 /// Register pod metadata (manual registration)
@@ -944,7 +956,7 @@ pub async fn k8s_register_pod(
     body: web::Json<K8sPodMetadata>,
 ) -> HttpResponse {
     sync.register_pod(body.into_inner());
-    HttpResponse::Ok().json(RestResult::ok(Some("Pod registered")))
+    HttpResponse::Ok().json(ApiResult::success("Pod registered"))
 }
 
 /// Configure Kubernetes routes

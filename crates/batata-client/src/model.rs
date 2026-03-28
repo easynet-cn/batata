@@ -299,7 +299,14 @@ pub struct Page<T> {
     pub page_number: u64,
     #[serde(default)]
     pub pages_available: u64,
-    #[serde(alias = "serviceList", alias = "configList", alias = "hosts", alias = "subscribers", alias = "list", default)]
+    #[serde(
+        alias = "serviceList",
+        alias = "configList",
+        alias = "hosts",
+        alias = "subscribers",
+        alias = "list",
+        default
+    )]
     pub page_items: Vec<T>,
 }
 

@@ -1,6 +1,7 @@
 // Common types shared across different registry implementations
 // These types are registry-agnostic and can be mapped to/from Nacos, Consul, etc.
 
+use md5::Digest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -144,7 +145,7 @@ impl ConfigItem {
 
     /// Calculate MD5 from content
     pub fn calculate_md5(&self) -> String {
-        format!("{:x}", md5::compute(&self.content))
+        const_hex::encode(md5::Md5::digest(&self.content))
     }
 }
 

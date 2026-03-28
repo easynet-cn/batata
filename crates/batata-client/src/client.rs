@@ -57,10 +57,10 @@ impl BatataClient {
 
         // Start address server refresh if configured
         if let Some(ref endpoint) = config.address_server_url
-            && config.server_list_refresh_interval.as_millis() > 0 {
-                server_list
-                    .start_refresh_task(endpoint.clone(), config.server_list_refresh_interval);
-            }
+            && config.server_list_refresh_interval.as_millis() > 0
+        {
+            server_list.start_refresh_task(endpoint.clone(), config.server_list_refresh_interval);
+        }
 
         Ok(Self {
             config,
@@ -80,7 +80,13 @@ impl BatataClient {
             grpc.connect().await?;
             self.grpc_config = Some(grpc);
         }
-        Ok(BatataConfigService::new(self.grpc_config.clone().unwrap()))
+        // Safe: we just ensured grpc_config is Some above
+        let grpc = Arc::clone(
+            self.grpc_config
+                .as_ref()
+                .expect("grpc_config just initialized"),
+        );
+        Ok(BatataConfigService::new(grpc))
     }
 
     /// Get (or create) the Naming gRPC service.
@@ -92,7 +98,13 @@ impl BatataClient {
             grpc.connect().await?;
             self.grpc_naming = Some(grpc);
         }
-        Ok(BatataNamingService::new(self.grpc_naming.clone().unwrap()))
+        // Safe: we just ensured grpc_naming is Some above
+        let grpc = Arc::clone(
+            self.grpc_naming
+                .as_ref()
+                .expect("grpc_naming just initialized"),
+        );
+        Ok(BatataNamingService::new(grpc))
     }
 
     /// Create a new HTTP API client for admin/maintainer operations.

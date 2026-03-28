@@ -87,7 +87,7 @@ pub fn compute_md5(content: &str) -> String {
     let mut hasher = Md5::new();
     hasher.update(content.as_bytes());
     let result = hasher.finalize();
-    format!("{:x}", result)
+    const_hex::encode(result)
 }
 
 #[cfg(test)]

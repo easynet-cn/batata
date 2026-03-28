@@ -186,11 +186,84 @@ impl ConsulRaftService for ConsulRaftGrpcService {
 
     async fn install_snapshot(
         &self,
-        _request: Request<Streaming<ProtoInstallSnapshotRequest>>,
+        request: Request<Streaming<ProtoInstallSnapshotRequest>>,
     ) -> Result<Response<ProtoInstallSnapshotResponse>, Status> {
-        Err(Status::unimplemented(
-            "Consul Raft snapshot not yet implemented",
-        ))
+        let raft = self.get_raft().await?;
+        let mut stream = request.into_inner();
+
+        // Collect all snapshot chunks
+        let mut snapshot_data = Vec::new();
+        let mut vote = None;
+        let mut meta = None;
+        let mut offset = 0u64;
+
+        loop {
+            match stream.message().await {
+                Ok(Some(chunk)) => {
+                    if meta.is_none()
+                        && let Some(proto_meta) = chunk.meta
+                    {
+                        meta = Some(proto_meta);
+                    }
+
+                    if vote.is_none() {
+                        vote = chunk.vote.map(|v| {
+                            proto_convert::from_proto_vote(Some(v))
+                                .unwrap_or_else(|| openraft::Vote::new(chunk.term, chunk.leader_id))
+                        });
+                    }
+
+                    offset = chunk.offset;
+                    snapshot_data.extend_from_slice(&chunk.data);
+
+                    if chunk.done {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    error!("Consul Raft: snapshot stream error: {}", e);
+                    return Err(Status::internal(e.to_string()));
+                }
+            }
+        }
+
+        let vote = vote.ok_or_else(|| Status::invalid_argument("Missing vote in snapshot"))?;
+        let proto_meta =
+            meta.ok_or_else(|| Status::invalid_argument("Missing meta in snapshot"))?;
+
+        // Convert proto meta to openraft SnapshotMeta
+        let last_log_id = proto_convert::from_proto_log_id(proto_meta.last_log_id);
+        let last_membership =
+            openraft::StoredMembership::new(None, openraft::Membership::new(vec![], None));
+
+        let snapshot_meta = openraft::SnapshotMeta {
+            last_log_id,
+            last_membership,
+            snapshot_id: proto_meta.snapshot_id,
+        };
+
+        let install_req = openraft::raft::InstallSnapshotRequest {
+            vote,
+            meta: snapshot_meta,
+            offset,
+            data: snapshot_data,
+            done: true,
+        };
+
+        let response = raft
+            .raft()
+            .install_snapshot(install_req)
+            .await
+            .map_err(|e| {
+                error!("Consul Raft InstallSnapshot failed: {}", e);
+                Status::internal(e.to_string())
+            })?;
+
+        Ok(Response::new(ProtoInstallSnapshotResponse {
+            term: response.vote.leader_id().term,
+            vote: Some(proto_convert::to_proto_vote(&response.vote)),
+        }))
     }
 }
 

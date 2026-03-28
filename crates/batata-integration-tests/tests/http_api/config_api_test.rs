@@ -6,6 +6,7 @@ use batata_integration_tests::{
     CONSOLE_BASE_URL, DEFAULT_GROUP, MAIN_BASE_URL, TEST_NAMESPACE, TEST_PASSWORD, TEST_USERNAME,
     TestClient, unique_data_id,
 };
+use md5::Digest;
 
 /// Create an authenticated test client for the main API server
 async fn authenticated_client() -> TestClient {
@@ -523,7 +524,7 @@ async fn test_config_md5() {
     );
 
     // Verify MD5 matches the expected value for the content
-    let expected_md5 = format!("{:x}", md5::compute(content.as_bytes()));
+    let expected_md5 = const_hex::encode(md5::Md5::digest(content.as_bytes()));
     assert_eq!(
         md5_str, expected_md5,
         "MD5 should match md5 of content '{}': expected '{}', got '{}'",

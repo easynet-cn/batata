@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dashmap::DashMap;
-use std::sync::RwLock;
+use parking_lot::RwLock;
 
 /// Health status of a server
 #[derive(Debug, Clone)]
@@ -81,7 +81,7 @@ impl ServerListManager {
 
     /// Get the next healthy server using round-robin
     pub fn next_server(&self) -> Option<String> {
-        let list = self.server_list.read().unwrap();
+        let list = self.server_list.read();
         if list.is_empty() {
             return None;
         }
@@ -139,7 +139,7 @@ impl ServerListManager {
 
     /// Get all server addresses
     pub fn all_servers(&self) -> Vec<String> {
-        self.server_list.read().unwrap().clone()
+        self.server_list.read().clone()
     }
 
     /// Get only healthy server addresses
@@ -180,7 +180,7 @@ impl ServerListManager {
             self.servers.remove(&addr);
         }
 
-        *self.server_list.write().unwrap() = addrs;
+        *self.server_list.write() = addrs;
     }
 
     /// Start periodic server list refresh from an endpoint

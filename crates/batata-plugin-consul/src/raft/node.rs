@@ -18,11 +18,12 @@ use super::state_machine::ConsulStateMachine;
 use super::types::*;
 use crate::index_provider::ConsulTableIndex;
 
-#[allow(dead_code)]
 pub struct ConsulRaftNode {
     node_id: NodeId,
+    #[allow(dead_code)]
     addr: String,
     raft: ConsulRaft,
+    #[allow(dead_code)]
     data_dir: PathBuf,
 }
 

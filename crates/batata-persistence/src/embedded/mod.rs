@@ -1,6 +1,7 @@
 // Embedded persistence backend using RocksDB
 // Provides standalone (single-node) storage without an external database
 
+use md5::Digest;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -74,7 +75,7 @@ impl EmbeddedPersistService {
 
     /// Compute MD5 hash of content
     fn compute_md5(content: &str) -> String {
-        format!("{:x}", md5::compute(content.as_bytes()))
+        const_hex::encode(md5::Md5::digest(content.as_bytes()))
     }
 
     /// Convert a JSON value from RocksDB to ConfigStorageData

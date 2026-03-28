@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::model::*;
-use batata_server_common::model::response::RestResult;
+use batata_server_common::model::response::Result as ApiResult;
 
 /// MCP server change event for subscriptions
 #[derive(Debug, Clone)]
@@ -652,10 +652,10 @@ pub async fn register_server(
     debug!(server_name = %body.name, "Registering MCP server");
 
     match registry.register(body.into_inner()) {
-        Ok(server) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
+        Ok(server) => HttpResponse::Ok().json(ApiResult::success(server)),
         Err(e) => {
             warn!(error = %e, "Failed to register MCP server");
-            HttpResponse::BadRequest().json(RestResult::<()>::err(400, &e))
+            ApiResult::<String>::http_response(400, 400, e.to_string(), String::new())
         }
     }
 }
@@ -671,10 +671,10 @@ pub async fn update_server(
     debug!(server_name = %name, namespace = %namespace, "Updating MCP server");
 
     match registry.update(&namespace, &name, body.into_inner()) {
-        Ok(server) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
+        Ok(server) => HttpResponse::Ok().json(ApiResult::success(server)),
         Err(e) => {
             warn!(error = %e, "Failed to update MCP server");
-            HttpResponse::NotFound().json(RestResult::<()>::err(404, &e))
+            ApiResult::<String>::http_response(404, 404, e.to_string(), String::new())
         }
     }
 }
@@ -689,10 +689,10 @@ pub async fn deregister_server(
     debug!(server_name = %name, namespace = %namespace, "Deregistering MCP server");
 
     match registry.deregister(&namespace, &name) {
-        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
+        Ok(()) => HttpResponse::Ok().json(ApiResult::success(true)),
         Err(e) => {
             warn!(error = %e, "Failed to deregister MCP server");
-            HttpResponse::NotFound().json(RestResult::<()>::err(404, &e))
+            ApiResult::<String>::http_response(404, 404, e.to_string(), String::new())
         }
     }
 }
@@ -706,11 +706,13 @@ pub async fn get_server(
     let (namespace, name) = path.into_inner();
 
     match registry.get(&namespace, &name) {
-        Some(server) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
-        None => HttpResponse::NotFound().json(RestResult::<()>::err(
+        Some(server) => HttpResponse::Ok().json(ApiResult::success(server)),
+        None => ApiResult::<String>::http_response(
             404,
-            &format!("Server '{}' not found in namespace '{}'", name, namespace),
-        )),
+            404,
+            format!("Server '{}' not found in namespace '{}'", name, namespace),
+            String::new(),
+        ),
     }
 }
 
@@ -721,7 +723,7 @@ pub async fn list_servers(
     query: web::Query<McpServerQuery>,
 ) -> HttpResponse {
     let result = registry.list(&query.into_inner());
-    HttpResponse::Ok().json(RestResult::ok(Some(result)))
+    HttpResponse::Ok().json(ApiResult::success(result))
 }
 
 /// Import MCP servers from JSON config
@@ -733,14 +735,14 @@ pub async fn import_servers(
     debug!("Importing MCP servers");
 
     let result = registry.import(body.into_inner());
-    HttpResponse::Ok().json(RestResult::ok(Some(result)))
+    HttpResponse::Ok().json(ApiResult::success(result))
 }
 
 /// Get MCP registry statistics
 #[get("/v3/ai/mcp/stats")]
 pub async fn get_stats(registry: web::Data<Arc<McpServerRegistry>>) -> HttpResponse {
     let stats = registry.stats();
-    HttpResponse::Ok().json(RestResult::ok(Some(stats)))
+    HttpResponse::Ok().json(ApiResult::success(stats))
 }
 
 /// Configure MCP routes

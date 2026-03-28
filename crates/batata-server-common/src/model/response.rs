@@ -131,35 +131,6 @@ impl ErrorResult {
     }
 }
 
-/// REST API result type with convenient builder methods
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RestResult<T> {
-    pub code: i32,
-    pub message: Option<String>,
-    pub data: Option<T>,
-}
-
-impl<T> RestResult<T> {
-    /// Create a successful result with data
-    pub fn ok(data: Option<T>) -> Self {
-        RestResult {
-            code: 0,
-            message: Some("success".to_string()),
-            data,
-        }
-    }
-
-    /// Create an error result
-    pub fn err(code: i32, message: &str) -> Self {
-        RestResult {
-            code,
-            message: Some(message.to_string()),
-            data: None,
-        }
-    }
-}
-
 /// Console exception handling utilities
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConsoleException {}

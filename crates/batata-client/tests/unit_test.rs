@@ -239,7 +239,7 @@ fn test_instance_info_serialization() {
         metadata: {
             let mut map = std::collections::HashMap::new();
             map.insert("version".to_string(), "1.0".to_string());
-            map
+            Some(map)
         },
         instance_heart_beat_interval: 5000,
         instance_heart_beat_timeout: 15000,

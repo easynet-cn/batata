@@ -3,18 +3,23 @@
 /// Owns its own RocksDB instance at `{consul_data_dir}/raft/state/`.
 /// All CreateIndex/ModifyIndex values are set from the Raft log index,
 /// matching Consul's original behavior.
+use std::hash::Hasher;
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
-use openraft::storage::RaftStateMachine;
+use openraft::storage::{RaftSnapshotBuilder, RaftStateMachine, Snapshot};
 use openraft::{EntryPayload, OptionalSend, StorageError, StoredMembership};
 use rocksdb::{ColumnFamilyDescriptor, DB, Options, WriteBatch};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
 use super::types::*;
 use crate::index_provider::{ConsulTable, ConsulTableIndex};
+
+/// Snapshot data: column family name -> list of (key, value) pairs
+type SnapshotCfData = std::collections::HashMap<String, Vec<(Vec<u8>, Vec<u8>)>>;
 
 // Column family names
 const CF_CONSUL_KV: &str = "consul_kv";
@@ -558,10 +563,28 @@ fn rewrite_json_index(json_str: &str, log_index: u64, set_create_index: bool) ->
     }
 }
 
+/// Compute a checksum over data bytes using SipHash (stable, in std)
+fn compute_checksum(data: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hasher.write(data);
+    hasher.finish()
+}
+
+/// Size of the checksum trailer appended to snapshot data (8 bytes for u64)
+const SNAPSHOT_CHECKSUM_SIZE: usize = std::mem::size_of::<u64>();
+
 fn sm_error(e: impl std::fmt::Display) -> StorageError<NodeId> {
     StorageError::from_io_error(
         openraft::ErrorSubject::StateMachine,
         openraft::ErrorVerb::Write,
+        std::io::Error::other(e.to_string()),
+    )
+}
+
+fn sm_read_error(e: impl std::fmt::Display) -> StorageError<NodeId> {
+    StorageError::from_io_error(
+        openraft::ErrorSubject::StateMachine,
+        openraft::ErrorVerb::Read,
         std::io::Error::other(e.to_string()),
     )
 }
@@ -626,8 +649,6 @@ impl RaftStateMachine<ConsulTypeConfig> for ConsulStateMachine {
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        // The state machine itself implements RaftSnapshotBuilder.
-        // Currently returns an empty snapshot; full implementation TODO.
         ConsulStateMachine {
             db: self.db.clone(),
             last_applied: RwLock::new(*self.last_applied.read().await),
@@ -638,45 +659,146 @@ impl RaftStateMachine<ConsulTypeConfig> for ConsulStateMachine {
 
     async fn begin_receiving_snapshot(
         &mut self,
-    ) -> Result<Box<std::io::Cursor<Vec<u8>>>, StorageError<NodeId>> {
-        Ok(Box::new(std::io::Cursor::new(Vec::new())))
+    ) -> Result<Box<Cursor<Vec<u8>>>, StorageError<NodeId>> {
+        Ok(Box::new(Cursor::new(Vec::new())))
     }
 
     async fn install_snapshot(
         &mut self,
-        _meta: &ConsulSnapshotMeta,
-        _snapshot: Box<std::io::Cursor<Vec<u8>>>,
+        meta: &ConsulSnapshotMeta,
+        snapshot: Box<Cursor<Vec<u8>>>,
     ) -> Result<(), StorageError<NodeId>> {
-        // TODO: Implement snapshot installation
+        let data = snapshot.into_inner();
+
+        if !data.is_empty() {
+            // Validate snapshot integrity checksum
+            let payload = if data.len() > SNAPSHOT_CHECKSUM_SIZE {
+                let (payload, checksum_bytes) = data.split_at(data.len() - SNAPSHOT_CHECKSUM_SIZE);
+                let expected = u64::from_le_bytes(
+                    checksum_bytes
+                        .try_into()
+                        .map_err(|_| sm_read_error("Invalid checksum trailer size"))?,
+                );
+                let actual = compute_checksum(payload);
+                if actual != expected {
+                    error!(
+                        "Consul snapshot checksum mismatch: expected {:#x}, got {:#x}",
+                        expected, actual
+                    );
+                    return Err(sm_read_error(
+                        "Consul snapshot checksum mismatch — data may be corrupted",
+                    ));
+                }
+                info!("Consul snapshot checksum verified ({:#x})", actual);
+                payload
+            } else {
+                warn!("Consul snapshot has no checksum trailer, skipping integrity check");
+                &data
+            };
+
+            // Deserialize the snapshot data
+            let snapshot_data: SnapshotCfData =
+                serde_json::from_slice(payload).map_err(sm_error)?;
+
+            // Atomically clear and restore each column family
+            for (cf_name, cf_data) in snapshot_data {
+                if let Some(cf) = self.db.cf_handle(&cf_name) {
+                    let mut batch = WriteBatch::default();
+
+                    // Delete existing data
+                    let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                    for (key, _) in iter.flatten() {
+                        batch.delete_cf(cf, &key);
+                    }
+
+                    // Restore snapshot data in the same batch
+                    for (key, value) in cf_data {
+                        batch.put_cf(cf, &key, &value);
+                    }
+
+                    self.db.write(batch).map_err(sm_error)?;
+                }
+            }
+        }
+
+        // Update metadata
+        if let Some(log_id) = meta.last_log_id {
+            self.save_last_applied(log_id).await?;
+        }
+        self.save_membership(meta.last_membership.clone()).await?;
+
+        // Re-initialize table indexes from last_applied
+        if let Some(ref la) = *self.last_applied.read().await {
+            self.table_index.update(ConsulTable::KVS, la.index);
+            self.table_index.update(ConsulTable::Sessions, la.index);
+            self.table_index.update(ConsulTable::Catalog, la.index);
+        }
+
+        info!("Consul snapshot installed: {:?}", meta.snapshot_id);
         Ok(())
     }
 
     async fn get_current_snapshot(
         &mut self,
-    ) -> Result<Option<openraft::Snapshot<ConsulTypeConfig>>, StorageError<NodeId>> {
-        // TODO: Implement snapshot retrieval
+    ) -> Result<Option<Snapshot<ConsulTypeConfig>>, StorageError<NodeId>> {
+        // Build a fresh snapshot on demand rather than caching
+        // This is consistent with the main Raft implementation
         Ok(None)
     }
 }
 
-// Snapshot builder — placeholder
-impl openraft::RaftSnapshotBuilder<ConsulTypeConfig> for ConsulStateMachine {
-    async fn build_snapshot(
-        &mut self,
-    ) -> Result<openraft::Snapshot<ConsulTypeConfig>, StorageError<NodeId>> {
-        // TODO: Build actual snapshot from RocksDB
+impl RaftSnapshotBuilder<ConsulTypeConfig> for ConsulStateMachine {
+    async fn build_snapshot(&mut self) -> Result<Snapshot<ConsulTypeConfig>, StorageError<NodeId>> {
         let applied = *self.last_applied.read().await;
         let membership = self.last_membership.read().await.clone();
+
+        let snapshot_id = format!(
+            "consul-{}-{}",
+            applied.map(|l| l.index).unwrap_or(0),
+            chrono::Utc::now().timestamp_millis()
+        );
 
         let meta = ConsulSnapshotMeta {
             last_log_id: applied,
             last_membership: membership,
-            snapshot_id: format!("consul-{}", applied.map(|l| l.index).unwrap_or(0)),
+            snapshot_id: snapshot_id.clone(),
         };
 
-        Ok(openraft::Snapshot {
+        // Serialize all column family data into snapshot
+        let mut snapshot_data: SnapshotCfData = std::collections::HashMap::new();
+
+        for cf_name in [
+            CF_CONSUL_KV,
+            CF_CONSUL_SESSIONS,
+            CF_CONSUL_ACL,
+            CF_CONSUL_QUERIES,
+        ] {
+            if let Some(cf) = self.db.cf_handle(cf_name) {
+                let mut cf_data = Vec::new();
+                let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+                for (key, value) in iter.flatten() {
+                    cf_data.push((key.to_vec(), value.to_vec()));
+                }
+                snapshot_data.insert(cf_name.to_string(), cf_data);
+            }
+        }
+
+        let payload = serde_json::to_vec(&snapshot_data).map_err(sm_error)?;
+
+        // Append 8-byte checksum trailer (SipHash) for integrity validation
+        let checksum = compute_checksum(&payload);
+        let mut data = payload;
+        data.extend_from_slice(&checksum.to_le_bytes());
+
+        info!(
+            "Built Consul snapshot {} with {} bytes",
+            snapshot_id,
+            data.len()
+        );
+
+        Ok(Snapshot {
             meta,
-            snapshot: Box::new(std::io::Cursor::new(Vec::new())),
+            snapshot: Box::new(Cursor::new(data)),
         })
     }
 }

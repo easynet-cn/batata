@@ -1,5 +1,6 @@
 //! ConfigPersistence implementation for ExternalDbPersistService
 
+use md5::Digest;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -254,7 +255,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         encrypted_data_key: &str,
         cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let md5_hash = format!("{:x}", md5::compute(content));
+        let md5_hash = const_hex::encode(md5::Md5::digest(content));
         let tags = normalize_tags(config_tags);
         let now = chrono::Local::now().naive_local();
 
@@ -391,7 +392,7 @@ impl ConfigPersistence for ExternalDbPersistService {
                     group_id: Set(group_id.to_string()),
                     app_name: Set(Some(app_name.to_string())),
                     content: Set(content.to_string()),
-                    md5: Set(Some(format!("{:x}", md5::compute(content)))),
+                    md5: Set(Some(const_hex::encode(md5::Md5::digest(content)))),
                     gmt_create: Set(now),
                     gmt_modified: Set(now),
                     src_user: Set(Some(src_user.to_string())),
@@ -538,7 +539,7 @@ impl ConfigPersistence for ExternalDbPersistService {
         encrypted_data_key: &str,
         cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let md5_hash = format!("{:x}", md5::compute(content));
+        let md5_hash = const_hex::encode(md5::Md5::digest(content));
         let now = chrono::Local::now().naive_local();
 
         let existing = config_info_gray::Entity::find()

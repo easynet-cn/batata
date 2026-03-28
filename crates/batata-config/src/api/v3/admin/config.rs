@@ -395,6 +395,24 @@ async fn update_config(
         );
     }
 
+    if !is_valid(&form.data_id) {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            format!("invalid dataId : {}", form.data_id),
+        );
+    }
+
+    if !is_valid(&form.group_name) {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            format!("invalid group : {}", form.group_name),
+        );
+    }
+
     let mut config_form = form.into_inner();
     if config_form.namespace_id.is_empty() {
         config_form.namespace_id = DEFAULT_NAMESPACE_ID.to_string();
@@ -464,6 +482,24 @@ async fn delete_config(
             .api_type(ApiType::AdminApi)
             .build()
     );
+
+    if params.data_id.is_empty() || params.group_name.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameters 'dataId', 'groupName' are missing",
+        );
+    }
+
+    if !is_valid(&params.data_id) || !is_valid(&params.group_name) {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_VALIDATE_ERROR.code,
+            error::PARAMETER_VALIDATE_ERROR.message.to_string(),
+            "invalid dataId or group",
+        );
+    }
 
     let namespace_id = if params.namespace_id.is_empty() {
         DEFAULT_NAMESPACE_ID.to_string()

@@ -20,7 +20,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 use super::model::*;
-use batata_server_common::model::response::RestResult;
+use batata_server_common::model::response::Result as ApiResult;
 
 /// Prometheus service discovery configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -348,13 +348,13 @@ pub async fn prometheus_sd(
 #[get("/v1/cloud/prometheus/stats")]
 pub async fn prometheus_stats(sd: web::Data<Arc<PrometheusServiceDiscovery>>) -> HttpResponse {
     let stats = sd.stats().await;
-    HttpResponse::Ok().json(RestResult::ok(Some(stats)))
+    HttpResponse::Ok().json(ApiResult::success(stats))
 }
 
 /// Get Prometheus SD configuration
 #[get("/v1/cloud/prometheus/config")]
 pub async fn prometheus_config(sd: web::Data<Arc<PrometheusServiceDiscovery>>) -> HttpResponse {
-    HttpResponse::Ok().json(RestResult::ok(Some(sd.config().clone())))
+    HttpResponse::Ok().json(ApiResult::success(sd.config().clone()))
 }
 
 /// Configure Prometheus routes

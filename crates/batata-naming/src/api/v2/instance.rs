@@ -28,6 +28,62 @@ use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
 use batata_api::naming::NamingServiceProvider;
+use batata_api::validation;
+
+/// Validate common instance parameters (service_name, ip, port).
+/// Returns an error HttpResponse if validation fails, or None if all valid.
+fn validate_instance_params(
+    service_name: &str,
+    ip: &str,
+    port: i32,
+) -> Option<actix_web::HttpResponse> {
+    if service_name.is_empty() {
+        return Some(Result::<String>::http_response(
+            400,
+            error::PARAMETER_MISSING.code,
+            "Required parameter 'serviceName' is missing".to_string(),
+            String::new(),
+        ));
+    }
+
+    if validation::validate_service_name(service_name).is_err() {
+        return Some(Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", service_name),
+            String::new(),
+        ));
+    }
+
+    if ip.is_empty() {
+        return Some(Result::<String>::http_response(
+            400,
+            error::PARAMETER_MISSING.code,
+            "Required parameter 'ip' is missing".to_string(),
+            String::new(),
+        ));
+    }
+
+    if validation::validate_ip(ip).is_err() {
+        return Some(Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid ip : {}", ip),
+            String::new(),
+        ));
+    }
+
+    if port <= 0 {
+        return Some(Result::<String>::http_response(
+            400,
+            error::PARAMETER_MISSING.code,
+            "Required parameter 'port' is invalid".to_string(),
+            String::new(),
+        ));
+    }
+
+    None
+}
 
 use super::model::{
     BatchMetadataParam, InstanceDeregisterParam, InstanceDetailParam, InstanceListParam,
@@ -47,32 +103,8 @@ pub async fn register_instance(
     distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     form: web::Form<InstanceRegisterParam>,
 ) -> impl Responder {
-    // Validate required parameters
-    if form.service_name.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'serviceName' is missing".to_string(),
-            String::new(),
-        );
-    }
-
-    if form.ip.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'ip' is missing".to_string(),
-            String::new(),
-        );
-    }
-
-    if form.port <= 0 {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'port' is invalid".to_string(),
-            String::new(),
-        );
+    if let Some(err) = validate_instance_params(&form.service_name, &form.ip, form.port) {
+        return err;
     }
 
     let namespace_id = form.namespace_id_or_default();
@@ -182,32 +214,8 @@ pub async fn deregister_instance(
     distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     params: web::Query<InstanceDeregisterParam>,
 ) -> impl Responder {
-    // Validate required parameters
-    if params.service_name.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'serviceName' is missing".to_string(),
-            String::new(),
-        );
-    }
-
-    if params.ip.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'ip' is missing".to_string(),
-            String::new(),
-        );
-    }
-
-    if params.port <= 0 {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'port' is invalid".to_string(),
-            String::new(),
-        );
+    if let Some(err) = validate_instance_params(&params.service_name, &params.ip, params.port) {
+        return err;
     }
 
     let namespace_id = params.namespace_id_or_default();
@@ -308,32 +316,8 @@ pub async fn update_instance(
     distro_protocol: Option<web::Data<Arc<DistroProtocol>>>,
     form: web::Form<InstanceUpdateParam>,
 ) -> impl Responder {
-    // Validate required parameters
-    if form.service_name.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'serviceName' is missing".to_string(),
-            String::new(),
-        );
-    }
-
-    if form.ip.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'ip' is missing".to_string(),
-            String::new(),
-        );
-    }
-
-    if form.port <= 0 {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'port' is invalid".to_string(),
-            String::new(),
-        );
+    if let Some(err) = validate_instance_params(&form.service_name, &form.ip, form.port) {
+        return err;
     }
 
     let namespace_id = form.namespace_id_or_default();
@@ -428,32 +412,8 @@ pub async fn get_instance(
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     params: web::Query<InstanceDetailParam>,
 ) -> impl Responder {
-    // Validate required parameters
-    if params.service_name.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'serviceName' is missing".to_string(),
-            String::new(),
-        );
-    }
-
-    if params.ip.is_empty() {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'ip' is missing".to_string(),
-            String::new(),
-        );
-    }
-
-    if params.port <= 0 {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameter 'port' is invalid".to_string(),
-            String::new(),
-        );
+    if let Some(err) = validate_instance_params(&params.service_name, &params.ip, params.port) {
+        return err;
     }
 
     let namespace_id = params.namespace_id_or_default();
@@ -535,6 +495,15 @@ pub async fn get_instance_list(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    if validation::validate_service_name(&params.service_name).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", params.service_name),
             String::new(),
         );
     }
@@ -625,6 +594,15 @@ pub async fn batch_update_metadata(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
+            String::new(),
+        );
+    }
+
+    if validation::validate_service_name(&form.service_name).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", form.service_name),
             String::new(),
         );
     }
@@ -757,6 +735,15 @@ pub async fn batch_delete_metadata(
         );
     }
 
+    if validation::validate_service_name(&params.service_name).is_err() {
+        return Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", params.service_name),
+            String::new(),
+        );
+    }
+
     if params.instances.is_empty() {
         return Result::<String>::http_response(
             400,
@@ -873,13 +860,8 @@ pub async fn patch_instance(
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
     form: web::Form<InstanceUpdateParam>,
 ) -> impl Responder {
-    if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
-        return Result::<String>::http_response(
-            400,
-            error::PARAMETER_MISSING.code,
-            "Required parameters 'serviceName', 'ip', 'port' are missing or invalid".to_string(),
-            String::new(),
-        );
+    if let Some(err) = validate_instance_params(&form.service_name, &form.ip, form.port) {
+        return err;
     }
 
     let namespace_id = form.namespace_id_or_default();
@@ -979,6 +961,15 @@ pub async fn beat_instance(
             400,
             error::PARAMETER_MISSING.code,
             "Required parameter 'serviceName' is missing".to_string(),
+            BeatResponse::default(),
+        );
+    }
+
+    if validation::validate_service_name(&form.service_name).is_err() {
+        return Result::<BeatResponse>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            format!("invalid serviceName : {}", form.service_name),
             BeatResponse::default(),
         );
     }

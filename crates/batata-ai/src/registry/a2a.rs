@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::model::*;
-use batata_server_common::model::response::RestResult;
+use batata_server_common::model::response::Result as ApiResult;
 
 /// Agent card change event for subscriptions
 #[derive(Debug, Clone)]
@@ -615,10 +615,10 @@ pub async fn register_agent(
     debug!(agent_name = %body.card.name, "Registering agent");
 
     match registry.register(body.into_inner()) {
-        Ok(agent) => HttpResponse::Ok().json(RestResult::ok(Some(agent))),
+        Ok(agent) => HttpResponse::Ok().json(ApiResult::success(agent)),
         Err(e) => {
             warn!(error = %e, "Failed to register agent");
-            HttpResponse::BadRequest().json(RestResult::<()>::err(400, &e))
+            ApiResult::<String>::http_response(400, 400, e.to_string(), String::new())
         }
     }
 }
@@ -634,10 +634,10 @@ pub async fn update_agent(
     debug!(agent_name = %name, namespace = %namespace, "Updating agent");
 
     match registry.update(&namespace, &name, body.into_inner()) {
-        Ok(agent) => HttpResponse::Ok().json(RestResult::ok(Some(agent))),
+        Ok(agent) => HttpResponse::Ok().json(ApiResult::success(agent)),
         Err(e) => {
             warn!(error = %e, "Failed to update agent");
-            HttpResponse::NotFound().json(RestResult::<()>::err(404, &e))
+            ApiResult::<String>::http_response(404, 404, e.to_string(), String::new())
         }
     }
 }
@@ -652,10 +652,10 @@ pub async fn deregister_agent(
     debug!(agent_name = %name, namespace = %namespace, "Deregistering agent");
 
     match registry.deregister(&namespace, &name) {
-        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
+        Ok(()) => HttpResponse::Ok().json(ApiResult::success(true)),
         Err(e) => {
             warn!(error = %e, "Failed to deregister agent");
-            HttpResponse::NotFound().json(RestResult::<()>::err(404, &e))
+            ApiResult::<String>::http_response(404, 404, e.to_string(), String::new())
         }
     }
 }
@@ -669,11 +669,13 @@ pub async fn get_agent(
     let (namespace, name) = path.into_inner();
 
     match registry.get(&namespace, &name) {
-        Some(agent) => HttpResponse::Ok().json(RestResult::ok(Some(agent))),
-        None => HttpResponse::NotFound().json(RestResult::<()>::err(
+        Some(agent) => HttpResponse::Ok().json(ApiResult::success(agent)),
+        None => ApiResult::<String>::http_response(
             404,
-            &format!("Agent '{}' not found in namespace '{}'", name, namespace),
-        )),
+            404,
+            format!("Agent '{}' not found in namespace '{}'", name, namespace),
+            String::new(),
+        ),
     }
 }
 
@@ -684,7 +686,7 @@ pub async fn list_agents(
     query: web::Query<AgentQuery>,
 ) -> HttpResponse {
     let result = registry.list(&query.into_inner());
-    HttpResponse::Ok().json(RestResult::ok(Some(result)))
+    HttpResponse::Ok().json(ApiResult::success(result))
 }
 
 /// Find agents by skill
@@ -695,7 +697,7 @@ pub async fn find_agents_by_skill(
 ) -> HttpResponse {
     let skill = path.into_inner();
     let agents = registry.find_by_skill(&skill);
-    HttpResponse::Ok().json(RestResult::ok(Some(agents)))
+    HttpResponse::Ok().json(ApiResult::success(agents))
 }
 
 /// Batch register agents
@@ -707,14 +709,14 @@ pub async fn batch_register_agents(
     debug!("Batch registering agents");
 
     let result = registry.batch_register(body.into_inner());
-    HttpResponse::Ok().json(RestResult::ok(Some(result)))
+    HttpResponse::Ok().json(ApiResult::success(result))
 }
 
 /// Get agent registry statistics
 #[get("/v3/ai/a2a/stats")]
 pub async fn get_stats(registry: web::Data<Arc<AgentRegistry>>) -> HttpResponse {
     let stats = registry.stats();
-    HttpResponse::Ok().json(RestResult::ok(Some(stats)))
+    HttpResponse::Ok().json(ApiResult::success(stats))
 }
 
 /// Configure A2A routes

@@ -6,6 +6,7 @@
 // Allow complex types for snapshot data structures
 #![allow(clippy::type_complexity)]
 
+use md5::Digest;
 use std::hash::Hasher;
 use std::io::Cursor;
 use std::path::Path;
@@ -676,7 +677,7 @@ impl RocksStateMachine {
     ) -> RaftResponse {
         let key = Self::config_gray_key(data_id, group, tenant, gray_name);
         let now = chrono::Utc::now().timestamp_millis();
-        let md5_val = format!("{:x}", md5::compute(content.as_bytes()));
+        let md5_val = const_hex::encode(md5::Md5::digest(content.as_bytes()));
 
         // CAS check: if cas_md5 provided, verify current gray MD5 matches
         if let Some(ref expected_md5) = cas_md5 {

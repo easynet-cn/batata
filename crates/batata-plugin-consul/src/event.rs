@@ -374,7 +374,10 @@ pub async fn list_events(
 
     // Support blocking queries (Watch API)
     if let Some(target_index) = query.index {
-        let timeout = query.wait.as_deref().and_then(ConsulIndexProvider::parse_wait_duration);
+        let timeout = query
+            .wait
+            .as_deref()
+            .and_then(ConsulIndexProvider::parse_wait_duration);
         index_provider
             .wait_for_change(ConsulTable::Catalog, target_index, timeout)
             .await;
@@ -461,7 +464,10 @@ pub async fn list_events_persistent(
 
     // Support blocking queries (Watch API)
     if let Some(target_index) = query.index {
-        let timeout = query.wait.as_deref().and_then(ConsulIndexProvider::parse_wait_duration);
+        let timeout = query
+            .wait
+            .as_deref()
+            .and_then(ConsulIndexProvider::parse_wait_duration);
         index_provider
             .wait_for_change(ConsulTable::Catalog, target_index, timeout)
             .await;

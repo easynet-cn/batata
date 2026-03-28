@@ -253,7 +253,7 @@ impl LocalConfigInfoProcessor {
         let mut hasher = Md5::new();
         hasher.update(s.as_bytes());
         let result = hasher.finalize();
-        hex::encode(&result[..4])
+        const_hex::encode(&result[..4])
     }
 
     /// Read file content
@@ -324,7 +324,7 @@ impl SnapshotManager {
                 let content =
                     fs::read_to_string(&path).map_err(|e| BatataClientError::Other(e.into()))?;
 
-                let md5 = format!("{:x}", Md5::digest(content.as_bytes()));
+                let md5 = const_hex::encode(Md5::digest(content.as_bytes()));
 
                 snapshots.push(SnapshotMetadata {
                     file_path: path,

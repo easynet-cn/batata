@@ -5,6 +5,7 @@
 //! This is the safety net that ensures eventual consistency of the config
 //! cache across cluster nodes.
 
+use md5::Digest;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -109,7 +110,7 @@ async fn reconcile_once(
         match persistence.config_find_one(data_id, group, tenant).await {
             Ok(Some(config)) => {
                 let db_md5 = if config.md5.is_empty() {
-                    format!("{:x}", md5::compute(config.content.as_bytes()))
+                    const_hex::encode(md5::Md5::digest(config.content.as_bytes()))
                 } else {
                     config.md5.clone()
                 };

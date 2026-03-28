@@ -13,7 +13,7 @@ use crate::{
         McpServerOperationService, McpServerRegistry,
         model::{McpDeleteQuery, McpDetailQuery, McpListQuery, McpServerRegistration},
     },
-    model::{common::AppState, response::RestResult},
+    model::{common::AppState, response::Result},
     secured,
 };
 
@@ -47,10 +47,10 @@ async fn list_mcp(
             page_no,
             page_size,
         );
-        HttpResponse::Ok().json(RestResult::ok(Some(result)))
+        HttpResponse::Ok().json(Result::success(result))
     } else {
         let result = registry.list_with_search(&q);
-        HttpResponse::Ok().json(RestResult::ok(Some(result)))
+        HttpResponse::Ok().json(Result::success(result))
     }
 }
 
@@ -83,20 +83,20 @@ async fn get_mcp(
             )
             .await
         {
-            Ok(Some(server)) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
-            Ok(None) => {
-                HttpResponse::NotFound().json(RestResult::<()>::err(404, "MCP server not found"))
-            }
-            Err(e) => {
-                HttpResponse::InternalServerError().json(RestResult::<()>::err(500, &e.to_string()))
-            }
+            Ok(Some(server)) => HttpResponse::Ok().json(Result::success(server)),
+            Ok(None) => Result::<()>::http_not_found(
+                &batata_common::error::MCP_SERVER_NOT_FOUND,
+                "MCP server not found",
+            ),
+            Err(e) => Result::<()>::http_internal_error(e),
         }
     } else {
         match registry.get_by_query(&q) {
-            Some(server) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
-            None => {
-                HttpResponse::NotFound().json(RestResult::<()>::err(404, "MCP server not found"))
-            }
+            Some(server) => HttpResponse::Ok().json(Result::success(server)),
+            None => Result::<()>::http_not_found(
+                &batata_common::error::MCP_SERVER_NOT_FOUND,
+                "MCP server not found",
+            ),
         }
     }
 }
@@ -128,14 +128,19 @@ async fn create_mcp(
         match svc.create_mcp_server(namespace, &registration).await {
             Ok(id) => {
                 let _ = registry.register(registration);
-                HttpResponse::Ok().json(RestResult::ok(Some(id)))
+                HttpResponse::Ok().json(Result::success(id))
             }
-            Err(e) => HttpResponse::BadRequest().json(RestResult::<()>::err(400, &e.to_string())),
+            Err(e) => Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e.to_string(),
+            ),
         }
     } else {
         match registry.register(registration) {
-            Ok(server) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
-            Err(e) => HttpResponse::BadRequest().json(RestResult::<()>::err(400, &e)),
+            Ok(server) => HttpResponse::Ok().json(Result::success(server)),
+            Err(e) => {
+                Result::<()>::http_bad_request(&batata_common::error::PARAMETER_VALIDATE_ERROR, e)
+            }
         }
     }
 }
@@ -167,14 +172,17 @@ async fn update_mcp(
         match svc.update_mcp_server(namespace, &registration).await {
             Ok(()) => {
                 let _ = registry.update(namespace, &name, registration);
-                HttpResponse::Ok().json(RestResult::ok(Some(true)))
+                HttpResponse::Ok().json(Result::success(true))
             }
-            Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e.to_string())),
+            Err(e) => Result::<()>::http_not_found(
+                &batata_common::error::MCP_SERVER_NOT_FOUND,
+                e.to_string(),
+            ),
         }
     } else {
         match registry.update(namespace, &name, registration) {
-            Ok(server) => HttpResponse::Ok().json(RestResult::ok(Some(server))),
-            Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+            Ok(server) => HttpResponse::Ok().json(Result::success(server)),
+            Err(e) => Result::<()>::http_not_found(&batata_common::error::MCP_SERVER_NOT_FOUND, e),
         }
     }
 }
@@ -212,14 +220,17 @@ async fn delete_mcp(
         {
             Ok(()) => {
                 let _ = registry.delete_by_query(&q);
-                HttpResponse::Ok().json(RestResult::ok(Some(true)))
+                HttpResponse::Ok().json(Result::success(true))
             }
-            Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e.to_string())),
+            Err(e) => Result::<()>::http_not_found(
+                &batata_common::error::MCP_SERVER_NOT_FOUND,
+                e.to_string(),
+            ),
         }
     } else {
         match registry.delete_by_query(&q) {
-            Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
-            Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+            Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+            Err(e) => Result::<()>::http_not_found(&batata_common::error::MCP_SERVER_NOT_FOUND, e),
         }
     }
 }
@@ -254,14 +265,16 @@ async fn register_mcp_endpoint(
     let endpoint_url = match q.endpoint_url {
         Some(url) => url,
         None => {
-            return HttpResponse::BadRequest()
-                .json(RestResult::<()>::err(400, "endpointUrl is required"));
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_MISSING,
+                "endpointUrl is required",
+            );
         }
     };
 
     match registry.register_endpoint(namespace, &q.mcp_name, &endpoint_url) {
-        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
-        Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_not_found(&batata_common::error::MCP_SERVER_NOT_FOUND, e),
     }
 }
 
@@ -285,8 +298,8 @@ async fn deregister_mcp_endpoint(
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
 
     match registry.deregister_endpoint(namespace, &q.mcp_name) {
-        Ok(()) => HttpResponse::Ok().json(RestResult::ok(Some(true))),
-        Err(e) => HttpResponse::NotFound().json(RestResult::<()>::err(404, &e)),
+        Ok(()) => HttpResponse::Ok().json(Result::success(true)),
+        Err(e) => Result::<()>::http_not_found(&batata_common::error::MCP_SERVER_NOT_FOUND, e),
     }
 }
 

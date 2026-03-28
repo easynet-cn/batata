@@ -34,6 +34,20 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         }));
     }
 
+    if batata_api::validation::validate_username(&username).is_err() {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "code": 400,
+            "message": format!("invalid username format: must be alphanumeric, _, -, @, . (max {} chars)", batata_api::validation::MAX_USERNAME_LENGTH)
+        }));
+    }
+
+    if batata_api::validation::validate_password(&password).is_err() {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "code": 400,
+            "message": "invalid password: must be 6-128 characters"
+        }));
+    }
+
     // Check if a global admin already exists
     let has_admin = match data.persistence().role_has_global_admin().await {
         Ok(v) => v,

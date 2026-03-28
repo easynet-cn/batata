@@ -7,6 +7,7 @@
 //! - Quick startup by loading cache from persistence
 //! - Accurate change detection for long-polling notifications
 
+use md5::Digest;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
@@ -89,7 +90,7 @@ impl ConfigCacheService {
         encrypted_data_key: &str,
     ) -> bool {
         let key = Self::build_key(tenant, group, data_id);
-        let new_md5 = format!("{:x}", md5::compute(content.as_bytes()));
+        let new_md5 = const_hex::encode(md5::Md5::digest(content.as_bytes()));
 
         if let Some(mut existing) = self.cache.get_mut(&key) {
             // Check if this update is outdated
@@ -153,7 +154,7 @@ impl ConfigCacheService {
         encrypted_data_key: &str,
     ) {
         let key = Self::build_key(tenant, group, data_id);
-        let new_md5 = format!("{:x}", md5::compute(content.as_bytes()));
+        let new_md5 = const_hex::encode(md5::Md5::digest(content.as_bytes()));
 
         let entry = self.cache.entry(key).or_insert_with(|| CacheItem {
             md5: String::new(),
@@ -300,7 +301,7 @@ impl ConfigCacheService {
 
             for config in &configs {
                 let md5 = if config.md5.is_empty() {
-                    format!("{:x}", md5::compute(config.content.as_bytes()))
+                    const_hex::encode(md5::Md5::digest(config.content.as_bytes()))
                 } else {
                     config.md5.clone()
                 };
@@ -403,7 +404,10 @@ mod tests {
 
         let md5 = cache.get_md5("public", "DEFAULT_GROUP", "app.yaml");
         assert!(md5.is_some());
-        assert_eq!(md5.unwrap(), format!("{:x}", md5::compute("key=value")));
+        assert_eq!(
+            md5.unwrap(),
+            const_hex::encode(md5::Md5::digest("key=value"))
+        );
     }
 
     #[test]
@@ -430,7 +434,7 @@ mod tests {
         assert!(!changed);
         // Should still have the original MD5
         let md5 = cache.get_md5("t", "g", "d").unwrap();
-        assert_eq!(md5, format!("{:x}", md5::compute("content")));
+        assert_eq!(md5, const_hex::encode(md5::Md5::digest("content")));
     }
 
     #[test]
@@ -447,7 +451,7 @@ mod tests {
     fn test_has_changed() {
         let cache = ConfigCacheService::new();
         cache.dump("t", "g", "d", "content", 1000, "text", "");
-        let correct_md5 = format!("{:x}", md5::compute("content"));
+        let correct_md5 = const_hex::encode(md5::Md5::digest("content"));
 
         assert!(!cache.has_changed("t", "g", "d", &correct_md5));
         assert!(cache.has_changed("t", "g", "d", "wrong_md5"));
@@ -460,7 +464,7 @@ mod tests {
         cache.dump("t", "g", "d1", "content1", 1000, "text", "");
         cache.dump("t", "g", "d2", "content2", 1000, "text", "");
 
-        let md5_1 = format!("{:x}", md5::compute("content1"));
+        let md5_1 = const_hex::encode(md5::Md5::digest("content1"));
 
         let configs = vec![
             ("t".into(), "g".into(), "d1".into(), md5_1.clone()), // unchanged
@@ -514,7 +518,10 @@ mod tests {
         assert_eq!(item.gray_items.len(), 1);
 
         let gray = item.gray_items.get("beta").unwrap();
-        assert_eq!(gray.md5, format!("{:x}", md5::compute("gray_content")));
+        assert_eq!(
+            gray.md5,
+            const_hex::encode(md5::Md5::digest("gray_content"))
+        );
         assert_eq!(gray.gray_rule, "beta_rule");
     }
 
@@ -548,7 +555,10 @@ mod tests {
         cache.dump_gray("t", "g", "d1", "beta", "gray_content", 1000, "rule", "");
 
         let md5 = cache.get_gray_md5("t", "g", "d1", "beta");
-        assert_eq!(md5, Some(format!("{:x}", md5::compute("gray_content"))));
+        assert_eq!(
+            md5,
+            Some(const_hex::encode(md5::Md5::digest("gray_content")))
+        );
 
         assert!(cache.get_gray_md5("t", "g", "d1", "nonexistent").is_none());
         assert!(cache.get_gray_md5("t", "g", "missing", "beta").is_none());

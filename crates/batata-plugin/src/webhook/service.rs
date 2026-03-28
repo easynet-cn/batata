@@ -133,7 +133,7 @@ fn compute_signature(payload: &str, secret: &str) -> String {
     mac.update(payload.as_bytes());
     let result = mac.finalize();
 
-    hex::encode(result.into_bytes())
+    const_hex::encode(result.into_bytes())
 }
 
 /// Default webhook plugin implementation

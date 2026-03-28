@@ -149,13 +149,15 @@ impl BatataHttpClient {
             token: RwLock::new(None),
         };
 
-        if !use_identity && !client_config.username.is_empty()
-            && let Err(e) = instance.authenticate().await {
-                tracing::warn!(
-                    "Initial authentication failed (will retry on demand): {}",
-                    e
-                );
-            }
+        if !use_identity
+            && !client_config.username.is_empty()
+            && let Err(e) = instance.authenticate().await
+        {
+            tracing::warn!(
+                "Initial authentication failed (will retry on demand): {}",
+                e
+            );
+        }
 
         Ok(instance)
     }

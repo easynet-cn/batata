@@ -1,3 +1,4 @@
+use md5::Digest;
 //! Advanced Config Service Functional Tests
 //!
 //! Tests for config types, large content, concurrency, special characters,
@@ -352,7 +353,7 @@ async fn test_config_cas_with_type() {
     // Get content and compute MD5
     let content = svc.get_config(&data_id, GROUP, TENANT).await.unwrap();
     assert_eq!(content, initial_content, "initial content should match");
-    let md5 = format!("{:x}", md5::compute(content.as_bytes()));
+    let md5 = const_hex::encode(md5::Md5::digest(content.as_bytes()));
 
     // CAS update with correct MD5 and type
     let ok = svc

@@ -433,8 +433,7 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
 
             // Check TPS limits before processing
             let client_ip = &connection.meta_info.remote_ip;
-            self
-                .handler_registry
+            self.handler_registry
                 .check_tps(message_type, client_ip)
                 .await?;
 

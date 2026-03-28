@@ -33,7 +33,7 @@ reqwest = { workspace = true }
 # Crypto for webhooks
 hmac = { workspace = true }
 sha2 = { workspace = true }
-hex = { workspace = true }
+const-hex = { workspace = true }
 
 # Random for jitter
 rand = { workspace = true }

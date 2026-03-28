@@ -437,21 +437,13 @@ impl ConnectionManager {
 
                 // Push detection request and mark as success if push succeeds
                 // (the client will respond via bi-stream, which calls touch_connection)
-                match tokio::time::timeout(
-                    detection_timeout,
-                    client.tx.send(Ok(payload)),
-                )
-                .await
-                {
+                match tokio::time::timeout(detection_timeout, client.tx.send(Ok(payload))).await {
                     Ok(Ok(_)) => {
                         tracing::debug!("Sent detection request to {}", connection_id);
                         success_ids.insert(connection_id.clone());
                     }
                     _ => {
-                        tracing::debug!(
-                            "Failed to send detection request to {}",
-                            connection_id
-                        );
+                        tracing::debug!("Failed to send detection request to {}", connection_id);
                     }
                 }
             }
