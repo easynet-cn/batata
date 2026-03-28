@@ -23,7 +23,7 @@ struct CachedPermissions {
 static PERMISSIONS_CACHE: LazyLock<Cache<u64, CachedPermissions>> = LazyLock::new(|| {
     Cache::builder()
         .max_capacity(20_000)
-        .time_to_live(Duration::from_secs(300))
+        .time_to_live(Duration::from_secs(60))
         .build()
 });
 

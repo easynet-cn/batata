@@ -1581,11 +1581,11 @@ impl Configuration {
     // Auth Cache Advanced
     // ========================================================================
 
-    /// Token cache TTL in seconds
+    /// Token cache TTL in seconds (default: 60s for cluster-safe operation)
     pub fn auth_token_cache_ttl_secs(&self) -> u64 {
         self.config
             .get_int("batata.core.auth.cache.token_ttl_secs")
-            .unwrap_or(300) as u64
+            .unwrap_or(60) as u64
     }
 
     /// Token blacklist max capacity
@@ -1793,11 +1793,11 @@ impl Configuration {
             .unwrap_or(10000) as u64
     }
 
-    /// gRPC auth permission check cache TTL in seconds (default: 300)
+    /// gRPC auth permission check cache TTL in seconds (default: 60s for cluster-safe operation)
     pub fn grpc_auth_cache_ttl_secs(&self) -> u64 {
         self.config
             .get_int("batata.core.auth.cache.grpc_permission_ttl_secs")
-            .unwrap_or(300) as u64
+            .unwrap_or(60) as u64
     }
 
     /// Build a RocksDB configuration struct from the current config values

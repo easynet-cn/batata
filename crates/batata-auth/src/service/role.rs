@@ -15,11 +15,11 @@ use dashmap::DashMap;
 
 use crate::model::{GLOBAL_ADMIN_ROLE, RoleInfo};
 
-// Cache for user roles with 5-minute TTL
+// Cache for user roles with 60-second TTL (cluster-safe default)
 static ROLES_CACHE: LazyLock<Cache<String, Vec<RoleInfo>>> = LazyLock::new(|| {
     Cache::builder()
         .max_capacity(50_000)
-        .time_to_live(Duration::from_secs(300))
+        .time_to_live(Duration::from_secs(60))
         .build()
 });
 

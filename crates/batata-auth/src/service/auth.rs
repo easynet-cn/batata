@@ -29,7 +29,7 @@ impl Default for AuthCacheConfig {
     fn default() -> Self {
         Self {
             token_capacity: 50_000,
-            token_ttl_secs: 300,
+            token_ttl_secs: 60,
             blacklist_capacity: 100_000,
             blacklist_ttl_secs: 86400,
         }

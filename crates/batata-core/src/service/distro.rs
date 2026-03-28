@@ -654,7 +654,15 @@ impl DistroProtocol {
                     }
                 }
 
-                tokio::time::sleep(config.verify_interval).await;
+                // Add jitter to prevent thundering herd when multiple nodes
+                // start their verify loops at the same time
+                let jitter_ms = {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    std::time::SystemTime::now().hash(&mut hasher);
+                    (hasher.finish() % 2000) as u64
+                };
+                tokio::time::sleep(config.verify_interval + Duration::from_millis(jitter_ms)).await;
 
                 // Get all members except self
                 let other_members: Vec<String> = members

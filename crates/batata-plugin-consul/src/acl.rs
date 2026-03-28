@@ -26,10 +26,10 @@ pub const CONSUL_TOKEN_QUERY: &str = "token";
 /// Well-known accessor ID for the bootstrap management token
 pub const BOOTSTRAP_ACCESSOR_ID: &str = "00000000-0000-0000-0000-000000000001";
 
-// Cache for validated tokens (5 minute TTL)
+// Cache for validated tokens (60-second TTL, cluster-safe default)
 static TOKEN_CACHE: LazyLock<Cache<String, AclToken>> = LazyLock::new(|| {
     Cache::builder()
-        .time_to_live(Duration::from_secs(300))
+        .time_to_live(Duration::from_secs(60))
         .max_capacity(10_000)
         .build()
 });
@@ -509,6 +509,22 @@ query_prefix "" { policy = "write" }
             return Some(token);
         }
 
+        // Fall through to RocksDB for cluster mode:
+        // Raft apply on follower nodes writes to RocksDB but not DashMap.
+        // This read-through ensures tokens created on other nodes are visible.
+        if let Some(ref db) = self.rocks_db {
+            let key = format!("token::{}", secret_id);
+            if let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
+                && let Ok(Some(bytes)) = db.get_cf(cf, key.as_bytes())
+                && let Ok(token) = serde_json::from_slice::<AclToken>(&bytes)
+            {
+                // Populate DashMap and cache for subsequent reads
+                MEMORY_TOKENS.insert(secret_id.to_string(), token.clone());
+                TOKEN_CACHE.insert(secret_id.to_string(), token.clone());
+                return Some(token);
+            }
+        }
+
         None
     }
 
@@ -649,7 +665,23 @@ query_prefix "" { policy = "write" }
 
     /// Get a policy by ID or name
     pub fn get_policy(&self, id_or_name: &str) -> Option<AclPolicy> {
-        MEMORY_POLICIES.get(id_or_name).map(|p| p.clone())
+        if let Some(p) = MEMORY_POLICIES.get(id_or_name) {
+            return Some(p.clone());
+        }
+
+        // Fall through to RocksDB for cluster mode
+        if let Some(ref db) = self.rocks_db {
+            let key = format!("policy::{}", id_or_name);
+            if let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
+                && let Ok(Some(bytes)) = db.get_cf(cf, key.as_bytes())
+                && let Ok(policy) = serde_json::from_slice::<AclPolicy>(&bytes)
+            {
+                MEMORY_POLICIES.insert(id_or_name.to_string(), policy.clone());
+                return Some(policy);
+            }
+        }
+
+        None
     }
 
     /// List all policies
@@ -702,7 +734,23 @@ query_prefix "" { policy = "write" }
 
     /// Get a role by ID or name
     pub fn get_role(&self, id_or_name: &str) -> Option<AclRole> {
-        MEMORY_ROLES.get(id_or_name).map(|r| r.clone())
+        if let Some(r) = MEMORY_ROLES.get(id_or_name) {
+            return Some(r.clone());
+        }
+
+        // Fall through to RocksDB for cluster mode
+        if let Some(ref db) = self.rocks_db {
+            let key = format!("role::{}", id_or_name);
+            if let Some(cf) = db.cf_handle(CF_CONSUL_ACL)
+                && let Ok(Some(bytes)) = db.get_cf(cf, key.as_bytes())
+                && let Ok(role) = serde_json::from_slice::<AclRole>(&bytes)
+            {
+                MEMORY_ROLES.insert(id_or_name.to_string(), role.clone());
+                return Some(role);
+            }
+        }
+
+        None
     }
 
     /// Update a role
