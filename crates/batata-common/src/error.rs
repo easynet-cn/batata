@@ -325,6 +325,21 @@ pub const AGENT_VERSION_EXIST: ErrorCode<'static> = ErrorCode {
     message: "agent version has existed",
 };
 
+pub const SKILL_NOT_FOUND: ErrorCode<'static> = ErrorCode {
+    code: 50200,
+    message: "skill not found",
+};
+
+pub const SKILL_VERSION_NOT_FOUND: ErrorCode<'static> = ErrorCode {
+    code: 50201,
+    message: "skill version not found",
+};
+
+pub const AGENTSPEC_NOT_FOUND: ErrorCode<'static> = ErrorCode {
+    code: 50300,
+    message: "agentspec not found",
+};
+
 pub const METADATA_ILLEGAL: ErrorCode<'static> = ErrorCode {
     code: 100002,
     message: "Imported metadata is invalid",

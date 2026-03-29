@@ -207,7 +207,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ai_services = match (&app_state.persistence, &naming_service) {
         (Some(persist), Some(ns)) => {
             info!("AI services using config-backed persistence");
-            AIServices::with_persistence(persist.clone(), ns.clone())
+            let mut services = AIServices::with_persistence(persist.clone(), ns.clone());
+            // Skill service requires direct DB connection (ai_resource tables)
+            if let Some(ref db) = persistence_ctx.database_connection {
+                services = services.with_skill_service(Arc::new(db.clone()));
+            }
+            services
         }
         _ => {
             info!("AI services using in-memory storage (no persistence)");

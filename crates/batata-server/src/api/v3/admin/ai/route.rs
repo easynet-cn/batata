@@ -7,4 +7,7 @@ pub fn routes() -> Scope {
         .service(mcp::routes())
         .service(a2a::routes())
         .service(batata_ai::prompt_admin_routes())
+        .service(batata_ai::skill_admin_routes())
+        .service(batata_ai::agentspec_admin_routes())
+        .service(batata_ai::pipeline_admin_routes())
 }

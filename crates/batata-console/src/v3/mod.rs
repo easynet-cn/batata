@@ -4,8 +4,12 @@
 //! These handlers use the AppState and ConsoleDataSource abstraction for data access.
 
 pub mod ai_a2a;
+pub mod ai_agentspec;
+pub mod ai_copilot;
 pub mod ai_mcp;
+pub mod ai_pipeline;
 pub mod ai_plugin;
+pub mod ai_skill;
 pub mod audit;
 pub mod cluster;
 pub mod cmdb;

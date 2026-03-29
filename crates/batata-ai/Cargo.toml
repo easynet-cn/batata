@@ -19,6 +19,7 @@ batata-server-common = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }
+actix-multipart = { workspace = true }
 
 # gRPC
 tonic = { workspace = true }
@@ -47,6 +48,10 @@ futures = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
+
+# ZIP archive support
+zip = { workspace = true }
+base64 = { workspace = true }
 
 # Hashing
 md-5 = { workspace = true }

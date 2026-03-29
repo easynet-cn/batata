@@ -31,7 +31,11 @@ use crate::{
     api::v3::admin::route::admin_routes as v3_admin_routes,
     api::v3::client::route::client_routes as v3_client_routes,
     auth,
-    console::v3::{ai_a2a as console_a2a, ai_mcp as console_mcp, ai_plugin as console_plugin},
+    console::v3::{
+        ai_a2a as console_a2a, ai_agentspec as console_agentspec, ai_copilot as console_copilot,
+        ai_mcp as console_mcp, ai_pipeline as console_pipeline, ai_plugin as console_plugin,
+        ai_skill as console_skill,
+    },
     middleware::{
         auth::Authentication, distro_filter::DistroFilter, rate_limit::RateLimiter,
         tps_control::TpsControlMiddleware, traffic_revise::TrafficReviseFilter,
@@ -297,6 +301,15 @@ pub fn console_server(
         if let Some(ref svc) = ai_services.prompt_service {
             app = app.app_data(web::Data::new(svc.clone()));
         }
+        if let Some(ref svc) = ai_services.skill_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.agentspec_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.pipeline_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
 
         // Inject NamingService if available (not available in console-remote mode)
         if let Some(ref ns) = naming_service {
@@ -311,6 +324,10 @@ pub fn console_server(
                         .service(console_mcp::routes())
                         .service(console_a2a::routes())
                         .service(console_plugin::routes())
+                        .service(console_skill::routes())
+                        .service(console_agentspec::routes())
+                        .service(console_pipeline::routes())
+                        .service(console_copilot::routes())
                         .service(web::scope("/ai").service(batata_ai::prompt_admin_routes())),
                 )
                 .configure(batata_console::configure_v2_console_routes),
@@ -442,6 +459,9 @@ pub struct AIServices {
     pub endpoint_service: Option<Arc<crate::service::ai::AiEndpointService>>,
     pub mcp_index: Option<Arc<crate::service::ai::McpServerIndex>>,
     pub prompt_service: Option<Arc<batata_ai::PromptOperationService>>,
+    pub skill_service: Option<Arc<batata_ai::SkillOperationService>>,
+    pub agentspec_service: Option<Arc<batata_ai::AgentSpecOperationService>>,
+    pub pipeline_service: Option<Arc<batata_ai::PipelineQueryService>>,
 }
 
 impl AIServices {
@@ -455,6 +475,9 @@ impl AIServices {
             endpoint_service: None,
             mcp_index: None,
             prompt_service: None,
+            skill_service: None,
+            agentspec_service: None,
+            pipeline_service: None,
         }
     }
 
@@ -482,7 +505,23 @@ impl AIServices {
             endpoint_service: Some(endpoint_service),
             mcp_index: Some(mcp_index),
             prompt_service: Some(prompt_service),
+            skill_service: None,
+            agentspec_service: None,
+            pipeline_service: None,
         }
+    }
+
+    /// Set the skill, agentspec, and pipeline services (requires DatabaseConnection, only available with external DB)
+    pub fn with_skill_service(
+        mut self,
+        db: Arc<batata_persistence::sea_orm::DatabaseConnection>,
+    ) -> Self {
+        self.skill_service = Some(Arc::new(batata_ai::SkillOperationService::new(db.clone())));
+        self.agentspec_service = Some(Arc::new(batata_ai::AgentSpecOperationService::new(
+            db.clone(),
+        )));
+        self.pipeline_service = Some(Arc::new(batata_ai::PipelineQueryService::new(db)));
+        self
     }
 }
 
@@ -610,6 +649,15 @@ pub fn main_server(
         if let Some(ref svc) = ai_services.prompt_service {
             app = app.app_data(web::Data::new(svc.clone()));
         }
+        if let Some(ref svc) = ai_services.skill_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.agentspec_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.pipeline_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
 
         app.service(
             web::scope(&context_path)
@@ -627,13 +675,19 @@ pub fn main_server(
                         .configure(batata_console::configure_v3_console_routes)
                         .service(console_mcp::routes())
                         .service(console_a2a::routes())
-                        .service(console_plugin::routes()),
+                        .service(console_plugin::routes())
+                        .service(console_skill::routes())
+                        .service(console_agentspec::routes())
+                        .service(console_pipeline::routes())
+                        .service(console_copilot::routes()),
                 )
                 // V3 Admin API routes
                 .service(v3_admin_routes())
                 // V3 Client API routes
                 .service(v3_client_routes()),
         )
+        // Skills Registry (.well-known discovery protocol)
+        .service(batata_ai::skills_registry_routes())
         // Cloud Native Integration API routes (Prometheus SD, Kubernetes Sync)
         .configure(configure_prometheus)
         .configure(configure_kubernetes)

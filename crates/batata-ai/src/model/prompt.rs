@@ -262,20 +262,20 @@ pub fn resolve_target_version(
     label: Option<&str>,
 ) -> Option<String> {
     // Version takes highest priority — must exist in versions list
-    if let Some(v) = version {
-        if !v.is_empty() {
-            return if mapping.versions.contains(&v.to_string()) {
-                Some(v.to_string())
-            } else {
-                None // Version explicitly requested but not found
-            };
-        }
+    if let Some(v) = version
+        && !v.is_empty()
+    {
+        return if mapping.versions.contains(&v.to_string()) {
+            Some(v.to_string())
+        } else {
+            None // Version explicitly requested but not found
+        };
     }
     // Label fallback — must exist in labels map
-    if let Some(l) = label {
-        if !l.is_empty() {
-            return mapping.labels.get(l).cloned();
-        }
+    if let Some(l) = label
+        && !l.is_empty()
+    {
+        return mapping.labels.get(l).cloned();
     }
     // Latest fallback
     mapping.latest_version.clone()

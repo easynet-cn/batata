@@ -2,12 +2,15 @@
 
 pub mod prelude;
 
+pub mod ai_resource;
+pub mod ai_resource_version;
 pub mod config_info;
 pub mod config_info_gray;
 pub mod config_tags_relation;
 pub mod group_capacity;
 pub mod his_config_info;
 pub mod permissions;
+pub mod pipeline_execution;
 pub mod roles;
 pub mod tenant_capacity;
 pub mod tenant_info;

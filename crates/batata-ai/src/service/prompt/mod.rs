@@ -445,14 +445,12 @@ impl PromptOperationService {
 
         if let Some(ref info) = info {
             // If client already has this version (MD5 match), return None (NOT_MODIFIED)
-            if let Some(client) = client_md5 {
-                if !client.is_empty() {
-                    if let Some(ref server_md5) = info.md5 {
-                        if client == server_md5 {
-                            return Ok(None);
-                        }
-                    }
-                }
+            if let Some(client) = client_md5
+                && !client.is_empty()
+                && let Some(ref server_md5) = info.md5
+                && client == server_md5
+            {
+                return Ok(None);
             }
         }
 
@@ -502,7 +500,7 @@ impl PromptOperationService {
         Ok(batata_persistence::model::Page {
             total_count: total,
             page_number: page_no,
-            pages_available: (total + page_size - 1) / page_size,
+            pages_available: total.div_ceil(page_size),
             page_items: summaries,
         })
     }
