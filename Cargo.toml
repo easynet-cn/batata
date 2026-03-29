@@ -18,6 +18,7 @@ members = [
     "crates/batata-mesh",
     "crates/batata-maintainer-client",
     "crates/batata-ai",
+    "crates/batata-copilot",
     "crates/batata-consul-client",
     "crates/batata-migration",
     "crates/batata-server",
@@ -50,6 +51,7 @@ batata-client = { path = "crates/batata-client" }
 batata-maintainer-client = { path = "crates/batata-maintainer-client" }
 batata-mesh = { path = "crates/batata-mesh" }
 batata-ai = { path = "crates/batata-ai" }
+batata-copilot = { path = "crates/batata-copilot" }
 batata-consul-client = { path = "crates/batata-consul-client" }
 batata-migration = { path = "crates/batata-migration" }
 batata-server = { path = "crates/batata-server" }

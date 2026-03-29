@@ -11,7 +11,7 @@ description = "Batata - Nacos-compatible service discovery and configuration man
 default = ["consul", "mesh", "ai", "cloud"]
 consul = ["dep:batata-plugin-consul"]
 mesh = ["dep:batata-mesh"]
-ai = ["dep:batata-ai"]
+ai = ["dep:batata-ai", "dep:batata-copilot"]
 cloud = ["dep:batata-plugin-cloud"]
 full = ["consul", "mesh", "ai", "cloud"]
 
@@ -41,6 +41,7 @@ batata-maintainer-client = { workspace = true }
 
 # Optional internal crates (gated by feature flags)
 batata-ai = { workspace = true, optional = true }
+batata-copilot = { workspace = true, optional = true }
 batata-plugin-consul = { workspace = true, optional = true }
 batata-plugin-cloud = { workspace = true, optional = true }
 batata-mesh = { workspace = true, optional = true }

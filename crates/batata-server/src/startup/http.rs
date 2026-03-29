@@ -32,9 +32,8 @@ use crate::{
     api::v3::client::route::client_routes as v3_client_routes,
     auth,
     console::v3::{
-        ai_a2a as console_a2a, ai_agentspec as console_agentspec, ai_copilot as console_copilot,
-        ai_mcp as console_mcp, ai_pipeline as console_pipeline, ai_plugin as console_plugin,
-        ai_skill as console_skill,
+        ai_a2a as console_a2a, ai_agentspec as console_agentspec, ai_mcp as console_mcp,
+        ai_pipeline as console_pipeline, ai_plugin as console_plugin, ai_skill as console_skill,
     },
     middleware::{
         auth::Authentication, distro_filter::DistroFilter, rate_limit::RateLimiter,
@@ -310,6 +309,16 @@ pub fn console_server(
         if let Some(ref svc) = ai_services.pipeline_service {
             app = app.app_data(web::Data::new(svc.clone()));
         }
+        if let Some(ref mgr) = ai_services.copilot_agent_manager {
+            app = app.app_data(web::Data::new(mgr.clone()));
+        }
+        if let Some(ref svcs) = ai_services.copilot_services {
+            app = app
+                .app_data(web::Data::new(svcs.skill_generation.clone()))
+                .app_data(web::Data::new(svcs.skill_optimization.clone()))
+                .app_data(web::Data::new(svcs.prompt_optimization.clone()))
+                .app_data(web::Data::new(svcs.prompt_debug.clone()));
+        }
 
         // Inject NamingService if available (not available in console-remote mode)
         if let Some(ref ns) = naming_service {
@@ -327,7 +336,7 @@ pub fn console_server(
                         .service(console_skill::routes())
                         .service(console_agentspec::routes())
                         .service(console_pipeline::routes())
-                        .service(console_copilot::routes())
+                        .service(batata_copilot::copilot_console_routes())
                         .service(web::scope("/ai").service(batata_ai::prompt_admin_routes())),
                 )
                 .configure(batata_console::configure_v2_console_routes),
@@ -462,6 +471,17 @@ pub struct AIServices {
     pub skill_service: Option<Arc<batata_ai::SkillOperationService>>,
     pub agentspec_service: Option<Arc<batata_ai::AgentSpecOperationService>>,
     pub pipeline_service: Option<Arc<batata_ai::PipelineQueryService>>,
+    pub copilot_agent_manager: Option<Arc<batata_copilot::CopilotAgentManager>>,
+    pub copilot_services: Option<CopilotServices>,
+}
+
+/// Copilot service bundle (4 services)
+#[derive(Clone)]
+pub struct CopilotServices {
+    pub skill_generation: Arc<batata_copilot::service::SkillGenerationService>,
+    pub skill_optimization: Arc<batata_copilot::service::SkillOptimizationService>,
+    pub prompt_optimization: Arc<batata_copilot::service::PromptOptimizationService>,
+    pub prompt_debug: Arc<batata_copilot::service::PromptDebugService>,
 }
 
 impl AIServices {
@@ -478,6 +498,8 @@ impl AIServices {
             skill_service: None,
             agentspec_service: None,
             pipeline_service: None,
+            copilot_agent_manager: None,
+            copilot_services: None,
         }
     }
 
@@ -508,6 +530,8 @@ impl AIServices {
             skill_service: None,
             agentspec_service: None,
             pipeline_service: None,
+            copilot_agent_manager: None,
+            copilot_services: None,
         }
     }
 
@@ -521,6 +545,32 @@ impl AIServices {
             db.clone(),
         )));
         self.pipeline_service = Some(Arc::new(batata_ai::PipelineQueryService::new(db)));
+        self
+    }
+
+    /// Set copilot services (uses PersistenceService for config storage)
+    pub fn with_copilot(
+        mut self,
+        persistence: Arc<dyn batata_persistence::PersistenceService>,
+    ) -> Self {
+        let config_storage = batata_copilot::CopilotConfigStorage::new(persistence);
+        let agent_manager = Arc::new(batata_copilot::CopilotAgentManager::new(config_storage));
+        let copilot_services = CopilotServices {
+            skill_generation: Arc::new(batata_copilot::service::SkillGenerationService::new(
+                agent_manager.clone(),
+            )),
+            skill_optimization: Arc::new(batata_copilot::service::SkillOptimizationService::new(
+                agent_manager.clone(),
+            )),
+            prompt_optimization: Arc::new(batata_copilot::service::PromptOptimizationService::new(
+                agent_manager.clone(),
+            )),
+            prompt_debug: Arc::new(batata_copilot::service::PromptDebugService::new(
+                agent_manager.clone(),
+            )),
+        };
+        self.copilot_agent_manager = Some(agent_manager);
+        self.copilot_services = Some(copilot_services);
         self
     }
 }
@@ -679,7 +729,7 @@ pub fn main_server(
                         .service(console_skill::routes())
                         .service(console_agentspec::routes())
                         .service(console_pipeline::routes())
-                        .service(console_copilot::routes()),
+                        .service(batata_copilot::copilot_console_routes()),
                 )
                 // V3 Admin API routes
                 .service(v3_admin_routes())

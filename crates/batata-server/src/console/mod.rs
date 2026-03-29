@@ -7,7 +7,6 @@ pub mod client;
 pub mod v3 {
     pub use batata_console::v3::ai_a2a;
     pub use batata_console::v3::ai_agentspec;
-    pub use batata_console::v3::ai_copilot;
     pub use batata_console::v3::ai_mcp;
     pub use batata_console::v3::ai_pipeline;
     pub use batata_console::v3::ai_plugin;

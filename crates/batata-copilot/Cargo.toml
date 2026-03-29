@@ -1,0 +1,39 @@
+[package]
+name = "batata-copilot"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "AI Copilot for Batata - LLM-powered skill/prompt optimization and generation"
+
+[dependencies]
+# Internal crates
+batata-common = { workspace = true }
+batata-persistence = { workspace = true }
+batata-auth = { workspace = true }
+batata-server-common = { workspace = true }
+batata-ai = { workspace = true }
+
+# Web framework
+actix-web = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# HTTP client (for LLM API calls)
+reqwest = { workspace = true, features = ["stream"] }
+
+# Async streaming
+tokio = { workspace = true, features = ["rt", "sync", "macros", "time"] }
+tokio-stream = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+# Time
+chrono = { workspace = true }
