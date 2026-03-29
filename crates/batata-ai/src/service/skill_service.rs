@@ -1,4 +1,4 @@
-//! Skill operation service — DB-backed storage via ai_resource / ai_resource_version tables
+//! Skill operation service — persistence-backed storage via ai_resource / ai_resource_version tables
 //!
 //! Skills use ai_resource (type="skill") for governance metadata and
 //! ai_resource_version for version-specific content with draft→reviewing→online lifecycle.
@@ -6,12 +6,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::model::Page;
-use batata_persistence::sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, prelude::Expr,
-};
+use batata_persistence::PersistenceService;
+use batata_persistence::model::{AiResourceInfo, AiResourceVersionInfo, Page};
 use chrono::Utc;
 use tracing::debug;
 
@@ -19,12 +15,12 @@ use crate::model::skill::*;
 
 /// Skill operation service backed by ai_resource/ai_resource_version tables
 pub struct SkillOperationService {
-    db: Arc<DatabaseConnection>,
+    persistence: Arc<dyn PersistenceService>,
 }
 
 impl SkillOperationService {
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
+    pub fn new(persistence: Arc<dyn PersistenceService>) -> Self {
+        Self { persistence }
     }
 
     // ========================================================================
@@ -35,14 +31,10 @@ impl SkillOperationService {
         &self,
         namespace_id: &str,
         name: &str,
-    ) -> anyhow::Result<Option<ai_resource::Model>> {
-        let result = ai_resource::Entity::find()
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-            .one(self.db.as_ref())
-            .await?;
-        Ok(result)
+    ) -> anyhow::Result<Option<AiResourceInfo>> {
+        self.persistence
+            .ai_resource_find(namespace_id, name, SKILL_TYPE)
+            .await
     }
 
     async fn find_version(
@@ -50,33 +42,23 @@ impl SkillOperationService {
         namespace_id: &str,
         name: &str,
         version: &str,
-    ) -> anyhow::Result<Option<ai_resource_version::Model>> {
-        let result = ai_resource_version::Entity::find()
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(version))
-            .one(self.db.as_ref())
-            .await?;
-        Ok(result)
+    ) -> anyhow::Result<Option<AiResourceVersionInfo>> {
+        self.persistence
+            .ai_resource_version_find(namespace_id, name, SKILL_TYPE, version)
+            .await
     }
 
     async fn list_versions_for_skill(
         &self,
         namespace_id: &str,
         name: &str,
-    ) -> anyhow::Result<Vec<ai_resource_version::Model>> {
-        let results = ai_resource_version::Entity::find()
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-            .order_by(ai_resource_version::Column::GmtModified, Order::Desc)
-            .all(self.db.as_ref())
-            .await?;
-        Ok(results)
+    ) -> anyhow::Result<Vec<AiResourceVersionInfo>> {
+        self.persistence
+            .ai_resource_version_list(namespace_id, name, SKILL_TYPE)
+            .await
     }
 
-    fn parse_version_info(resource: &ai_resource::Model) -> SkillVersionInfo {
+    fn parse_version_info(resource: &AiResourceInfo) -> SkillVersionInfo {
         resource
             .version_info
             .as_deref()
@@ -84,16 +66,16 @@ impl SkillOperationService {
             .unwrap_or_default()
     }
 
-    fn resource_to_summary(resource: &ai_resource::Model) -> SkillSummary {
+    fn resource_to_summary(resource: &AiResourceInfo) -> SkillSummary {
         let vi = Self::parse_version_info(resource);
         SkillSummary {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
-            description: resource.c_desc.clone(),
-            update_time: resource.gmt_modified.map(|dt| dt.to_string()),
+            description: resource.description.clone(),
+            update_time: resource.gmt_modified.clone(),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
-            from: Some(resource.c_from.clone()),
+            from: Some(resource.from.clone()),
             scope: Some(resource.scope.clone()),
             labels: vi.labels,
             editing_version: vi.editing_version,
@@ -103,14 +85,14 @@ impl SkillOperationService {
         }
     }
 
-    fn version_to_summary(v: &ai_resource_version::Model) -> SkillVersionSummary {
+    fn version_to_summary(v: &AiResourceVersionInfo) -> SkillVersionSummary {
         SkillVersionSummary {
             version: v.version.clone(),
             status: v.status.clone(),
             author: v.author.clone(),
-            description: v.c_desc.clone(),
-            create_time: v.gmt_create.map(|dt| dt.to_string()),
-            update_time: v.gmt_modified.map(|dt| dt.to_string()),
+            description: v.description.clone(),
+            create_time: v.gmt_create.clone(),
+            update_time: v.gmt_modified.clone(),
             publish_pipeline_info: v.publish_pipeline_info.clone(),
             download_count: v.download_count,
         }
@@ -129,26 +111,20 @@ impl SkillOperationService {
         version_info: &SkillVersionInfo,
     ) -> anyhow::Result<bool> {
         let vi_json = serde_json::to_string(version_info)?;
-        let now = Utc::now().naive_utc();
 
-        let result = ai_resource::Entity::update_many()
-            .col_expr(
-                ai_resource::Column::VersionInfo,
-                Expr::value(vi_json.clone()),
+        let ok = self
+            .persistence
+            .ai_resource_update_version_info_cas(
+                namespace_id,
+                name,
+                SKILL_TYPE,
+                expected_meta_version,
+                &vi_json,
+                expected_meta_version + 1,
             )
-            .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
-            .col_expr(
-                ai_resource::Column::MetaVersion,
-                Expr::value(expected_meta_version + 1),
-            )
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-            .filter(ai_resource::Column::MetaVersion.eq(expected_meta_version))
-            .exec(self.db.as_ref())
             .await?;
 
-        if result.rows_affected > 0 {
+        if ok {
             return Ok(true);
         }
 
@@ -158,24 +134,18 @@ impl SkillOperationService {
                 Some(r) => r,
                 None => return Ok(false),
             };
-            let retry_now = Utc::now().naive_utc();
-            let retry_result = ai_resource::Entity::update_many()
-                .col_expr(
-                    ai_resource::Column::VersionInfo,
-                    Expr::value(vi_json.clone()),
+            let ok = self
+                .persistence
+                .ai_resource_update_version_info_cas(
+                    namespace_id,
+                    name,
+                    SKILL_TYPE,
+                    resource.meta_version,
+                    &vi_json,
+                    resource.meta_version + 1,
                 )
-                .col_expr(ai_resource::Column::GmtModified, Expr::value(retry_now))
-                .col_expr(
-                    ai_resource::Column::MetaVersion,
-                    Expr::value(resource.meta_version + 1),
-                )
-                .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource::Column::Name.eq(name))
-                .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-                .filter(ai_resource::Column::MetaVersion.eq(resource.meta_version))
-                .exec(self.db.as_ref())
                 .await?;
-            if retry_result.rows_affected > 0 {
+            if ok {
                 return Ok(true);
             }
         }
@@ -208,11 +178,11 @@ impl SkillOperationService {
         Ok(Some(SkillMeta {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
-            description: resource.c_desc.clone(),
-            update_time: resource.gmt_modified.map(|dt| dt.to_string()),
+            description: resource.description.clone(),
+            update_time: resource.gmt_modified.clone(),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
-            from: Some(resource.c_from.clone()),
+            from: Some(resource.from.clone()),
             scope: Some(resource.scope.clone()),
             labels: vi.labels,
             editing_version: vi.editing_version,
@@ -261,7 +231,7 @@ impl SkillOperationService {
         Ok(Some(Skill {
             namespace_id: namespace_id.to_string(),
             name: name.to_string(),
-            description: ver.c_desc.clone(),
+            description: ver.description.clone(),
             skill_md,
             resource,
         }))
@@ -280,28 +250,21 @@ impl SkillOperationService {
 
         if skill.is_some() {
             // Increment download count on version
-            let _ = ai_resource_version::Entity::update_many()
-                .col_expr(
-                    ai_resource_version::Column::DownloadCount,
-                    Expr::col(ai_resource_version::Column::DownloadCount).add(1),
+            let _ = self
+                .persistence
+                .ai_resource_version_increment_download_count(
+                    namespace_id,
+                    name,
+                    SKILL_TYPE,
+                    version,
+                    1,
                 )
-                .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource_version::Column::Name.eq(name))
-                .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-                .filter(ai_resource_version::Column::Version.eq(version))
-                .exec(self.db.as_ref())
                 .await;
 
             // Increment download count on resource
-            let _ = ai_resource::Entity::update_many()
-                .col_expr(
-                    ai_resource::Column::DownloadCount,
-                    Expr::col(ai_resource::Column::DownloadCount).add(1),
-                )
-                .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource::Column::Name.eq(name))
-                .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-                .exec(self.db.as_ref())
+            let _ = self
+                .persistence
+                .ai_resource_increment_download_count(namespace_id, name, SKILL_TYPE, 1)
                 .await;
         }
 
@@ -312,19 +275,13 @@ impl SkillOperationService {
     /// Order: meta resource first (cuts off discovery), then versions (cleanup).
     pub async fn delete_skill(&self, namespace_id: &str, name: &str) -> anyhow::Result<()> {
         // 1. Delete the resource meta (immediately removes from list/query results)
-        ai_resource::Entity::delete_many()
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_delete(namespace_id, name, SKILL_TYPE)
             .await?;
 
         // 2. Delete all version records
-        ai_resource_version::Entity::delete_many()
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_version_delete_all(namespace_id, name, SKILL_TYPE)
             .await?;
 
         debug!("Deleted skill '{}' in namespace '{}'", name, namespace_id);
@@ -341,43 +298,31 @@ impl SkillOperationService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<SkillSummary>> {
-        let mut query = ai_resource::Entity::find()
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Type.eq(SKILL_TYPE));
+        let search_accurate = search == Some("accurate");
+        let order_by_downloads = order_by == Some("download_count");
 
-        if let Some(name) = skill_name
-            && !name.is_empty()
-        {
-            let search_type = search.unwrap_or("blur");
-            if search_type == "accurate" {
-                query = query.filter(ai_resource::Column::Name.eq(name));
-            } else {
-                query = query.filter(ai_resource::Column::Name.contains(name));
-            }
-        }
+        let name_filter = skill_name.filter(|n| !n.is_empty());
 
-        // Order by
-        match order_by {
-            Some("download_count") => {
-                query = query.order_by(ai_resource::Column::DownloadCount, Order::Desc);
-            }
-            _ => {
-                query = query.order_by(ai_resource::Column::GmtModified, Order::Desc);
-            }
-        }
-
-        let total = query.clone().count(self.db.as_ref()).await?;
-        let offset = (page_no.saturating_sub(1)) * page_size;
-
-        let resources = query
-            .offset(offset)
-            .limit(page_size)
-            .all(self.db.as_ref())
+        let page = self
+            .persistence
+            .ai_resource_list(
+                namespace_id,
+                SKILL_TYPE,
+                name_filter,
+                search_accurate,
+                order_by_downloads,
+                page_no,
+                page_size,
+            )
             .await?;
 
-        let items: Vec<SkillSummary> = resources.iter().map(Self::resource_to_summary).collect();
+        let items: Vec<SkillSummary> = page
+            .page_items
+            .iter()
+            .map(Self::resource_to_summary)
+            .collect();
 
-        Ok(Page::new(total, page_no, page_size, items))
+        Ok(Page::new(page.total_count, page_no, page_size, items))
     }
 
     /// Upload a skill from parsed content (creates resource + draft version)
@@ -410,7 +355,7 @@ impl SkillOperationService {
         let storage = self.skill_to_storage(skill);
         let storage_json = serde_json::to_string(&storage)?;
 
-        let now = Utc::now().naive_utc();
+        let now = Utc::now().naive_utc().to_string();
 
         if let Some(res) = existing {
             let mut vi = Self::parse_version_info(&res);
@@ -425,55 +370,57 @@ impl SkillOperationService {
             };
             let vi_json = serde_json::to_string(&vi)?;
 
-            let resource = ai_resource::ActiveModel {
-                gmt_create: Set(Some(now)),
-                gmt_modified: Set(Some(now)),
-                name: Set(name.to_string()),
-                r#type: Set(SKILL_TYPE.to_string()),
-                c_desc: Set(skill.description.clone()),
-                status: Set(Some(RESOURCE_STATUS_ENABLE.to_string())),
-                namespace_id: Set(namespace_id.to_string()),
-                c_from: Set(SKILL_DEFAULT_FROM.to_string()),
-                version_info: Set(Some(vi_json)),
-                meta_version: Set(1),
-                scope: Set(SCOPE_PRIVATE.to_string()),
-                owner: Set(author.to_string()),
-                download_count: Set(0),
-                ..Default::default()
+            let info = AiResourceInfo {
+                id: 0,
+                name: name.to_string(),
+                resource_type: SKILL_TYPE.to_string(),
+                description: skill.description.clone(),
+                status: Some(RESOURCE_STATUS_ENABLE.to_string()),
+                namespace_id: namespace_id.to_string(),
+                biz_tags: None,
+                ext: None,
+                from: SKILL_DEFAULT_FROM.to_string(),
+                version_info: Some(vi_json),
+                meta_version: 1,
+                scope: SCOPE_PRIVATE.to_string(),
+                owner: author.to_string(),
+                download_count: 0,
+                gmt_create: Some(now.clone()),
+                gmt_modified: Some(now.clone()),
             };
-            ai_resource::Entity::insert(resource)
-                .exec(self.db.as_ref())
-                .await?;
+            self.persistence.ai_resource_insert(&info).await?;
         }
 
         // Delete existing draft if overwriting
         if overwrite {
-            ai_resource_version::Entity::delete_many()
-                .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource_version::Column::Name.eq(name))
-                .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-                .filter(ai_resource_version::Column::Status.eq(VERSION_STATUS_DRAFT))
-                .exec(self.db.as_ref())
+            self.persistence
+                .ai_resource_version_delete_by_status(
+                    namespace_id,
+                    name,
+                    SKILL_TYPE,
+                    VERSION_STATUS_DRAFT,
+                )
                 .await?;
         }
 
         // Create draft version
-        let ver = ai_resource_version::ActiveModel {
-            gmt_create: Set(Some(now)),
-            gmt_modified: Set(Some(now)),
-            r#type: Set(SKILL_TYPE.to_string()),
-            author: Set(Some(author.to_string())),
-            name: Set(name.to_string()),
-            c_desc: Set(skill.description.clone()),
-            status: Set(VERSION_STATUS_DRAFT.to_string()),
-            version: Set(version.clone()),
-            namespace_id: Set(namespace_id.to_string()),
-            storage: Set(Some(storage_json)),
-            download_count: Set(0),
-            ..Default::default()
+        let ver_info = AiResourceVersionInfo {
+            id: 0,
+            resource_type: SKILL_TYPE.to_string(),
+            author: Some(author.to_string()),
+            name: name.to_string(),
+            description: skill.description.clone(),
+            status: VERSION_STATUS_DRAFT.to_string(),
+            version: version.clone(),
+            namespace_id: namespace_id.to_string(),
+            storage: Some(storage_json),
+            publish_pipeline_info: None,
+            download_count: 0,
+            gmt_create: Some(now.clone()),
+            gmt_modified: Some(now),
         };
-        ai_resource_version::Entity::insert(ver)
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_version_insert(&ver_info)
             .await?;
 
         debug!(
@@ -513,7 +460,7 @@ impl SkillOperationService {
             anyhow::bail!("Version '{}' already exists for skill '{}'", version, name);
         }
 
-        let now = Utc::now().naive_utc();
+        let now = Utc::now().naive_utc().to_string();
 
         // Build storage from initial content or fork from base version
         let storage_json = if let Some(bv) = based_on_version {
@@ -552,44 +499,45 @@ impl SkillOperationService {
             };
             let vi_json = serde_json::to_string(&vi)?;
 
-            let resource = ai_resource::ActiveModel {
-                gmt_create: Set(Some(now)),
-                gmt_modified: Set(Some(now)),
-                name: Set(name.to_string()),
-                r#type: Set(SKILL_TYPE.to_string()),
-                c_desc: Set(initial_content.and_then(|s| s.description.clone())),
-                status: Set(Some(RESOURCE_STATUS_ENABLE.to_string())),
-                namespace_id: Set(namespace_id.to_string()),
-                c_from: Set(SKILL_DEFAULT_FROM.to_string()),
-                version_info: Set(Some(vi_json)),
-                meta_version: Set(1),
-                scope: Set(SCOPE_PRIVATE.to_string()),
-                owner: Set(author.to_string()),
-                download_count: Set(0),
-                ..Default::default()
+            let info = AiResourceInfo {
+                id: 0,
+                name: name.to_string(),
+                resource_type: SKILL_TYPE.to_string(),
+                description: initial_content.and_then(|s| s.description.clone()),
+                status: Some(RESOURCE_STATUS_ENABLE.to_string()),
+                namespace_id: namespace_id.to_string(),
+                biz_tags: None,
+                ext: None,
+                from: SKILL_DEFAULT_FROM.to_string(),
+                version_info: Some(vi_json),
+                meta_version: 1,
+                scope: SCOPE_PRIVATE.to_string(),
+                owner: author.to_string(),
+                download_count: 0,
+                gmt_create: Some(now.clone()),
+                gmt_modified: Some(now.clone()),
             };
-            ai_resource::Entity::insert(resource)
-                .exec(self.db.as_ref())
-                .await?;
+            self.persistence.ai_resource_insert(&info).await?;
         }
 
         // Create draft version
-        let ver = ai_resource_version::ActiveModel {
-            gmt_create: Set(Some(now)),
-            gmt_modified: Set(Some(now)),
-            r#type: Set(SKILL_TYPE.to_string()),
-            author: Set(Some(author.to_string())),
-            name: Set(name.to_string()),
-            c_desc: Set(initial_content.and_then(|s| s.description.clone())),
-            status: Set(VERSION_STATUS_DRAFT.to_string()),
-            version: Set(version.clone()),
-            namespace_id: Set(namespace_id.to_string()),
-            storage: Set(Some(storage_json)),
-            download_count: Set(0),
-            ..Default::default()
+        let ver_info = AiResourceVersionInfo {
+            id: 0,
+            resource_type: SKILL_TYPE.to_string(),
+            author: Some(author.to_string()),
+            name: name.to_string(),
+            description: initial_content.and_then(|s| s.description.clone()),
+            status: VERSION_STATUS_DRAFT.to_string(),
+            version: version.clone(),
+            namespace_id: namespace_id.to_string(),
+            storage: Some(storage_json),
+            publish_pipeline_info: None,
+            download_count: 0,
+            gmt_create: Some(now.clone()),
+            gmt_modified: Some(now),
         };
-        ai_resource_version::Entity::insert(ver)
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_version_insert(&ver_info)
             .await?;
 
         debug!(
@@ -618,24 +566,16 @@ impl SkillOperationService {
 
         let storage = self.skill_to_storage(skill);
         let storage_json = serde_json::to_string(&storage)?;
-        let now = Utc::now().naive_utc();
 
-        ai_resource_version::Entity::update_many()
-            .col_expr(
-                ai_resource_version::Column::Storage,
-                Expr::value(storage_json.clone()),
+        self.persistence
+            .ai_resource_version_update_storage(
+                namespace_id,
+                name,
+                SKILL_TYPE,
+                &draft_version,
+                &storage_json,
+                skill.description.as_deref(),
             )
-            .col_expr(
-                ai_resource_version::Column::CDesc,
-                Expr::value(skill.description.clone()),
-            )
-            .col_expr(ai_resource_version::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(&draft_version))
-            .filter(ai_resource_version::Column::Status.eq(VERSION_STATUS_DRAFT))
-            .exec(self.db.as_ref())
             .await?;
 
         debug!(
@@ -659,12 +599,8 @@ impl SkillOperationService {
             .ok_or_else(|| anyhow::anyhow!("Skill '{}' has no editing version", name))?;
 
         // Delete the draft version record
-        ai_resource_version::Entity::delete_many()
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(&draft_version))
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_version_delete(namespace_id, name, SKILL_TYPE, &draft_version)
             .await?;
 
         // Clear editing_version
@@ -702,20 +638,15 @@ impl SkillOperationService {
             anyhow::bail!("Version '{}' is not in draft status", version);
         }
 
-        let now = Utc::now().naive_utc();
-
         // Update version status to reviewing
-        ai_resource_version::Entity::update_many()
-            .col_expr(
-                ai_resource_version::Column::Status,
-                Expr::value(VERSION_STATUS_REVIEWING),
+        self.persistence
+            .ai_resource_version_update_status(
+                namespace_id,
+                name,
+                SKILL_TYPE,
+                version,
+                VERSION_STATUS_REVIEWING,
             )
-            .col_expr(ai_resource_version::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(version))
-            .exec(self.db.as_ref())
             .await?;
 
         // Update version_info
@@ -759,20 +690,15 @@ impl SkillOperationService {
             );
         }
 
-        let now = Utc::now().naive_utc();
-
         // Update version status to online
-        ai_resource_version::Entity::update_many()
-            .col_expr(
-                ai_resource_version::Column::Status,
-                Expr::value(VERSION_STATUS_ONLINE),
+        self.persistence
+            .ai_resource_version_update_status(
+                namespace_id,
+                name,
+                SKILL_TYPE,
+                version,
+                VERSION_STATUS_ONLINE,
             )
-            .col_expr(ai_resource_version::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(version))
-            .exec(self.db.as_ref())
             .await?;
 
         // Update version_info
@@ -844,15 +770,8 @@ impl SkillOperationService {
         name: &str,
         biz_tags: &str,
     ) -> anyhow::Result<()> {
-        let now = Utc::now().naive_utc();
-
-        ai_resource::Entity::update_many()
-            .col_expr(ai_resource::Column::BizTags, Expr::value(biz_tags))
-            .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_update_biz_tags(namespace_id, name, SKILL_TYPE, biz_tags)
             .await?;
 
         debug!(
@@ -876,8 +795,6 @@ impl SkillOperationService {
             .await?
             .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found", name))?;
 
-        let now = Utc::now().naive_utc();
-
         if scope == Some("skill") {
             // Skill-level: enable/disable the whole skill
             let new_status = if online {
@@ -885,13 +802,8 @@ impl SkillOperationService {
             } else {
                 RESOURCE_STATUS_DISABLE
             };
-            ai_resource::Entity::update_many()
-                .col_expr(ai_resource::Column::Status, Expr::value(new_status))
-                .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
-                .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource::Column::Name.eq(name))
-                .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-                .exec(self.db.as_ref())
+            self.persistence
+                .ai_resource_update_status(namespace_id, name, SKILL_TYPE, new_status)
                 .await?;
         } else {
             // Version-level online/offline
@@ -902,23 +814,25 @@ impl SkillOperationService {
                 VERSION_STATUS_OFFLINE
             };
 
-            ai_resource_version::Entity::update_many()
-                .col_expr(ai_resource_version::Column::Status, Expr::value(new_status))
-                .col_expr(ai_resource_version::Column::GmtModified, Expr::value(now))
-                .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource_version::Column::Name.eq(name))
-                .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-                .filter(ai_resource_version::Column::Version.eq(version))
-                .exec(self.db.as_ref())
+            self.persistence
+                .ai_resource_version_update_status(
+                    namespace_id,
+                    name,
+                    SKILL_TYPE,
+                    version,
+                    new_status,
+                )
                 .await?;
 
             // Recalculate online_cnt
-            let online_count = ai_resource_version::Entity::find()
-                .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource_version::Column::Name.eq(name))
-                .filter(ai_resource_version::Column::Type.eq(SKILL_TYPE))
-                .filter(ai_resource_version::Column::Status.eq(VERSION_STATUS_ONLINE))
-                .count(self.db.as_ref())
+            let online_count = self
+                .persistence
+                .ai_resource_version_count_by_status(
+                    namespace_id,
+                    name,
+                    SKILL_TYPE,
+                    VERSION_STATUS_ONLINE,
+                )
                 .await? as i64;
 
             let mut vi = Self::parse_version_info(&resource);
@@ -944,15 +858,9 @@ impl SkillOperationService {
         if scope != SCOPE_PUBLIC && scope != SCOPE_PRIVATE {
             anyhow::bail!("Invalid scope '{}', must be PUBLIC or PRIVATE", scope);
         }
-        let now = Utc::now().naive_utc();
 
-        ai_resource::Entity::update_many()
-            .col_expr(ai_resource::Column::Scope, Expr::value(scope))
-            .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_update_scope(namespace_id, name, SKILL_TYPE, scope)
             .await?;
 
         debug!(
@@ -1034,7 +942,7 @@ impl SkillOperationService {
         Ok(Some(Skill {
             namespace_id: namespace_id.to_string(),
             name: name.to_string(),
-            description: ver.c_desc,
+            description: ver.description,
             skill_md,
             resource: resource_map,
         }))
@@ -1066,7 +974,7 @@ impl SkillOperationService {
 
         let storage = self.skill_to_storage(&skill);
         let storage_json = serde_json::to_string(&storage)?;
-        let now = Utc::now().naive_utc();
+        let now = Utc::now().naive_utc().to_string();
 
         // Create resource with online status and labels
         let mut labels = HashMap::new();
@@ -1078,43 +986,44 @@ impl SkillOperationService {
         };
         let vi_json = serde_json::to_string(&vi)?;
 
-        let resource = ai_resource::ActiveModel {
-            gmt_create: Set(Some(now)),
-            gmt_modified: Set(Some(now)),
-            name: Set(name.to_string()),
-            r#type: Set(SKILL_TYPE.to_string()),
-            c_desc: Set(skill.description.clone()),
-            status: Set(Some(RESOURCE_STATUS_ENABLE.to_string())),
-            namespace_id: Set(namespace_id.to_string()),
-            c_from: Set(from.to_string()),
-            version_info: Set(Some(vi_json)),
-            meta_version: Set(1),
-            scope: Set(SCOPE_PUBLIC.to_string()),
-            owner: Set("-".to_string()),
-            download_count: Set(0),
-            ..Default::default()
+        let info = AiResourceInfo {
+            id: 0,
+            name: name.to_string(),
+            resource_type: SKILL_TYPE.to_string(),
+            description: skill.description.clone(),
+            status: Some(RESOURCE_STATUS_ENABLE.to_string()),
+            namespace_id: namespace_id.to_string(),
+            biz_tags: None,
+            ext: None,
+            from: from.to_string(),
+            version_info: Some(vi_json),
+            meta_version: 1,
+            scope: SCOPE_PUBLIC.to_string(),
+            owner: "-".to_string(),
+            download_count: 0,
+            gmt_create: Some(now.clone()),
+            gmt_modified: Some(now.clone()),
         };
-        ai_resource::Entity::insert(resource)
-            .exec(self.db.as_ref())
-            .await?;
+        self.persistence.ai_resource_insert(&info).await?;
 
         // Create online version directly (skip draft/reviewing)
-        let ver = ai_resource_version::ActiveModel {
-            gmt_create: Set(Some(now)),
-            gmt_modified: Set(Some(now)),
-            r#type: Set(SKILL_TYPE.to_string()),
-            author: Set(Some("-".to_string())),
-            name: Set(name.to_string()),
-            c_desc: Set(skill.description.clone()),
-            status: Set(VERSION_STATUS_ONLINE.to_string()),
-            version: Set(version.clone()),
-            namespace_id: Set(namespace_id.to_string()),
-            storage: Set(Some(storage_json)),
-            download_count: Set(0),
-            ..Default::default()
+        let ver_info = AiResourceVersionInfo {
+            id: 0,
+            resource_type: SKILL_TYPE.to_string(),
+            author: Some("-".to_string()),
+            name: name.to_string(),
+            description: skill.description.clone(),
+            status: VERSION_STATUS_ONLINE.to_string(),
+            version: version.clone(),
+            namespace_id: namespace_id.to_string(),
+            storage: Some(storage_json),
+            publish_pipeline_info: None,
+            download_count: 0,
+            gmt_create: Some(now.clone()),
+            gmt_modified: Some(now),
         };
-        ai_resource_version::Entity::insert(ver)
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_version_insert(&ver_info)
             .await?;
 
         debug!(
@@ -1132,24 +1041,25 @@ impl SkillOperationService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<SkillBasicInfo>> {
-        let mut query = ai_resource::Entity::find()
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Type.eq(SKILL_TYPE))
-            .filter(ai_resource::Column::Status.eq(RESOURCE_STATUS_ENABLE));
+        // Fetch all enabled resources to filter by online_cnt > 0
+        let all_resources = self
+            .persistence
+            .ai_resource_find_all(namespace_id, SKILL_TYPE)
+            .await?;
 
-        if let Some(kw) = keyword
-            && !kw.is_empty()
-        {
-            query = query.filter(ai_resource::Column::Name.contains(kw));
-        }
-
-        query = query.order_by(ai_resource::Column::GmtModified, Order::Desc);
-
-        let all_resources = query.all(self.db.as_ref()).await?;
-
-        // Filter for skills with at least one online version (onlineCnt > 0)
+        // Filter for enabled skills with keyword match and at least one online version
         let filtered: Vec<SkillBasicInfo> = all_resources
             .iter()
+            .filter(|r| r.status.as_deref() == Some(RESOURCE_STATUS_ENABLE))
+            .filter(|r| {
+                if let Some(kw) = keyword
+                    && !kw.is_empty()
+                {
+                    r.name.contains(kw)
+                } else {
+                    true
+                }
+            })
             .filter(|r| {
                 let vi = Self::parse_version_info(r);
                 vi.online_cnt > 0
@@ -1157,8 +1067,8 @@ impl SkillOperationService {
             .map(|r| SkillBasicInfo {
                 namespace_id: r.namespace_id.clone(),
                 name: r.name.clone(),
-                description: r.c_desc.clone(),
-                update_time: r.gmt_modified.map(|dt| dt.to_string()),
+                description: r.description.clone(),
+                update_time: r.gmt_modified.clone(),
             })
             .collect();
 

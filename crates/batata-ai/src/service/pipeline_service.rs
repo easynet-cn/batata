@@ -1,24 +1,20 @@
-//! Pipeline query service — reads pipeline_execution table
+//! Pipeline query service — reads pipeline executions via persistence trait
 
 use std::sync::Arc;
 
-use batata_persistence::entity::pipeline_execution;
-use batata_persistence::model::Page;
-use batata_persistence::sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect,
-};
+use batata_persistence::PersistenceService;
+use batata_persistence::model::{Page, PipelineExecutionInfo};
 
 use crate::model::pipeline::*;
 
 /// Pipeline query service (read-only, pipeline execution is managed by the publish workflow)
 pub struct PipelineQueryService {
-    db: Arc<DatabaseConnection>,
+    persistence: Arc<dyn PersistenceService>,
 }
 
 impl PipelineQueryService {
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
+    pub fn new(persistence: Arc<dyn PersistenceService>) -> Self {
+        Self { persistence }
     }
 
     /// Get a single pipeline execution by ID
@@ -26,8 +22,9 @@ impl PipelineQueryService {
         &self,
         execution_id: &str,
     ) -> anyhow::Result<Option<PipelineExecution>> {
-        let record = pipeline_execution::Entity::find_by_id(execution_id.to_string())
-            .one(self.db.as_ref())
+        let record = self
+            .persistence
+            .pipeline_execution_find(execution_id)
             .await?;
 
         Ok(record.map(Self::model_to_execution))
@@ -43,43 +40,28 @@ impl PipelineQueryService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<PipelineExecution>> {
-        let mut query = pipeline_execution::Entity::find()
-            .filter(pipeline_execution::Column::ResourceType.eq(resource_type));
-
-        if let Some(name) = resource_name
-            && !name.is_empty()
-        {
-            query = query.filter(pipeline_execution::Column::ResourceName.eq(name));
-        }
-        if let Some(ns) = namespace_id
-            && !ns.is_empty()
-        {
-            query = query.filter(pipeline_execution::Column::NamespaceId.eq(ns));
-        }
-        if let Some(v) = version
-            && !v.is_empty()
-        {
-            query = query.filter(pipeline_execution::Column::Version.eq(v));
-        }
-
-        query = query.order_by(pipeline_execution::Column::CreateTime, Order::Desc);
-
-        let total = query.clone().count(self.db.as_ref()).await?;
-        let offset = (page_no.saturating_sub(1)) * page_size;
-
-        let records = query
-            .offset(offset)
-            .limit(page_size)
-            .all(self.db.as_ref())
+        let page = self
+            .persistence
+            .pipeline_execution_list(
+                resource_type,
+                resource_name,
+                namespace_id,
+                version,
+                page_no,
+                page_size,
+            )
             .await?;
 
-        let items: Vec<PipelineExecution> =
-            records.into_iter().map(Self::model_to_execution).collect();
+        let items: Vec<PipelineExecution> = page
+            .page_items
+            .into_iter()
+            .map(Self::model_to_execution)
+            .collect();
 
-        Ok(Page::new(total, page_no, page_size, items))
+        Ok(Page::new(page.total_count, page_no, page_size, items))
     }
 
-    fn model_to_execution(m: pipeline_execution::Model) -> PipelineExecution {
+    fn model_to_execution(m: PipelineExecutionInfo) -> PipelineExecution {
         let pipeline: Vec<PipelineNodeResult> =
             serde_json::from_str(&m.pipeline).unwrap_or_default();
 

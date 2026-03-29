@@ -4,11 +4,13 @@
 //! storage backends: external database (MySQL/PostgreSQL), standalone embedded
 //! (RocksDB), and distributed embedded (Raft + RocksDB).
 
+pub mod ai_resource;
 pub mod auth;
 pub mod capacity;
 pub mod config;
 pub mod namespace;
 
+pub use ai_resource::AiResourcePersistence;
 pub use auth::AuthPersistence;
 pub use capacity::CapacityPersistence;
 pub use config::ConfigPersistence;
@@ -24,7 +26,13 @@ use crate::model::{DeployTopology, StorageBackend, StorageMode};
 /// dispatch to the appropriate storage backend based on the configured mode.
 #[async_trait]
 pub trait PersistenceService:
-    ConfigPersistence + NamespacePersistence + AuthPersistence + CapacityPersistence + Send + Sync
+    ConfigPersistence
+    + NamespacePersistence
+    + AuthPersistence
+    + CapacityPersistence
+    + AiResourcePersistence
+    + Send
+    + Sync
 {
     /// Get the storage backend type
     fn storage_backend(&self) -> StorageBackend;

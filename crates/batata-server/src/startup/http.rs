@@ -535,16 +535,18 @@ impl AIServices {
         }
     }
 
-    /// Set the skill, agentspec, and pipeline services (requires DatabaseConnection, only available with external DB)
-    pub fn with_skill_service(
+    /// Set the skill, agentspec, and pipeline services (uses PersistenceService trait)
+    pub fn with_ai_resource_services(
         mut self,
-        db: Arc<batata_persistence::sea_orm::DatabaseConnection>,
+        persistence: Arc<dyn batata_persistence::PersistenceService>,
     ) -> Self {
-        self.skill_service = Some(Arc::new(batata_ai::SkillOperationService::new(db.clone())));
-        self.agentspec_service = Some(Arc::new(batata_ai::AgentSpecOperationService::new(
-            db.clone(),
+        self.skill_service = Some(Arc::new(batata_ai::SkillOperationService::new(
+            persistence.clone(),
         )));
-        self.pipeline_service = Some(Arc::new(batata_ai::PipelineQueryService::new(db)));
+        self.agentspec_service = Some(Arc::new(batata_ai::AgentSpecOperationService::new(
+            persistence.clone(),
+        )));
+        self.pipeline_service = Some(Arc::new(batata_ai::PipelineQueryService::new(persistence)));
         self
     }
 

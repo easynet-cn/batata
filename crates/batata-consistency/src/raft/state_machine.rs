@@ -60,6 +60,9 @@ pub const CF_CONSUL_KV: &str = "consul_kv";
 pub const CF_CONSUL_ACL: &str = "consul_acl";
 pub const CF_CONSUL_SESSIONS: &str = "consul_sessions";
 pub const CF_CONSUL_QUERIES: &str = "consul_queries";
+pub const CF_AI_RESOURCE: &str = "ai_resource";
+pub const CF_AI_RESOURCE_VERSION: &str = "ai_resource_version";
+pub const CF_PIPELINE_EXECUTION: &str = "pipeline_execution";
 const CF_META: &str = "meta";
 
 // Meta keys
@@ -139,6 +142,9 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_PERMISSIONS, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_INSTANCES, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_LOCKS, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_AI_RESOURCE, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_AI_RESOURCE_VERSION, cf_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_PIPELINE_EXECUTION, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_META, cf_opts),
         ];
 
@@ -1655,6 +1661,9 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             CF_PERMISSIONS,
             CF_INSTANCES,
             CF_LOCKS,
+            CF_AI_RESOURCE,
+            CF_AI_RESOURCE_VERSION,
+            CF_PIPELINE_EXECUTION,
         ] {
             if let Some(cf) = self.db.cf_handle(cf_name) {
                 let mut cf_data = Vec::new();

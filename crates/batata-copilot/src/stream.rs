@@ -49,7 +49,9 @@ struct ChunkDelta {
     content: Option<String>,
     #[serde(default)]
     reasoning_content: Option<String>,
+    // role field exists in API but is unused — suppress warning
     #[serde(default)]
+    #[allow(dead_code)]
     role: Option<String>,
 }
 

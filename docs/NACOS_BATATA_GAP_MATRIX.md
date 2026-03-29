@@ -28,17 +28,40 @@ Legend: ✅ Implemented | ⚠️ Partial | ❌ Missing | ➖ Not Applicable (Bat
 | **V2 Config** | 10+ | ✅ Complete | 0 |
 | **V2 Naming** | 20+ | ✅ Complete | 0 |
 | **gRPC Config** | 4 handlers | ✅ Complete | 0 |
-| **gRPC Naming** | 7 handlers | ⚠️ Most | 1 (FuzzyWatch) |
-| **gRPC AI** | 7 handlers | ⚠️ Most | 1 (BatchAgentEndpoint) |
-| **gRPC Core** | 5 handlers | ⚠️ Most | 1 (PluginAvailability) |
-| AI/Copilot | 6 | ✅ Stub (no LLM) | 0 |
-| Skills Registry | 7 | ✅ Implemented | 0 |
-| Lock (gRPC) | 1 | ✅ Already implemented | 0 |
+| **gRPC Naming** | 7 handlers | ✅ Complete (incl. FuzzyWatch) | 0 |
+| **gRPC AI** | 7 handlers | ⚠️ 6/7 | 1 (BatchAgentEndpoint) |
+| **gRPC Core** | 5 handlers | ⚠️ 4/5 | 1 (PluginAvailability) |
+| **AI/Copilot** | 6 | ✅ Real LLM (batata-copilot crate) | 0 |
+| **Skills Registry** | 7 | ✅ Complete | 0 |
+| **Lock (gRPC)** | 1 | ✅ Complete | 0 |
 | Consul Compat | N/A | ➖ Batata ext | N/A |
 
 ---
 
-## 1. CONFIG MODULE
+## Remaining Gaps (2 gRPC handlers)
+
+These are cluster-internal gRPC handlers with minimal SDK impact:
+
+### 1. BatchAgentEndpointRequest (gRPC AI)
+- **Nacos**: Registers multiple agent service instances in one gRPC call
+- **Batata**: Single-instance `AgentEndpointRequest` handler exists; HTTP batch endpoint exists
+- **Impact**: Low — SDK clients can use single registration; HTTP batch API available
+- **Priority**: P3
+
+### 2. PluginAvailabilityRequest (gRPC Core)
+- **Nacos**: Cluster-internal handler to check if plugins are available on a node
+- **Batata**: Plugin status available via HTTP API (`/v3/admin/core/plugin`)
+- **Impact**: Low — only used for inter-node communication in cluster mode
+- **Priority**: P3
+
+---
+
+## Completed Module Details (verified against code)
+
+All sections below were verified by grepping the actual Batata codebase.
+Stale entries from earlier analysis have been removed.
+
+### 1. CONFIG MODULE
 
 ### V3 Admin: `/v3/admin/cs/config`
 

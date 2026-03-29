@@ -30,6 +30,66 @@ pub struct PermissionInfo {
     pub action: String,
 }
 
+// ============================================================================
+// AI Resource persistence models
+// ============================================================================
+
+/// AI resource metadata (storage-agnostic representation of ai_resource row)
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiResourceInfo {
+    pub id: i64,
+    pub name: String,
+    pub resource_type: String,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub namespace_id: String,
+    pub biz_tags: Option<String>,
+    pub ext: Option<String>,
+    pub from: String,
+    pub version_info: Option<String>,
+    pub meta_version: i64,
+    pub scope: String,
+    pub owner: String,
+    pub download_count: i64,
+    pub gmt_create: Option<String>,
+    pub gmt_modified: Option<String>,
+}
+
+/// AI resource version (storage-agnostic representation of ai_resource_version row)
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiResourceVersionInfo {
+    pub id: i64,
+    pub resource_type: String,
+    pub author: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub status: String,
+    pub version: String,
+    pub namespace_id: String,
+    pub storage: Option<String>,
+    pub publish_pipeline_info: Option<String>,
+    pub download_count: i64,
+    pub gmt_create: Option<String>,
+    pub gmt_modified: Option<String>,
+}
+
+/// Pipeline execution (storage-agnostic representation of pipeline_execution row)
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineExecutionInfo {
+    pub execution_id: String,
+    pub resource_type: String,
+    pub resource_name: String,
+    pub namespace_id: Option<String>,
+    pub version: Option<String>,
+    pub status: String,
+    pub pipeline: String,
+    pub create_time: i64,
+    pub update_time: i64,
+}
+
 /// Generic paginated result
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

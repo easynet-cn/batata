@@ -20,8 +20,8 @@ pub use entity::prelude::*;
 
 // Re-export persistence traits
 pub use traits::{
-    AuthPersistence, CapacityPersistence, ConfigPersistence, NamespacePersistence,
-    PersistenceService,
+    AiResourcePersistence, AuthPersistence, CapacityPersistence, ConfigPersistence,
+    NamespacePersistence, PersistenceService,
 };
 
 // Re-export SQL backend
@@ -35,7 +35,7 @@ pub use distributed::DistributedPersistService;
 
 // Re-export model types
 pub use model::{
-    CapacityInfo, ConfigGrayStorageData, ConfigHistoryStorageData, ConfigStorageData,
-    DeployTopology, NamespaceInfo, Page, PermissionInfo, RoleInfo, StorageBackend, StorageMode,
-    UserInfo,
+    AiResourceInfo, AiResourceVersionInfo, CapacityInfo, ConfigGrayStorageData,
+    ConfigHistoryStorageData, ConfigStorageData, DeployTopology, NamespaceInfo, Page,
+    PermissionInfo, PipelineExecutionInfo, RoleInfo, StorageBackend, StorageMode, UserInfo,
 };

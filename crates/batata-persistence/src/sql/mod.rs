@@ -7,6 +7,7 @@
 //! - `auth`: Users, roles, permissions
 //! - `capacity`: Tenant and group capacity management
 
+mod ai_resource;
 mod auth;
 mod capacity;
 mod config;

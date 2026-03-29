@@ -1,53 +1,44 @@
-//! AgentSpec operation service — DB-backed storage via ai_resource / ai_resource_version tables
+//! AgentSpec operation service — persistence-backed storage via ai_resource / ai_resource_version
 //!
 //! AgentSpecs use ai_resource (type="agentspec") for governance metadata.
 //! Structurally identical to SkillOperationService but with type="agentspec"
 //! and manifest.json as the main file instead of SKILL.md.
 //!
-//! This delegates to SkillOperationService internally by using the same DB layer
-//! with a different resource type filter.
+//! Uses the `PersistenceService` trait abstraction instead of direct DB access.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use batata_persistence::entity::{ai_resource, ai_resource_version};
-use batata_persistence::model::Page;
-use batata_persistence::sea_orm::{
-    ColumnTrait, DatabaseConnection, EntityTrait, Order, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, prelude::Expr,
-};
-use chrono::Utc;
+use batata_persistence::PersistenceService;
+use batata_persistence::model::{AiResourceInfo, AiResourceVersionInfo, Page};
 use tracing::debug;
 
 use crate::model::agentspec::*;
 
 /// AgentSpec operation service backed by ai_resource/ai_resource_version tables
 pub struct AgentSpecOperationService {
-    db: Arc<DatabaseConnection>,
+    persistence: Arc<dyn PersistenceService>,
 }
 
 impl AgentSpecOperationService {
-    pub fn new(db: Arc<DatabaseConnection>) -> Self {
-        Self { db }
+    pub fn new(persistence: Arc<dyn PersistenceService>) -> Self {
+        Self { persistence }
     }
 
     const CAS_MAX_RETRIES: u32 = 3;
 
     // ========================================================================
-    // Internal DB helpers (same as Skills but with AGENTSPEC_TYPE)
+    // Internal helpers
     // ========================================================================
 
     async fn find_resource(
         &self,
         namespace_id: &str,
         name: &str,
-    ) -> anyhow::Result<Option<ai_resource::Model>> {
-        Ok(ai_resource::Entity::find()
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE))
-            .one(self.db.as_ref())
-            .await?)
+    ) -> anyhow::Result<Option<AiResourceInfo>> {
+        self.persistence
+            .ai_resource_find(namespace_id, name, AGENTSPEC_TYPE)
+            .await
     }
 
     async fn find_version(
@@ -55,31 +46,23 @@ impl AgentSpecOperationService {
         namespace_id: &str,
         name: &str,
         version: &str,
-    ) -> anyhow::Result<Option<ai_resource_version::Model>> {
-        Ok(ai_resource_version::Entity::find()
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(version))
-            .one(self.db.as_ref())
-            .await?)
+    ) -> anyhow::Result<Option<AiResourceVersionInfo>> {
+        self.persistence
+            .ai_resource_version_find(namespace_id, name, AGENTSPEC_TYPE, version)
+            .await
     }
 
     async fn list_versions_for_resource(
         &self,
         namespace_id: &str,
         name: &str,
-    ) -> anyhow::Result<Vec<ai_resource_version::Model>> {
-        Ok(ai_resource_version::Entity::find()
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-            .order_by(ai_resource_version::Column::GmtModified, Order::Desc)
-            .all(self.db.as_ref())
-            .await?)
+    ) -> anyhow::Result<Vec<AiResourceVersionInfo>> {
+        self.persistence
+            .ai_resource_version_list(namespace_id, name, AGENTSPEC_TYPE)
+            .await
     }
 
-    fn parse_version_info(resource: &ai_resource::Model) -> AgentSpecVersionInfo {
+    fn parse_version_info(resource: &AiResourceInfo) -> AgentSpecVersionInfo {
         resource
             .version_info
             .as_deref()
@@ -87,16 +70,16 @@ impl AgentSpecOperationService {
             .unwrap_or_default()
     }
 
-    fn resource_to_summary(resource: &ai_resource::Model) -> AgentSpecSummary {
+    fn resource_to_summary(resource: &AiResourceInfo) -> AgentSpecSummary {
         let vi = Self::parse_version_info(resource);
         AgentSpecSummary {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
-            description: resource.c_desc.clone(),
-            update_time: resource.gmt_modified.map(|dt| dt.to_string()),
+            description: resource.description.clone(),
+            update_time: resource.gmt_modified.clone(),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
-            from: Some(resource.c_from.clone()),
+            from: Some(resource.from.clone()),
             scope: Some(resource.scope.clone()),
             labels: vi.labels,
             editing_version: vi.editing_version,
@@ -106,14 +89,14 @@ impl AgentSpecOperationService {
         }
     }
 
-    fn version_to_summary(v: &ai_resource_version::Model) -> AgentSpecVersionSummary {
+    fn version_to_summary(v: &AiResourceVersionInfo) -> AgentSpecVersionSummary {
         AgentSpecVersionSummary {
             version: v.version.clone(),
             status: v.status.clone(),
             author: v.author.clone(),
-            description: v.c_desc.clone(),
-            create_time: v.gmt_create.map(|dt| dt.to_string()),
-            update_time: v.gmt_modified.map(|dt| dt.to_string()),
+            description: v.description.clone(),
+            create_time: v.gmt_create.clone(),
+            update_time: v.gmt_modified.clone(),
             publish_pipeline_info: v.publish_pipeline_info.clone(),
             download_count: v.download_count,
         }
@@ -127,26 +110,20 @@ impl AgentSpecOperationService {
         version_info: &AgentSpecVersionInfo,
     ) -> anyhow::Result<bool> {
         let vi_json = serde_json::to_string(version_info)?;
-        let now = Utc::now().naive_utc();
 
-        let result = ai_resource::Entity::update_many()
-            .col_expr(
-                ai_resource::Column::VersionInfo,
-                Expr::value(vi_json.clone()),
+        let ok = self
+            .persistence
+            .ai_resource_update_version_info_cas(
+                namespace_id,
+                name,
+                AGENTSPEC_TYPE,
+                expected_meta_version,
+                &vi_json,
+                expected_meta_version + 1,
             )
-            .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
-            .col_expr(
-                ai_resource::Column::MetaVersion,
-                Expr::value(expected_meta_version + 1),
-            )
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE))
-            .filter(ai_resource::Column::MetaVersion.eq(expected_meta_version))
-            .exec(self.db.as_ref())
             .await?;
 
-        if result.rows_affected > 0 {
+        if ok {
             return Ok(true);
         }
 
@@ -155,24 +132,18 @@ impl AgentSpecOperationService {
                 Some(r) => r,
                 None => return Ok(false),
             };
-            let retry_now = Utc::now().naive_utc();
-            let retry_result = ai_resource::Entity::update_many()
-                .col_expr(
-                    ai_resource::Column::VersionInfo,
-                    Expr::value(vi_json.clone()),
+            let retry_ok = self
+                .persistence
+                .ai_resource_update_version_info_cas(
+                    namespace_id,
+                    name,
+                    AGENTSPEC_TYPE,
+                    resource.meta_version,
+                    &vi_json,
+                    resource.meta_version + 1,
                 )
-                .col_expr(ai_resource::Column::GmtModified, Expr::value(retry_now))
-                .col_expr(
-                    ai_resource::Column::MetaVersion,
-                    Expr::value(resource.meta_version + 1),
-                )
-                .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource::Column::Name.eq(name))
-                .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE))
-                .filter(ai_resource::Column::MetaVersion.eq(resource.meta_version))
-                .exec(self.db.as_ref())
                 .await?;
-            if retry_result.rows_affected > 0 {
+            if retry_ok {
                 return Ok(true);
             }
         }
@@ -198,11 +169,11 @@ impl AgentSpecOperationService {
         Ok(Some(AgentSpecMeta {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
-            description: resource.c_desc.clone(),
-            update_time: resource.gmt_modified.map(|dt| dt.to_string()),
+            description: resource.description.clone(),
+            update_time: resource.gmt_modified.clone(),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
-            from: Some(resource.c_from.clone()),
+            from: Some(resource.from.clone()),
             scope: Some(resource.scope.clone()),
             labels: vi.labels,
             editing_version: vi.editing_version,
@@ -248,7 +219,7 @@ impl AgentSpecOperationService {
         Ok(Some(AgentSpec {
             namespace_id: namespace_id.to_string(),
             name: name.to_string(),
-            description: ver.c_desc.clone(),
+            description: ver.description.clone(),
             content,
             biz_tags: None,
             resource: resources,
@@ -256,17 +227,11 @@ impl AgentSpecOperationService {
     }
 
     pub async fn delete(&self, namespace_id: &str, name: &str) -> anyhow::Result<()> {
-        ai_resource::Entity::delete_many()
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE))
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_delete(namespace_id, name, AGENTSPEC_TYPE)
             .await?;
-        ai_resource_version::Entity::delete_many()
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_version_delete_all(namespace_id, name, AGENTSPEC_TYPE)
             .await?;
         debug!(
             "Deleted agentspec '{}' in namespace '{}'",
@@ -283,32 +248,25 @@ impl AgentSpecOperationService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<AgentSpecSummary>> {
-        let mut query = ai_resource::Entity::find()
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE));
-
-        if let Some(name) = name_filter
-            && !name.is_empty()
-        {
-            let st = search.unwrap_or("blur");
-            if st == "accurate" {
-                query = query.filter(ai_resource::Column::Name.eq(name));
-            } else {
-                query = query.filter(ai_resource::Column::Name.contains(name));
-            }
-        }
-
-        query = query.order_by(ai_resource::Column::GmtModified, Order::Desc);
-        let total = query.clone().count(self.db.as_ref()).await?;
-        let offset = (page_no.saturating_sub(1)) * page_size;
-        let resources = query
-            .offset(offset)
-            .limit(page_size)
-            .all(self.db.as_ref())
+        let search_accurate = search.unwrap_or("blur") == "accurate";
+        let page = self
+            .persistence
+            .ai_resource_list(
+                namespace_id,
+                AGENTSPEC_TYPE,
+                name_filter,
+                search_accurate,
+                false,
+                page_no,
+                page_size,
+            )
             .await?;
-        let items: Vec<AgentSpecSummary> =
-            resources.iter().map(Self::resource_to_summary).collect();
-        Ok(Page::new(total, page_no, page_size, items))
+        let items: Vec<AgentSpecSummary> = page
+            .page_items
+            .iter()
+            .map(Self::resource_to_summary)
+            .collect();
+        Ok(Page::new(page.total_count, page_no, page_size, items))
     }
 
     pub async fn upload(
@@ -333,7 +291,6 @@ impl AgentSpecOperationService {
         let version = self.resolve_upload_version(namespace_id, name).await?;
         let storage = self.spec_to_storage(spec);
         let storage_json = serde_json::to_string(&storage)?;
-        let now = Utc::now().naive_utc();
 
         if let Some(res) = existing {
             let mut vi = Self::parse_version_info(&res);
@@ -346,54 +303,47 @@ impl AgentSpecOperationService {
                 ..Default::default()
             };
             let vi_json = serde_json::to_string(&vi)?;
-            let resource = ai_resource::ActiveModel {
-                gmt_create: Set(Some(now)),
-                gmt_modified: Set(Some(now)),
-                name: Set(name.to_string()),
-                r#type: Set(AGENTSPEC_TYPE.to_string()),
-                c_desc: Set(spec.description.clone()),
-                status: Set(Some(RESOURCE_STATUS_ENABLE.to_string())),
-                namespace_id: Set(namespace_id.to_string()),
-                c_from: Set(AGENTSPEC_DEFAULT_FROM.to_string()),
-                version_info: Set(Some(vi_json)),
-                meta_version: Set(1),
-                scope: Set(SCOPE_PRIVATE.to_string()),
-                owner: Set(author.to_string()),
-                download_count: Set(0),
+            let resource = AiResourceInfo {
+                name: name.to_string(),
+                resource_type: AGENTSPEC_TYPE.to_string(),
+                description: spec.description.clone(),
+                status: Some(RESOURCE_STATUS_ENABLE.to_string()),
+                namespace_id: namespace_id.to_string(),
+                from: AGENTSPEC_DEFAULT_FROM.to_string(),
+                version_info: Some(vi_json),
+                meta_version: 1,
+                scope: SCOPE_PRIVATE.to_string(),
+                owner: author.to_string(),
+                download_count: 0,
                 ..Default::default()
             };
-            ai_resource::Entity::insert(resource)
-                .exec(self.db.as_ref())
-                .await?;
+            self.persistence.ai_resource_insert(&resource).await?;
         }
 
         if overwrite {
-            ai_resource_version::Entity::delete_many()
-                .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource_version::Column::Name.eq(name))
-                .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-                .filter(ai_resource_version::Column::Status.eq(VERSION_STATUS_DRAFT))
-                .exec(self.db.as_ref())
+            self.persistence
+                .ai_resource_version_delete_by_status(
+                    namespace_id,
+                    name,
+                    AGENTSPEC_TYPE,
+                    VERSION_STATUS_DRAFT,
+                )
                 .await?;
         }
 
-        let ver = ai_resource_version::ActiveModel {
-            gmt_create: Set(Some(now)),
-            gmt_modified: Set(Some(now)),
-            r#type: Set(AGENTSPEC_TYPE.to_string()),
-            author: Set(Some(author.to_string())),
-            name: Set(name.to_string()),
-            c_desc: Set(spec.description.clone()),
-            status: Set(VERSION_STATUS_DRAFT.to_string()),
-            version: Set(version.clone()),
-            namespace_id: Set(namespace_id.to_string()),
-            storage: Set(Some(storage_json)),
-            download_count: Set(0),
+        let ver = AiResourceVersionInfo {
+            resource_type: AGENTSPEC_TYPE.to_string(),
+            author: Some(author.to_string()),
+            name: name.to_string(),
+            description: spec.description.clone(),
+            status: VERSION_STATUS_DRAFT.to_string(),
+            version: version.clone(),
+            namespace_id: namespace_id.to_string(),
+            storage: Some(storage_json),
+            download_count: 0,
             ..Default::default()
         };
-        ai_resource_version::Entity::insert(ver)
-            .exec(self.db.as_ref())
-            .await?;
+        self.persistence.ai_resource_version_insert(&ver).await?;
 
         debug!("Uploaded agentspec '{}' version '{}'", name, version);
         Ok(name.to_string())
@@ -429,7 +379,6 @@ impl AgentSpecOperationService {
             );
         }
 
-        let now = Utc::now().naive_utc();
         let storage_json = if let Some(bv) = based_on_version {
             let base = self
                 .find_version(namespace_id, name, bv)
@@ -457,44 +406,36 @@ impl AgentSpecOperationService {
                 ..Default::default()
             };
             let vi_json = serde_json::to_string(&vi)?;
-            let resource = ai_resource::ActiveModel {
-                gmt_create: Set(Some(now)),
-                gmt_modified: Set(Some(now)),
-                name: Set(name.to_string()),
-                r#type: Set(AGENTSPEC_TYPE.to_string()),
-                c_desc: Set(initial_content.and_then(|s| s.description.clone())),
-                status: Set(Some(RESOURCE_STATUS_ENABLE.to_string())),
-                namespace_id: Set(namespace_id.to_string()),
-                c_from: Set(AGENTSPEC_DEFAULT_FROM.to_string()),
-                version_info: Set(Some(vi_json)),
-                meta_version: Set(1),
-                scope: Set(SCOPE_PRIVATE.to_string()),
-                owner: Set(author.to_string()),
-                download_count: Set(0),
+            let resource = AiResourceInfo {
+                name: name.to_string(),
+                resource_type: AGENTSPEC_TYPE.to_string(),
+                description: initial_content.and_then(|s| s.description.clone()),
+                status: Some(RESOURCE_STATUS_ENABLE.to_string()),
+                namespace_id: namespace_id.to_string(),
+                from: AGENTSPEC_DEFAULT_FROM.to_string(),
+                version_info: Some(vi_json),
+                meta_version: 1,
+                scope: SCOPE_PRIVATE.to_string(),
+                owner: author.to_string(),
+                download_count: 0,
                 ..Default::default()
             };
-            ai_resource::Entity::insert(resource)
-                .exec(self.db.as_ref())
-                .await?;
+            self.persistence.ai_resource_insert(&resource).await?;
         }
 
-        let ver = ai_resource_version::ActiveModel {
-            gmt_create: Set(Some(now)),
-            gmt_modified: Set(Some(now)),
-            r#type: Set(AGENTSPEC_TYPE.to_string()),
-            author: Set(Some(author.to_string())),
-            name: Set(name.to_string()),
-            c_desc: Set(initial_content.and_then(|s| s.description.clone())),
-            status: Set(VERSION_STATUS_DRAFT.to_string()),
-            version: Set(version.clone()),
-            namespace_id: Set(namespace_id.to_string()),
-            storage: Set(Some(storage_json)),
-            download_count: Set(0),
+        let ver = AiResourceVersionInfo {
+            resource_type: AGENTSPEC_TYPE.to_string(),
+            author: Some(author.to_string()),
+            name: name.to_string(),
+            description: initial_content.and_then(|s| s.description.clone()),
+            status: VERSION_STATUS_DRAFT.to_string(),
+            version: version.clone(),
+            namespace_id: namespace_id.to_string(),
+            storage: Some(storage_json),
+            download_count: 0,
             ..Default::default()
         };
-        ai_resource_version::Entity::insert(ver)
-            .exec(self.db.as_ref())
-            .await?;
+        self.persistence.ai_resource_version_insert(&ver).await?;
         debug!("Created agentspec draft '{}' version '{}'", name, version);
         Ok(version)
     }
@@ -516,24 +457,16 @@ impl AgentSpecOperationService {
 
         let storage = self.spec_to_storage(spec);
         let storage_json = serde_json::to_string(&storage)?;
-        let now = Utc::now().naive_utc();
 
-        ai_resource_version::Entity::update_many()
-            .col_expr(
-                ai_resource_version::Column::Storage,
-                Expr::value(storage_json.clone()),
+        self.persistence
+            .ai_resource_version_update_storage(
+                namespace_id,
+                name,
+                AGENTSPEC_TYPE,
+                &draft_version,
+                &storage_json,
+                spec.description.as_deref(),
             )
-            .col_expr(
-                ai_resource_version::Column::CDesc,
-                Expr::value(spec.description.clone()),
-            )
-            .col_expr(ai_resource_version::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(&draft_version))
-            .filter(ai_resource_version::Column::Status.eq(VERSION_STATUS_DRAFT))
-            .exec(self.db.as_ref())
             .await?;
         Ok(())
     }
@@ -549,12 +482,8 @@ impl AgentSpecOperationService {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' has no editing version", name))?;
 
-        ai_resource_version::Entity::delete_many()
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(&draft_version))
-            .exec(self.db.as_ref())
+        self.persistence
+            .ai_resource_version_delete(namespace_id, name, AGENTSPEC_TYPE, &draft_version)
             .await?;
 
         let mut new_vi = vi;
@@ -582,18 +511,14 @@ impl AgentSpecOperationService {
             anyhow::bail!("Version '{}' is not in draft status", version);
         }
 
-        let now = Utc::now().naive_utc();
-        ai_resource_version::Entity::update_many()
-            .col_expr(
-                ai_resource_version::Column::Status,
-                Expr::value(VERSION_STATUS_REVIEWING),
+        self.persistence
+            .ai_resource_version_update_status(
+                namespace_id,
+                name,
+                AGENTSPEC_TYPE,
+                version,
+                VERSION_STATUS_REVIEWING,
             )
-            .col_expr(ai_resource_version::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(version))
-            .exec(self.db.as_ref())
             .await?;
 
         let mut vi = Self::parse_version_info(&resource);
@@ -626,18 +551,14 @@ impl AgentSpecOperationService {
             );
         }
 
-        let now = Utc::now().naive_utc();
-        ai_resource_version::Entity::update_many()
-            .col_expr(
-                ai_resource_version::Column::Status,
-                Expr::value(VERSION_STATUS_ONLINE),
+        self.persistence
+            .ai_resource_version_update_status(
+                namespace_id,
+                name,
+                AGENTSPEC_TYPE,
+                version,
+                VERSION_STATUS_ONLINE,
             )
-            .col_expr(ai_resource_version::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource_version::Column::Name.eq(name))
-            .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-            .filter(ai_resource_version::Column::Version.eq(version))
-            .exec(self.db.as_ref())
             .await?;
 
         let mut vi = Self::parse_version_info(&resource);
@@ -692,16 +613,9 @@ impl AgentSpecOperationService {
         name: &str,
         biz_tags: &str,
     ) -> anyhow::Result<()> {
-        let now = Utc::now().naive_utc();
-        ai_resource::Entity::update_many()
-            .col_expr(ai_resource::Column::BizTags, Expr::value(biz_tags))
-            .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE))
-            .exec(self.db.as_ref())
-            .await?;
-        Ok(())
+        self.persistence
+            .ai_resource_update_biz_tags(namespace_id, name, AGENTSPEC_TYPE, biz_tags)
+            .await
     }
 
     pub async fn change_online_status(
@@ -716,7 +630,6 @@ impl AgentSpecOperationService {
             .find_resource(namespace_id, name)
             .await?
             .ok_or_else(|| anyhow::anyhow!("AgentSpec '{}' not found", name))?;
-        let now = Utc::now().naive_utc();
 
         if scope == Some("agentspec") {
             let status = if online {
@@ -724,13 +637,8 @@ impl AgentSpecOperationService {
             } else {
                 RESOURCE_STATUS_DISABLE
             };
-            ai_resource::Entity::update_many()
-                .col_expr(ai_resource::Column::Status, Expr::value(status))
-                .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
-                .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource::Column::Name.eq(name))
-                .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE))
-                .exec(self.db.as_ref())
+            self.persistence
+                .ai_resource_update_status(namespace_id, name, AGENTSPEC_TYPE, status)
                 .await?;
         } else {
             let version = version.ok_or_else(|| anyhow::anyhow!("version is required"))?;
@@ -739,22 +647,24 @@ impl AgentSpecOperationService {
             } else {
                 VERSION_STATUS_OFFLINE
             };
-            ai_resource_version::Entity::update_many()
-                .col_expr(ai_resource_version::Column::Status, Expr::value(status))
-                .col_expr(ai_resource_version::Column::GmtModified, Expr::value(now))
-                .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource_version::Column::Name.eq(name))
-                .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-                .filter(ai_resource_version::Column::Version.eq(version))
-                .exec(self.db.as_ref())
+            self.persistence
+                .ai_resource_version_update_status(
+                    namespace_id,
+                    name,
+                    AGENTSPEC_TYPE,
+                    version,
+                    status,
+                )
                 .await?;
 
-            let online_count = ai_resource_version::Entity::find()
-                .filter(ai_resource_version::Column::NamespaceId.eq(namespace_id))
-                .filter(ai_resource_version::Column::Name.eq(name))
-                .filter(ai_resource_version::Column::Type.eq(AGENTSPEC_TYPE))
-                .filter(ai_resource_version::Column::Status.eq(VERSION_STATUS_ONLINE))
-                .count(self.db.as_ref())
+            let online_count = self
+                .persistence
+                .ai_resource_version_count_by_status(
+                    namespace_id,
+                    name,
+                    AGENTSPEC_TYPE,
+                    VERSION_STATUS_ONLINE,
+                )
                 .await? as i64;
 
             let mut vi = Self::parse_version_info(&resource);
@@ -774,16 +684,9 @@ impl AgentSpecOperationService {
         if scope != SCOPE_PUBLIC && scope != SCOPE_PRIVATE {
             anyhow::bail!("Invalid scope '{}', must be PUBLIC or PRIVATE", scope);
         }
-        let now = Utc::now().naive_utc();
-        ai_resource::Entity::update_many()
-            .col_expr(ai_resource::Column::Scope, Expr::value(scope))
-            .col_expr(ai_resource::Column::GmtModified, Expr::value(now))
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Name.eq(name))
-            .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE))
-            .exec(self.db.as_ref())
-            .await?;
-        Ok(())
+        self.persistence
+            .ai_resource_update_scope(namespace_id, name, AGENTSPEC_TYPE, scope)
+            .await
     }
 
     // ========================================================================
@@ -846,7 +749,7 @@ impl AgentSpecOperationService {
         Ok(Some(AgentSpec {
             namespace_id: namespace_id.to_string(),
             name: name.to_string(),
-            description: ver.c_desc,
+            description: ver.description,
             content,
             biz_tags: None,
             resource: resources,
@@ -860,25 +763,29 @@ impl AgentSpecOperationService {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<Page<AgentSpecBasicInfo>> {
-        let mut query = ai_resource::Entity::find()
-            .filter(ai_resource::Column::NamespaceId.eq(namespace_id))
-            .filter(ai_resource::Column::Type.eq(AGENTSPEC_TYPE))
-            .filter(ai_resource::Column::Status.eq(RESOURCE_STATUS_ENABLE));
-        if let Some(kw) = keyword
-            && !kw.is_empty()
-        {
-            query = query.filter(ai_resource::Column::Name.contains(kw));
-        }
-        query = query.order_by(ai_resource::Column::GmtModified, Order::Desc);
-        let all = query.all(self.db.as_ref()).await?;
+        // Fetch all enabled resources, then filter to those with online versions
+        let all = self
+            .persistence
+            .ai_resource_find_all(namespace_id, AGENTSPEC_TYPE)
+            .await?;
         let filtered: Vec<AgentSpecBasicInfo> = all
             .iter()
+            .filter(|r| r.status.as_deref() == Some(RESOURCE_STATUS_ENABLE))
+            .filter(|r| {
+                if let Some(kw) = keyword
+                    && !kw.is_empty()
+                {
+                    r.name.contains(kw)
+                } else {
+                    true
+                }
+            })
             .filter(|r| Self::parse_version_info(r).online_cnt > 0)
             .map(|r| AgentSpecBasicInfo {
                 namespace_id: r.namespace_id.clone(),
                 name: r.name.clone(),
-                description: r.c_desc.clone(),
-                update_time: r.gmt_modified.map(|dt| dt.to_string()),
+                description: r.description.clone(),
+                update_time: r.gmt_modified.clone(),
             })
             .collect();
         let total = filtered.len() as u64;

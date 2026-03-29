@@ -23,6 +23,8 @@ use crate::traits::capacity::CapacityPersistence;
 use crate::traits::config::ConfigPersistence;
 use crate::traits::namespace::NamespacePersistence;
 
+mod ai_resource;
+
 /// Standalone embedded persistence using RocksDB
 ///
 /// Reads via `RocksDbReader`, writes directly to RocksDB (no Raft).
