@@ -150,7 +150,12 @@ async fn create(
         .await;
 
     match result {
-        Ok(()) => Result::<String>::http_success("add role ok!"),
+        Ok(()) => {
+            // Invalidate local role/permission cache
+            batata_auth::service::role::invalidate_roles_cache(&params.username);
+            batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            Result::<String>::http_success("add role ok!")
+        }
         Err(err) => {
             if let Some(e) = err.downcast_ref::<BatataError>()
                 && let BatataError::IllegalArgument(msg) = e
@@ -187,10 +192,12 @@ pub async fn delete(
         .await;
 
     match result {
-        Ok(()) => Result::<String>::http_success(format!(
-            "delete role of user {} ok!",
-            params.username.clone().unwrap_or_default()
-        )),
+        Ok(()) => {
+            let username = params.username.clone().unwrap_or_default();
+            batata_auth::service::role::invalidate_roles_cache(&username);
+            batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            Result::<String>::http_success(format!("delete role of user {} ok!", username))
+        }
         Err(err) => {
             if let Some(e) = err.downcast_ref::<BatataError>()
                 && let BatataError::IllegalArgument(msg) = e

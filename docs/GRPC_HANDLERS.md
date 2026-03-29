@@ -6,6 +6,7 @@ This document describes the gRPC handler architecture, all registered handlers, 
 
 | Date | Description |
 |------|-------------|
+| 2026-03-29 | Added Nacos 3.2 new gRPC handlers: BatchAgentEndpointRequest, QueryPromptRequest. Updated AI handler table with Nacos source class names, auth levels (AI/Read, AI/Write), and Batata implementation status. Added operation type details for MCP and Agent endpoints. |
 | 2026-03-01 | Re-verified all 25 Nacos handlers against Nacos source (`~/work/github/easynet-cn/nacos`). All handler type strings, auth levels, and message type mappings confirmed accurate. No corrections needed. |
 | 2026-02-28 | Initial document created with full handler registry, protocol details, auth mechanisms, and Nacos comparison table (25 Nacos handlers + 15 Batata-only handlers = 40 total). |
 
@@ -346,20 +347,36 @@ Registered by `register_lock_handlers()`. Handles distributed lock operations.
 
 ---
 
-### AI Handlers (MCP + A2A)
+### AI Handlers (MCP + A2A + Prompts)
 
 **File:** `crates/batata-server/src/service/ai_handler.rs`
 
-Registered by `register_ai_handlers()`. Handles MCP server management and A2A agent management via gRPC.
+Registered by `register_ai_handlers()`. Handles MCP server management, A2A agent management, and prompt queries via gRPC.
 
-| # | Handler | Message Type | Auth | Description |
-|---|---------|-------------|------|-------------|
-| 1 | `McpServerEndpointHandler` | `McpServerEndpointRequest` | Authenticated | Registers or deregisters an MCP server endpoint. The `type` field determines the operation: `register` or `deregister`. Creates a server registration in the `McpServerRegistry` with address, port, and version. |
-| 2 | `QueryMcpServerHandler` | `QueryMcpServerRequest` | Read | Queries MCP server details by namespace and name. Returns the full server specification as JSON in the `detail` field, or an error if not found. |
-| 3 | `ReleaseMcpServerHandler` | `ReleaseMcpServerRequest` | Authenticated | Publishes (releases) an MCP server from a `serverSpecification` JSON payload. Creates a new server registration or updates an existing one. Returns the server ID on success. |
-| 4 | `AgentEndpointHandler` | `AgentEndpointRequest` | Authenticated | Registers or deregisters an A2A agent endpoint. The `type` field determines the operation: `register` or `deregister`. Constructs an agent card from the endpoint info (address, port, transport, TLS support). |
-| 5 | `QueryAgentCardHandler` | `QueryAgentCardRequest` | Read | Queries an A2A agent card by namespace and name. Returns the full agent card as JSON in the `detail` field, or an error if not found. |
-| 6 | `ReleaseAgentCardHandler` | `ReleaseAgentCardRequest` | Authenticated | Publishes (releases) an A2A agent card from the `agentCard` JSON payload. Creates a new agent registration or updates an existing one. Supports `setAsLatest` flag. |
+| # | Handler | Message Type | Auth | Nacos Source | Batata Status |
+|---|---------|-------------|------|-------------|:---:|
+| 1 | `McpServerEndpointHandler` | `McpServerEndpointRequest` | AI/Write | `McpServerEndpointRequestHandler` | OK |
+| 2 | `QueryMcpServerHandler` | `QueryMcpServerRequest` | AI/Read | `QueryMcpServerRequestHandler` | OK |
+| 3 | `ReleaseMcpServerHandler` | `ReleaseMcpServerRequest` | AI/Write | `ReleaseMcpServerRequestHandler` | OK |
+| 4 | `AgentEndpointHandler` | `AgentEndpointRequest` | AI/Write | `AgentEndpointRequestHandler` | OK |
+| 5 | `QueryAgentCardHandler` | `QueryAgentCardRequest` | AI/Read | `QueryAgentCardRequestHandler` | OK |
+| 6 | `ReleaseAgentCardHandler` | `ReleaseAgentCardRequest` | AI/Write | `ReleaseAgentCardRequestHandler` | OK |
+| 7 | `BatchAgentEndpointHandler` | `BatchAgentEndpointRequest` | AI/Write | `BatchAgentEndpointRequestHandler` | **TODO** |
+| 8 | `QueryPromptHandler` | `QueryPromptRequest` | AI/Read | `QueryPromptRequestHandler` | **TODO** |
+
+**Nacos 3.2 Handler Details:**
+
+- **BatchAgentEndpointRequest**: Batch registers multiple agent endpoints in one call. Validates all endpoints share the same version. Uses `batchRegisterInstance` for efficiency.
+- **QueryPromptRequest**: Queries prompt by `promptKey` with version/label/MD5 filtering. Returns `NOT_MODIFIED` (304-equivalent) if MD5 matches, avoiding unnecessary data transfer.
+
+**MCP Endpoint Operations** (determined by `type` field):
+- `registerEndpoint` — Register MCP server endpoint (creates Nacos service instance)
+- `deregisterEndpoint` — Deregister MCP server endpoint
+
+**Agent Endpoint Operations** (determined by `type` field):
+- `registerEndpoint` — Register single agent endpoint
+- `deregisterEndpoint` — Deregister agent endpoint
+- `batchRegisterEndpoint` — Batch register endpoints (BatchAgentEndpointRequest)
 
 ---
 

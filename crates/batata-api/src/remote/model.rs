@@ -799,6 +799,65 @@ impl From<MemberReportResponse> for Any {
 }
 
 // =============================================================================
+// Auth: Cache Invalidation (cluster-internal)
+// =============================================================================
+
+/// Request to invalidate auth caches on peer nodes.
+/// Sent via cluster gRPC port when roles, permissions, or tokens change.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AuthCacheInvalidateRequest {
+    #[serde(flatten)]
+    pub internal_request: InternalRequest,
+    /// Type: "role", "permission", "token", "user", "all"
+    pub invalidate_type: String,
+    /// Target: username, role name, or token id. Empty for "all".
+    pub target: String,
+}
+
+impl AuthCacheInvalidateRequest {
+    pub fn new(invalidate_type: &str, target: &str) -> Self {
+        Self {
+            internal_request: InternalRequest::new(),
+            invalidate_type: invalidate_type.to_string(),
+            target: target.to_string(),
+        }
+    }
+}
+
+impl_request_trait!(AuthCacheInvalidateRequest, internal_request);
+
+impl From<&Payload> for AuthCacheInvalidateRequest {
+    fn from(value: &Payload) -> Self {
+        AuthCacheInvalidateRequest::from_payload(value)
+    }
+}
+
+/// Response to auth cache invalidation request
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthCacheInvalidateResponse {
+    #[serde(flatten)]
+    pub response: Response,
+}
+
+impl AuthCacheInvalidateResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+        }
+    }
+}
+
+impl_response_trait!(AuthCacheInvalidateResponse);
+
+impl From<AuthCacheInvalidateResponse> for Any {
+    fn from(val: AuthCacheInvalidateResponse) -> Self {
+        val.to_any()
+    }
+}
+
+// =============================================================================
 // Lock: LockOperation
 // =============================================================================
 

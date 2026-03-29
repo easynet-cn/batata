@@ -6,6 +6,7 @@ This document provides the complete HTTP API routing tables for the two original
 
 | Date | Description |
 |------|-------------|
+| 2026-03-29 | Added Nacos 3.2 new AI endpoints: Skills Admin (16 endpoints), AgentSpec Admin (15 endpoints), Prompts Admin (9 endpoints), Pipeline Admin (2 endpoints), AI Client (4 endpoints). All marked TODO for Batata implementation. Updated MCP and A2A tables with query parameter details and Batata status column. |
 | 2026-03-20 | Fixed V3 Admin CS routes verified against nacos-maintainer-client. History detail path corrected: `GET /v3/admin/cs/history` (base) not `/history/detail`. Config publish also handles beta via `betaIps` header. Blur search wildcard stripping (`*pattern*`) added. Namespace normalization (empty→"public") fixed for get_config, list_history. ConfigGrayInfo response flattened (was nested under `configDetailInfo`). Added Batata implementation status comparison section at end. |
 | 2026-03-01 | Re-verified all V3 Admin routes against Nacos source (`~/work/github/easynet-cn/nacos`). Major corrections: Config Controller (removed separate PUT, fixed `/search`→`/list`, added `/metadata`, `/batch`, `/beta`, `/config/listener`, Config Ops section); removed Config Gray Rules section (Nacos uses `/beta` not `/gray/{dataId}`); Listener Controller corrected to single base endpoint (IP query); History Controller added `/previous` and `/configs`, fixed `/detail/{nid}`→base GET with query param; Capacity added POST; Metrics fixed to `/cluster` and `/ip` sub-paths. Naming Admin: Health fixed (removed base GET, added `/checkers`); Client expanded to 7 endpoints; Operator fixed to sub-paths only (`/switches`, `/metrics`, `/log`); Instance added `DELETE /metadata/batch` and `PUT /partial`, fixed POST→PUT for metadata; Cluster removed non-existent GET; Service added `PUT /service/cluster`. Comparison section: ~20 items previously marked EXTRA corrected to OK (they exist in Nacos). |
 | 2026-02-28 | Added V3 Admin Listener `/ip` endpoint. Added route completeness integration tests. Fixed comparison section for items that don't exist in Nacos (marked N/A). |
@@ -342,27 +343,89 @@ All routes are prefixed with `/nacos`. These are administrative APIs running on 
 
 **MCP Controller** (`/nacos/v3/admin/ai/mcp`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/nacos/v3/admin/ai/mcp/list` | List MCP servers |
-| GET | `/nacos/v3/admin/ai/mcp` | Get MCP server detail |
-| POST | `/nacos/v3/admin/ai/mcp` | Create MCP server |
-| PUT | `/nacos/v3/admin/ai/mcp` | Update MCP server |
-| DELETE | `/nacos/v3/admin/ai/mcp` | Delete MCP server |
-| POST | `/nacos/v3/admin/ai/mcp/import/validate` | Validate MCP import |
-| POST | `/nacos/v3/admin/ai/mcp/import/execute` | Execute MCP import |
-| GET | `/nacos/v3/admin/ai/mcp/tools` | Get MCP tools |
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| GET | `/nacos/v3/admin/ai/mcp/list` | List MCP servers (namespaceId, mcpName, search, pageNo, pageSize) | OK |
+| GET | `/nacos/v3/admin/ai/mcp` | Get MCP server detail (namespaceId, mcpId, mcpName, version) | OK |
+| POST | `/nacos/v3/admin/ai/mcp` | Create MCP server (McpDetailForm body) | OK |
+| PUT | `/nacos/v3/admin/ai/mcp` | Update MCP server (McpUpdateForm body) | OK |
+| DELETE | `/nacos/v3/admin/ai/mcp` | Delete MCP server (namespaceId, mcpName, mcpId, version) | OK |
+| POST | `/nacos/v3/admin/ai/mcp/import/validate` | Validate MCP import | OK |
+| POST | `/nacos/v3/admin/ai/mcp/import/execute` | Execute MCP import | OK |
+| GET | `/nacos/v3/admin/ai/mcp/tools` | Get MCP tools | OK |
 
 **A2A Controller** (`/nacos/v3/admin/ai/a2a`)
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/nacos/v3/admin/ai/a2a` | Register agent |
-| GET | `/nacos/v3/admin/ai/a2a` | Get agent card |
-| PUT | `/nacos/v3/admin/ai/a2a` | Update agent |
-| DELETE | `/nacos/v3/admin/ai/a2a` | Delete agent |
-| GET | `/nacos/v3/admin/ai/a2a/list` | List agents |
-| GET | `/nacos/v3/admin/ai/a2a/version/list` | List agent versions |
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| POST | `/nacos/v3/admin/ai/a2a` | Register agent (AgentCardForm body) | OK |
+| GET | `/nacos/v3/admin/ai/a2a` | Get agent card (namespaceId, agentName, version, registrationType) | OK |
+| PUT | `/nacos/v3/admin/ai/a2a` | Update agent (AgentCardUpdateForm body, setAsLatest flag) | OK |
+| DELETE | `/nacos/v3/admin/ai/a2a` | Delete agent (namespaceId, agentName, version) | OK |
+| GET | `/nacos/v3/admin/ai/a2a/list` | List agents (namespaceId, agentName, search, pageNo, pageSize) | OK |
+| GET | `/nacos/v3/admin/ai/a2a/version/list` | List agent versions (namespaceId, agentName) | OK |
+
+**Skills Controller** (`/nacos/v3/admin/ai/skills`) — *Nacos 3.2 New*
+
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| GET | `/nacos/v3/admin/ai/skills` | Get skill detail (skillName, namespaceId) | TODO |
+| GET | `/nacos/v3/admin/ai/skills/version` | Get skill version (skillName, version, namespaceId) | TODO |
+| GET | `/nacos/v3/admin/ai/skills/version/download` | Download skill ZIP (skillName, version, namespaceId) | TODO |
+| GET | `/nacos/v3/admin/ai/skills/list` | List skills (namespaceId, skillName, search, pageNo, pageSize) | TODO |
+| POST | `/nacos/v3/admin/ai/skills/upload` | Upload skill ZIP (multipart file, namespaceId, overwrite) | TODO |
+| POST | `/nacos/v3/admin/ai/skills/draft` | Create skill draft (SkillDraftCreateForm body) | TODO |
+| PUT | `/nacos/v3/admin/ai/skills/draft` | Update skill draft (SkillUpdateForm body) | TODO |
+| DELETE | `/nacos/v3/admin/ai/skills/draft` | Delete skill draft (skillName, namespaceId) | TODO |
+| DELETE | `/nacos/v3/admin/ai/skills` | Delete skill (skillName, namespaceId) | TODO |
+| POST | `/nacos/v3/admin/ai/skills/submit` | Submit skill version (SkillSubmitForm body) | TODO |
+| POST | `/nacos/v3/admin/ai/skills/publish` | Publish skill version (SkillPublishForm body) | TODO |
+| PUT | `/nacos/v3/admin/ai/skills/labels` | Update labels (SkillLabelsUpdateForm body) | TODO |
+| PUT | `/nacos/v3/admin/ai/skills/biz-tags` | Update biz tags (SkillBizTagsUpdateForm body) | TODO |
+| POST | `/nacos/v3/admin/ai/skills/online` | Online skill/version (SkillOnlineForm body) | TODO |
+| POST | `/nacos/v3/admin/ai/skills/offline` | Offline skill/version (SkillOnlineForm body) | TODO |
+| PUT | `/nacos/v3/admin/ai/skills/scope` | Update visibility scope (SkillScopeForm body) | TODO |
+
+**AgentSpec Controller** (`/nacos/v3/admin/ai/agentspecs`) — *Nacos 3.2 New*
+
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| GET | `/nacos/v3/admin/ai/agentspecs` | Get AgentSpec detail (agentSpecName, namespaceId) | TODO |
+| GET | `/nacos/v3/admin/ai/agentspecs/version` | Get AgentSpec version (agentSpecName, version, namespaceId) | TODO |
+| GET | `/nacos/v3/admin/ai/agentspecs/list` | List AgentSpecs (namespaceId, agentSpecName, search, pageNo, pageSize) | TODO |
+| POST | `/nacos/v3/admin/ai/agentspecs/upload` | Upload AgentSpec ZIP (multipart file, namespaceId, overwrite) | TODO |
+| POST | `/nacos/v3/admin/ai/agentspecs/draft` | Create draft (AgentSpecDraftCreateForm body) | TODO |
+| PUT | `/nacos/v3/admin/ai/agentspecs/draft` | Update draft (AgentSpecUpdateForm body) | TODO |
+| DELETE | `/nacos/v3/admin/ai/agentspecs/draft` | Delete draft (agentSpecName, namespaceId) | TODO |
+| DELETE | `/nacos/v3/admin/ai/agentspecs` | Delete AgentSpec (agentSpecName, namespaceId) | TODO |
+| POST | `/nacos/v3/admin/ai/agentspecs/submit` | Submit version (AgentSpecSubmitForm body) | TODO |
+| POST | `/nacos/v3/admin/ai/agentspecs/publish` | Publish version (AgentSpecPublishForm body) | TODO |
+| PUT | `/nacos/v3/admin/ai/agentspecs/labels` | Update labels (AgentSpecLabelsUpdateForm body) | TODO |
+| PUT | `/nacos/v3/admin/ai/agentspecs/biz-tags` | Update biz tags (AgentSpecBizTagsUpdateForm body) | TODO |
+| POST | `/nacos/v3/admin/ai/agentspecs/online` | Online (AgentSpecOnlineForm body) | TODO |
+| POST | `/nacos/v3/admin/ai/agentspecs/offline` | Offline (AgentSpecOnlineForm body) | TODO |
+| PUT | `/nacos/v3/admin/ai/agentspecs/scope` | Update visibility scope (AgentSpecScopeForm body) | TODO |
+
+**Prompts Controller** (`/nacos/v3/admin/ai/prompt`) — *Nacos 3.2 New*
+
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| POST | `/nacos/v3/admin/ai/prompt` | Publish prompt version (PromptPublishForm body) | TODO |
+| GET | `/nacos/v3/admin/ai/prompt/metadata` | Get prompt metadata (namespaceId, promptKey) | TODO |
+| DELETE | `/nacos/v3/admin/ai/prompt` | Delete prompt (namespaceId, promptKey) | TODO |
+| GET | `/nacos/v3/admin/ai/prompt/list` | List prompts (namespaceId, promptKey, search, bizTags, pageNo, pageSize) | TODO |
+| GET | `/nacos/v3/admin/ai/prompt/versions` | List prompt versions (namespaceId, promptKey, pageNo, pageSize) | TODO |
+| GET | `/nacos/v3/admin/ai/prompt/detail` | Get prompt version detail (namespaceId, promptKey, version, label) | TODO |
+| PUT | `/nacos/v3/admin/ai/prompt/label` | Bind label to version (PromptLabelBindForm body) | TODO |
+| DELETE | `/nacos/v3/admin/ai/prompt/label` | Unbind label (namespaceId, promptKey, label) | TODO |
+| PUT | `/nacos/v3/admin/ai/prompt/metadata` | Update metadata (PromptMetadataForm body) | TODO |
+
+**Pipeline Controller** (`/nacos/v3/admin/ai/pipelines`) — *Nacos 3.2 New*
+
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| GET | `/nacos/v3/admin/ai/pipelines/{pipelineId}` | Get pipeline execution detail | TODO |
+| GET | `/nacos/v3/admin/ai/pipelines` | List pipelines (resourceType, resourceName, namespaceId, version, pageNo, pageSize) | TODO |
 
 ### 1.3 V3 Client API (Main Server - Port 8848)
 
@@ -385,6 +448,27 @@ All routes are prefixed with `/nacos`. These are SDK client-facing HTTP APIs for
 | POST | `/nacos/v3/client/ns/instance` | Register instance or heartbeat |
 | DELETE | `/nacos/v3/client/ns/instance` | Deregister instance |
 | GET | `/nacos/v3/client/ns/instance/list` | Get instance list |
+
+#### AI Client (`/nacos/v3/client/ai`) — *Nacos 3.2 New*
+
+**Skill Client** (`/nacos/v3/client/ai/skills`)
+
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| GET | `/nacos/v3/client/ai/skills` | Download skill ZIP (name, version, label, namespaceId) | TODO |
+
+**AgentSpec Client** (`/nacos/v3/client/ai/agentspecs`)
+
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| GET | `/nacos/v3/client/ai/agentspecs/search` | Search AgentSpecs (keyword, namespaceId, pageNo, pageSize) | TODO |
+| GET | `/nacos/v3/client/ai/agentspecs` | Get AgentSpec (name, version, label, namespaceId) | TODO |
+
+**Prompt Client** (`/nacos/v3/client/ai/prompt`)
+
+| Method | Path | Description | Batata Status |
+|--------|------|-------------|:---:|
+| GET | `/nacos/v3/client/ai/prompt` | Query prompt (promptKey, version, label, md5, namespaceId) | TODO |
 
 ### 1.4 V3 Console API (Console Server)
 

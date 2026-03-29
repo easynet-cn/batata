@@ -1,7 +1,9 @@
 //! AI Capabilities Data Models
 //!
-//! Data models for MCP (Model Content Protocol) server registration
-//! and A2A (Agent-to-Agent) communication.
+//! Data models for MCP (Model Content Protocol) server registration,
+//! A2A (Agent-to-Agent) communication, and Prompt management.
+
+pub mod prompt;
 
 use std::collections::HashMap;
 

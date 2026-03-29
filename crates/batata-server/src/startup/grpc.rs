@@ -276,6 +276,50 @@ fn register_cluster_handlers(
             member_manager: member_manager.clone(),
         }));
     }
+
+    // Auth cache invalidation handler — receives cache eviction requests from peers
+    registry.register_handler(Arc::new(
+        batata_core::handler::auth_cache::AuthCacheInvalidateHandler {
+            invalidator: Arc::new(AuthCacheInvalidatorImpl),
+        },
+    ));
+}
+
+/// Concrete implementation of AuthCacheInvalidator that calls batata_auth functions.
+/// Lives in batata-server because this is the only crate that depends on both
+/// batata-core (trait definition) and batata-auth (cache functions).
+struct AuthCacheInvalidatorImpl;
+
+impl batata_core::handler::auth_cache::AuthCacheInvalidator for AuthCacheInvalidatorImpl {
+    fn invalidate(&self, invalidate_type: &str, target: &str) {
+        match invalidate_type {
+            "role" => {
+                batata_auth::service::role::invalidate_roles_cache(target);
+                batata_auth::service::permission::invalidate_permissions_cache_for_role(target);
+            }
+            "permission" => {
+                batata_auth::service::permission::invalidate_permissions_cache_for_role(target);
+            }
+            "token" => {
+                batata_auth::service::auth::invalidate_token(target);
+            }
+            "user" => {
+                batata_auth::service::role::invalidate_roles_cache(target);
+                batata_core::service::grpc_auth::GrpcAuthService::invalidate_cache_for_user(
+                    target,
+                );
+            }
+            "all" => {
+                batata_auth::service::auth::clear_token_cache();
+                batata_auth::service::role::invalidate_all_roles_cache();
+                batata_auth::service::permission::invalidate_all_permissions_cache();
+                batata_core::service::grpc_auth::GrpcAuthService::clear_cache();
+            }
+            other => {
+                tracing::warn!("Unknown auth cache invalidation type: {}", other);
+            }
+        }
+    }
 }
 
 /// Registers the lock operation handler.

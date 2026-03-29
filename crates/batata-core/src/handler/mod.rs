@@ -5,6 +5,7 @@
 
 #[macro_use]
 pub mod macros;
+pub mod auth_cache;
 pub mod cluster;
 pub mod distro;
 pub mod generic;

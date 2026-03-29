@@ -10,11 +10,14 @@ mod m20250317_000007_create_tenant_info;
 mod m20250317_000008_create_users;
 mod m20250317_000009_create_roles;
 mod m20250317_000010_create_permissions;
+mod m20250329_000011_create_pipeline_execution;
+mod m20250329_000012_create_ai_resource;
+mod m20250329_000013_create_ai_resource_version;
 
 pub struct Migrator;
 
 /// Total number of migrations — update when adding new migrations
-pub const MIGRATION_COUNT: usize = 10;
+pub const MIGRATION_COUNT: usize = 13;
 
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
@@ -30,6 +33,9 @@ impl MigratorTrait for Migrator {
             Box::new(m20250317_000008_create_users::Migration),
             Box::new(m20250317_000009_create_roles::Migration),
             Box::new(m20250317_000010_create_permissions::Migration),
+            Box::new(m20250329_000011_create_pipeline_execution::Migration),
+            Box::new(m20250329_000012_create_ai_resource::Migration),
+            Box::new(m20250329_000013_create_ai_resource_version::Migration),
         ]
     }
 }
@@ -114,6 +120,18 @@ mod tests {
         assert!(
             names_str.contains("tenant_info"),
             "Missing tenant_info (namespace) migration"
+        );
+        assert!(
+            names_str.contains("pipeline_execution"),
+            "Missing pipeline_execution migration"
+        );
+        assert!(
+            names_str.contains("ai_resource"),
+            "Missing ai_resource migration"
+        );
+        assert!(
+            names_str.contains("ai_resource_version"),
+            "Missing ai_resource_version migration"
         );
     }
 }

@@ -616,6 +616,19 @@ impl ClusterRequestSender {
         self.client_manager.send_request(address, request).await
     }
 
+    /// Broadcast auth cache invalidation to all cluster nodes
+    pub async fn broadcast_auth_cache_invalidation(
+        &self,
+        members: &[Member],
+        invalidate_type: &str,
+        target: &str,
+    ) -> Vec<(String, Result<Payload, String>)> {
+        use batata_api::remote::model::AuthCacheInvalidateRequest;
+
+        let request = AuthCacheInvalidateRequest::new(invalidate_type, target);
+        self.client_manager.broadcast(members, request).await
+    }
+
     /// Broadcast config change to all cluster nodes
     pub async fn broadcast_config_change(
         &self,

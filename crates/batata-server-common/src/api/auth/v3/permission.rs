@@ -127,7 +127,10 @@ async fn create(
         .await;
 
     match result {
-        Ok(()) => Result::<String>::http_success("add permission ok!"),
+        Ok(()) => {
+            batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            Result::<String>::http_success("add permission ok!")
+        }
         Err(err) => HttpResponse::InternalServerError().json(Result::<String> {
             code: 500,
             message: err.to_string(),
@@ -156,7 +159,10 @@ async fn delete(
         .await;
 
     match result {
-        Ok(()) => Result::<String>::http_success("delete permission ok!"),
+        Ok(()) => {
+            batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            Result::<String>::http_success("delete permission ok!")
+        }
         Err(err) => HttpResponse::InternalServerError().json(Result::<String> {
             code: 500,
             message: err.to_string(),
