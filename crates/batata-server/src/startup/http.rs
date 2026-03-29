@@ -171,13 +171,24 @@ impl ConsulServices {
             query: ConsulQueryService::with_rocks(db.clone()),
             lock,
             semaphore,
-            peering: Arc::new(ConsulPeeringService::new()),
-            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::new(),
+            peering: Arc::new(ConsulPeeringService::with_rocks(
+                db.clone(),
+                dc_config.datacenter.clone(),
+                8500,
+            )),
+            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::with_rocks(
+                db.clone(),
+            ),
             connect: batata_plugin_consul::connect::ConsulConnectService::new(),
-            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::new(),
-            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::new(),
-            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::with_rocks(db),
-            operator: batata_plugin_consul::operator::ConsulOperatorService::new(),
+            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::with_rocks(
+                db.clone(),
+            ),
+            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::with_rocks(
+                db.clone(),
+                dc_config.datacenter.clone(),
+            ),
+            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::with_rocks(db.clone()),
+            operator: batata_plugin_consul::operator::ConsulOperatorService::with_rocks(db),
             dc_config,
             index_provider,
         }
@@ -233,13 +244,24 @@ impl ConsulServices {
             query: ConsulQueryService::with_rocks(db.clone()),
             lock,
             semaphore,
-            peering: Arc::new(ConsulPeeringService::new()),
-            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::new(),
+            peering: Arc::new(ConsulPeeringService::with_rocks(
+                db.clone(),
+                dc_config.datacenter.clone(),
+                8500,
+            )),
+            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::with_rocks(
+                db.clone(),
+            ),
             connect: batata_plugin_consul::connect::ConsulConnectService::new(),
-            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::new(),
-            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::new(),
-            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::with_rocks(db),
-            operator: batata_plugin_consul::operator::ConsulOperatorService::new(),
+            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::with_rocks(
+                db.clone(),
+            ),
+            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::with_rocks(
+                db.clone(),
+                dc_config.datacenter.clone(),
+            ),
+            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::with_rocks(db.clone()),
+            operator: batata_plugin_consul::operator::ConsulOperatorService::with_rocks(db),
             dc_config,
             index_provider,
         }

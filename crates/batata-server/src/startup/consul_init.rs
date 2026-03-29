@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use batata_consistency::raft::state_machine::{
-    CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
+    CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CONFIG_ENTRIES, CF_CONSUL_COORDINATES,
+    CF_CONSUL_INTENTIONS, CF_CONSUL_KV, CF_CONSUL_OPERATOR, CF_CONSUL_PEERING, CF_CONSUL_QUERIES,
+    CF_CONSUL_SESSIONS,
 };
 use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
@@ -323,7 +325,13 @@ fn open_consul_rocks_db(
         ColumnFamilyDescriptor::new(CF_CONSUL_KV, cf_opts.clone()),
         ColumnFamilyDescriptor::new(CF_CONSUL_ACL, cf_opts.clone()),
         ColumnFamilyDescriptor::new(CF_CONSUL_SESSIONS, cf_opts.clone()),
-        ColumnFamilyDescriptor::new(CF_CONSUL_QUERIES, cf_opts),
+        ColumnFamilyDescriptor::new(CF_CONSUL_QUERIES, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_CONFIG_ENTRIES, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_CA_ROOTS, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_INTENTIONS, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_COORDINATES, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_PEERING, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_OPERATOR, cf_opts),
     ];
 
     match rocksdb::DB::open_cf_descriptors(&db_opts, data_dir, consul_cfs) {

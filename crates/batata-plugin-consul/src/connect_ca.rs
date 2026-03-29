@@ -6,8 +6,12 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use chrono::Utc;
 use dashmap::DashMap;
+use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing::{error, info};
+
+use batata_consistency::raft::state_machine::{CF_CONSUL_CA_ROOTS, CF_CONSUL_INTENTIONS};
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -239,11 +243,16 @@ pub struct LeafCertQueryParams {
     pub wait: Option<String>,
 }
 
+/// RocksDB key for the CA configuration (stored in CF_CONSUL_CA_ROOTS)
+const ROCKS_KEY_CA_CONFIG: &str = "__ca_config__";
+/// RocksDB key for the active root ID (stored in CF_CONSUL_CA_ROOTS)
+const ROCKS_KEY_ACTIVE_ROOT: &str = "__active_root__";
+
 // ============================================================================
-// Service (In-Memory)
+// Service (In-Memory + optional RocksDB persistence)
 // ============================================================================
 
-/// In-memory Connect CA and Intentions service
+/// Connect CA and Intentions service with optional RocksDB write-through persistence
 #[derive(Clone)]
 pub struct ConsulConnectCAService {
     /// CA roots
@@ -265,6 +274,8 @@ pub struct ConsulConnectCAService {
     ca_cert_pem: String,
     /// CA private key PEM (for signing leaf certs)
     ca_key_pem: String,
+    /// Optional RocksDB for write-through persistence
+    rocks_db: Option<Arc<DB>>,
 }
 
 impl ConsulConnectCAService {
@@ -316,6 +327,155 @@ impl ConsulConnectCAService {
             datacenter: "dc1".to_string(),
             ca_cert_pem,
             ca_key_pem,
+            rocks_db: None,
+        }
+    }
+
+    /// Create a Connect CA service backed by an existing RocksDB instance.
+    /// Loads CA roots from CF_CONSUL_CA_ROOTS and intentions from CF_CONSUL_INTENTIONS.
+    pub fn with_rocks(db: Arc<DB>) -> Self {
+        let roots = Arc::new(DashMap::new());
+        let intentions = Arc::new(DashMap::new());
+        let mut max_index = 0u64;
+        let mut loaded_active_root_id: Option<String> = None;
+        let mut loaded_ca_config: Option<CAConfig> = None;
+
+        // Load CA roots
+        if let Some(cf) = db.cf_handle(CF_CONSUL_CA_ROOTS) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut root_count = 0u64;
+
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                    if key == ROCKS_KEY_CA_CONFIG {
+                        match serde_json::from_slice::<CAConfig>(&value_bytes) {
+                            Ok(config) => {
+                                if config.modify_index > max_index {
+                                    max_index = config.modify_index;
+                                }
+                                loaded_ca_config = Some(config);
+                            }
+                            Err(e) => {
+                                error!("Failed to deserialize CA config from RocksDB: {}", e);
+                            }
+                        }
+                    } else if key == ROCKS_KEY_ACTIVE_ROOT {
+                        if let Ok(id) = String::from_utf8(value_bytes.to_vec()) {
+                            loaded_active_root_id = Some(id);
+                        }
+                    } else {
+                        match serde_json::from_slice::<CARoot>(&value_bytes) {
+                            Ok(root) => {
+                                if root.modify_index > max_index {
+                                    max_index = root.modify_index;
+                                }
+                                roots.insert(key, root);
+                                root_count += 1;
+                            }
+                            Err(e) => {
+                                error!(
+                                    "Failed to deserialize CA root '{}' from RocksDB: {}",
+                                    key, e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            info!(
+                "Loaded {} CA roots from RocksDB (max_index={})",
+                root_count, max_index
+            );
+        }
+
+        // Load intentions
+        if let Some(cf) = db.cf_handle(CF_CONSUL_INTENTIONS) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut intention_count = 0u64;
+
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                    match serde_json::from_slice::<Intention>(&value_bytes) {
+                        Ok(intention) => {
+                            if intention.modify_index > max_index {
+                                max_index = intention.modify_index;
+                            }
+                            intentions.insert(key, intention);
+                            intention_count += 1;
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize intention '{}' from RocksDB: {}",
+                                key, e
+                            );
+                        }
+                    }
+                }
+            }
+            info!(
+                "Loaded {} intentions from RocksDB (max_index={})",
+                intention_count, max_index
+            );
+        }
+
+        // If no roots were loaded from RocksDB, generate a fresh CA root
+        let (ca_cert_pem, ca_key_pem) = Self::generate_ca_root_cert();
+        if roots.is_empty() {
+            let root_id = uuid::Uuid::new_v4().to_string();
+            let root = CARoot {
+                id: root_id.clone(),
+                name: "Consul CA Root Cert".to_string(),
+                root_cert: ca_cert_pem.clone(),
+                active: true,
+                create_index: 1,
+                modify_index: 1,
+            };
+            roots.insert(root_id.clone(), root);
+            loaded_active_root_id = Some(root_id);
+        }
+
+        let active_root_id = loaded_active_root_id.unwrap_or_else(|| {
+            // Fallback: find the first active root
+            roots
+                .iter()
+                .find(|r| r.value().active)
+                .map(|r| r.key().clone())
+                .unwrap_or_default()
+        });
+
+        let ca_config = loaded_ca_config.unwrap_or_else(|| CAConfig {
+            provider: "consul".to_string(),
+            config: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "LeafCertTTL".to_string(),
+                    serde_json::Value::String("72h".to_string()),
+                );
+                m.insert(
+                    "RootCertTTL".to_string(),
+                    serde_json::Value::String("87600h".to_string()),
+                );
+                m
+            },
+            state: std::collections::HashMap::new(),
+            force_without_cross_signing: false,
+            create_index: 1,
+            modify_index: 1,
+        });
+
+        Self {
+            roots,
+            active_root_id: Arc::new(tokio::sync::RwLock::new(active_root_id)),
+            ca_config: Arc::new(tokio::sync::RwLock::new(ca_config)),
+            intentions,
+            index: Arc::new(std::sync::atomic::AtomicU64::new(max_index + 1)),
+            trust_domain: "consul".to_string(),
+            datacenter: "dc1".to_string(),
+            ca_cert_pem,
+            ca_key_pem,
+            rocks_db: Some(db),
         }
     }
 
@@ -323,6 +483,108 @@ impl ConsulConnectCAService {
         self.datacenter = datacenter;
         self
     }
+
+    // ========================================================================
+    // RocksDB persistence helpers
+    // ========================================================================
+
+    /// Persist a CA root to RocksDB
+    #[allow(dead_code)]
+    fn persist_root_to_rocks(&self, id: &str, root: &CARoot) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_CA_ROOTS) {
+                match serde_json::to_vec(root) {
+                    Ok(json_bytes) => {
+                        if let Err(e) = db.put_cf(cf, id.as_bytes(), &json_bytes) {
+                            error!("Failed to persist CA root '{}' to RocksDB: {}", id, e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize CA root '{}' for RocksDB: {}", id, e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete a CA root from RocksDB
+    #[allow(dead_code)]
+    fn delete_root_from_rocks(&self, id: &str) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_CA_ROOTS) {
+                if let Err(e) = db.delete_cf(cf, id.as_bytes()) {
+                    error!("Failed to delete CA root '{}' from RocksDB: {}", id, e);
+                }
+            }
+        }
+    }
+
+    /// Persist the active root ID to RocksDB
+    #[allow(dead_code)]
+    fn persist_active_root_to_rocks(&self, active_root_id: &str) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_CA_ROOTS) {
+                if let Err(e) = db.put_cf(
+                    cf,
+                    ROCKS_KEY_ACTIVE_ROOT.as_bytes(),
+                    active_root_id.as_bytes(),
+                ) {
+                    error!("Failed to persist active root ID to RocksDB: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Persist the CA configuration to RocksDB
+    fn persist_ca_config_to_rocks(&self, config: &CAConfig) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_CA_ROOTS) {
+                match serde_json::to_vec(config) {
+                    Ok(json_bytes) => {
+                        if let Err(e) = db.put_cf(cf, ROCKS_KEY_CA_CONFIG.as_bytes(), &json_bytes) {
+                            error!("Failed to persist CA config to RocksDB: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize CA config for RocksDB: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Persist an intention to RocksDB
+    fn persist_intention_to_rocks(&self, id: &str, intention: &Intention) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_INTENTIONS) {
+                match serde_json::to_vec(intention) {
+                    Ok(json_bytes) => {
+                        if let Err(e) = db.put_cf(cf, id.as_bytes(), &json_bytes) {
+                            error!("Failed to persist intention '{}' to RocksDB: {}", id, e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize intention '{}' for RocksDB: {}", id, e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete an intention from RocksDB
+    fn delete_intention_from_rocks(&self, id: &str) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_INTENTIONS) {
+                if let Err(e) = db.delete_cf(cf, id.as_bytes()) {
+                    error!("Failed to delete intention '{}' from RocksDB: {}", id, e);
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // CA certificate generation
+    // ========================================================================
 
     /// Generate a self-signed CA root certificate using rcgen
     fn generate_ca_root_cert() -> (String, String) {
@@ -345,6 +607,10 @@ impl ConsulConnectCAService {
         (cert.pem(), key_pair.serialize_pem())
     }
 
+    // ========================================================================
+    // CA operations
+    // ========================================================================
+
     pub async fn get_roots(&self) -> CARootList {
         let active_id = self.active_root_id.read().await.clone();
         let roots: Vec<CARoot> = self.roots.iter().map(|r| r.value().clone()).collect();
@@ -365,6 +631,7 @@ impl ConsulConnectCAService {
         }
         let index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         config.modify_index = index;
+        self.persist_ca_config_to_rocks(&config);
         *self.ca_config.write().await = config;
         Ok(())
     }
@@ -436,6 +703,10 @@ impl ConsulConnectCAService {
         (leaf_cert.pem(), leaf_key_pair.serialize_pem())
     }
 
+    // ========================================================================
+    // Intention operations
+    // ========================================================================
+
     pub fn create_intention(&self, req: IntentionRequest) -> Intention {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
@@ -468,7 +739,8 @@ impl ConsulConnectCAService {
             modify_index: index,
         };
 
-        self.intentions.insert(id, intention.clone());
+        self.intentions.insert(id.clone(), intention.clone());
+        self.persist_intention_to_rocks(&id, &intention);
         intention
     }
 
@@ -498,14 +770,20 @@ impl ConsulConnectCAService {
             entry.precedence = Self::compute_precedence(&req.source_name, &req.destination_name);
             entry.updated_at = Utc::now().to_rfc3339();
             entry.modify_index = index;
-            Some(entry.clone())
+            let updated = entry.clone();
+            self.persist_intention_to_rocks(id, &updated);
+            Some(updated)
         } else {
             None
         }
     }
 
     pub fn delete_intention(&self, id: &str) -> bool {
-        self.intentions.remove(id).is_some()
+        let removed = self.intentions.remove(id).is_some();
+        if removed {
+            self.delete_intention_from_rocks(id);
+        }
+        removed
     }
 
     pub fn list_intentions(&self) -> Vec<Intention> {
@@ -582,6 +860,7 @@ impl ConsulConnectCAService {
             .map(|r| r.key().clone());
         if let Some(key) = key_to_remove {
             self.intentions.remove(&key);
+            self.delete_intention_from_rocks(&key);
             true
         } else {
             false

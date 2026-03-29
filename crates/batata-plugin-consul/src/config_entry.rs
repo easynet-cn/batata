@@ -9,10 +9,14 @@
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use dashmap::DashMap;
+use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{error, info};
+
+use batata_consistency::raft::state_machine::CF_CONSUL_CONFIG_ENTRIES;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -100,16 +104,18 @@ pub struct ConfigEntryRequest {
 }
 
 // ============================================================================
-// Config Entry Service (In-Memory)
+// Config Entry Service (In-Memory + optional RocksDB persistence)
 // ============================================================================
 
-/// In-memory config entry service
+/// Config entry service with optional RocksDB write-through persistence
 #[derive(Clone)]
 pub struct ConsulConfigEntryService {
     /// Entries stored by "kind/name" key
     entries: Arc<DashMap<String, ConfigEntry>>,
     /// Current index
     index: Arc<AtomicU64>,
+    /// Optional RocksDB for write-through persistence
+    rocks_db: Option<Arc<DB>>,
 }
 
 impl ConsulConfigEntryService {
@@ -117,11 +123,90 @@ impl ConsulConfigEntryService {
         Self {
             entries: Arc::new(DashMap::new()),
             index: Arc::new(AtomicU64::new(1)),
+            rocks_db: None,
+        }
+    }
+
+    /// Create a config entry service backed by an existing RocksDB instance.
+    /// Loads existing entries from the CF_CONSUL_CONFIG_ENTRIES column family.
+    pub fn with_rocks(db: Arc<DB>) -> Self {
+        let entries = Arc::new(DashMap::new());
+        let mut max_index = 0u64;
+
+        if let Some(cf) = db.cf_handle(CF_CONSUL_CONFIG_ENTRIES) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut count = 0u64;
+
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                    match serde_json::from_slice::<ConfigEntry>(&value_bytes) {
+                        Ok(entry) => {
+                            if entry.modify_index > max_index {
+                                max_index = entry.modify_index;
+                            }
+                            entries.insert(key, entry);
+                            count += 1;
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to deserialize config entry '{}' from RocksDB: {}",
+                                key, e
+                            );
+                        }
+                    }
+                }
+            }
+            info!(
+                "Loaded {} config entries from RocksDB (max_index={})",
+                count, max_index
+            );
+        }
+
+        Self {
+            entries,
+            index: Arc::new(AtomicU64::new(max_index + 1)),
+            rocks_db: Some(db),
         }
     }
 
     fn entry_key(kind: &str, name: &str) -> String {
         format!("{}/{}", kind, name)
+    }
+
+    /// Persist an entry to RocksDB (write-through)
+    fn persist_to_rocks(&self, key: &str, entry: &ConfigEntry) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_CONFIG_ENTRIES) {
+                match serde_json::to_vec(entry) {
+                    Ok(json_bytes) => {
+                        if let Err(e) = db.put_cf(cf, key.as_bytes(), &json_bytes) {
+                            error!("Failed to persist config entry '{}' to RocksDB: {}", key, e);
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "Failed to serialize config entry '{}' for RocksDB: {}",
+                            key, e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete an entry from RocksDB
+    fn delete_from_rocks(&self, key: &str) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_CONFIG_ENTRIES) {
+                if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
+                    error!(
+                        "Failed to delete config entry '{}' from RocksDB: {}",
+                        key, e
+                    );
+                }
+            }
+        }
     }
 
     pub fn list_entries(&self, kind: &str) -> Vec<ConfigEntry> {
@@ -176,7 +261,8 @@ impl ConsulConfigEntryService {
             create_index: existing_create_index,
             modify_index: new_index,
         };
-        self.entries.insert(key, entry);
+        self.entries.insert(key.clone(), entry.clone());
+        self.persist_to_rocks(&key, &entry);
         Ok(true)
     }
 
@@ -194,6 +280,7 @@ impl ConsulConfigEntryService {
         }
 
         self.entries.remove(&key);
+        self.delete_from_rocks(&key);
         self.index.fetch_add(1, Ordering::SeqCst);
         Ok(true)
     }
@@ -202,182 +289,6 @@ impl ConsulConfigEntryService {
 impl Default for ConsulConfigEntryService {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// ============================================================================
-// Config Entry Service (Persistent)
-// ============================================================================
-
-const CONSUL_CONFIG_ENTRY_GROUP: &str = "consul-config-entries";
-
-/// Persistent config entry service backed by database via ConfigService pattern
-pub struct ConsulConfigEntryServicePersistent {
-    db: Arc<sea_orm::DatabaseConnection>,
-    /// L1 cache
-    cache: Arc<DashMap<String, ConfigEntry>>,
-    index: Arc<AtomicU64>,
-    /// Default namespace for config entry storage
-    default_namespace: String,
-}
-
-impl ConsulConfigEntryServicePersistent {
-    pub fn new(db: Arc<sea_orm::DatabaseConnection>) -> Self {
-        Self {
-            db,
-            cache: Arc::new(DashMap::new()),
-            index: Arc::new(AtomicU64::new(1)),
-            default_namespace: "public".to_string(),
-        }
-    }
-
-    /// Create with a custom default namespace
-    pub fn with_namespace(mut self, namespace: String) -> Self {
-        if !namespace.is_empty() {
-            self.default_namespace = namespace;
-        }
-        self
-    }
-
-    fn entry_key(kind: &str, name: &str) -> String {
-        format!("{}/{}", kind, name)
-    }
-
-    fn data_id(kind: &str, name: &str) -> String {
-        format!("config-entry:{}:{}", kind, name)
-    }
-
-    pub async fn list_entries(&self, kind: &str) -> Vec<ConfigEntry> {
-        // Try cache first
-        let prefix = format!("{}/", kind);
-        let cached: Vec<ConfigEntry> = self
-            .cache
-            .iter()
-            .filter(|r| r.key().starts_with(&prefix))
-            .map(|r| r.value().clone())
-            .collect();
-
-        if !cached.is_empty() {
-            return cached;
-        }
-
-        // Fallback to database query
-        self.load_entries_from_db(kind).await
-    }
-
-    pub async fn get_entry(&self, kind: &str, name: &str) -> Option<ConfigEntry> {
-        let key = Self::entry_key(kind, name);
-
-        // Try cache first
-        if let Some(entry) = self.cache.get(&key) {
-            return Some(entry.value().clone());
-        }
-
-        // Try database
-        self.load_entry_from_db(kind, name).await
-    }
-
-    pub async fn apply_entry(
-        &self,
-        mut req: ConfigEntryRequest,
-        cas: Option<u64>,
-    ) -> Result<bool, String> {
-        if req.name.is_empty() {
-            req.name = req.kind.clone();
-        }
-        let key = Self::entry_key(&req.kind, &req.name);
-
-        if let Some(cas_index) = cas {
-            if let Some(existing) = self.cache.get(&key) {
-                if existing.modify_index != cas_index {
-                    return Ok(false);
-                }
-            } else if cas_index != 0 {
-                return Ok(false);
-            }
-        }
-
-        let new_index = self.index.fetch_add(1, Ordering::SeqCst) + 1;
-        let existing_create_index = self
-            .cache
-            .get(&key)
-            .map(|r| r.value().create_index)
-            .unwrap_or(new_index);
-
-        let entry = ConfigEntry {
-            kind: req.kind.clone(),
-            name: req.name.clone(),
-            namespace: req.namespace,
-            partition: req.partition,
-            meta: req.meta,
-            extra: req.extra,
-            create_index: existing_create_index,
-            modify_index: new_index,
-        };
-
-        // Store in database
-        self.store_entry_to_db(&req.kind, &req.name, &entry).await?;
-
-        // Update cache
-        self.cache.insert(key, entry);
-        Ok(true)
-    }
-
-    pub async fn delete_entry(
-        &self,
-        kind: &str,
-        name: &str,
-        cas: Option<u64>,
-    ) -> Result<bool, String> {
-        let key = Self::entry_key(kind, name);
-
-        if let Some(cas_index) = cas {
-            if let Some(existing) = self.cache.get(&key) {
-                if existing.modify_index != cas_index {
-                    return Ok(false);
-                }
-            } else {
-                return Ok(false);
-            }
-        }
-
-        // Remove from database
-        self.delete_entry_from_db(kind, name).await?;
-
-        // Remove from cache
-        self.cache.remove(&key);
-        self.index.fetch_add(1, Ordering::SeqCst);
-        Ok(true)
-    }
-
-    async fn load_entries_from_db(&self, _kind: &str) -> Vec<ConfigEntry> {
-        // Query database via ConfigService pattern
-        // For now, return from cache since DB queries will be similar to KV persistent
-        let _ = &self.db;
-        vec![]
-    }
-
-    async fn load_entry_from_db(&self, _kind: &str, _name: &str) -> Option<ConfigEntry> {
-        let _ = &self.db;
-        None
-    }
-
-    async fn store_entry_to_db(
-        &self,
-        _kind: &str,
-        _name: &str,
-        _entry: &ConfigEntry,
-    ) -> Result<(), String> {
-        let _ = &self.db;
-        let _ = &self.default_namespace;
-        let _ = CONSUL_CONFIG_ENTRY_GROUP;
-        let _ = Self::data_id(_kind, _name);
-        Ok(())
-    }
-
-    async fn delete_entry_from_db(&self, _kind: &str, _name: &str) -> Result<(), String> {
-        let _ = &self.db;
-        Ok(())
     }
 }
 
@@ -515,147 +426,6 @@ pub async fn delete_config_entry(
 
     let (kind, name) = path.into_inner();
     match config_service.delete_entry(&kind, &name, query.cas) {
-        Ok(success) => {
-            if query.cas.is_some() {
-                HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider
-                            .current_index(ConsulTable::Catalog)
-                            .to_string(),
-                    ))
-                    .json(success)
-            } else {
-                HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider
-                            .current_index(ConsulTable::Catalog)
-                            .to_string(),
-                    ))
-                    .json(serde_json::json!({}))
-            }
-        }
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
-    }
-}
-
-// ============================================================================
-// HTTP Handlers (Persistent)
-// ============================================================================
-
-/// GET /v1/config/{kind} - List config entries (persistent)
-pub async fn list_config_entries_persistent(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    config_service: web::Data<ConsulConfigEntryServicePersistent>,
-    path: web::Path<String>,
-    _query: web::Query<ConfigEntryListParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
-    }
-
-    let kind = path.into_inner();
-    if !SUPPORTED_KINDS.contains(&kind.as_str()) {
-        return HttpResponse::BadRequest().json(ConsulError::new(format!(
-            "Unsupported config entry kind: {}",
-            kind
-        )));
-    }
-
-    let entries = config_service.list_entries(&kind).await;
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(entries)
-}
-
-/// GET /v1/config/{kind}/{name} - Read config entry (persistent)
-pub async fn get_config_entry_persistent(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    config_service: web::Data<ConsulConfigEntryServicePersistent>,
-    path: web::Path<(String, String)>,
-    _query: web::Query<ConfigEntryListParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", false);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
-    }
-
-    let (kind, name) = path.into_inner();
-    match config_service.get_entry(&kind, &name).await {
-        Some(entry) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(entry),
-        None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
-    }
-}
-
-/// PUT /v1/config - Apply config entry (persistent)
-pub async fn apply_config_entry_persistent(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    config_service: web::Data<ConsulConfigEntryServicePersistent>,
-    query: web::Query<ConfigEntryApplyParams>,
-    body: web::Json<ConfigEntryRequest>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
-    }
-
-    let entry_req = body.into_inner();
-    if !SUPPORTED_KINDS.contains(&entry_req.kind.as_str()) {
-        return HttpResponse::BadRequest().json(ConsulError::new(format!(
-            "Unsupported config entry kind: {}",
-            entry_req.kind
-        )));
-    }
-
-    match config_service.apply_entry(entry_req, query.cas).await {
-        Ok(success) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(success),
-        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
-    }
-}
-
-/// DELETE /v1/config/{kind}/{name} - Delete config entry (persistent)
-pub async fn delete_config_entry_persistent(
-    req: HttpRequest,
-    acl_service: web::Data<AclService>,
-    config_service: web::Data<ConsulConfigEntryServicePersistent>,
-    path: web::Path<(String, String)>,
-    query: web::Query<ConfigEntryDeleteParams>,
-    index_provider: web::Data<ConsulIndexProvider>,
-) -> HttpResponse {
-    let authz = acl_service.authorize_request(&req, ResourceType::Service, "", true);
-    if !authz.allowed {
-        return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
-    }
-
-    let (kind, name) = path.into_inner();
-    match config_service.delete_entry(&kind, &name, query.cas).await {
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()

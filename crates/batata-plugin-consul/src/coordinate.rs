@@ -4,8 +4,12 @@
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use dashmap::DashMap;
+use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing::{error, info, warn};
+
+use batata_consistency::raft::state_machine::CF_CONSUL_COORDINATES;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -98,6 +102,8 @@ pub struct ConsulCoordinateService {
     coordinates: Arc<DashMap<String, CoordinateEntry>>,
     /// Datacenter name
     datacenter: String,
+    /// Optional RocksDB persistence
+    rocks_db: Option<Arc<DB>>,
 }
 
 impl ConsulCoordinateService {
@@ -114,6 +120,7 @@ impl ConsulCoordinateService {
         let service = Self {
             coordinates: Arc::new(DashMap::new()),
             datacenter,
+            rocks_db: None,
         };
 
         // Add self with default coordinate
@@ -125,6 +132,54 @@ impl ConsulCoordinateService {
         service.coordinates.insert(format!("{}:", node_name), entry);
 
         service
+    }
+
+    pub fn with_rocks(db: Arc<DB>, datacenter: String) -> Self {
+        let coordinates = Arc::new(DashMap::new());
+
+        // Load from RocksDB
+        if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut count = 0u64;
+
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if let Ok(_key) = String::from_utf8(key_bytes.to_vec()) {
+                    if let Ok(entry) = serde_json::from_slice::<CoordinateEntry>(&value_bytes) {
+                        let map_key = format!("{}:{}", entry.node, entry.segment);
+                        coordinates.insert(map_key, entry);
+                        count += 1;
+                    } else {
+                        warn!(
+                            "Failed to deserialize coordinate entry: {}",
+                            String::from_utf8_lossy(&key_bytes)
+                        );
+                    }
+                }
+            }
+            info!("Loaded {} coordinate entries from RocksDB", count);
+        }
+
+        // Add self with default coordinate if not already loaded
+        let node_name = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "batata-node".to_string());
+        let self_key = format!("{}:", node_name);
+        if !coordinates.contains_key(&self_key) {
+            let entry = CoordinateEntry {
+                node: node_name,
+                segment: String::new(),
+                coord: Coordinate::default(),
+            };
+            coordinates.insert(self_key, entry);
+        }
+
+        Self {
+            coordinates,
+            datacenter,
+            rocks_db: Some(db),
+        }
     }
 
     pub fn get_datacenters(&self) -> Vec<DatacenterMap> {
@@ -192,8 +247,39 @@ impl ConsulCoordinateService {
             segment: req.segment,
             coord: req.coord,
         };
-        self.coordinates.insert(key, entry);
+        self.coordinates.insert(key.clone(), entry.clone());
+        self.persist_to_rocks(&key, &entry);
         Ok(())
+    }
+
+    /// Persist a coordinate entry to RocksDB
+    fn persist_to_rocks(&self, key: &str, entry: &CoordinateEntry) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
+                match serde_json::to_vec(entry) {
+                    Ok(bytes) => {
+                        if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
+                            error!("Failed to persist coordinate '{}': {}", key, e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize coordinate '{}': {}", key, e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete a coordinate entry from RocksDB
+    #[allow(dead_code)]
+    fn delete_from_rocks(&self, key: &str) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
+                if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
+                    error!("Failed to delete coordinate '{}': {}", key, e);
+                }
+            }
+        }
     }
 }
 
@@ -213,6 +299,8 @@ pub struct ConsulCoordinateServicePersistent {
     coordinates: Arc<DashMap<String, CoordinateEntry>>,
     /// Datacenter name
     datacenter: String,
+    /// Optional RocksDB persistence
+    rocks_db: Option<Arc<DB>>,
 }
 
 impl ConsulCoordinateServicePersistent {
@@ -220,6 +308,43 @@ impl ConsulCoordinateServicePersistent {
         Self {
             coordinates: Arc::new(DashMap::new()),
             datacenter: datacenter.to_string(),
+            rocks_db: None,
+        }
+    }
+
+    pub fn with_rocks(db: Arc<DB>, datacenter: String) -> Self {
+        let coordinates = Arc::new(DashMap::new());
+
+        // Load from RocksDB
+        if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut count = 0u64;
+
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if let Ok(_key) = String::from_utf8(key_bytes.to_vec()) {
+                    if let Ok(entry) = serde_json::from_slice::<CoordinateEntry>(&value_bytes) {
+                        let map_key = format!("{}:{}", entry.node, entry.segment);
+                        coordinates.insert(map_key, entry);
+                        count += 1;
+                    } else {
+                        warn!(
+                            "Failed to deserialize persistent coordinate entry: {}",
+                            String::from_utf8_lossy(&key_bytes)
+                        );
+                    }
+                }
+            }
+            info!(
+                "Loaded {} persistent coordinate entries from RocksDB",
+                count
+            );
+        }
+
+        Self {
+            coordinates,
+            datacenter,
+            rocks_db: Some(db),
         }
     }
 
@@ -286,8 +411,39 @@ impl ConsulCoordinateServicePersistent {
             segment: req.segment,
             coord: req.coord,
         };
-        self.coordinates.insert(key, entry);
+        self.coordinates.insert(key.clone(), entry.clone());
+        self.persist_to_rocks(&key, &entry);
         Ok(())
+    }
+
+    /// Persist a coordinate entry to RocksDB
+    fn persist_to_rocks(&self, key: &str, entry: &CoordinateEntry) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
+                match serde_json::to_vec(entry) {
+                    Ok(bytes) => {
+                        if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
+                            error!("Failed to persist persistent coordinate '{}': {}", key, e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize persistent coordinate '{}': {}", key, e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete a coordinate entry from RocksDB
+    #[allow(dead_code)]
+    fn delete_from_rocks(&self, key: &str) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_COORDINATES) {
+                if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
+                    error!("Failed to delete persistent coordinate '{}': {}", key, e);
+                }
+            }
+        }
     }
 }
 

@@ -5,8 +5,12 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use chrono::Utc;
 use dashmap::DashMap;
+use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing::{error, info, warn};
+
+use batata_consistency::raft::state_machine::CF_CONSUL_PEERING;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -164,6 +168,8 @@ pub struct ConsulPeeringService {
     datacenter: String,
     /// Consul compatibility HTTP port (default 8500)
     consul_port: u16,
+    /// Optional RocksDB persistence
+    rocks_db: Option<Arc<DB>>,
 }
 
 impl ConsulPeeringService {
@@ -177,12 +183,51 @@ impl ConsulPeeringService {
             index: std::sync::atomic::AtomicU64::new(1),
             datacenter,
             consul_port: 8500,
+            rocks_db: None,
         }
     }
 
     pub fn with_consul_port(mut self, port: u16) -> Self {
         self.consul_port = port;
         self
+    }
+
+    pub fn with_rocks(db: Arc<DB>, datacenter: String, consul_port: u16) -> Self {
+        let peerings = Arc::new(DashMap::new());
+        let mut max_index = 1u64;
+
+        // Load from RocksDB
+        if let Some(cf) = db.cf_handle(CF_CONSUL_PEERING) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+            let mut count = 0u64;
+
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                    if let Ok(peering) = serde_json::from_slice::<Peering>(&value_bytes) {
+                        if peering.modify_index > max_index {
+                            max_index = peering.modify_index;
+                        }
+                        peerings.insert(key, peering);
+                        count += 1;
+                    } else {
+                        warn!(
+                            "Failed to deserialize peering entry: {}",
+                            String::from_utf8_lossy(&key_bytes)
+                        );
+                    }
+                }
+            }
+            info!("Loaded {} peering entries from RocksDB", count);
+        }
+
+        Self {
+            peerings,
+            index: std::sync::atomic::AtomicU64::new(max_index + 1),
+            datacenter,
+            consul_port,
+            rocks_db: Some(db),
+        }
     }
 
     pub fn generate_token(
@@ -214,7 +259,8 @@ impl ConsulPeeringService {
             remote: PeeringRemoteInfo::default(),
             deleted_at: None,
         };
-        self.peerings.insert(req.peer_name, peering);
+        self.peerings.insert(req.peer_name.clone(), peering.clone());
+        self.persist_to_rocks(&req.peer_name, &peering);
 
         // Generate the token
         let token = PeeringToken {
@@ -290,7 +336,8 @@ impl ConsulPeeringService {
             deleted_at: None,
         };
 
-        self.peerings.insert(req.peer_name, peering);
+        self.peerings.insert(req.peer_name.clone(), peering.clone());
+        self.persist_to_rocks(&req.peer_name, &peering);
         Ok(())
     }
 
@@ -317,9 +364,42 @@ impl ConsulPeeringService {
             peering.state = PeeringState::Deleting;
             peering.deleted_at = Some(Utc::now().to_rfc3339());
             peering.modify_index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let updated = peering.clone();
+            drop(peering);
+            self.persist_to_rocks(name, &updated);
             true
         } else {
             false
+        }
+    }
+
+    /// Persist a peering entry to RocksDB
+    fn persist_to_rocks(&self, name: &str, peering: &Peering) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_PEERING) {
+                match serde_json::to_vec(peering) {
+                    Ok(bytes) => {
+                        if let Err(e) = db.put_cf(cf, name.as_bytes(), &bytes) {
+                            error!("Failed to persist peering '{}': {}", name, e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize peering '{}': {}", name, e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete a peering entry from RocksDB
+    #[allow(dead_code)]
+    fn delete_from_rocks(&self, name: &str) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_PEERING) {
+                if let Err(e) = db.delete_cf(cf, name.as_bytes()) {
+                    error!("Failed to delete peering '{}': {}", name, e);
+                }
+            }
         }
     }
 }

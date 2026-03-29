@@ -13,12 +13,16 @@
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use dashmap::DashMap;
+use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{error, info, warn};
 
 use base64::Engine;
+
+use batata_consistency::raft::state_machine::CF_CONSUL_OPERATOR;
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
@@ -207,6 +211,8 @@ pub struct ConsulOperatorService {
     index: Arc<AtomicU64>,
     /// Datacenter name
     pub(crate) datacenter: String,
+    /// Optional RocksDB persistence
+    rocks_db: Option<Arc<DB>>,
 }
 
 impl ConsulOperatorService {
@@ -227,6 +233,7 @@ impl ConsulOperatorService {
             primary_key: Arc::new(tokio::sync::RwLock::new(None)),
             index: Arc::new(AtomicU64::new(1)),
             datacenter,
+            rocks_db: None,
         };
 
         // Add self as default server
@@ -253,6 +260,114 @@ impl ConsulOperatorService {
         service
     }
 
+    pub fn with_rocks(db: Arc<DB>) -> Self {
+        let servers = Arc::new(DashMap::new());
+        let keyring = Arc::new(DashMap::new());
+        let mut autopilot_config = AutopilotConfiguration::default();
+        let mut server_count = 0u64;
+        let mut keyring_count = 0u64;
+        let mut loaded_autopilot = false;
+
+        // Load from RocksDB
+        if let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR) {
+            let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
+
+            for item in iter.flatten() {
+                let (key_bytes, value_bytes) = item;
+                if let Ok(key) = String::from_utf8(key_bytes.to_vec()) {
+                    if let Some(id) = key.strip_prefix("server:") {
+                        if let Ok(server) = serde_json::from_slice::<RaftServer>(&value_bytes) {
+                            servers.insert(id.to_string(), server);
+                            server_count += 1;
+                        } else {
+                            warn!("Failed to deserialize operator server: {}", key);
+                        }
+                    } else if let Some(k) = key.strip_prefix("keyring:") {
+                        if let Ok(count) = serde_json::from_slice::<i32>(&value_bytes) {
+                            keyring.insert(k.to_string(), count);
+                            keyring_count += 1;
+                        } else {
+                            warn!("Failed to deserialize operator keyring: {}", key);
+                        }
+                    } else if key == "autopilot_config" {
+                        if let Ok(config) =
+                            serde_json::from_slice::<AutopilotConfiguration>(&value_bytes)
+                        {
+                            autopilot_config = config;
+                            loaded_autopilot = true;
+                        } else {
+                            warn!("Failed to deserialize operator autopilot_config");
+                        }
+                    }
+                }
+            }
+            info!(
+                "Loaded operator data from RocksDB: {} servers, {} keyring entries, autopilot_config={}",
+                server_count, keyring_count, loaded_autopilot
+            );
+        }
+
+        let datacenter = "dc1".to_string();
+
+        // If no servers loaded, add self as default
+        if servers.is_empty() {
+            let node_name = hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_else(|| "batata-node".to_string());
+            let server = RaftServer {
+                id: uuid::Uuid::new_v4().to_string(),
+                node: node_name,
+                address: "127.0.0.1:8300".to_string(),
+                leader: true,
+                voter: true,
+                protocol_version: "3".to_string(),
+                last_index: 1,
+            };
+            servers.insert(server.id.clone(), server);
+        }
+
+        // If no keyring loaded, add default
+        if keyring.is_empty() {
+            let default_key =
+                base64::engine::general_purpose::STANDARD.encode(uuid::Uuid::new_v4().as_bytes());
+            keyring.insert(default_key, 1);
+        }
+
+        let primary_key = Arc::new(tokio::sync::RwLock::new(
+            keyring.iter().next().map(|r| r.key().clone()),
+        ));
+
+        let svc = Self {
+            servers,
+            autopilot_config: Arc::new(tokio::sync::RwLock::new(autopilot_config)),
+            keyring,
+            primary_key,
+            index: Arc::new(AtomicU64::new(1)),
+            datacenter,
+            rocks_db: Some(db),
+        };
+
+        // Persist defaults if not loaded
+        if server_count == 0 {
+            for entry in svc.servers.iter() {
+                svc.persist_to_rocks(&format!("server:{}", entry.key()), entry.value());
+            }
+        }
+        if keyring_count == 0 {
+            for entry in svc.keyring.iter() {
+                svc.persist_to_rocks(&format!("keyring:{}", entry.key()), entry.value());
+            }
+        }
+        if !loaded_autopilot {
+            if let Ok(guard) = svc.autopilot_config.try_read() {
+                svc.persist_to_rocks("autopilot_config", &*guard);
+            }
+        }
+
+        svc
+    }
+
     pub fn get_raft_configuration(&self) -> RaftConfigurationResponse {
         let servers: Vec<RaftServer> = self.servers.iter().map(|r| r.value().clone()).collect();
         let index = self.index.load(Ordering::SeqCst);
@@ -263,6 +378,7 @@ impl ConsulOperatorService {
         if let Some(id) = id {
             if self.servers.remove(id).is_some() {
                 self.index.fetch_add(1, Ordering::SeqCst);
+                self.delete_from_rocks(&format!("server:{}", id));
                 return Ok(());
             }
             return Err(format!("Peer with ID '{}' not found", id));
@@ -276,6 +392,7 @@ impl ConsulOperatorService {
             if let Some(key) = key_to_remove {
                 self.servers.remove(&key);
                 self.index.fetch_add(1, Ordering::SeqCst);
+                self.delete_from_rocks(&format!("server:{}", key));
                 return Ok(());
             }
             return Err(format!("Peer with address '{}' not found", address));
@@ -307,7 +424,8 @@ impl ConsulOperatorService {
         let mut new_config = config;
         new_config.modify_index = new_index;
         new_config.create_index = current.create_index;
-        *current = new_config;
+        *current = new_config.clone();
+        self.persist_to_rocks("autopilot_config", &new_config);
         Ok(true)
     }
 
@@ -397,6 +515,7 @@ impl ConsulOperatorService {
     pub fn install_key(&self, key: &str) {
         let node_count = self.servers.len() as i32;
         self.keyring.insert(key.to_string(), node_count);
+        self.persist_to_rocks(&format!("keyring:{}", key), &node_count);
     }
 
     pub async fn use_key(&self, key: &str) -> Result<(), String> {
@@ -415,7 +534,37 @@ impl ConsulOperatorService {
         }
         drop(primary);
         self.keyring.remove(key);
+        self.delete_from_rocks(&format!("keyring:{}", key));
         Ok(())
+    }
+
+    /// Persist a value to RocksDB
+    fn persist_to_rocks<T: Serialize>(&self, key: &str, value: &T) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR) {
+                match serde_json::to_vec(value) {
+                    Ok(bytes) => {
+                        if let Err(e) = db.put_cf(cf, key.as_bytes(), &bytes) {
+                            error!("Failed to persist operator '{}': {}", key, e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize operator '{}': {}", key, e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Delete a key from RocksDB
+    fn delete_from_rocks(&self, key: &str) {
+        if let Some(ref db) = self.rocks_db {
+            if let Some(cf) = db.cf_handle(CF_CONSUL_OPERATOR) {
+                if let Err(e) = db.delete_cf(cf, key.as_bytes()) {
+                    error!("Failed to delete operator '{}': {}", key, e);
+                }
+            }
+        }
     }
 }
 

@@ -55,7 +55,7 @@ pub use route::routes;
 pub use acl::AclService;
 pub use agent::ConsulAgentService;
 pub use catalog::ConsulCatalogService;
-pub use config_entry::{ConsulConfigEntryService, ConsulConfigEntryServicePersistent};
+pub use config_entry::ConsulConfigEntryService;
 pub use event::{ConsulEventService, ConsulEventServicePersistent};
 pub use health::ConsulHealthService;
 pub use kv::ConsulKVService;
