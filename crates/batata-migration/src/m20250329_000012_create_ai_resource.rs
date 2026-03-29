@@ -11,11 +11,7 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(AiResource::Table)
                     .if_not_exists()
-                    .col(
-                        big_integer(AiResource::Id)
-                            .auto_increment()
-                            .primary_key(),
-                    )
+                    .col(big_integer(AiResource::Id).auto_increment().primary_key())
                     .col(
                         timestamp(AiResource::GmtCreate)
                             .not_null()
@@ -43,26 +39,14 @@ impl MigrationTrait for Migration {
                             .default("local"),
                     )
                     .col(text_null(AiResource::VersionInfo))
-                    .col(
-                        big_integer(AiResource::MetaVersion)
-                            .not_null()
-                            .default(1),
-                    )
+                    .col(big_integer(AiResource::MetaVersion).not_null().default(1))
                     .col(
                         string_len(AiResource::Scope, 16)
                             .not_null()
                             .default("PRIVATE"),
                     )
-                    .col(
-                        string_len(AiResource::Owner, 128)
-                            .not_null()
-                            .default(""),
-                    )
-                    .col(
-                        big_integer(AiResource::DownloadCount)
-                            .not_null()
-                            .default(0),
-                    )
+                    .col(string_len(AiResource::Owner, 128).not_null().default(""))
+                    .col(big_integer(AiResource::DownloadCount).not_null().default(0))
                     .to_owned(),
             )
             .await?;

@@ -323,10 +323,7 @@ mod tests {
             compare_versions("1.1.0", "1.0.0"),
             std::cmp::Ordering::Greater
         );
-        assert_eq!(
-            compare_versions("1.0.0", "2.0.0"),
-            std::cmp::Ordering::Less
-        );
+        assert_eq!(compare_versions("1.0.0", "2.0.0"), std::cmp::Ordering::Less);
         assert_eq!(
             compare_versions("1.0.1", "1.0.0"),
             std::cmp::Ordering::Greater

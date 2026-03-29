@@ -6,6 +6,7 @@ pub mod endpoint_service;
 pub mod mcp_client;
 pub mod mcp_index;
 pub mod mcp_service;
+pub mod prompt;
 
 pub use a2a_service::A2aServerOperationService;
 pub use endpoint_service::AiEndpointService;

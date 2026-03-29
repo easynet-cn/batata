@@ -789,6 +789,111 @@ fn default_agent_card() -> AgentCard {
     }
 }
 
+// =============================================================================
+// Prompt Handlers
+// =============================================================================
+
+/// Handler for QueryPromptRequest — queries prompt with version/label/MD5 support
+#[derive(Clone)]
+pub struct QueryPromptHandler {
+    pub prompt_service: Arc<crate::service::prompt::PromptOperationService>,
+}
+
+#[tonic::async_trait]
+impl PayloadHandler for QueryPromptHandler {
+    async fn handle(&self, _connection: &Connection, payload: &Payload) -> Result<Payload, Status> {
+        use batata_api::remote::model::{
+            QueryPromptRequest, QueryPromptResponse, RequestTrait, ResponseTrait,
+        };
+
+        let request = QueryPromptRequest::from(payload);
+        let request_id = request.request_id();
+
+        let namespace_id = if request.namespace_id.is_empty() {
+            "public"
+        } else {
+            &request.namespace_id
+        };
+
+        if request.prompt_key.is_empty() {
+            let response = batata_core::error_response!(
+                QueryPromptResponse,
+                request_id,
+                "promptKey is required"
+            );
+            return Ok(response.build_payload());
+        }
+
+        debug!(
+            prompt_key = %request.prompt_key,
+            namespace = %namespace_id,
+            version = %request.version,
+            label = %request.label,
+            "Processing QueryPromptRequest"
+        );
+
+        let version = if request.version.is_empty() {
+            None
+        } else {
+            Some(request.version.as_str())
+        };
+        let label = if request.label.is_empty() {
+            None
+        } else {
+            Some(request.label.as_str())
+        };
+        let md5 = if request.md5.is_empty() {
+            None
+        } else {
+            Some(request.md5.as_str())
+        };
+
+        match self
+            .prompt_service
+            .query_prompt(namespace_id, &request.prompt_key, version, label, md5)
+            .await
+        {
+            Ok(Some(info)) => {
+                let prompt = info.to_client_prompt();
+                let prompt_json = serde_json::to_value(&prompt).unwrap_or_default();
+                let mut response = QueryPromptResponse::with_prompt(prompt_json);
+                response.response.request_id = request_id;
+                Ok(response.build_payload())
+            }
+            Ok(None) => {
+                // NOT_MODIFIED — client already has latest version
+                let mut response = QueryPromptResponse::new();
+                response.response.request_id = request_id;
+                response.response.error_code = 304;
+                response.response.message = "Not Modified".to_string();
+                Ok(response.build_payload())
+            }
+            Err(e) => {
+                warn!("QueryPromptRequest error: {}", e);
+                let response =
+                    batata_core::error_response!(QueryPromptResponse, request_id, &e.to_string());
+                Ok(response.build_payload())
+            }
+        }
+    }
+
+    fn can_handle(&self) -> &'static str {
+        "QueryPromptRequest"
+    }
+
+    fn auth_requirement(&self) -> AuthRequirement {
+        AuthRequirement::Read
+    }
+
+    fn sign_type(&self) -> &'static str {
+        "ai"
+    }
+
+    fn resource_type(&self) -> ResourceType {
+        ResourceType::Ai
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

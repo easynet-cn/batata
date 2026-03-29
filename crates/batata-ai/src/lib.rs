@@ -21,7 +21,9 @@ pub use service::a2a_service::A2aServerOperationService;
 pub use service::endpoint_service::{AiEndpointService, EndpointInfo};
 pub use service::mcp_index::{McpServerIndex, McpServerIndexData};
 pub use service::mcp_service::McpServerOperationService;
+pub use service::prompt::PromptOperationService;
 
 // Re-export configure functions for route setup
 pub use api::a2a::configure as configure_a2a;
 pub use api::mcp::configure as configure_mcp;
+pub use api::prompt::{admin_routes as prompt_admin_routes, client_routes as prompt_client_routes};

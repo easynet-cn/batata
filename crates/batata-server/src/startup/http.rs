@@ -294,6 +294,9 @@ pub fn console_server(
         if let Some(ref svc) = ai_services.endpoint_service {
             app = app.app_data(web::Data::new(svc.clone()));
         }
+        if let Some(ref svc) = ai_services.prompt_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
 
         // Inject NamingService if available (not available in console-remote mode)
         if let Some(ref ns) = naming_service {
@@ -307,7 +310,8 @@ pub fn console_server(
                         .configure(batata_console::configure_v3_console_routes)
                         .service(console_mcp::routes())
                         .service(console_a2a::routes())
-                        .service(console_plugin::routes()),
+                        .service(console_plugin::routes())
+                        .service(web::scope("/ai").service(batata_ai::prompt_admin_routes())),
                 )
                 .configure(batata_console::configure_v2_console_routes),
         )
@@ -437,6 +441,7 @@ pub struct AIServices {
     pub a2a_service: Option<Arc<crate::service::ai::A2aServerOperationService>>,
     pub endpoint_service: Option<Arc<crate::service::ai::AiEndpointService>>,
     pub mcp_index: Option<Arc<crate::service::ai::McpServerIndex>>,
+    pub prompt_service: Option<Arc<batata_ai::PromptOperationService>>,
 }
 
 impl AIServices {
@@ -449,6 +454,7 @@ impl AIServices {
             a2a_service: None,
             endpoint_service: None,
             mcp_index: None,
+            prompt_service: None,
         }
     }
 
@@ -462,6 +468,7 @@ impl AIServices {
             persistence.clone(),
             mcp_index.clone(),
         ));
+        let prompt_service = Arc::new(batata_ai::PromptOperationService::new(persistence.clone()));
         let a2a_service = Arc::new(crate::service::ai::A2aServerOperationService::new(
             persistence,
         ));
@@ -474,6 +481,7 @@ impl AIServices {
             a2a_service: Some(a2a_service),
             endpoint_service: Some(endpoint_service),
             mcp_index: Some(mcp_index),
+            prompt_service: Some(prompt_service),
         }
     }
 }
@@ -597,6 +605,9 @@ pub fn main_server(
             app = app.app_data(web::Data::new(svc.clone()));
         }
         if let Some(ref svc) = ai_services.endpoint_service {
+            app = app.app_data(web::Data::new(svc.clone()));
+        }
+        if let Some(ref svc) = ai_services.prompt_service {
             app = app.app_data(web::Data::new(svc.clone()));
         }
 

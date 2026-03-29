@@ -1235,6 +1235,68 @@ impl From<ReleaseAgentCardResponse> for Any {
     }
 }
 
+// =============================================================================
+// AI-Prompt: QueryPrompt
+// =============================================================================
+
+/// Request to query a prompt by key, with optional version/label/MD5 filtering
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct QueryPromptRequest {
+    #[serde(flatten)]
+    pub request: Request,
+    pub namespace_id: String,
+    pub prompt_key: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub version: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub md5: String,
+}
+
+impl_request_trait!(QueryPromptRequest, request);
+
+impl From<&Payload> for QueryPromptRequest {
+    fn from(value: &Payload) -> Self {
+        QueryPromptRequest::from_payload(value)
+    }
+}
+
+/// Response for prompt query — contains the prompt info
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryPromptResponse {
+    #[serde(flatten)]
+    pub response: Response,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_info: Option<serde_json::Value>,
+}
+
+impl QueryPromptResponse {
+    pub fn new() -> Self {
+        Self {
+            response: Response::new(),
+            prompt_info: None,
+        }
+    }
+
+    pub fn with_prompt(prompt: serde_json::Value) -> Self {
+        Self {
+            response: Response::new(),
+            prompt_info: Some(prompt),
+        }
+    }
+}
+
+impl_response_trait!(QueryPromptResponse);
+
+impl From<QueryPromptResponse> for Any {
+    fn from(val: QueryPromptResponse) -> Self {
+        val.to_any()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

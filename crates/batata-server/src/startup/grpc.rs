@@ -30,7 +30,8 @@ use crate::{
     service::{
         ai_handler::{
             AgentEndpointHandler, McpServerEndpointHandler, QueryAgentCardHandler,
-            QueryMcpServerHandler, ReleaseAgentCardHandler, ReleaseMcpServerHandler,
+            QueryMcpServerHandler, QueryPromptHandler, ReleaseAgentCardHandler,
+            ReleaseMcpServerHandler,
         },
         cluster_handler::MemberReportHandler,
         config_fuzzy_watch::ConfigFuzzyWatchManager,
@@ -305,9 +306,7 @@ impl batata_core::handler::auth_cache::AuthCacheInvalidator for AuthCacheInvalid
             }
             "user" => {
                 batata_auth::service::role::invalidate_roles_cache(target);
-                batata_core::service::grpc_auth::GrpcAuthService::invalidate_cache_for_user(
-                    target,
-                );
+                batata_core::service::grpc_auth::GrpcAuthService::invalidate_cache_for_user(target);
             }
             "all" => {
                 batata_auth::service::auth::clear_token_cache();
@@ -362,6 +361,13 @@ fn register_ai_handlers(registry: &mut HandlerRegistry, ai_services: &AIServices
         agent_registry: ai_services.agent_registry.clone(),
         a2a_service: ai_services.a2a_service.clone(),
     }));
+
+    // Prompt handler
+    if let Some(ref prompt_service) = ai_services.prompt_service {
+        registry.register_handler(Arc::new(QueryPromptHandler {
+            prompt_service: prompt_service.clone(),
+        }));
+    }
 }
 
 /// Creates and initializes the Distro protocol with the naming service handler.
