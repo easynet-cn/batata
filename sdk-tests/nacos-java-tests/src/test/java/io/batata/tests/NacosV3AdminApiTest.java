@@ -208,7 +208,7 @@ public class NacosV3AdminApiTest {
      */
     @Test
     @Order(4)
-    @Disabled("Gray config API not yet fully implemented in Batata")
+    @Disabled("Nacos V3 admin has no POST /gray endpoint - gray publish uses console beta API")
     void testPublishGrayConfigViaV3Admin() throws Exception {
         String dataId = "v3admin-gray-" + UUID.randomUUID().toString().substring(0, 8);
         String normalContent = "gray.release=stable";

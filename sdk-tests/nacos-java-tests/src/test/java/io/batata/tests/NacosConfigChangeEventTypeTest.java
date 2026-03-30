@@ -59,25 +59,19 @@ public class NacosConfigChangeEventTypeTest {
      * CCET-001: Test ADDED change type when config is first published
      *
      * Aligned with Nacos ConfigLongPollReturnChangesConfigITCase.testAdd()
-     *
-     * SKIPPED: Batata does not populate ConfigChangeEvent.changeItems when
-     * pushing config changes via gRPC. The AbstractConfigChangeListener
-     * receives an empty changeItems collection. This requires server-side
-     * support for computing property-level diffs.
      */
     @Test
     @Order(1)
-    @Disabled("Batata does not populate ConfigChangeEvent.changeItems for config changes")
     void testAddedChangeType() throws NacosException, InterruptedException {
         String dataId = "ccet-add-" + UUID.randomUUID().toString().substring(0, 8);
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<ConfigChangeEvent> receivedEvent = new AtomicReference<>();
 
-        // Use getConfigAndSignListener with AbstractConfigChangeListener
+        // Add listener before config exists (aligned with Nacos testAdd pattern)
         configService.addListener(dataId, DEFAULT_GROUP, new AbstractConfigChangeListener() {
             @Override
             public void receiveConfigChange(ConfigChangeEvent event) {
-                System.out.println("Received change event: " + event);
+                System.out.println("Received change event with items: " + event.getChangeItems().size());
                 receivedEvent.set(event);
                 latch.countDown();
             }
@@ -95,19 +89,12 @@ public class NacosConfigChangeEventTypeTest {
         ConfigChangeEvent event = receivedEvent.get();
         assertNotNull(event, "ConfigChangeEvent should not be null");
 
-        // Verify change items
-        Collection<ConfigChangeItem> items = event.getChangeItems();
-        assertFalse(items.isEmpty(), "Should have at least one change item");
-
-        System.out.println("Change items count: " + items.size());
-        for (ConfigChangeItem item : items) {
-            System.out.println("  Key: " + item.getKey() + ", Type: " + item.getType()
-                    + ", NewValue: " + item.getNewValue());
-            // On first publish, type should be ADDED
-            assertEquals(PropertyChangeType.ADDED, item.getType(),
-                    "Change type should be ADDED for new config item: " + item.getKey());
-            assertNotNull(item.getNewValue(), "New value should not be null for ADDED item");
-        }
+        // TextChangeParser creates a single "content" key for text-type configs
+        ConfigChangeItem cci = event.getChangeItem("content");
+        assertNotNull(cci, "Should have a 'content' change item");
+        assertNull(cci.getOldValue(), "Old value should be null for ADDED item");
+        assertEquals(content, cci.getNewValue(), "New value should match published content");
+        assertEquals(PropertyChangeType.ADDED, cci.getType(), "Change type should be ADDED");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -303,13 +290,9 @@ public class NacosConfigChangeEventTypeTest {
      * CCET-005: Test getConfigAndSignListener with AbstractConfigChangeListener
      *
      * Aligned with Nacos AbstractConfigAPIConfigITCase.testAddListenerAndUpdateConfig()
-     *
-     * SKIPPED: Batata does not populate ConfigChangeEvent.changeItems when
-     * pushing config changes via gRPC.
      */
     @Test
     @Order(5)
-    @Disabled("Batata does not populate ConfigChangeEvent.changeItems for config changes")
     void testGetConfigAndSignListenerWithChangeEvent() throws NacosException, InterruptedException {
         String dataId = "ccet-sign-" + UUID.randomUUID().toString().substring(0, 8);
         CountDownLatch latch = new CountDownLatch(1);
@@ -320,7 +303,7 @@ public class NacosConfigChangeEventTypeTest {
         configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
         Thread.sleep(2000);
 
-        // Use getConfigAndSignListener
+        // Use getConfigAndSignListener (atomically fetches content + registers listener)
         AbstractConfigChangeListener listener = new AbstractConfigChangeListener() {
             @Override
             public void receiveConfigChange(ConfigChangeEvent event) {
@@ -334,7 +317,7 @@ public class NacosConfigChangeEventTypeTest {
 
         Thread.sleep(1000);
 
-        // Update should trigger listener
+        // Update should trigger listener with MODIFIED change
         String updatedContent = "ccet.sign.key=updated";
         configService.publishConfig(dataId, DEFAULT_GROUP, updatedContent);
 
@@ -343,7 +326,13 @@ public class NacosConfigChangeEventTypeTest {
 
         ConfigChangeEvent event = receivedEvent.get();
         assertNotNull(event, "Change event should not be null");
-        assertFalse(event.getChangeItems().isEmpty(), "Should have change items");
+
+        // TextChangeParser creates a single "content" key for text-type configs
+        ConfigChangeItem cci = event.getChangeItem("content");
+        assertNotNull(cci, "Should have a 'content' change item");
+        assertEquals(initialContent, cci.getOldValue(), "Old value should be initial content");
+        assertEquals(updatedContent, cci.getNewValue(), "New value should be updated content");
+        assertEquals(PropertyChangeType.MODIFIED, cci.getType(), "Change type should be MODIFIED");
 
         // Cleanup
         configService.removeConfig(dataId, DEFAULT_GROUP);
@@ -353,28 +342,32 @@ public class NacosConfigChangeEventTypeTest {
      * CCET-006: Test listener triggered exactly once per change
      *
      * Aligned with Nacos AbstractConfigAPIConfigITCase.testAddListenerAndModifyConfig()
-     *
-     * SKIPPED: Batata may send duplicate notifications (double notification behavior).
+     * Uses getConfigAndSignListener to avoid initial MD5 mismatch notification.
      */
     @Test
     @Order(6)
-    @Disabled("Test counts initial ConfigBatchListen mismatch as duplicate - addListener after publishConfig triggers initial MD5 diff")
     void testListenerTriggeredOncePerChange() throws NacosException, InterruptedException {
         String dataId = "ccet-once-" + UUID.randomUUID().toString().substring(0, 8);
         AtomicInteger triggerCount = new AtomicInteger(0);
         CountDownLatch latch = new CountDownLatch(1);
 
         // Publish initial config
-        configService.publishConfig(dataId, DEFAULT_GROUP, "ccet.once=initial");
+        String initialContent = "ccet.once=initial";
+        configService.publishConfig(dataId, DEFAULT_GROUP, initialContent);
         Thread.sleep(2000);
 
-        configService.addListener(dataId, DEFAULT_GROUP, new AbstractConfigChangeListener() {
+        // Use getConfigAndSignListener to atomically fetch + register listener
+        // This ensures CacheData has the correct MD5, avoiding initial mismatch notification
+        AbstractConfigChangeListener listener = new AbstractConfigChangeListener() {
             @Override
             public void receiveConfigChange(ConfigChangeEvent event) {
                 triggerCount.incrementAndGet();
                 latch.countDown();
             }
-        });
+        };
+
+        String content = configService.getConfigAndSignListener(dataId, DEFAULT_GROUP, 5000, listener);
+        assertEquals(initialContent, content, "Should get initial content");
 
         Thread.sleep(1000);
 

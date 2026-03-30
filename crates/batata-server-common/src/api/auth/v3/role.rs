@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 use batata_api::model::Page;
 use batata_common::error::BatataError;
+use batata_core::service::GrpcAuthService;
 
 use crate::api::auth::model::RoleInfo;
 use crate::model::app_state::AppState;
@@ -153,9 +154,10 @@ async fn create(
 
     match result {
         Ok(()) => {
-            // Invalidate local role/permission cache
+            // Invalidate local role/permission cache and gRPC auth cache
             batata_auth::service::role::invalidate_roles_cache(&params.username);
             batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            GrpcAuthService::clear_cache();
             Result::<String>::http_success("add role ok!")
         }
         Err(err) => {
@@ -198,6 +200,7 @@ pub async fn delete(
             let username = params.username.clone().unwrap_or_default();
             batata_auth::service::role::invalidate_roles_cache(&username);
             batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            GrpcAuthService::clear_cache();
             Result::<String>::http_success(format!("delete role of user {} ok!", username))
         }
         Err(err) => {

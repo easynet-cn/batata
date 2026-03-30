@@ -1027,7 +1027,10 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                 let all_keys = self.naming_service.get_all_service_keys();
                 info!(
                     "NamingFuzzyWatch initial sync: {} total service keys, pattern ns={} group={} svc={}",
-                    all_keys.len(), pattern.namespace, pattern.group_pattern, pattern.service_name_pattern
+                    all_keys.len(),
+                    pattern.namespace,
+                    pattern.group_pattern,
+                    pattern.service_name_pattern
                 );
                 let matched: Vec<String> = all_keys
                     .into_iter()
@@ -1045,7 +1048,8 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
 
                 info!(
                     "NamingFuzzyWatch initial sync: {} matched services out of {} total",
-                    matched.len(), self.naming_service.get_all_service_keys().len()
+                    matched.len(),
+                    self.naming_service.get_all_service_keys().len()
                 );
                 if !matched.is_empty() {
                     let batches = divide_into_batches(&matched, FUZZY_WATCH_BATCH_SIZE);
@@ -1069,8 +1073,7 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                                 .collect();
 
                             let mut sync_req = NamingFuzzyWatchSyncRequest::new();
-                            sync_req.group_key_pattern = format!("{}>>{}>>{}",
-                                ns, gp, sp);
+                            sync_req.group_key_pattern = format!("{}>>{}>>{}", ns, gp, sp);
                             sync_req.pattern_namespace = ns.clone();
                             sync_req.pattern_group_name = gp.clone();
                             sync_req.pattern_service_name = sp.clone();
@@ -1263,8 +1266,7 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
                                 .collect();
 
                             let mut sync_req = NamingFuzzyWatchSyncRequest::new();
-                            sync_req.group_key_pattern = format!("{}>>{}>>{}",
-                                ns, gp, sp);
+                            sync_req.group_key_pattern = format!("{}>>{}>>{}", ns, gp, sp);
                             sync_req.pattern_namespace = ns.clone();
                             sync_req.pattern_group_name = gp.clone();
                             sync_req.pattern_service_name = sp.clone();

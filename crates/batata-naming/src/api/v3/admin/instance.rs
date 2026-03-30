@@ -130,6 +130,9 @@ struct MetadataUpdateForm {
     group_name: Option<String>,
     #[serde(alias = "serviceName")]
     service_name: String,
+    #[serde(default, alias = "consistencyType")]
+    #[allow(dead_code)]
+    consistency_type: Option<String>,
     instances: String,
     metadata: String,
 }
@@ -330,13 +333,12 @@ async fn deregister_instance(
                     "",
                     false,
                 );
-                let notification =
-                    batata_api::naming::model::NotifySubscriberRequest::for_service(
-                        namespace_id,
-                        group_name,
-                        &params.service_name,
-                        service_info,
-                    );
+                let notification = batata_api::naming::model::NotifySubscriberRequest::for_service(
+                    namespace_id,
+                    group_name,
+                    &params.service_name,
+                    service_info,
+                );
                 use batata_api::remote::model::RequestTrait;
                 let payload = notification.build_server_push_payload();
                 let cm = cm.clone().into_inner();
@@ -423,13 +425,8 @@ async fn update_instance(
         let subscribers =
             naming_service.get_subscribers(namespace_id, group_name, &form.service_name);
         if !subscribers.is_empty() {
-            let service_info = naming_service.get_service(
-                namespace_id,
-                group_name,
-                &form.service_name,
-                "",
-                false,
-            );
+            let service_info =
+                naming_service.get_service(namespace_id, group_name, &form.service_name, "", false);
             let notification = batata_api::naming::model::NotifySubscriberRequest::for_service(
                 namespace_id,
                 group_name,
@@ -577,8 +574,8 @@ async fn list_instances(
     Result::<Vec<batata_api::naming::Instance>>::http_success(instances)
 }
 
-/// PUT /v3/admin/ns/instance/metadata
-#[put("metadata")]
+/// PUT /v3/admin/ns/instance/metadata/batch
+#[put("metadata/batch")]
 async fn update_metadata(
     req: HttpRequest,
     data: web::Data<AppState>,
@@ -621,18 +618,7 @@ async fn update_metadata(
         );
     }
 
-    let instance_keys: Vec<(&str, &str)> = form
-        .instances
-        .split(',')
-        .filter_map(|s| {
-            let parts: Vec<&str> = s.trim().split(':').collect();
-            if parts.len() == 2 {
-                Some((parts[0], parts[1]))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let instance_keys = parse_instance_keys(&form.instances);
 
     let instances = naming_service.get_instances_by_source(
         namespace_id,
@@ -646,7 +632,7 @@ async fn update_metadata(
     for instance in instances {
         let matches = instance_keys
             .iter()
-            .any(|(ip, port)| instance.ip == *ip && instance.port.to_string() == *port);
+            .any(|(ip, port)| instance.ip == *ip && instance.port == *port);
 
         if matches {
             let mut updated_instance = instance.clone();
@@ -762,6 +748,51 @@ async fn partial_update_instance(
     }
 }
 
+/// Parse instance keys from the instances parameter.
+/// Supports two formats:
+/// 1. JSON array of Instance objects: [{"ip":"10.0.0.1","port":8080,...}, ...]
+/// 2. Comma-separated ip:port pairs: "10.0.0.1:8080,10.0.0.2:8080"
+fn parse_instance_keys(instances_str: &str) -> Vec<(String, i32)> {
+    // Try JSON array format first (Nacos maintainer client format)
+    if let Ok(instances) = serde_json::from_str::<Vec<serde_json::Value>>(instances_str) {
+        return instances
+            .iter()
+            .filter_map(|v| {
+                let ip = v.get("ip").and_then(|v| v.as_str())?;
+                let port = v.get("port").and_then(|v| v.as_i64())? as i32;
+                Some((ip.to_string(), port))
+            })
+            .collect();
+    }
+
+    // Fall back to comma-separated ip:port format
+    instances_str
+        .split(',')
+        .filter_map(|s| {
+            let parts: Vec<&str> = s.trim().split(':').collect();
+            if parts.len() == 2 {
+                let port = parts[1].parse::<i32>().ok()?;
+                Some((parts[0].to_string(), port))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Parse keys to delete from the metadata parameter.
+/// Supports two formats:
+/// 1. JSON object: {"key1":"val1","key2":"val2"} - keys of the object are deleted
+/// 2. JSON array of strings: ["key1","key2"]
+fn parse_metadata_keys_to_delete(metadata_str: &str) -> Vec<String> {
+    // Try JSON object format first (Nacos maintainer client format)
+    if let Ok(obj) = serde_json::from_str::<HashMap<String, serde_json::Value>>(metadata_str) {
+        return obj.into_keys().collect();
+    }
+    // Try JSON array of strings
+    serde_json::from_str::<Vec<String>>(metadata_str).unwrap_or_default()
+}
+
 /// DELETE /v3/admin/ns/instance/metadata/batch
 ///
 /// Batch delete metadata keys from multiple instances.
@@ -796,29 +827,18 @@ async fn delete_metadata_batch(
             .build()
     );
 
-    let keys_to_delete: Vec<String> = serde_json::from_str(&params.metadata).unwrap_or_default();
+    let keys_to_delete = parse_metadata_keys_to_delete(&params.metadata);
 
     if keys_to_delete.is_empty() {
         return Result::<bool>::http_response(
             400,
             error::PARAMETER_VALIDATE_ERROR.code,
-            "Invalid metadata format. Expected JSON array of keys".to_string(),
+            "Invalid metadata format".to_string(),
             false,
         );
     }
 
-    let instance_keys: Vec<(&str, &str)> = params
-        .instances
-        .split(',')
-        .filter_map(|s| {
-            let parts: Vec<&str> = s.trim().split(':').collect();
-            if parts.len() == 2 {
-                Some((parts[0], parts[1]))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let instance_keys = parse_instance_keys(&params.instances);
 
     if instance_keys.is_empty() {
         return Result::<bool>::http_response(
@@ -841,7 +861,7 @@ async fn delete_metadata_batch(
     for instance in instances {
         let matches = instance_keys
             .iter()
-            .any(|(ip, port)| instance.ip == *ip && instance.port.to_string() == *port);
+            .any(|(ip, port)| instance.ip == *ip && instance.port == *port);
 
         if matches {
             let mut updated_instance = instance.clone();

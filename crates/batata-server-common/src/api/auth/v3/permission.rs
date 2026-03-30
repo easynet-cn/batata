@@ -2,6 +2,7 @@ use actix_web::{HttpRequest, HttpResponse, Responder, delete, get, post, web};
 use serde::Deserialize;
 
 use batata_api::model::Page;
+use batata_core::service::GrpcAuthService;
 
 use crate::api::auth::model::PermissionInfo;
 use crate::model::app_state::AppState;
@@ -131,6 +132,7 @@ async fn create(
     match result {
         Ok(()) => {
             batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            GrpcAuthService::clear_cache();
             Result::<String>::http_success("add permission ok!")
         }
         Err(err) => HttpResponse::InternalServerError().json(Result::<String> {
@@ -163,6 +165,7 @@ async fn delete(
     match result {
         Ok(()) => {
             batata_auth::service::permission::invalidate_permissions_cache_for_role(&params.role);
+            GrpcAuthService::clear_cache();
             Result::<String>::http_success("delete permission ok!")
         }
         Err(err) => HttpResponse::InternalServerError().json(Result::<String> {

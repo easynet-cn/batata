@@ -40,8 +40,8 @@ struct AgentForm {
 impl AgentForm {
     fn into_registration(self) -> std::result::Result<AgentRegistrationRequest, String> {
         let card_json = self.agent_card.unwrap_or_else(|| "{}".to_string());
-        let card = serde_json::from_str(&card_json)
-            .map_err(|e| format!("Invalid agentCard: {}", e))?;
+        let card =
+            serde_json::from_str(&card_json).map_err(|e| format!("Invalid agentCard: {}", e))?;
         let namespace = self.namespace_id.unwrap_or_default();
         Ok(AgentRegistrationRequest { card, namespace })
     }

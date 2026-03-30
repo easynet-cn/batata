@@ -134,7 +134,7 @@ public class NacosConfigTagTest {
      */
     @Test
     @Order(3)
-    @Disabled("configTags is metadata for search, not gray tag - second publish overwrites first content")
+    @Disabled("SDK-side: maintainerService.publishConfig() sends configTags (search metadata), not gray tag - second publish overwrites first content")
     void testQueryWithoutTagReturnsDefault() throws Exception {
         String dataId = "tag-default-" + UUID.randomUUID().toString().substring(0, 8);
         String normalContent = "mode=default";

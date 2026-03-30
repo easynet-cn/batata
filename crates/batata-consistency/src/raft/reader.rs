@@ -192,7 +192,6 @@ impl RocksDbReader {
 
         Ok((page_items, total))
     }
-
 }
 
 /// Simple glob matching supporting `*` wildcards.

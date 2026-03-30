@@ -98,10 +98,7 @@ impl PayloadHandler for LockOperationHandler {
         "lock"
     }
 
-    fn resource_from_payload(
-        &self,
-        payload: &Payload,
-    ) -> Option<(GrpcResource, PermissionAction)> {
+    fn resource_from_payload(&self, payload: &Payload) -> Option<(GrpcResource, PermissionAction)> {
         let request = LockOperationRequest::from(payload);
         let key = request
             .lock_instance

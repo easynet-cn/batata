@@ -151,7 +151,6 @@ public class NacosNamingMaintainerServiceTest {
      */
     @Test
     @Order(3)
-    @Disabled("Batch metadata update API not aligned")
     void testBatchUpdateInstanceMetadata() throws Exception {
         String serviceName = "nmms-batch-meta-" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -215,7 +214,6 @@ public class NacosNamingMaintainerServiceTest {
      */
     @Test
     @Order(4)
-    @Disabled("Batch metadata delete API not aligned")
     void testBatchDeleteInstanceMetadata() throws Exception {
         String serviceName = "nmms-batch-del-meta-" + UUID.randomUUID().toString().substring(0, 8);
 

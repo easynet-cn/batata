@@ -369,14 +369,11 @@ public class NacosMultiTenantConfigTest {
     /**
      * NMTC-006: Test config update in one namespace does not notify other namespace
      *
-     * SKIPPED: Batata's config change notification does not yet properly filter
-     * by namespace when pushing changes via gRPC. The namespace B listener may
-     * fire when namespace A updates because the server-side push does not
-     * isolate by tenant in the current implementation.
+     * Uses getConfigAndSignListener to avoid initial MD5 mismatch notification,
+     * aligned with Nacos AbstractConfigAPIConfigITCase pattern.
      */
     @Test
     @Order(6)
-    @Disabled("addListener after publishConfig triggers initial ConfigBatchListen MD5 mismatch - SDK fires listener for initial diff")
     void testConfigUpdateDoesNotNotifyCrossNamespace() throws Exception {
         String nsA = "nmtc006-nsA-" + UUID.randomUUID().toString().substring(0, 6);
         String nsB = "nmtc006-nsB-" + UUID.randomUUID().toString().substring(0, 6);
@@ -392,15 +389,15 @@ public class NacosMultiTenantConfigTest {
             // Publish initial content in both namespaces
             configA.publishConfig(dataId, DEFAULT_GROUP, "initial=A");
             configB.publishConfig(dataId, DEFAULT_GROUP, "initial=B");
-            Thread.sleep(500);
+            Thread.sleep(2000);
 
-            // Register listeners in both namespaces
+            // Register listeners using getConfigAndSignListener to avoid initial MD5 mismatch
             CountDownLatch latchA = new CountDownLatch(1);
             CountDownLatch latchB = new CountDownLatch(1);
             AtomicReference<String> receivedA = new AtomicReference<>();
             AtomicReference<String> receivedB = new AtomicReference<>();
 
-            configA.addListener(dataId, DEFAULT_GROUP, new Listener() {
+            String contentA = configA.getConfigAndSignListener(dataId, DEFAULT_GROUP, 5000, new Listener() {
                 @Override
                 public Executor getExecutor() { return null; }
 
@@ -410,8 +407,9 @@ public class NacosMultiTenantConfigTest {
                     latchA.countDown();
                 }
             });
+            assertEquals("initial=A", contentA, "Should get initial content for namespace A");
 
-            configB.addListener(dataId, DEFAULT_GROUP, new Listener() {
+            String contentB = configB.getConfigAndSignListener(dataId, DEFAULT_GROUP, 5000, new Listener() {
                 @Override
                 public Executor getExecutor() { return null; }
 
@@ -421,11 +419,12 @@ public class NacosMultiTenantConfigTest {
                     latchB.countDown();
                 }
             });
-            Thread.sleep(500);
+            assertEquals("initial=B", contentB, "Should get initial content for namespace B");
+
+            Thread.sleep(1000);
 
             // Update ONLY in namespace A
             configA.publishConfig(dataId, DEFAULT_GROUP, "updated=A");
-            Thread.sleep(3000);
 
             // Wait for listener A to fire
             boolean aFired = latchA.await(15, TimeUnit.SECONDS);

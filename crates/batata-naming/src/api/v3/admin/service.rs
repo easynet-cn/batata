@@ -163,14 +163,17 @@ async fn list_services(
     let (_, raw_names) = naming_service.list_services(
         namespace_id,
         group_name,
-        1,       // get all from page 1
+        1,        // get all from page 1
         i32::MAX, // large page to get all
     );
 
     // Apply service name filter (blur/contains match) if serviceNameParam is provided
     let name_filtered: Vec<String> = if let Some(ref sn) = params.service_name {
         if !sn.is_empty() {
-            raw_names.into_iter().filter(|n| n.contains(sn.as_str())).collect()
+            raw_names
+                .into_iter()
+                .filter(|n| n.contains(sn.as_str()))
+                .collect()
         } else {
             raw_names
         }
@@ -239,12 +242,14 @@ async fn list_services(
                     } else {
                         &inst.cluster_name
                     };
-                    cluster_map.entry(cluster_name.to_string()).or_insert_with(|| {
-                        serde_json::json!({
-                            "name": cluster_name,
-                            "hosts": []
-                        })
-                    });
+                    cluster_map
+                        .entry(cluster_name.to_string())
+                        .or_insert_with(|| {
+                            serde_json::json!({
+                                "name": cluster_name,
+                                "hosts": []
+                            })
+                        });
                 }
 
                 ServiceDetailResponse {

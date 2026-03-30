@@ -589,7 +589,7 @@ async fn find_listeners(
     }
 }
 
-#[get("export2")]
+#[get("export")]
 async fn export_configs(
     req: HttpRequest,
     data: web::Data<AppState>,

@@ -109,7 +109,7 @@ pub struct ExportRequest {
     pub group: Option<String>,
     #[serde(alias = "dataIds")]
     pub data_ids: Option<String>, // Comma-separated dataIds
-    pub ids: Option<String>,      // Comma-separated config IDs
+    pub ids: Option<String>, // Comma-separated config IDs
     #[serde(alias = "appName")]
     pub app_name: Option<String>,
 }

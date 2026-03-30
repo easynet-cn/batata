@@ -375,7 +375,6 @@ public class NacosV3ConsoleApiTest {
      */
     @Test
     @Order(7)
-    @Disabled("Config export endpoint not yet implemented in Batata")
     void testV3ConfigExport() throws Exception {
         // Create a config so there is something to export
         String dataId = "v3-export-" + UUID.randomUUID().toString().substring(0, 8);

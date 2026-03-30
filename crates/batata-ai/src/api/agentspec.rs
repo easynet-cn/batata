@@ -376,12 +376,8 @@ fn parse_agentspec_zip(zip_data: &[u8]) -> std::result::Result<AgentSpec, String
         }
     }
 
-    let manifest = manifest_json.ok_or_else(|| {
-        format!(
-            "ZIP does not contain {}",
-            AGENTSPEC_MAIN_FILE
-        )
-    })?;
+    let manifest =
+        manifest_json.ok_or_else(|| format!("ZIP does not contain {}", AGENTSPEC_MAIN_FILE))?;
 
     let spec: AgentSpec = serde_json::from_str(&manifest)
         .map_err(|e| format!("Invalid {} JSON: {}", AGENTSPEC_MAIN_FILE, e))?;

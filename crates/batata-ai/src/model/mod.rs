@@ -1172,7 +1172,6 @@ pub struct AgentCardDetailInfo {
     pub agent_card: Option<AgentCard>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

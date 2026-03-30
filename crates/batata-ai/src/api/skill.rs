@@ -451,10 +451,7 @@ async fn update_draft(
         );
     }
 
-    match skill_service
-        .update_draft(ns, skill_name, &skill)
-        .await
-    {
+    match skill_service.update_draft(ns, skill_name, &skill).await {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
         Err(e) => Result::<()>::http_bad_request(
             &batata_common::error::PARAMETER_VALIDATE_ERROR,

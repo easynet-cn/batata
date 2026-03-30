@@ -241,21 +241,14 @@ impl McpServerRegistry {
 
     /// List all servers as full McpServer objects (for MCP Registry server).
     pub fn list_all_servers(&self) -> Vec<McpServer> {
-        let mut servers: Vec<McpServer> = self
-            .servers
-            .iter()
-            .map(|e| e.value().clone())
-            .collect();
+        let mut servers: Vec<McpServer> = self.servers.iter().map(|e| e.value().clone()).collect();
         servers.sort_by(|a, b| a.name.cmp(&b.name));
         servers
     }
 
     /// List servers with optional filtering.
     /// Returns `Page<McpServerBasicInfo>` matching Nacos Java API contract.
-    pub fn list(
-        &self,
-        query: &McpServerQuery,
-    ) -> batata_api::model::Page<McpServerBasicInfo> {
+    pub fn list(&self, query: &McpServerQuery) -> batata_api::model::Page<McpServerBasicInfo> {
         let mut servers: Vec<McpServer> = self
             .servers
             .iter()
@@ -304,13 +297,17 @@ impl McpServerRegistry {
                 }
 
                 if let Some(has_resources) = query.has_resources
-                    && s.capabilities.contains(&crate::model::McpCapability::Resource) != has_resources
+                    && s.capabilities
+                        .contains(&crate::model::McpCapability::Resource)
+                        != has_resources
                 {
                     return false;
                 }
 
                 if let Some(has_prompts) = query.has_prompts
-                    && s.capabilities.contains(&crate::model::McpCapability::Prompt) != has_prompts
+                    && s.capabilities
+                        .contains(&crate::model::McpCapability::Prompt)
+                        != has_prompts
                 {
                     return false;
                 }
@@ -437,7 +434,10 @@ impl McpServerRegistry {
     pub fn update_tools(&self, id: &str, tools: Vec<McpTool>) {
         if let Some(mut server) = self.servers.get_mut(id) {
             server.tools = tools;
-            if !server.capabilities.contains(&crate::model::McpCapability::Tool) {
+            if !server
+                .capabilities
+                .contains(&crate::model::McpCapability::Tool)
+            {
                 server.capabilities.push(crate::model::McpCapability::Tool);
             }
             server.updated_at = Utc::now().timestamp_millis();

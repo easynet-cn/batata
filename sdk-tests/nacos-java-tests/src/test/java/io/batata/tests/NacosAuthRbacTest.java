@@ -1270,7 +1270,6 @@ public class NacosAuthRbacTest {
      */
     @Test
     @Order(30)
-    @Disabled("Permission cache invalidation timing - gRPC cache TTL may delay revocation effect")
     void testPermissionRevocation() throws Exception {
         String user = "revoke-user-" + UUID.randomUUID().toString().substring(0, 6);
         String role = "revoke-role-" + UUID.randomUUID().toString().substring(0, 6);
