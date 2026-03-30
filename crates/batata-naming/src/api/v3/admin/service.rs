@@ -33,6 +33,12 @@ struct ServiceListQuery {
     page_no: u64,
     #[serde(default = "default_page_size_small", alias = "pageSize")]
     page_size: u64,
+    /// When true, return ServiceDetailInfo (with metadata, protectThreshold, etc.)
+    #[serde(default, alias = "withInstances")]
+    with_instances: bool,
+    /// When true, exclude services that have no instances
+    #[serde(default, alias = "ignoreEmptyService", alias = "hasIpCount")]
+    ignore_empty_service: bool,
 }
 
 impl ServiceListQuery {
@@ -162,7 +168,7 @@ async fn list_services(
     );
 
     // Apply service name filter (blur/contains match) if serviceNameParam is provided
-    let filtered_names: Vec<String> = if let Some(ref sn) = params.service_name {
+    let name_filtered: Vec<String> = if let Some(ref sn) = params.service_name {
         if !sn.is_empty() {
             raw_names.into_iter().filter(|n| n.contains(sn.as_str())).collect()
         } else {
@@ -170,6 +176,27 @@ async fn list_services(
         }
     } else {
         raw_names
+    };
+
+    // Filter out empty services if ignoreEmptyService=true
+    let filtered_names: Vec<String> = if params.ignore_empty_service {
+        name_filtered
+            .into_iter()
+            .filter(|name| {
+                !naming_service
+                    .get_instances_by_source(
+                        namespace_id,
+                        group_name,
+                        name,
+                        "",
+                        false,
+                        Some(batata_api::naming::RegisterSource::Batata),
+                    )
+                    .is_empty()
+            })
+            .collect()
+    } else {
+        name_filtered
     };
 
     // Apply pagination to filtered results
@@ -182,47 +209,116 @@ async fn list_services(
         vec![]
     };
 
-    let service_list: Vec<ServiceInfoResponse> = service_names
-        .iter()
-        .map(|name| {
-            let instances = naming_service.get_instances_by_source(
-                namespace_id,
-                group_name,
-                name,
-                "",
-                false,
-                Some(batata_api::naming::RegisterSource::Batata),
-            );
-            let clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
-            let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
-
-            ServiceInfoResponse {
-                name: name.clone(),
-                group_name: group_name.to_string(),
-                cluster_count: clusters.len() as i32,
-                ip_count: instances.len() as i32,
-                healthy_instance_count: healthy_count as i32,
-                trigger_flag: String::new(),
-            }
-        })
-        .collect();
-
     let total = total_count as u64;
-    let page_size = params.page_size.max(1);
-    let pages_available = if page_size > 0 {
-        (total as f64 / page_size as f64).ceil() as u64
+    let page_size_val = params.page_size.max(1);
+    let pages_available = if page_size_val > 0 {
+        (total as f64 / page_size_val as f64).ceil() as u64
     } else {
         0
     };
 
-    let response = ServiceListResponse {
-        total_count: total_count,
-        page_number: params.page_no,
-        pages_available,
-        page_items: service_list,
-    };
+    if params.with_instances {
+        // Return ServiceDetailInfo format (for maintainer client listServicesWithDetail)
+        let detail_list: Vec<ServiceDetailResponse> = service_names
+            .iter()
+            .map(|name| {
+                let metadata = naming_service.get_service_metadata(namespace_id, group_name, name);
+                let instances = naming_service.get_instances_by_source(
+                    namespace_id,
+                    group_name,
+                    name,
+                    "",
+                    false,
+                    Some(batata_api::naming::RegisterSource::Batata),
+                );
+                // Build cluster map from instances
+                let mut cluster_map: HashMap<String, serde_json::Value> = HashMap::new();
+                for inst in &instances {
+                    let cluster_name = if inst.cluster_name.is_empty() {
+                        "DEFAULT"
+                    } else {
+                        &inst.cluster_name
+                    };
+                    cluster_map.entry(cluster_name.to_string()).or_insert_with(|| {
+                        serde_json::json!({
+                            "name": cluster_name,
+                            "hosts": []
+                        })
+                    });
+                }
 
-    Result::<ServiceListResponse>::http_success(response)
+                ServiceDetailResponse {
+                    namespace_id: namespace_id.to_string(),
+                    service_name: name.clone(),
+                    group_name: group_name.to_string(),
+                    cluster_map: if cluster_map.is_empty() {
+                        None
+                    } else {
+                        Some(cluster_map)
+                    },
+                    metadata: metadata.as_ref().map(|m| m.metadata.clone()),
+                    protect_threshold: metadata
+                        .as_ref()
+                        .map(|m| m.protect_threshold)
+                        .unwrap_or(0.0),
+                    selector: metadata.as_ref().and_then(|m| {
+                        if m.selector_type.is_empty() || m.selector_type == "none" {
+                            None
+                        } else {
+                            Some(SelectorResponse {
+                                r#type: m.selector_type.clone(),
+                                expression: Some(m.selector_expression.clone()),
+                            })
+                        }
+                    }),
+                    ephemeral: Some(true),
+                }
+            })
+            .collect();
+
+        let response = serde_json::json!({
+            "totalCount": total_count,
+            "pageNumber": params.page_no,
+            "pagesAvailable": pages_available,
+            "pageItems": detail_list,
+        });
+        Result::<serde_json::Value>::http_success(response)
+    } else {
+        // Return ServiceView format (default list)
+        let service_list: Vec<ServiceInfoResponse> = service_names
+            .iter()
+            .map(|name| {
+                let instances = naming_service.get_instances_by_source(
+                    namespace_id,
+                    group_name,
+                    name,
+                    "",
+                    false,
+                    Some(batata_api::naming::RegisterSource::Batata),
+                );
+                let clusters: HashSet<_> =
+                    instances.iter().map(|i| i.cluster_name.clone()).collect();
+                let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
+
+                ServiceInfoResponse {
+                    name: name.clone(),
+                    group_name: group_name.to_string(),
+                    cluster_count: clusters.len() as i32,
+                    ip_count: instances.len() as i32,
+                    healthy_instance_count: healthy_count as i32,
+                    trigger_flag: String::new(),
+                }
+            })
+            .collect();
+
+        let response = ServiceListResponse {
+            total_count: total_count,
+            page_number: params.page_no,
+            pages_available,
+            page_items: service_list,
+        };
+        Result::<ServiceListResponse>::http_success(response)
+    }
 }
 
 /// GET /v3/admin/ns/service

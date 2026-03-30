@@ -297,6 +297,7 @@ impl NamingService {
     }
 
     /// List all services in a namespace
+    /// Includes both services with instances AND empty services created via admin API.
     /// Single-pass iteration to minimize DashMap lock hold time
     pub fn list_services(
         &self,
@@ -311,19 +312,28 @@ impl NamingService {
             format!("{}@@{}@@", namespace, group_name)
         };
 
-        // Single pass: collect all matching service names, then paginate on owned data.
-        // This avoids iterating the DashMap twice (which holds shard read locks each time).
-        let all_names: Vec<String> = self
-            .services
-            .iter()
-            .filter(|entry| entry.key().starts_with(&prefix))
-            .map(|entry| {
-                super::parse_service_key(entry.key())
-                    .map(|(_, _, svc)| svc.to_string())
-                    .unwrap_or_else(|| entry.key().clone())
-            })
-            .collect();
-        // --- all shard locks released ---
+        // Collect service names from both services (with instances) and service_metadata
+        // (empty services created via admin API). Use a set to deduplicate.
+        let mut name_set = std::collections::HashSet::new();
+
+        for entry in self.services.iter() {
+            if entry.key().starts_with(&prefix) {
+                if let Some((_, _, svc)) = super::parse_service_key(entry.key()) {
+                    name_set.insert(svc.to_string());
+                }
+            }
+        }
+
+        for entry in self.service_metadata.iter() {
+            if entry.key().starts_with(&prefix) {
+                if let Some((_, _, svc)) = super::parse_service_key(entry.key()) {
+                    name_set.insert(svc.to_string());
+                }
+            }
+        }
+
+        let mut all_names: Vec<String> = name_set.into_iter().collect();
+        all_names.sort(); // deterministic ordering for pagination
 
         let total = all_names.len() as i32;
         let start = ((page_no - 1) * page_size) as usize;

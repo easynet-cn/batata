@@ -67,7 +67,6 @@ public class NacosConfigTagTest {
      */
     @Test
     @Order(1)
-    @Disabled("Tag-based config GET is not yet supported in Batata")
     void testPublishConfigWithTag() throws Exception {
         String dataId = "tag-publish-" + UUID.randomUUID().toString().substring(0, 8);
         String content = "tag.publish.key=value";
@@ -96,7 +95,6 @@ public class NacosConfigTagTest {
      */
     @Test
     @Order(2)
-    @Disabled("Tag-based config GET is not yet supported in Batata")
     void testQueryConfigWithTagFilter() throws Exception {
         String dataId = "tag-query-" + UUID.randomUUID().toString().substring(0, 8);
         String normalContent = "tag.query.mode=normal";
@@ -136,7 +134,7 @@ public class NacosConfigTagTest {
      */
     @Test
     @Order(3)
-    @Disabled("Tag-based config is not yet supported in Batata")
+    @Disabled("configTags is metadata for search, not gray tag - second publish overwrites first content")
     void testQueryWithoutTagReturnsDefault() throws Exception {
         String dataId = "tag-default-" + UUID.randomUUID().toString().substring(0, 8);
         String normalContent = "mode=default";
@@ -201,7 +199,6 @@ public class NacosConfigTagTest {
      */
     @Test
     @Order(5)
-    @Disabled("Gray publish endpoint response is not parseable in Batata")
     void testTagBasedGrayRelease() throws Exception {
         String dataId = "tag-gray-" + UUID.randomUUID().toString().substring(0, 8);
         String normalContent = "gray.release=stable";
