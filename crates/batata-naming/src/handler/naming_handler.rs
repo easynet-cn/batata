@@ -1024,10 +1024,12 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                 let matched: Vec<String> = all_keys
                     .into_iter()
                     .filter(|key| {
-                        if let Some((ns, rest)) = key.split_once("##") {
-                            if let Some((group, svc)) = rest.split_once("@@") {
-                                return pattern.matches(ns, group, svc);
-                            }
+                        // Service keys are in format: namespace@@group@@serviceName
+                        let mut parts = key.splitn(3, "@@");
+                        if let (Some(ns), Some(group), Some(svc)) =
+                            (parts.next(), parts.next(), parts.next())
+                        {
+                            return pattern.matches(ns, group, svc);
                         }
                         false
                     })

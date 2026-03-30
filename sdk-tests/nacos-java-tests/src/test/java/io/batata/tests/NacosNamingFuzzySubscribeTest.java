@@ -730,7 +730,7 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(12)
-    @Disabled("Naming fuzzy watch with fixed group not yet delivering events")
+    @Disabled("Nacos SDK FuzzyGroupKeyPattern.itemMatched fails for ANY_PATTERN('.*') - also broken in Nacos 3.x")
     void testFuzzyWatchWithFixedGroup() throws NacosException, InterruptedException {
         String uniqueId = UUID.randomUUID().toString().substring(0, 8);
         String fixedGroup = "NFSGROUP-" + uniqueId;

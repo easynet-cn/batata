@@ -448,12 +448,15 @@ pub struct FuzzyWatchNotifyRequest {
         deserialize_with = "deserialize_naming_module"
     )]
     module: String,
+    /// Sync type: "FUZZY_WATCH_RESOURCE_CHANGED" for change notifications
+    pub sync_type: String,
 }
 
 impl FuzzyWatchNotifyRequest {
     pub fn new() -> Self {
         Self {
             server_request: ServerRequest::new(),
+            sync_type: crate::model::FUZZY_WATCH_RESOURCE_CHANGED.to_string(),
             ..Default::default()
         }
     }
