@@ -262,7 +262,7 @@ impl NamingFuzzyWatchService {
                 entry.received_service_keys.insert(ctx.service_key.clone());
                 let event = NamingFuzzyWatchEvent {
                     service_key: ctx.service_key.clone(),
-                    change_type: ctx.change_type.clone(),
+                    change_type: ctx.changed_type.clone(),
                 };
                 for listener in &entry.listeners {
                     listener.on_change(event.clone());
@@ -674,11 +674,11 @@ mod tests {
         let mut contexts = HashSet::new();
         contexts.insert(NamingContext {
             service_key: "DEFAULT_GROUP@@svc1".to_string(),
-            change_type: CHANGE_TYPE_ADD.to_string(),
+            changed_type: CHANGE_TYPE_ADD.to_string(),
         });
         contexts.insert(NamingContext {
             service_key: "DEFAULT_GROUP@@svc2".to_string(),
-            change_type: CHANGE_TYPE_ADD.to_string(),
+            changed_type: CHANGE_TYPE_ADD.to_string(),
         });
 
         service.handle_sync_request("public", "*", "*", &contexts);

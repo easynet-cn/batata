@@ -510,7 +510,9 @@ impl From<&Payload> for NamingFuzzyWatchRequest {
 #[serde(rename_all = "camelCase")]
 pub struct NamingContext {
     pub service_key: String,
-    pub change_type: String,
+    /// Named "changedType" in Java SDK (not "changeType")
+    #[serde(rename = "changedType")]
+    pub changed_type: String,
 }
 
 // Naming fuzzy watch change notify request
@@ -550,10 +552,15 @@ impl From<&Payload> for NamingFuzzyWatchChangeNotifyRequest {
 pub struct NamingFuzzyWatchSyncRequest {
     #[serde(flatten)]
     pub fuzzy_watch_notify_request: FuzzyWatchNotifyRequest,
+    /// Combined pattern in format "namespace>>group>>service" (Java SDK field name)
+    pub group_key_pattern: String,
+    /// Kept for backward compatibility with internal code
+    #[serde(skip_serializing)]
     pub pattern_namespace: String,
+    #[serde(skip_serializing)]
     pub pattern_service_name: String,
+    #[serde(skip_serializing)]
     pub pattern_group_name: String,
-    pub sync_type: String,
     pub total_batch: i32,
     pub current_batch: i32,
     pub contexts: HashSet<NamingContext>,

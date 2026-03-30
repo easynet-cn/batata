@@ -756,6 +756,21 @@ impl ConfigPublishHandler {
                 data_id
             );
 
+            // Update subscriber MD5 to the new server MD5 BEFORE pushing notification
+            // to prevent duplicate notifications from ConfigBatchListen on the next check.
+            // The SDK sends a new ConfigBatchListenRequest immediately after receiving the push,
+            // so the MD5 must already be updated by that time.
+            let persistence = self.app_state.persistence();
+            if let Ok(Some(config)) = persistence.config_find_one(data_id, group, tenant).await {
+                for subscriber in &subscribers {
+                    self.app_state.config_subscriber_manager.update_md5(
+                        &subscriber.connection_id,
+                        &config_key,
+                        &config.md5,
+                    );
+                }
+            }
+
             // Push notification to each subscriber in parallel.
             // Use subscriber's client_tenant (original value from SDK) so the SDK
             // can match the notification against its local cache key.
@@ -1027,6 +1042,15 @@ impl ConfigRemoveHandler {
                 })
                 .collect();
             join_all(futs).await;
+
+            // Update subscriber MD5 to empty to prevent duplicate notifications
+            for subscriber in &subscribers {
+                self.app_state.config_subscriber_manager.update_md5(
+                    &subscriber.connection_id,
+                    &config_key,
+                    "",
+                );
+            }
 
             info!(
                 "Notified {} regular subscribers for config removal: {}@@{}@@{}",

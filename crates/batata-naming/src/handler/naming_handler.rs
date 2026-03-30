@@ -1018,9 +1018,17 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
         // Aligned with Nacos NamingFuzzyWatchRequestHandler which publishes ClientFuzzyWatchEvent
         // to trigger NamingFuzzyWatchSyncNotifier for initial data delivery.
         if request.initializing {
+            info!(
+                "NamingFuzzyWatch initial sync: pattern={}, connection={}",
+                group_key_pattern, connection_id
+            );
             let pattern = NamingFuzzyWatchPattern::from_group_key_pattern(&group_key_pattern);
             if let Some(pattern) = pattern {
                 let all_keys = self.naming_service.get_all_service_keys();
+                info!(
+                    "NamingFuzzyWatch initial sync: {} total service keys, pattern ns={} group={} svc={}",
+                    all_keys.len(), pattern.namespace, pattern.group_pattern, pattern.service_name_pattern
+                );
                 let matched: Vec<String> = all_keys
                     .into_iter()
                     .filter(|key| {
@@ -1035,6 +1043,10 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                     })
                     .collect();
 
+                info!(
+                    "NamingFuzzyWatch initial sync: {} matched services out of {} total",
+                    matched.len(), self.naming_service.get_all_service_keys().len()
+                );
                 if !matched.is_empty() {
                     let batches = divide_into_batches(&matched, FUZZY_WATCH_BATCH_SIZE);
                     let total_batch = batches.len() as i32;
@@ -1052,15 +1064,18 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                                 .iter()
                                 .map(|key| NamingContext {
                                     service_key: key.clone(),
-                                    change_type: CHANGE_TYPE_ADD.to_string(),
+                                    changed_type: CHANGE_TYPE_ADD.to_string(),
                                 })
                                 .collect();
 
                             let mut sync_req = NamingFuzzyWatchSyncRequest::new();
+                            sync_req.group_key_pattern = format!("{}>>{}>>{}",
+                                ns, gp, sp);
                             sync_req.pattern_namespace = ns.clone();
                             sync_req.pattern_group_name = gp.clone();
                             sync_req.pattern_service_name = sp.clone();
-                            sync_req.sync_type = SYNC_TYPE_INIT_NOTIFY.to_string();
+                            sync_req.fuzzy_watch_notify_request.sync_type =
+                                SYNC_TYPE_INIT_NOTIFY.to_string();
                             sync_req.total_batch = total_batch;
                             sync_req.current_batch = current_batch;
                             sync_req.contexts = contexts;
@@ -1081,7 +1096,8 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                         finish_req.pattern_namespace = ns;
                         finish_req.pattern_group_name = gp;
                         finish_req.pattern_service_name = sp;
-                        finish_req.sync_type = SYNC_TYPE_FINISH_NOTIFY.to_string();
+                        finish_req.fuzzy_watch_notify_request.sync_type =
+                            SYNC_TYPE_FINISH_NOTIFY.to_string();
                         finish_req.total_batch = total_batch;
                         finish_req.current_batch = total_batch;
                         let finish_payload = finish_req.build_server_push_payload();
@@ -1173,7 +1189,7 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
         let namespace = request.pattern_namespace.clone();
         let group_pattern = request.pattern_group_name.clone();
         let service_pattern = request.pattern_service_name.clone();
-        let sync_type = request.sync_type.clone();
+        let sync_type = request.fuzzy_watch_notify_request.sync_type.clone();
 
         // Build group key pattern in >> format
         let group_key_pattern = format!("{}>>{}>>{}", namespace, group_pattern, service_pattern);
@@ -1242,15 +1258,18 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
                                 .iter()
                                 .map(|key| NamingContext {
                                     service_key: key.clone(),
-                                    change_type: CHANGE_TYPE_ADD.to_string(),
+                                    changed_type: CHANGE_TYPE_ADD.to_string(),
                                 })
                                 .collect();
 
                             let mut sync_req = NamingFuzzyWatchSyncRequest::new();
+                            sync_req.group_key_pattern = format!("{}>>{}>>{}",
+                                ns, gp, sp);
                             sync_req.pattern_namespace = ns.clone();
                             sync_req.pattern_group_name = gp.clone();
                             sync_req.pattern_service_name = sp.clone();
-                            sync_req.sync_type = SYNC_TYPE_INIT_NOTIFY.to_string();
+                            sync_req.fuzzy_watch_notify_request.sync_type =
+                                SYNC_TYPE_INIT_NOTIFY.to_string();
                             sync_req.total_batch = total_batch;
                             sync_req.current_batch = current_batch;
                             sync_req.contexts = contexts;
@@ -1285,7 +1304,8 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
                         finish_req.pattern_namespace = ns;
                         finish_req.pattern_group_name = gp;
                         finish_req.pattern_service_name = sp;
-                        finish_req.sync_type = SYNC_TYPE_FINISH_NOTIFY.to_string();
+                        finish_req.fuzzy_watch_notify_request.sync_type =
+                            SYNC_TYPE_FINISH_NOTIFY.to_string();
                         finish_req.total_batch = total_batch;
                         finish_req.current_batch = total_batch;
 

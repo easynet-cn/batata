@@ -376,7 +376,7 @@ public class NacosMultiTenantConfigTest {
      */
     @Test
     @Order(6)
-    @Disabled("ConfigBatchListen initial MD5 mismatch causes spurious listener fire - same root cause as duplicate notification issue")
+    @Disabled("addListener after publishConfig triggers initial ConfigBatchListen MD5 mismatch - SDK fires listener for initial diff")
     void testConfigUpdateDoesNotNotifyCrossNamespace() throws Exception {
         String nsA = "nmtc006-nsA-" + UUID.randomUUID().toString().substring(0, 6);
         String nsB = "nmtc006-nsB-" + UUID.randomUUID().toString().substring(0, 6);

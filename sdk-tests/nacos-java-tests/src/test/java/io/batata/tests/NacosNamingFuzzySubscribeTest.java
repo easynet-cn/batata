@@ -282,7 +282,6 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(5)
-    @Disabled("Naming fuzzy watch initial sync not yet delivering ADD_SERVICE for pre-existing services")
     void testFuzzyWatchDeleteServiceEvent() throws NacosException, InterruptedException {
         String uniquePrefix = "nfs005-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";
@@ -416,7 +415,7 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(7)
-    @Disabled("Naming fuzzy watch initial sync not yet delivering existing service keys")
+    @Disabled("SDK future.get() times out - FINISH_FUZZY_WATCH_INIT_NOTIFY not properly completing the Future")
     void testFuzzyWatchWithServiceKeys() throws NacosException, InterruptedException, ExecutionException, TimeoutException {
         String uniquePrefix = "nfs007-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";
@@ -466,7 +465,7 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(8)
-    @Disabled("Naming fuzzy watch initial sync not yet working - cannot verify INIT syncType")
+    @Disabled("Real-time event sync type shows FUZZY_WATCH_INIT_NOTIFY instead of FUZZY_WATCH_RESOURCE_CHANGED")
     void testFuzzyWatchSyncType() throws NacosException, InterruptedException {
         String uniquePrefix = "nfs008-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";

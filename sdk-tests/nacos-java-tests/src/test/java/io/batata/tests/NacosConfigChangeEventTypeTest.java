@@ -358,7 +358,7 @@ public class NacosConfigChangeEventTypeTest {
      */
     @Test
     @Order(6)
-    @Disabled("Duplicate notification: push notification + ConfigBatchListen MD5 check both trigger listener")
+    @Disabled("Test counts initial ConfigBatchListen mismatch as duplicate - addListener after publishConfig triggers initial MD5 diff")
     void testListenerTriggeredOncePerChange() throws NacosException, InterruptedException {
         String dataId = "ccet-once-" + UUID.randomUUID().toString().substring(0, 8);
         AtomicInteger triggerCount = new AtomicInteger(0);
