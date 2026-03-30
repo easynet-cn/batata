@@ -134,17 +134,17 @@ impl RocksDbReader {
         let filtered: Vec<serde_json::Value> = configs
             .into_iter()
             .filter(|v| {
-                // Filter by data_id pattern (prefix match or contains)
+                // Filter by data_id pattern (supports * wildcards / glob matching)
                 if !data_id_pattern.is_empty() {
                     let did = v["data_id"].as_str().unwrap_or("");
-                    if !did.contains(data_id_pattern) {
+                    if !glob_match(data_id_pattern, did) {
                         return false;
                     }
                 }
-                // Filter by group pattern
+                // Filter by group pattern (supports * wildcards / glob matching)
                 if !group_pattern.is_empty() {
                     let grp = v["group"].as_str().unwrap_or("");
-                    if !grp.contains(group_pattern) {
+                    if !glob_match(group_pattern, grp) {
                         return false;
                     }
                 }
@@ -193,6 +193,54 @@ impl RocksDbReader {
         Ok((page_items, total))
     }
 
+}
+
+/// Simple glob matching supporting `*` wildcards.
+/// Splits pattern on `*` and checks that all segments appear in order in the value.
+fn glob_match(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    // No wildcard → exact or contains match
+    if !pattern.contains('*') {
+        return value.contains(pattern);
+    }
+
+    let segments: Vec<&str> = pattern.split('*').collect();
+    let mut pos = 0;
+
+    // First segment must match at the start (if non-empty)
+    if let Some(first) = segments.first() {
+        if !first.is_empty() {
+            if !value.starts_with(first) {
+                return false;
+            }
+            pos = first.len();
+        }
+    }
+
+    // Last segment must match at the end (if non-empty)
+    if let Some(last) = segments.last() {
+        if !last.is_empty() && !value.ends_with(last) {
+            return false;
+        }
+    }
+
+    // Middle segments must appear in order
+    for seg in &segments[1..segments.len().saturating_sub(1)] {
+        if seg.is_empty() {
+            continue;
+        }
+        match value[pos..].find(seg) {
+            Some(idx) => pos += idx + seg.len(),
+            None => return false,
+        }
+    }
+
+    true
+}
+
+impl RocksDbReader {
     // ==================== Config Gray Operations ====================
 
     /// Get gray config

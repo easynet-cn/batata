@@ -54,7 +54,9 @@ pub const SCOPE_PRIVATE: &str = "PRIVATE";
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Skill {
+    #[serde(default)]
     pub namespace_id: String,
+    #[serde(default)]
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -93,8 +95,9 @@ pub struct SkillMeta {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
+    pub update_time: Option<i64>,
     #[serde(default)]
     pub enable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,8 +126,9 @@ pub struct SkillSummary {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
+    pub update_time: Option<i64>,
     #[serde(default)]
     pub enable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,10 +157,12 @@ pub struct SkillVersionSummary {
     pub author: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create_time: Option<String>,
+    pub create_time: Option<i64>,
+    /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
+    pub update_time: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_pipeline_info: Option<String>,
     pub download_count: i64,
@@ -184,8 +190,9 @@ pub struct SkillBasicInfo {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Epoch millis (aligned with Nacos Java Long type)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
+    pub update_time: Option<i64>,
 }
 
 // ============================================================================
@@ -220,7 +227,7 @@ pub struct SkillStorageFile {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(alias = "skillName")]
     pub skill_name: Option<String>,
@@ -231,44 +238,60 @@ pub struct SkillForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillListForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(alias = "skillName")]
     pub skill_name: Option<String>,
     pub search: Option<String>,
+    #[serde(alias = "orderBy")]
     pub order_by: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
 /// Draft create form (POST body)
+///
+/// Aligned with Nacos SkillDraftCreateForm:
+/// - If `basedOnVersion` is set: forking from existing version, `skillName` required, `skillCard` ignored.
+/// - If `basedOnVersion` is not set: new skill, `skillCard` required, `skillName` optional (can be in skillCard).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillDraftCreateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
-    pub skill_name: String,
+    /// Skill name — optional when creating new skill (can be in skillCard JSON)
+    #[serde(alias = "skillName")]
+    pub skill_name: Option<String>,
     /// If forking from an existing version
+    #[serde(alias = "basedOnVersion")]
     pub based_on_version: Option<String>,
     /// Target version for the draft
+    #[serde(alias = "targetVersion")]
     pub target_version: Option<String>,
     /// Full skill content as JSON string (required for new skill, optional for fork)
+    #[serde(alias = "skillCard")]
     pub skill_card: Option<String>,
 }
 
 /// Draft update form (PUT body)
+///
+/// Aligned with Nacos SkillUpdateForm (extends SkillDetailForm):
+/// - `skillName` is optional — can be resolved from `skillCard` JSON content.
+/// - `skillCard` is required (validated by SkillDetailForm.validate()).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillUpdateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
-    pub skill_name: String,
+    #[serde(default, alias = "skillName")]
+    pub skill_name: Option<String>,
     pub version: Option<String>,
     /// Full skill content as JSON string
+    #[serde(alias = "skillCard")]
     pub skill_card: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "setAsLatest")]
     pub set_as_latest: bool,
 }
 
@@ -276,8 +299,9 @@ pub struct SkillUpdateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSubmitForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "skillName")]
     pub skill_name: String,
     pub version: String,
 }
@@ -286,11 +310,12 @@ pub struct SkillSubmitForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillPublishForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "skillName")]
     pub skill_name: String,
     pub version: String,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "updateLatestLabel")]
     pub update_latest_label: bool,
 }
 
@@ -298,8 +323,9 @@ pub struct SkillPublishForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillLabelsUpdateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "skillName")]
     pub skill_name: String,
     /// Labels as JSON string: {"latest": "0.0.1", "stable": "0.0.0"}
     pub labels: String,
@@ -309,10 +335,12 @@ pub struct SkillLabelsUpdateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillBizTagsUpdateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "skillName")]
     pub skill_name: String,
     /// Biz tags as JSON array string
+    #[serde(alias = "bizTags")]
     pub biz_tags: String,
 }
 
@@ -320,8 +348,9 @@ pub struct SkillBizTagsUpdateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillOnlineForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "skillName")]
     pub skill_name: String,
     /// "skill" for global online/offline, otherwise version-level
     pub scope: Option<String>,
@@ -332,8 +361,9 @@ pub struct SkillOnlineForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillScopeForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "skillName")]
     pub skill_name: String,
     /// "PUBLIC" or "PRIVATE"
     pub scope: String,
@@ -343,12 +373,12 @@ pub struct SkillScopeForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillSearchForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     pub keyword: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
@@ -356,7 +386,7 @@ pub struct SkillSearchForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillQueryForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     pub name: String,
     pub version: Option<String>,

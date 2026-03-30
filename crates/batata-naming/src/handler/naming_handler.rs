@@ -1,6 +1,7 @@
 // Naming module gRPC handlers
 // Implements handlers for service discovery requests
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use batata_core::{
@@ -17,7 +18,7 @@ use batata_api::{
     naming::model::{
         BATCH_DE_REGISTER_INSTANCE, BATCH_REGISTER_INSTANCE, BatchInstanceRequest,
         BatchInstanceResponse, DE_REGISTER_INSTANCE, InstanceRequest, InstanceResponse,
-        NamingFuzzyWatchChangeNotifyRequest, NamingFuzzyWatchChangeNotifyResponse,
+        NamingContext, NamingFuzzyWatchChangeNotifyRequest, NamingFuzzyWatchChangeNotifyResponse,
         NamingFuzzyWatchRequest, NamingFuzzyWatchResponse, NamingFuzzyWatchSyncRequest,
         NamingFuzzyWatchSyncResponse, NotifySubscriberRequest, NotifySubscriberResponse,
         PersistentInstanceRequest, QueryServiceResponse, REGISTER_INSTANCE, ServiceListRequest,
@@ -29,7 +30,7 @@ use batata_api::{
 
 use batata_api::naming::NamingServiceProvider;
 
-use crate::handler::naming_fuzzy_watch::NamingFuzzyWatchManager;
+use crate::handler::naming_fuzzy_watch::{NamingFuzzyWatchManager, NamingFuzzyWatchPattern};
 
 // Handler for InstanceRequest - registers or deregisters a service instance
 #[derive(Clone)]
@@ -964,6 +965,7 @@ impl PayloadHandler for NotifySubscriberHandler {
 pub struct NamingFuzzyWatchHandler {
     pub naming_service: Arc<dyn NamingServiceProvider>,
     pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
+    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -1012,7 +1014,81 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
             }
         }
 
-        // Return matching service keys if this is an initializing request
+        // Trigger initial sync: find existing matching services and push them
+        // Aligned with Nacos NamingFuzzyWatchRequestHandler which publishes ClientFuzzyWatchEvent
+        // to trigger NamingFuzzyWatchSyncNotifier for initial data delivery.
+        if request.initializing {
+            let pattern = NamingFuzzyWatchPattern::from_group_key_pattern(&group_key_pattern);
+            if let Some(pattern) = pattern {
+                let all_keys = self.naming_service.get_all_service_keys();
+                let matched: Vec<String> = all_keys
+                    .into_iter()
+                    .filter(|key| {
+                        if let Some((ns, rest)) = key.split_once("##") {
+                            if let Some((group, svc)) = rest.split_once("@@") {
+                                return pattern.matches(ns, group, svc);
+                            }
+                        }
+                        false
+                    })
+                    .collect();
+
+                if !matched.is_empty() {
+                    let batches = divide_into_batches(&matched, FUZZY_WATCH_BATCH_SIZE);
+                    let total_batch = batches.len() as i32;
+                    let conn_mgr = self.connection_manager.clone();
+                    let conn_id = connection_id.clone();
+                    let watch_mgr = self.naming_fuzzy_watch_manager.clone();
+                    let ns = pattern.namespace.clone();
+                    let gp = pattern.group_pattern.clone();
+                    let sp = pattern.service_name_pattern.clone();
+
+                    tokio::spawn(async move {
+                        for (batch_idx, batch) in batches.iter().enumerate() {
+                            let current_batch = (batch_idx + 1) as i32;
+                            let contexts: HashSet<NamingContext> = batch
+                                .iter()
+                                .map(|key| NamingContext {
+                                    service_key: key.clone(),
+                                    change_type: CHANGE_TYPE_ADD.to_string(),
+                                })
+                                .collect();
+
+                            let mut sync_req = NamingFuzzyWatchSyncRequest::new();
+                            sync_req.pattern_namespace = ns.clone();
+                            sync_req.pattern_group_name = gp.clone();
+                            sync_req.pattern_service_name = sp.clone();
+                            sync_req.sync_type = SYNC_TYPE_INIT_NOTIFY.to_string();
+                            sync_req.total_batch = total_batch;
+                            sync_req.current_batch = current_batch;
+                            sync_req.contexts = contexts;
+
+                            let push_payload = sync_req.build_server_push_payload();
+                            let sent = conn_mgr.push_message(&conn_id, push_payload).await;
+                            if sent {
+                                for key in batch {
+                                    watch_mgr.mark_received(&conn_id, key);
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // Send FINISH notification
+                        let mut finish_req = NamingFuzzyWatchSyncRequest::new();
+                        finish_req.pattern_namespace = ns;
+                        finish_req.pattern_group_name = gp;
+                        finish_req.pattern_service_name = sp;
+                        finish_req.sync_type = SYNC_TYPE_FINISH_NOTIFY.to_string();
+                        finish_req.total_batch = total_batch;
+                        finish_req.current_batch = total_batch;
+                        let finish_payload = finish_req.build_server_push_payload();
+                        conn_mgr.push_message(&conn_id, finish_payload).await;
+                    });
+                }
+            }
+        }
+
         let mut response = NamingFuzzyWatchResponse::new();
         response.response.request_id = request_id;
 
@@ -1068,11 +1144,21 @@ impl PayloadHandler for NamingFuzzyWatchChangeNotifyHandler {
     }
 }
 
-// Handler for NamingFuzzyWatchSyncRequest - syncs fuzzy watch state
+/// Batch size for fuzzy watch sync (matches Nacos BATCH_SIZE = 10)
+const FUZZY_WATCH_BATCH_SIZE: usize = 10;
+
+/// Sync type constants
+const SYNC_TYPE_ALL: &str = "all";
+const SYNC_TYPE_INIT_NOTIFY: &str = "FUZZY_WATCH_INIT_NOTIFY";
+const SYNC_TYPE_FINISH_NOTIFY: &str = "FINISH_FUZZY_WATCH_INIT_NOTIFY";
+const CHANGE_TYPE_ADD: &str = "ADD_SERVICE";
+
+// Handler for NamingFuzzyWatchSyncRequest - syncs fuzzy watch state with batch push
 #[derive(Clone)]
 pub struct NamingFuzzyWatchSyncHandler {
     pub naming_service: Arc<dyn NamingServiceProvider>,
     pub naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
+    pub connection_manager: Arc<batata_core::service::remote::ConnectionManager>,
 }
 
 #[tonic::async_trait]
@@ -1081,26 +1167,20 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
         let request = NamingFuzzyWatchSyncRequest::from(payload);
         let request_id = request.request_id();
 
-        let connection_id = &_connection.meta_info.connection_id;
-        let namespace = &request.pattern_namespace;
-        let group_pattern = &request.pattern_group_name;
-        let service_pattern = &request.pattern_service_name;
-        let sync_type = &request.sync_type;
+        let connection_id = _connection.meta_info.connection_id.clone();
+        let namespace = request.pattern_namespace.clone();
+        let group_pattern = request.pattern_group_name.clone();
+        let service_pattern = request.pattern_service_name.clone();
+        let sync_type = request.sync_type.clone();
 
         // Build group key pattern in >> format
         let group_key_pattern = format!("{}>>{}>>{}", namespace, group_pattern, service_pattern);
 
-        // For initial sync, get all matching services
-        if sync_type == "all" || request.current_batch == 0 {
-            // TODO: The matched services would be sent to client in batches
-            // This handler acknowledges the sync request
-        }
-
         // Register the pattern if not already registered
         match self.naming_fuzzy_watch_manager.register_watch(
-            connection_id,
+            &connection_id,
             &group_key_pattern,
-            sync_type,
+            &sync_type,
         ) {
             Ok(_) => {}
             Err(e) => {
@@ -1109,6 +1189,115 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
                     connection_id, e
                 );
                 return Err(Status::resource_exhausted(e.to_string()));
+            }
+        }
+
+        // For initial sync, find all matching services and push in batches
+        if sync_type == SYNC_TYPE_ALL || request.current_batch == 0 {
+            let pattern = NamingFuzzyWatchPattern::from_group_key_pattern(&group_key_pattern);
+
+            if let Some(pattern) = pattern {
+                // Get all service keys and find matches
+                let all_keys = self.naming_service.get_all_service_keys();
+                let matched: Vec<String> = all_keys
+                    .into_iter()
+                    .filter(|key| {
+                        // Service keys are in format: namespace##group@@serviceName
+                        if let Some((ns, rest)) = key.split_once("##") {
+                            if let Some((group, svc)) = rest.split_once("@@") {
+                                return pattern.matches(ns, group, svc);
+                            }
+                        }
+                        false
+                    })
+                    .collect();
+
+                // Check match count limit
+                if let Err(e) = self
+                    .naming_fuzzy_watch_manager
+                    .check_match_count(matched.len(), &group_key_pattern)
+                {
+                    warn!("Fuzzy watch match count exceeded: {}", e);
+                    // Continue with response but don't push batches
+                } else if !matched.is_empty() {
+                    // Divide into batches and push asynchronously
+                    let batches = divide_into_batches(&matched, FUZZY_WATCH_BATCH_SIZE);
+                    let total_batch = batches.len() as i32;
+
+                    let conn_mgr = self.connection_manager.clone();
+                    let conn_id = connection_id.clone();
+                    let ns = namespace.clone();
+                    let gp = group_pattern.clone();
+                    let sp = service_pattern.clone();
+                    let watch_mgr = self.naming_fuzzy_watch_manager.clone();
+
+                    // Spawn async task to push batches (don't block the handler)
+                    tokio::spawn(async move {
+                        for (batch_idx, batch) in batches.iter().enumerate() {
+                            let current_batch = (batch_idx + 1) as i32;
+
+                            let contexts: HashSet<NamingContext> = batch
+                                .iter()
+                                .map(|key| NamingContext {
+                                    service_key: key.clone(),
+                                    change_type: CHANGE_TYPE_ADD.to_string(),
+                                })
+                                .collect();
+
+                            let mut sync_req = NamingFuzzyWatchSyncRequest::new();
+                            sync_req.pattern_namespace = ns.clone();
+                            sync_req.pattern_group_name = gp.clone();
+                            sync_req.pattern_service_name = sp.clone();
+                            sync_req.sync_type = SYNC_TYPE_INIT_NOTIFY.to_string();
+                            sync_req.total_batch = total_batch;
+                            sync_req.current_batch = current_batch;
+                            sync_req.contexts = contexts;
+
+                            let push_payload = sync_req.build_server_push_payload();
+                            let sent = conn_mgr.push_message(&conn_id, push_payload).await;
+
+                            if sent {
+                                // Mark these keys as received
+                                for key in batch {
+                                    watch_mgr.mark_received(&conn_id, key);
+                                }
+                                debug!(
+                                    connection_id = %conn_id,
+                                    batch = current_batch,
+                                    total = total_batch,
+                                    count = batch.len(),
+                                    "Pushed fuzzy watch init batch"
+                                );
+                            } else {
+                                warn!(
+                                    connection_id = %conn_id,
+                                    batch = current_batch,
+                                    "Failed to push fuzzy watch init batch"
+                                );
+                                break; // Stop sending if connection is lost
+                            }
+                        }
+
+                        // Send FINISH notification
+                        let mut finish_req = NamingFuzzyWatchSyncRequest::new();
+                        finish_req.pattern_namespace = ns;
+                        finish_req.pattern_group_name = gp;
+                        finish_req.pattern_service_name = sp;
+                        finish_req.sync_type = SYNC_TYPE_FINISH_NOTIFY.to_string();
+                        finish_req.total_batch = total_batch;
+                        finish_req.current_batch = total_batch;
+
+                        let finish_payload = finish_req.build_server_push_payload();
+                        conn_mgr.push_message(&conn_id, finish_payload).await;
+
+                        debug!(
+                            connection_id = %conn_id,
+                            total_services = matched.len(),
+                            total_batches = total_batch,
+                            "Fuzzy watch init sync completed"
+                        );
+                    });
+                }
             }
         }
 
@@ -1125,4 +1314,12 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
     fn auth_requirement(&self) -> AuthRequirement {
         AuthRequirement::Internal
     }
+}
+
+/// Divide a list of items into batches of the given size
+fn divide_into_batches(items: &[String], batch_size: usize) -> Vec<Vec<String>> {
+    items
+        .chunks(batch_size)
+        .map(|chunk| chunk.to_vec())
+        .collect()
 }

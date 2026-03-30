@@ -14,7 +14,9 @@ use crate::{ActionTypes, ApiType, SignType, secured};
 struct SearchPageParam {
     search: Option<String>,
     role: Option<String>,
+    #[serde(alias = "pageNo")]
     page_no: u64,
+    #[serde(alias = "pageSize")]
     page_size: u64,
 }
 

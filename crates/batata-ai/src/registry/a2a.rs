@@ -393,11 +393,14 @@ impl AgentRegistry {
     }
 
     /// List agents with Nacos-compatible search params
-    pub fn list_with_search(&self, query: &AgentListQuery) -> AgentListResponse {
+    pub fn list_with_search(
+        &self,
+        query: &AgentListQuery,
+    ) -> batata_api::model::Page<AgentCardVersionInfo> {
         let namespace = query.namespace_id.clone();
         let search_type = query.search.as_deref().unwrap_or("blur");
-        let page_no = query.page_no.unwrap_or(1).max(1);
-        let page_size = query.page_size.unwrap_or(20);
+        let page_no = query.page_no.unwrap_or(1).max(1) as u64;
+        let page_size = query.page_size.unwrap_or(20) as u64;
 
         let mut agents: Vec<RegisteredAgent> = self
             .agents
@@ -432,18 +435,29 @@ impl AgentRegistry {
         let start = ((page_no - 1) * page_size) as usize;
         let end = (start + page_size as usize).min(agents.len());
 
-        let agents = if start < agents.len() {
-            agents[start..end].to_vec()
+        let page_agents = if start < agents.len() {
+            &agents[start..end]
         } else {
-            vec![]
+            &[]
         };
 
-        AgentListResponse {
-            agents,
-            total,
-            page: page_no,
-            page_size,
-        }
+        // Convert RegisteredAgent to AgentCardVersionInfo for Nacos Page<AgentCardVersionInfo> response
+        let version_infos: Vec<AgentCardVersionInfo> = page_agents
+            .iter()
+            .map(|a| AgentCardVersionInfo {
+                id: a.id.clone(),
+                name: a.card.name.clone(),
+                latest_published_version: a.card.version.clone(),
+                registration_type: "sdk".to_string(),
+                version_details: vec![VersionDetail {
+                    version: a.card.version.clone(),
+                    release_date: String::new(),
+                    is_latest: true,
+                }],
+            })
+            .collect();
+
+        batata_api::model::Page::new(total, page_no, page_size, version_infos)
     }
 
     /// Delete an agent by query params (Nacos-compatible)
@@ -489,7 +503,7 @@ impl AgentRegistry {
             && let Some(id) = ns_index.get(agent_name).map(|v| v.clone())
             && let Some(mut agent) = self.agents.get_mut(&id)
         {
-            agent.card.endpoint = endpoint_url.to_string();
+            agent.card.url = endpoint_url.to_string();
             agent.updated_at = Utc::now().timestamp_millis();
 
             let _ = self.change_sender.send(AgentCardChangeEvent {
@@ -511,7 +525,7 @@ impl AgentRegistry {
             && let Some(id) = ns_index.get(agent_name).map(|v| v.clone())
             && let Some(mut agent) = self.agents.get_mut(&id)
         {
-            agent.card.endpoint = String::new();
+            agent.card.url = String::new();
             agent.updated_at = Utc::now().timestamp_millis();
 
             let _ = self.change_sender.send(AgentCardChangeEvent {
@@ -741,7 +755,7 @@ mod tests {
             display_name: "Test Agent".to_string(),
             description: "A test agent".to_string(),
             version: "1.0.0".to_string(),
-            endpoint: "http://localhost:8080".to_string(),
+            url: "http://localhost:8080".to_string(),
             protocol_version: "1.0".to_string(),
             capabilities: AgentCapabilities {
                 streaming: true,
@@ -762,10 +776,13 @@ mod tests {
                     examples: vec![],
                 },
             ],
-            input_modes: vec![InputMode::Text],
-            output_modes: vec![OutputMode::Text],
-            authentication: None,
-            rate_limits: None,
+            default_input_modes: vec!["text".to_string()],
+            default_output_modes: vec!["text".to_string()],
+            preferred_transport: None,
+            provider: None,
+            documentation_url: None,
+            icon_url: None,
+            supports_authenticated_extended_card: None,
             metadata: HashMap::new(),
             tags: vec!["test".to_string()],
         }
@@ -940,7 +957,7 @@ mod tests {
             .unwrap();
 
         let agent = registry.get("default", "test-agent").unwrap();
-        assert_eq!(agent.card.endpoint, "http://new-endpoint:9090");
+        assert_eq!(agent.card.url, "http://new-endpoint:9090");
     }
 
     #[test]
@@ -954,7 +971,7 @@ mod tests {
             .unwrap();
 
         let agent = registry.get("default", "test-agent").unwrap();
-        assert!(agent.card.endpoint.is_empty());
+        assert!(agent.card.url.is_empty());
     }
 
     #[test]

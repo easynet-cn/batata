@@ -19,6 +19,7 @@ use batata_api::naming::NamingServiceProvider;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ClientDetailParam {
+    #[serde(alias = "clientId")]
     client_id: String,
 }
 
@@ -252,10 +253,11 @@ fn parse_service_key(key: &str) -> Option<ClientServiceInfo> {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceClientQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     #[serde(default)]
     ip: Option<String>,

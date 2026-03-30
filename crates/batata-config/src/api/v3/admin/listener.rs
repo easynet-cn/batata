@@ -19,11 +19,11 @@ use crate::api::config_model::ConfigListenerInfo;
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct ListenerQuery {
-    #[serde(default)]
+    #[serde(default, alias = "dataId")]
     data_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
 }
 
@@ -33,7 +33,7 @@ struct ListenerByIpQuery {
     pub ip: String,
     #[serde(default)]
     pub all: bool,
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
 }
 

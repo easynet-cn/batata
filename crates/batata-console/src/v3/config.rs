@@ -29,16 +29,20 @@ use batata_server_common::console::api_model::ImportResult;
 struct SearchPageParam {
     #[serde(flatten)]
     config_form: ConfigForm,
+    #[serde(alias = "pageNo")]
     pub page_no: u64,
+    #[serde(alias = "pageSize")]
     pub page_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeleteParam {
+    #[serde(alias = "dataId")]
     pub data_id: String,
+    #[serde(alias = "groupName")]
     pub group_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
 }
 
@@ -359,30 +363,32 @@ async fn find_beta_one(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BetaPublishForm {
+    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     pub content: String,
-    #[serde(default)]
+    #[serde(default, alias = "betaIps")]
     pub beta_ips: String,
-    #[serde(default)]
+    #[serde(default, alias = "appName")]
     pub app_name: String,
     #[serde(default)]
     #[allow(dead_code)]
     pub r#type: String,
-    #[serde(default)]
+    #[serde(default, alias = "encryptedDataKey")]
     pub encrypted_data_key: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct BetaQueryParam {
+    #[serde(alias = "dataId")]
     pub data_id: String,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(default)]
     pub tenant: String,
@@ -797,9 +803,11 @@ async fn batch_delete(
 struct SearchDetailParam {
     #[serde(flatten)]
     config_form: ConfigForm,
+    #[serde(alias = "pageNo")]
     pub page_no: u64,
+    #[serde(alias = "pageSize")]
     pub page_size: u64,
-    #[serde(default)]
+    #[serde(default, alias = "configDetail")]
     pub config_detail: String,
     #[serde(default = "default_search_type")]
     #[allow(dead_code)]
@@ -878,7 +886,7 @@ struct ListenerByIpParam {
     pub ip: String,
     #[serde(default)]
     pub all: bool,
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
 }
 
@@ -918,10 +926,11 @@ async fn find_listener_by_ip(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConsoleCloneParam {
+    #[serde(alias = "targetNamespaceId")]
     pub target_namespace_id: String,
     #[serde(default = "default_clone_policy")]
     pub policy: String,
-    #[serde(default)]
+    #[serde(default, alias = "srcUser")]
     pub src_user: Option<String>,
 }
 

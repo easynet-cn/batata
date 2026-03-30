@@ -63,8 +63,11 @@ impl From<batata_persistence::NamespaceInfo> for Namespace {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct NamespaceForm {
+    #[serde(alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "namespaceName")]
     pub namespace_name: String,
+    #[serde(alias = "namespaceDesc")]
     pub namespace_desc: String,
 }
 

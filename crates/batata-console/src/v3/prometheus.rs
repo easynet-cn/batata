@@ -15,7 +15,7 @@ use super::metrics::METRICS;
 pub struct PrometheusQueryParams {
     #[serde(default)]
     pub namespace: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "serviceName")]
     pub service_name: Option<String>,
     #[serde(default)]
     pub metric: Option<String>,

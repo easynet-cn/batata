@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.batata</groupId>
@@ -16,7 +16,7 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <nacos.version>3.1.1</nacos.version>
+        <nacos.version>3.2.0</nacos.version>
         <junit.version>5.10.2</junit.version>
     </properties>
 
@@ -89,7 +89,8 @@
                 <version>3.2.5</version>
                 <configuration>
                     <useManifestOnlyJar>false</useManifestOnlyJar>
-                    <argLine>--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/sun.misc=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED</argLine>
+                    <argLine>--add-opens java.base/java.lang=ALL-UNNAMED --add-opens
+                        java.base/sun.misc=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED</argLine>
                     <systemPropertyVariables>
                         <nacos.server>127.0.0.1:8848</nacos.server>
                         <nacos.username>nacos</nacos.username>

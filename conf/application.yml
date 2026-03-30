@@ -439,4 +439,4 @@ batata.mesh.xds.default.listener.port: 15001
 # =============================================================================
 
 # Nacos compatibility version (the Nacos version that Batata is compatible with)
-nacos.version: 3.1.1
+nacos.version: 3.2.0

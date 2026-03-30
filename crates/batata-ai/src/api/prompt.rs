@@ -23,15 +23,18 @@ use crate::service::prompt::PromptOperationService;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptPublishForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     pub version: String,
     #[serde(default)]
     pub template: String,
+    #[serde(alias = "commitMsg")]
     pub commit_msg: Option<String>,
     pub description: Option<String>,
     /// Comma-separated biz tags
+    #[serde(alias = "bizTags")]
     pub biz_tags: Option<String>,
     /// JSON array of PromptVariable
     pub variables: Option<String>,
@@ -40,8 +43,9 @@ pub struct PromptPublishForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptQueryForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     pub version: Option<String>,
     pub label: Option<String>,
@@ -51,34 +55,38 @@ pub struct PromptQueryForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptListForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "promptKey")]
     pub prompt_key: Option<String>,
     pub search: Option<String>,
+    #[serde(alias = "bizTags")]
     pub biz_tags: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptHistoryForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "promptKey")]
     pub prompt_key: String,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptLabelBindForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     pub label: String,
     pub version: String,
@@ -87,8 +95,9 @@ pub struct PromptLabelBindForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptLabelForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     pub label: String,
 }
@@ -96,11 +105,13 @@ pub struct PromptLabelForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptMetadataForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "promptKey")]
     pub prompt_key: String,
     pub description: Option<String>,
     /// Comma-separated biz tags
+    #[serde(alias = "bizTags")]
     pub biz_tags: Option<String>,
 }
 
@@ -139,7 +150,7 @@ async fn publish_prompt(
     req: HttpRequest,
     data: web::Data<AppState>,
     prompt_service: web::Data<Arc<PromptOperationService>>,
-    body: web::Json<PromptPublishForm>,
+    body: web::Form<PromptPublishForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -255,8 +266,8 @@ async fn delete_prompt(
 async fn list_prompts(
     req: HttpRequest,
     data: web::Data<AppState>,
-    _prompt_service: web::Data<Arc<PromptOperationService>>,
-    _query: web::Query<PromptListForm>,
+    prompt_service: web::Data<Arc<PromptOperationService>>,
+    query: web::Query<PromptListForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -266,16 +277,22 @@ async fn list_prompts(
             .build()
     );
 
-    // TODO: Implement list with search/filter via config search
-    // Requires iterating descriptor configs to build summaries
-    HttpResponse::Ok().json(Result::success(batata_persistence::model::Page::<
-        crate::model::prompt::PromptMetaSummary,
-    > {
-        total_count: 0,
-        page_number: 1,
-        pages_available: 0,
-        page_items: vec![],
-    }))
+    let ns = normalize_namespace(&query.namespace_id);
+
+    match prompt_service
+        .list_prompts(
+            ns,
+            query.prompt_key.as_deref(),
+            query.search.as_deref(),
+            query.biz_tags.as_deref(),
+            query.page_no,
+            query.page_size,
+        )
+        .await
+    {
+        Ok(page) => HttpResponse::Ok().json(Result::success(page)),
+        Err(e) => Result::<()>::http_internal_error(e),
+    }
 }
 
 /// GET /v3/admin/ai/prompt/versions — List prompt versions
@@ -352,7 +369,7 @@ async fn bind_label(
     req: HttpRequest,
     data: web::Data<AppState>,
     prompt_service: web::Data<Arc<PromptOperationService>>,
-    body: web::Json<PromptLabelBindForm>,
+    body: web::Form<PromptLabelBindForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -440,7 +457,7 @@ async fn update_metadata(
     req: HttpRequest,
     data: web::Data<AppState>,
     prompt_service: web::Data<Arc<PromptOperationService>>,
-    body: web::Json<PromptMetadataForm>,
+    body: web::Form<PromptMetadataForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")

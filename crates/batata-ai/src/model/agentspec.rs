@@ -43,7 +43,9 @@ pub use super::skill::{compare_versions, next_patch_version, parse_semver};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpec {
+    #[serde(default)]
     pub namespace_id: String,
+    #[serde(default)]
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -203,7 +205,7 @@ pub struct AgentSpecStorageFile {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
     pub agent_spec_name: Option<String>,
@@ -213,45 +215,61 @@ pub struct AgentSpecForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecListForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(alias = "agentSpecName")]
     pub agent_spec_name: Option<String>,
     pub search: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
+/// Draft create form (POST body)
+///
+/// `agentSpecName` may be optional when creating new (can be in agentSpecCard JSON).
+/// Required when `basedOnVersion` is set (forking).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecDraftCreateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
-    pub agent_spec_name: String,
+    #[serde(alias = "agentSpecName")]
+    pub agent_spec_name: Option<String>,
+    #[serde(alias = "basedOnVersion")]
     pub based_on_version: Option<String>,
+    #[serde(alias = "targetVersion")]
     pub target_version: Option<String>,
+    #[serde(alias = "agentSpecCard")]
     pub agent_spec_card: Option<String>,
 }
 
+/// AgentSpec update form (PUT body)
+///
+/// Aligned with Nacos AgentSpecUpdateForm (extends AgentSpecDetailForm):
+/// - `agentSpecName` is optional — can be resolved from `agentSpecCard` JSON content.
+/// - `agentSpecCard` is required.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecUpdateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
-    pub agent_spec_name: String,
+    #[serde(default, alias = "agentSpecName")]
+    pub agent_spec_name: Option<String>,
     pub version: Option<String>,
+    #[serde(alias = "agentSpecCard")]
     pub agent_spec_card: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "setAsLatest")]
     pub set_as_latest: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecSubmitForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "agentSpecName")]
     pub agent_spec_name: String,
     pub version: String,
 }
@@ -259,19 +277,21 @@ pub struct AgentSpecSubmitForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecPublishForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "agentSpecName")]
     pub agent_spec_name: String,
     pub version: String,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "updateLatestLabel")]
     pub update_latest_label: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecLabelsUpdateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "agentSpecName")]
     pub agent_spec_name: String,
     pub labels: String,
 }
@@ -279,17 +299,20 @@ pub struct AgentSpecLabelsUpdateForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecBizTagsUpdateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "agentSpecName")]
     pub agent_spec_name: String,
+    #[serde(alias = "bizTags")]
     pub biz_tags: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecOnlineForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "agentSpecName")]
     pub agent_spec_name: String,
     pub scope: Option<String>,
     pub version: Option<String>,
@@ -298,8 +321,9 @@ pub struct AgentSpecOnlineForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecScopeForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
+    #[serde(alias = "agentSpecName")]
     pub agent_spec_name: String,
     pub scope: String,
 }
@@ -307,7 +331,7 @@ pub struct AgentSpecScopeForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecQueryForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     pub name: String,
     pub version: Option<String>,
@@ -317,19 +341,19 @@ pub struct AgentSpecQueryForm {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecSearchForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     pub keyword: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpecUploadQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(default)]
     pub overwrite: bool,

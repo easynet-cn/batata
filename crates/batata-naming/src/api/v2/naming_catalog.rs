@@ -22,16 +22,17 @@ use batata_api::naming::NamingServiceProvider;
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CatalogInstancesQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     page_no: u64,
-    #[serde(default = "default_page_size_small")]
+    #[serde(default = "default_page_size_small", alias = "pageSize")]
     page_size: u64,
 }
 

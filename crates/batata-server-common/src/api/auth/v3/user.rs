@@ -17,7 +17,9 @@ use crate::{ActionTypes, ApiType, SignType, secured};
 struct SearchPageParam {
     search: Option<String>,
     username: Option<String>,
+    #[serde(alias = "pageNo")]
     page_no: u64,
+    #[serde(alias = "pageSize")]
     page_size: u64,
 }
 
@@ -31,6 +33,7 @@ struct UserParam {
 #[serde(rename_all = "camelCase")]
 struct UpdateFormData {
     username: String,
+    #[serde(alias = "newPassword")]
     new_password: String,
 }
 

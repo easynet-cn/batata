@@ -11,9 +11,13 @@ pub struct CapacityRequest {
     pub tenant: Option<String>,
     pub group: Option<String>,
     pub quota: Option<u32>,
+    #[serde(alias = "maxSize")]
     pub max_size: Option<u32>,
+    #[serde(alias = "maxAggrCount")]
     pub max_aggr_count: Option<u32>,
+    #[serde(alias = "maxAggrSize")]
     pub max_aggr_size: Option<u32>,
+    #[serde(alias = "maxHistoryCount")]
     pub max_history_count: Option<u32>,
 }
 

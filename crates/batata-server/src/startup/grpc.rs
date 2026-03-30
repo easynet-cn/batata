@@ -245,6 +245,7 @@ fn register_naming_handlers(
     registry.register_handler(Arc::new(NamingFuzzyWatchHandler {
         naming_service: naming_service.clone(),
         naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
+        connection_manager: connection_manager.clone(),
     }));
     registry.register_handler(Arc::new(NamingFuzzyWatchChangeNotifyHandler {
         naming_service: naming_service.clone(),
@@ -253,6 +254,7 @@ fn register_naming_handlers(
     registry.register_handler(Arc::new(NamingFuzzyWatchSyncHandler {
         naming_service,
         naming_fuzzy_watch_manager,
+        connection_manager,
     }));
 }
 

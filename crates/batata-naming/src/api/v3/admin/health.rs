@@ -19,14 +19,15 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceHealthParam {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
     healthy: bool,
 }

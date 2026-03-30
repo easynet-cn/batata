@@ -23,15 +23,15 @@ use batata_api::naming::NamingServiceProvider;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceListQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName", alias = "groupNameParam")]
     group_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "serviceName", alias = "serviceNameParam")]
     service_name: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     page_no: u64,
-    #[serde(default = "default_page_size_small")]
+    #[serde(default = "default_page_size_small", alias = "pageSize")]
     page_size: u64,
 }
 
@@ -44,10 +44,11 @@ impl ServiceListQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceDetailQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
 }
 
@@ -60,12 +61,13 @@ impl ServiceDetailQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "protectThreshold")]
     protect_threshold: Option<f32>,
     #[serde(default)]
     metadata: Option<String>,
@@ -79,13 +81,39 @@ impl ServiceForm {
     impl_or_default!(group_name_or_default, group_name, DEFAULT_GROUP);
 }
 
+/// Nacos-compatible Page response for service list.
+/// Nacos returns `Page<ServiceView>` with `totalCount`, `pageNumber`, `pagesAvailable`, `pageItems`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceListResponse {
-    count: i32,
-    service_list: Vec<ServiceInfoResponse>,
+    total_count: i32,
+    page_number: u64,
+    pages_available: u64,
+    page_items: Vec<ServiceInfoResponse>,
 }
 
+/// Service detail info response — aligned with Nacos ServiceDetailInfo.
+/// The Java class uses `serviceName`, `groupName`, `namespaceId` etc.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ServiceDetailResponse {
+    namespace_id: String,
+    service_name: String,
+    group_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cluster_map: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<HashMap<String, String>>,
+    protect_threshold: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selector: Option<SelectorResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ephemeral: Option<bool>,
+}
+
+/// Service info for list responses — aligned with Nacos `ServiceView` Java class.
+/// Only includes fields that ServiceView has: name, groupName, clusterCount,
+/// ipCount, healthyInstanceCount, triggerFlag (String).
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceInfoResponse {
@@ -94,12 +122,7 @@ struct ServiceInfoResponse {
     cluster_count: i32,
     ip_count: i32,
     healthy_instance_count: i32,
-    trigger_flag: bool,
-    protect_threshold: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<HashMap<String, String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    selector: Option<SelectorResponse>,
+    trigger_flag: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,12 +153,34 @@ async fn list_services(
             .build()
     );
 
-    let (total_count, service_names) = naming_service.list_services(
+    // Get all services first, then filter by service name pattern if provided
+    let (_, raw_names) = naming_service.list_services(
         namespace_id,
         group_name,
-        params.page_no as i32,
-        params.page_size as i32,
+        1,       // get all from page 1
+        i32::MAX, // large page to get all
     );
+
+    // Apply service name filter (blur/contains match) if serviceNameParam is provided
+    let filtered_names: Vec<String> = if let Some(ref sn) = params.service_name {
+        if !sn.is_empty() {
+            raw_names.into_iter().filter(|n| n.contains(sn.as_str())).collect()
+        } else {
+            raw_names
+        }
+    } else {
+        raw_names
+    };
+
+    // Apply pagination to filtered results
+    let total_count = filtered_names.len() as i32;
+    let start = ((params.page_no.max(1) - 1) * params.page_size) as usize;
+    let end = (start + params.page_size as usize).min(filtered_names.len());
+    let service_names: Vec<String> = if start < filtered_names.len() {
+        filtered_names[start..end].to_vec()
+    } else {
+        vec![]
+    };
 
     let service_list: Vec<ServiceInfoResponse> = service_names
         .iter()
@@ -150,32 +195,6 @@ async fn list_services(
             );
             let clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
             let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
-            let metadata_opt = naming_service.get_service_metadata(namespace_id, group_name, name);
-            let (protect_threshold, metadata, selector) = if let Some(meta) = metadata_opt {
-                let sel = if meta.selector_type != "none" && !meta.selector_type.is_empty() {
-                    Some(SelectorResponse {
-                        r#type: meta.selector_type,
-                        expression: if meta.selector_expression.is_empty() {
-                            None
-                        } else {
-                            Some(meta.selector_expression)
-                        },
-                    })
-                } else {
-                    None
-                };
-                (
-                    meta.protect_threshold,
-                    if meta.metadata.is_empty() {
-                        None
-                    } else {
-                        Some(meta.metadata)
-                    },
-                    sel,
-                )
-            } else {
-                (0.0, None, None)
-            };
 
             ServiceInfoResponse {
                 name: name.clone(),
@@ -183,17 +202,24 @@ async fn list_services(
                 cluster_count: clusters.len() as i32,
                 ip_count: instances.len() as i32,
                 healthy_instance_count: healthy_count as i32,
-                trigger_flag: false,
-                protect_threshold,
-                metadata,
-                selector,
+                trigger_flag: String::new(),
             }
         })
         .collect();
 
+    let total = total_count as u64;
+    let page_size = params.page_size.max(1);
+    let pages_available = if page_size > 0 {
+        (total as f64 / page_size as f64).ceil() as u64
+    } else {
+        0
+    };
+
     let response = ServiceListResponse {
-        count: total_count,
-        service_list,
+        total_count: total_count,
+        page_number: params.page_no,
+        pages_available,
+        page_items: service_list,
     };
 
     Result::<ServiceListResponse>::http_success(response)
@@ -223,11 +249,11 @@ async fn get_service(
     );
 
     if !naming_service.service_exists(namespace_id, group_name, &params.service_name) {
-        return Result::<Option<ServiceInfoResponse>>::http_response(
+        return Result::<Option<ServiceDetailResponse>>::http_response(
             404,
             error::RESOURCE_NOT_FOUND.code,
             format!("service {} not found", params.service_name),
-            None::<ServiceInfoResponse>,
+            None::<ServiceDetailResponse>,
         );
     }
 
@@ -240,7 +266,6 @@ async fn get_service(
         Some(batata_api::naming::RegisterSource::Batata),
     );
     let clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
-    let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
     let metadata_opt =
         naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
 
@@ -270,19 +295,37 @@ async fn get_service(
         (0.0, None, None)
     };
 
-    let response = ServiceInfoResponse {
-        name: params.service_name.clone(),
+    // Build clusterMap — Nacos returns Map<String, ClusterInfo>
+    let cluster_map: HashMap<String, serde_json::Value> = clusters
+        .into_iter()
+        .map(|c| {
+            (
+                c.clone(),
+                serde_json::json!({
+                    "clusterName": c,
+                    "healthChecker": {"type": "TCP"},
+                    "metadata": {},
+                }),
+            )
+        })
+        .collect();
+
+    let response = ServiceDetailResponse {
+        namespace_id: namespace_id.to_string(),
+        service_name: params.service_name.clone(),
         group_name: group_name.to_string(),
-        cluster_count: clusters.len() as i32,
-        ip_count: instances.len() as i32,
-        healthy_instance_count: healthy_count as i32,
-        trigger_flag: false,
-        protect_threshold,
+        cluster_map: if cluster_map.is_empty() {
+            None
+        } else {
+            Some(cluster_map)
+        },
         metadata,
+        protect_threshold,
         selector,
+        ephemeral: Some(true),
     };
 
-    Result::<ServiceInfoResponse>::http_success(response)
+    Result::<ServiceDetailResponse>::http_success(response)
 }
 
 /// POST /v3/admin/ns/service
@@ -291,7 +334,7 @@ async fn create_service(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<ServiceForm>,
+    form: web::Form<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
@@ -369,7 +412,7 @@ async fn update_service(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<ServiceForm>,
+    form: web::Form<ServiceForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
@@ -496,14 +539,15 @@ async fn delete_service(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubscriberQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     page_no: u64,
-    #[serde(default = "default_page_size_small")]
+    #[serde(default = "default_page_size_small", alias = "pageSize")]
     page_size: u64,
 }
 
@@ -597,13 +641,15 @@ async fn get_selector_types(req: HttpRequest, data: web::Data<AppState>) -> impl
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateClusterForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
+    #[serde(alias = "clusterName")]
     cluster_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "healthChecker")]
     health_checker: Option<ClusterHealthCheckerForm>,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
@@ -640,7 +686,7 @@ async fn update_service_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<UpdateClusterForm>,
+    form: web::Form<UpdateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();
     let group_name = form.group_name_or_default();

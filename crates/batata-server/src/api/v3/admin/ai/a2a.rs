@@ -20,6 +20,33 @@ use crate::{
     secured,
 };
 
+/// Form data for A2A agent registration - accepts JSON-as-string params like Nacos.
+/// The nacos-maintainer-client sends: agentCard=<JSON>&agentName=xxx&namespaceId=xxx
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentForm {
+    #[serde(default, alias = "agentCard")]
+    pub agent_card: Option<String>,
+    #[serde(default, alias = "agentName")]
+    pub agent_name: Option<String>,
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: Option<String>,
+    #[serde(default, alias = "registrationType")]
+    pub registration_type: Option<String>,
+    #[serde(default)]
+    pub latest: Option<bool>,
+}
+
+impl AgentForm {
+    fn into_registration(self) -> std::result::Result<AgentRegistrationRequest, String> {
+        let card_json = self.agent_card.unwrap_or_else(|| "{}".to_string());
+        let card = serde_json::from_str(&card_json)
+            .map_err(|e| format!("Invalid agentCard: {}", e))?;
+        let namespace = self.namespace_id.unwrap_or_default();
+        Ok(AgentRegistrationRequest { card, namespace })
+    }
+}
+
 /// POST /v3/admin/ai/a2a
 #[post("")]
 async fn register_agent(
@@ -27,7 +54,7 @@ async fn register_agent(
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
     a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
-    body: web::Json<AgentRegistrationRequest>,
+    form: web::Form<AgentForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -37,7 +64,15 @@ async fn register_agent(
             .build()
     );
 
-    let registration = body.into_inner();
+    let registration = match form.into_inner().into_registration() {
+        Ok(r) => r,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
     if let Some(svc) = a2a_service {
         let namespace = if registration.namespace.is_empty() {
             "public"
@@ -115,7 +150,7 @@ async fn update_agent(
     registry: web::Data<Arc<AgentRegistry>>,
     a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
     query: web::Query<AgentDetailQuery>,
-    body: web::Json<AgentRegistrationRequest>,
+    form: web::Form<AgentForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -127,7 +162,15 @@ async fn update_agent(
 
     let q = query.into_inner();
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
-    let registration = body.into_inner();
+    let registration = match form.into_inner().into_registration() {
+        Ok(r) => r,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
     let name = q
         .agent_name
         .unwrap_or_else(|| registration.card.name.clone());
@@ -273,8 +316,11 @@ async fn list_versions(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEndpointQuery {
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
+    #[serde(alias = "agentName")]
     pub agent_name: String,
+    #[serde(alias = "endpointUrl")]
     pub endpoint_url: Option<String>,
 }
 

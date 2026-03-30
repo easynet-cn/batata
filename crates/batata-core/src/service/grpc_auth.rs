@@ -475,24 +475,25 @@ impl GrpcAuthService {
         }
     }
 
-    /// Match resource pattern (supports wildcard *)
+    /// Match resource pattern using regex, consistent with Nacos AbstractCheckedRoleService.
+    /// Converts wildcard `*` to `.*` regex and uses full-string regex matching.
+    /// Example: pattern "public:DEFAULT_GROUP:config/*" matches "public:DEFAULT_GROUP:config/my-data-id"
     fn match_resource(&self, pattern: &str, resource: &str) -> bool {
         if pattern == GrpcResource::ANY {
             return true;
         }
 
-        // Simple pattern matching with wildcard support
-        let pattern_parts: Vec<&str> = pattern.split(':').collect();
-        let resource_parts: Vec<&str> = resource.split(':').collect();
+        // Apply same logic as HTTP auth (NacosAuthPlugin.validate_authority):
+        // 1. Escape regex special chars in the pattern
+        // 2. Replace escaped wildcard \* back to regex .*
+        // 3. Prepend default namespace if pattern starts with ':'
+        let mut regex_pattern = regex::escape(pattern).replace("\\*", ".*");
 
-        if pattern_parts.len() != resource_parts.len() {
-            return false;
+        if regex_pattern.starts_with(':') {
+            regex_pattern = format!("public{}", regex_pattern);
         }
 
-        pattern_parts
-            .iter()
-            .zip(resource_parts.iter())
-            .all(|(p, r)| *p == GrpcResource::ANY || p == r)
+        batata_common::regex_matches(&regex_pattern, resource)
     }
 
     /// Match action (r = read, w = write, rw = both)

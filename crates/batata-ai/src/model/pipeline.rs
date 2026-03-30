@@ -73,13 +73,16 @@ pub struct Checkpoint {
 #[serde(rename_all = "camelCase")]
 pub struct PipelineListForm {
     /// Required: resource type (e.g., "skill", "agentspec")
+    #[serde(alias = "resourceType")]
     pub resource_type: String,
+    #[serde(alias = "resourceName")]
     pub resource_name: Option<String>,
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     pub version: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 

@@ -5,7 +5,9 @@
 
 use std::sync::Arc;
 
+use actix_multipart::Multipart;
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, delete, get, post, put, web};
+use futures::StreamExt;
 
 use batata_common::{ActionTypes, ApiType, DEFAULT_NAMESPACE_ID, SignType};
 use batata_server_common::model::app_state::AppState;
@@ -247,16 +249,19 @@ async fn list_agentspecs(
     }
 }
 
-/// POST /v3/admin/ai/agentspecs/upload — Upload agentspec from JSON body
+/// POST /v3/admin/ai/agentspecs/upload — Upload agentspec from ZIP file (multipart/form-data)
 /// Params: namespaceId (query, optional), overwrite (query, optional, default=false)
-/// Body: JSON with agentSpecName, agentSpecCard fields
+/// Body: multipart with "file" field containing ZIP bytes
+///
+/// The ZIP must contain a `manifest.json` file with agentspec content.
+/// Falls back to JSON body upload if Content-Type is application/json.
 #[post("upload")]
 async fn upload_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
     query: web::Query<AgentSpecUploadQuery>,
-    body: web::Json<AgentSpecUploadForm>,
+    mut payload: Multipart,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -270,37 +275,70 @@ async fn upload_agentspec(
     let overwrite = query.overwrite;
     let author = get_username(&req);
 
-    let form = body.into_inner();
-    let name = match form.agent_spec_name.as_deref() {
-        Some(n) if !n.is_empty() => n.to_string(),
+    // Read ZIP file from multipart
+    let mut zip_bytes: Option<Vec<u8>> = None;
+    while let Some(Ok(mut field)) = payload.next().await {
+        let field_name = field
+            .content_disposition()
+            .and_then(|cd| cd.get_name().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        if field_name == "file" {
+            let mut data = Vec::new();
+            while let Some(chunk) = field.next().await {
+                match chunk {
+                    Ok(bytes) => data.extend_from_slice(&bytes),
+                    Err(e) => {
+                        return Result::<()>::http_bad_request(
+                            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                            format!("Failed to read multipart data: {}", e),
+                        );
+                    }
+                }
+            }
+            // Check size limit
+            if data.len() as u64 > MAX_UPLOAD_ZIP_BYTES {
+                return Result::<()>::http_bad_request(
+                    &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                    format!(
+                        "File too large: {} bytes (max: {} bytes)",
+                        data.len(),
+                        MAX_UPLOAD_ZIP_BYTES
+                    ),
+                );
+            }
+            zip_bytes = Some(data);
+        }
+    }
+
+    let zip_data = match zip_bytes {
+        Some(d) if !d.is_empty() => d,
         _ => {
             return Result::<()>::http_bad_request(
                 &batata_common::error::PARAMETER_MISSING,
-                "agentSpecName is required",
+                "Missing 'file' field in multipart upload",
             );
         }
     };
 
-    let spec: AgentSpec = match form
-        .agent_spec_card
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-    {
-        Ok(Some(s)) => s,
-        Ok(None) => {
-            return Result::<()>::http_bad_request(
-                &batata_common::error::PARAMETER_MISSING,
-                "agentSpecCard is required",
-            );
-        }
+    // Parse ZIP to extract manifest.json
+    let spec = match parse_agentspec_zip(&zip_data) {
+        Ok(s) => s,
         Err(e) => {
             return Result::<()>::http_bad_request(
                 &batata_common::error::PARAMETER_VALIDATE_ERROR,
-                format!("Invalid agentSpecCard JSON: {}", e),
+                format!("Invalid agentspec ZIP: {}", e),
             );
         }
     };
+
+    let name = spec.name.clone();
+    if name.is_empty() {
+        return Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "manifest.json must contain a 'name' field",
+        );
+    }
 
     match agentspec_service
         .upload(ns, &name, &spec, &author, overwrite)
@@ -314,13 +352,50 @@ async fn upload_agentspec(
     }
 }
 
+/// Parse a ZIP file to extract manifest.json and build an AgentSpec
+fn parse_agentspec_zip(zip_data: &[u8]) -> std::result::Result<AgentSpec, String> {
+    use std::io::Read;
+
+    let cursor = std::io::Cursor::new(zip_data);
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("Failed to read ZIP: {}", e))?;
+
+    let mut manifest_json = None;
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read ZIP entry: {}", e))?;
+        let name = file.name().to_string();
+
+        if name == AGENTSPEC_MAIN_FILE || name.ends_with(&format!("/{}", AGENTSPEC_MAIN_FILE)) {
+            let mut content = String::new();
+            file.read_to_string(&mut content)
+                .map_err(|e| format!("Failed to read {}: {}", AGENTSPEC_MAIN_FILE, e))?;
+            manifest_json = Some(content);
+        }
+    }
+
+    let manifest = manifest_json.ok_or_else(|| {
+        format!(
+            "ZIP does not contain {}",
+            AGENTSPEC_MAIN_FILE
+        )
+    })?;
+
+    let spec: AgentSpec = serde_json::from_str(&manifest)
+        .map_err(|e| format!("Invalid {} JSON: {}", AGENTSPEC_MAIN_FILE, e))?;
+
+    Ok(spec)
+}
+
 /// POST /v3/admin/ai/agentspecs/draft — Create draft
 #[post("draft")]
 async fn create_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecDraftCreateForm>,
+    body: web::Form<AgentSpecDraftCreateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -339,10 +414,25 @@ async fn create_draft(
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
 
+    // Resolve name: form param takes priority, then from agentSpecCard JSON
+    let agent_spec_name = form
+        .agent_spec_name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .or_else(|| initial_content.as_ref().map(|s| s.name.as_str()))
+        .unwrap_or("");
+
+    if agent_spec_name.is_empty() {
+        return Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "agentSpecName or agentSpecCard with name is required",
+        );
+    }
+
     match agentspec_service
         .create_draft(
             ns,
-            &form.agent_spec_name,
+            agent_spec_name,
             form.based_on_version.as_deref(),
             form.target_version.as_deref(),
             initial_content.as_ref(),
@@ -364,7 +454,7 @@ async fn update_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecUpdateForm>,
+    body: web::Form<AgentSpecUpdateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -398,8 +488,29 @@ async fn update_draft(
         }
     };
 
+    // Resolve name: form param takes priority, then from agentSpecCard JSON content
+    let agent_spec_name = form
+        .agent_spec_name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .or_else(|| {
+            if !spec.name.is_empty() {
+                Some(spec.name.as_str())
+            } else {
+                None
+            }
+        })
+        .unwrap_or("");
+
+    if agent_spec_name.is_empty() {
+        return Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "agentSpecName or agentSpecCard with name is required",
+        );
+    }
+
     match agentspec_service
-        .update_draft(ns, &form.agent_spec_name, &spec)
+        .update_draft(ns, agent_spec_name, &spec)
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -452,7 +563,7 @@ async fn submit_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecSubmitForm>,
+    body: web::Form<AgentSpecSubmitForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -483,7 +594,7 @@ async fn publish_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecPublishForm>,
+    body: web::Form<AgentSpecPublishForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -519,7 +630,7 @@ async fn update_labels(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecLabelsUpdateForm>,
+    body: web::Form<AgentSpecLabelsUpdateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -561,7 +672,7 @@ async fn update_biz_tags(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecBizTagsUpdateForm>,
+    body: web::Form<AgentSpecBizTagsUpdateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -592,7 +703,7 @@ async fn online_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecOnlineForm>,
+    body: web::Form<AgentSpecOnlineForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -629,7 +740,7 @@ async fn offline_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecOnlineForm>,
+    body: web::Form<AgentSpecOnlineForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -666,7 +777,7 @@ async fn update_scope(
     req: HttpRequest,
     data: web::Data<AppState>,
     agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
-    body: web::Json<AgentSpecScopeForm>,
+    body: web::Form<AgentSpecScopeForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")

@@ -17,12 +17,16 @@ pub struct CapacityRequest {
     /// Maximum configs quota
     pub quota: Option<u32>,
     /// Maximum config size in bytes
+    #[serde(alias = "maxSize")]
     pub max_size: Option<u32>,
     /// Maximum aggregate config count
+    #[serde(alias = "maxAggrCount")]
     pub max_aggr_count: Option<u32>,
     /// Maximum aggregate config size
+    #[serde(alias = "maxAggrSize")]
     pub max_aggr_size: Option<u32>,
     /// Maximum history count
+    #[serde(alias = "maxHistoryCount")]
     pub max_history_count: Option<u32>,
 }
 

@@ -325,10 +325,25 @@ async fn create_draft(
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
 
+    // Resolve name: form param takes priority, then from agentSpecCard JSON
+    let agent_spec_name = form
+        .agent_spec_name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .or_else(|| initial_content.as_ref().map(|s| s.name.as_str()))
+        .unwrap_or("");
+
+    if agent_spec_name.is_empty() {
+        return common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "agentSpecName or agentSpecCard with name is required",
+        );
+    }
+
     match agentspec_service
         .create_draft(
             ns,
-            &form.agent_spec_name,
+            agent_spec_name,
             form.based_on_version.as_deref(),
             form.target_version.as_deref(),
             initial_content.as_ref(),
@@ -384,8 +399,29 @@ async fn update_draft(
         }
     };
 
+    // Resolve name: form param takes priority, then from agentSpecCard JSON content
+    let agent_spec_name = form
+        .agent_spec_name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .or_else(|| {
+            if !spec.name.is_empty() {
+                Some(spec.name.as_str())
+            } else {
+                None
+            }
+        })
+        .unwrap_or("");
+
+    if agent_spec_name.is_empty() {
+        return common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "agentSpecName or agentSpecCard with name is required",
+        );
+    }
+
     match agentspec_service
-        .update_draft(ns, &form.agent_spec_name, &spec)
+        .update_draft(ns, agent_spec_name, &spec)
         .await
     {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),

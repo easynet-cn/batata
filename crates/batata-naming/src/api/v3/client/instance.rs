@@ -20,14 +20,15 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceRegisterForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
     #[serde(default)]
     weight: Option<f64>,
@@ -52,14 +53,15 @@ impl InstanceRegisterForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceDeregisterQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
     #[serde(default)]
     ephemeral: Option<bool>,
@@ -76,14 +78,15 @@ impl InstanceDeregisterQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceListQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     #[serde(default)]
     clusters: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "healthyOnly")]
     healthy_only: Option<bool>,
 }
 

@@ -504,7 +504,8 @@ impl McpServerOperationService {
         Ok(())
     }
 
-    /// List MCP servers with pagination and search
+    /// List MCP servers with pagination and search.
+    /// Returns `Page<McpServerBasicInfo>` matching Nacos Java API contract.
     pub fn list_mcp_servers(
         &self,
         namespace: &str,
@@ -512,7 +513,7 @@ impl McpServerOperationService {
         search_type: &str,
         page_no: u32,
         page_size: u32,
-    ) -> McpServerListResponse {
+    ) -> batata_api::model::Page<McpServerBasicInfo> {
         let page_no = page_no.max(1);
         let offset = ((page_no - 1) * page_size) as usize;
         let limit = page_size as usize;
@@ -521,38 +522,22 @@ impl McpServerOperationService {
             self.index
                 .search_by_name(namespace, name, search_type, offset, limit);
 
-        // Convert index entries to McpServer stubs (without full detail)
-        let servers: Vec<McpServer> = entries
+        let page_items: Vec<McpServerBasicInfo> = entries
             .into_iter()
-            .map(|e| McpServer {
+            .map(|e| McpServerBasicInfo {
+                namespace_id: e.namespace,
                 id: e.id,
-                name: e.name.clone(),
-                display_name: e.name,
+                name: e.name,
+                protocol: e.protocol,
                 description: e.description,
-                namespace: e.namespace,
                 version: e.latest_published_version,
-                endpoint: String::new(),
-                server_type: McpServerType::Http,
-                transport: McpTransport::default(),
+                enabled: true,
+                status: "ACTIVE".to_string(),
                 capabilities: McpCapabilities::default(),
-                tools: vec![],
-                resources: vec![],
-                prompts: vec![],
-                metadata: Default::default(),
-                tags: vec![],
-                health_status: HealthStatus::Unknown,
-                registered_at: e.create_time,
-                last_health_check: None,
-                updated_at: e.modify_time,
             })
             .collect();
 
-        McpServerListResponse {
-            servers,
-            total,
-            page: page_no,
-            page_size,
-        }
+        batata_api::model::Page::new(total, page_no as u64, page_size as u64, page_items)
     }
 
     /// Get all servers (for MCP Registry server)

@@ -21,24 +21,35 @@ const NAMESPACE_ID_MAX_LENGTH: usize = 128;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetParam {
+    #[serde(alias = "namespaceId")]
     namespace_id: String,
 }
 
+/// Namespace create form — aligned with Nacos NamespaceForm.
+/// The Nacos maintainer-client sends `namespaceId` as the namespace ID param.
+/// The Nacos console sends `customNamespaceId` (legacy alias).
+/// Both are accepted; `namespaceId` takes priority.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CreateFormData {
+    #[serde(alias = "customNamespaceId")]
     custom_namespace_id: Option<String>,
-    #[allow(dead_code)]
+    #[serde(alias = "namespaceId")]
     namespace_id: Option<String>,
+    #[serde(alias = "namespaceName")]
     namespace_name: String,
+    #[serde(alias = "namespaceDesc")]
     namespace_desc: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateFormData {
+    #[serde(alias = "namespaceId")]
     namespace_id: String,
+    #[serde(alias = "namespaceName")]
     namespace_name: String,
+    #[serde(alias = "namespaceDesc")]
     namespace_desc: Option<String>,
 }
 
@@ -130,9 +141,12 @@ async fn create_namespace(
             .build()
     );
 
+    // Nacos maintainer-client sends `namespaceId`, console sends `customNamespaceId`
+    // Accept both, with `namespaceId` taking priority
     let mut namespace_id = form
-        .custom_namespace_id
+        .namespace_id
         .clone()
+        .or_else(|| form.custom_namespace_id.clone())
         .unwrap_or_default()
         .trim()
         .to_string();
@@ -144,24 +158,39 @@ async fn create_namespace(
     }
 
     if !NAMESPACE_ID_REGEX.is_match(&namespace_id) {
-        return common::Result::<String>::http_not_found(
+        return common::Result::<String>::http_bad_request(
             &error::ILLEGAL_NAMESPACE,
             format!("namespaceId [{}] mismatch the pattern", namespace_id),
         );
     }
 
     if namespace_id.chars().count() > NAMESPACE_ID_MAX_LENGTH {
-        return common::Result::<String>::http_not_found(
+        return common::Result::<String>::http_bad_request(
             &error::ILLEGAL_NAMESPACE,
             format!("too long namespaceId, over {}", namespace_id),
         );
     }
 
     if !namespace_name_check(&namespace_name) {
-        return common::Result::<String>::http_not_found(
+        return common::Result::<String>::http_bad_request(
             &error::ILLEGAL_NAMESPACE,
             format!("namespaceName [{}] contains illegal char", namespace_name),
         );
+    }
+
+    // Nacos behavior: check duplicate before create (throws NacosApiException if exists)
+    match data.persistence().namespace_check(&namespace_id).await {
+        Ok(true) => {
+            return common::Result::<String>::http_bad_request(
+                &error::NAMESPACE_ALREADY_EXIST,
+                format!("namespaceId [{}] already exist.", namespace_id),
+            );
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to check namespace existence");
+            return common::Result::<String>::http_internal_error(e);
+        }
+        Ok(false) => {} // proceed with creation
     }
 
     let res = data

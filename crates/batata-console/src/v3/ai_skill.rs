@@ -249,7 +249,7 @@ async fn list_skills(
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConsoleSkillUploadQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(default)]
     pub overwrite: bool,
@@ -361,10 +361,25 @@ async fn create_draft(
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
 
+    // Resolve skill name: form param takes priority, then from skill_card JSON
+    let skill_name = form
+        .skill_name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .or_else(|| initial_content.as_ref().map(|s| s.name.as_str()))
+        .unwrap_or("");
+
+    if skill_name.is_empty() {
+        return common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "skillName or skillCard with name is required",
+        );
+    }
+
     match skill_service
         .create_draft(
             ns,
-            &form.skill_name,
+            skill_name,
             form.based_on_version.as_deref(),
             form.target_version.as_deref(),
             initial_content.as_ref(),
@@ -420,8 +435,29 @@ async fn update_draft(
         }
     };
 
+    // Resolve skill name: form param takes priority, then from skillCard JSON content
+    let skill_name = form
+        .skill_name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .or_else(|| {
+            if !skill.name.is_empty() {
+                Some(skill.name.as_str())
+            } else {
+                None
+            }
+        })
+        .unwrap_or("");
+
+    if skill_name.is_empty() {
+        return common_response::Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "skillName or skillCard with name is required",
+        );
+    }
+
     match skill_service
-        .update_draft(ns, &form.skill_name, &skill)
+        .update_draft(ns, skill_name, &skill)
         .await
     {
         Ok(()) => HttpResponse::Ok().json(common_response::Result::success(true)),

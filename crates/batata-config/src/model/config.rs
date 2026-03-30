@@ -16,18 +16,29 @@ use batata_persistence::entity;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ConfigForm {
+    #[serde(alias = "dataId")]
     pub data_id: String,
+    #[serde(alias = "groupName")]
     pub group_name: String,
+    #[serde(alias = "namespaceId")]
     pub namespace_id: String,
     pub content: String,
     pub tag: Option<String>,
+    #[serde(alias = "appName")]
     pub app_name: String,
+    #[serde(alias = "srcUser")]
     pub src_user: Option<String>,
+    #[serde(alias = "configTags")]
     pub config_tags: String,
+    #[serde(alias = "encryptedDataKey")]
     pub encrypted_data_key: Option<String>,
+    #[serde(alias = "grayName")]
     pub gray_name: Option<String>,
+    #[serde(alias = "grayRuleExp")]
     pub gray_rule_exp: Option<String>,
+    #[serde(alias = "grayVersion")]
     pub gray_version: Option<String>,
+    #[serde(alias = "grayPriority")]
     pub gray_priority: Option<i32>,
     pub desc: String,
     pub r#use: Option<String>,

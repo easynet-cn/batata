@@ -17,6 +17,73 @@ use crate::{
     secured,
 };
 
+/// Form data for MCP create/update - accepts JSON-as-string params like Nacos.
+/// The nacos-maintainer-client sends:
+///   mcpName=xxx&namespaceId=xxx&serverSpecification=<JSON>&toolSpecification=<JSON>&endpointSpecification=<JSON>
+///
+/// Aligned with Nacos McpDetailForm + McpRequestUtil.parseMcpServerBasicInfo():
+/// If `name` is empty in the serverSpecification JSON, it falls back to the
+/// form-level `mcpName` parameter.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpForm {
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: Option<String>,
+    #[serde(default, alias = "mcpName")]
+    pub mcp_name: Option<String>,
+    #[serde(default, alias = "mcpId")]
+    pub mcp_id: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default, alias = "serverSpecification")]
+    pub server_specification: Option<String>,
+    #[serde(default, alias = "toolSpecification")]
+    pub tool_specification: Option<String>,
+    #[serde(default, alias = "endpointSpecification")]
+    pub endpoint_specification: Option<String>,
+    #[serde(default)]
+    pub latest: Option<bool>,
+    #[serde(default, alias = "overrideExisting")]
+    pub override_existing: Option<bool>,
+}
+
+impl McpForm {
+    fn into_registration(self) -> std::result::Result<McpServerRegistration, String> {
+        // Parse serverSpecification JSON string into the registration
+        let server_json = self
+            .server_specification
+            .unwrap_or_else(|| "{}".to_string());
+        let mut reg: McpServerRegistration = serde_json::from_str(&server_json)
+            .map_err(|e| format!("Invalid serverSpecification: {}", e))?;
+
+        // Nacos behavior: if name is empty in serverSpecification, fill from mcpName form param
+        if reg.name.is_empty() {
+            if let Some(mcp_name) = &self.mcp_name {
+                if !mcp_name.is_empty() {
+                    reg.name = mcp_name.clone();
+                }
+            }
+        }
+
+        if let Some(ns) = self.namespace_id {
+            if !ns.is_empty() {
+                reg.namespace = ns;
+            }
+        }
+
+        // Parse toolSpecification if present
+        if let Some(tool_json) = self.tool_specification {
+            if !tool_json.is_empty() {
+                if let Ok(tools) = serde_json::from_str(&tool_json) {
+                    reg.tools = tools;
+                }
+            }
+        }
+
+        Ok(reg)
+    }
+}
+
 /// GET /v3/admin/ai/mcp/list
 #[get("list")]
 async fn list_mcp(
@@ -108,7 +175,7 @@ async fn create_mcp(
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
     mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
-    body: web::Json<McpServerRegistration>,
+    form: web::Form<McpForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -118,7 +185,21 @@ async fn create_mcp(
             .build()
     );
 
-    let registration = body.into_inner();
+    let registration = match form.into_inner().into_registration() {
+        Ok(r) => r,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
+    if registration.name.is_empty() {
+        return Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_VALIDATE_ERROR,
+            "MCP server name is required (via mcpName param or name in serverSpecification)",
+        );
+    }
     if let Some(svc) = mcp_service {
         let namespace = if registration.namespace.is_empty() {
             "public"
@@ -153,7 +234,7 @@ async fn update_mcp(
     registry: web::Data<Arc<McpServerRegistry>>,
     mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
     query: web::Query<McpDetailQuery>,
-    body: web::Json<McpServerRegistration>,
+    form: web::Form<McpForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -165,7 +246,15 @@ async fn update_mcp(
 
     let q = query.into_inner();
     let namespace = q.namespace_id.as_deref().unwrap_or("public");
-    let registration = body.into_inner();
+    let registration = match form.into_inner().into_registration() {
+        Ok(r) => r,
+        Err(e) => {
+            return Result::<()>::http_bad_request(
+                &batata_common::error::PARAMETER_VALIDATE_ERROR,
+                e,
+            );
+        }
+    };
     let name = q.mcp_name.unwrap_or_else(|| registration.name.clone());
 
     if let Some(svc) = mcp_service {
@@ -239,8 +328,11 @@ async fn delete_mcp(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpEndpointQuery {
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
+    #[serde(alias = "mcpName")]
     pub mcp_name: String,
+    #[serde(alias = "endpointUrl")]
     pub endpoint_url: Option<String>,
 }
 

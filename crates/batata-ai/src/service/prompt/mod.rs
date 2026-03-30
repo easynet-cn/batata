@@ -504,6 +504,95 @@ impl PromptOperationService {
             page_items: summaries,
         })
     }
+
+    /// List prompts with search/filter and pagination.
+    /// Searches config entries with group = "nacos-ai-prompt" and
+    /// dataId matching `*.descriptor.json` pattern.
+    pub async fn list_prompts(
+        &self,
+        namespace_id: &str,
+        prompt_key: Option<&str>,
+        search: Option<&str>,
+        biz_tags: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<batata_persistence::model::Page<PromptMetaSummary>> {
+        // Build dataId search pattern
+        let data_id_pattern = match (prompt_key, search) {
+            (Some(key), Some("accurate")) if !key.is_empty() => {
+                // Exact match: {promptKey}.descriptor.json
+                build_descriptor_data_id(key)
+            }
+            (Some(key), _) if !key.is_empty() => {
+                // Blur match: *{promptKey}*.descriptor.json
+                format!("*{}*.descriptor.json", key)
+            }
+            _ => {
+                // All descriptors: *.descriptor.json
+                "*.descriptor.json".to_string()
+            }
+        };
+
+        // Build tags filter
+        let tags: Vec<String> = biz_tags
+            .map(|t| {
+                t.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Search config entries
+        let config_page = self
+            .persistence
+            .config_search_page(
+                page_no,
+                page_size,
+                namespace_id,
+                &data_id_pattern,
+                PROMPT_GROUP,
+                "", // app_name
+                tags,
+                vec![], // types
+                "",     // content
+            )
+            .await?;
+
+        // Convert config entries to PromptMetaSummary
+        let mut summaries = Vec::with_capacity(config_page.page_items.len());
+        for config in &config_page.page_items {
+            let Some(prompt_key) = extract_prompt_key_from_descriptor(&config.data_id) else {
+                continue;
+            };
+
+            // Parse descriptor content
+            let descriptor: Option<PromptDescriptor> = serde_json::from_str(&config.content).ok();
+
+            // Load label-version mapping for latest_version
+            let mapping = self.load_mapping(namespace_id, prompt_key).await;
+
+            let summary = PromptMetaSummary {
+                schema_version: 1,
+                prompt_key: prompt_key.to_string(),
+                description: descriptor.as_ref().and_then(|d| d.description.clone()),
+                biz_tags: descriptor
+                    .as_ref()
+                    .map(|d| d.biz_tags.clone())
+                    .unwrap_or_default(),
+                latest_version: mapping.and_then(|m| m.latest_version),
+                gmt_modified: descriptor.as_ref().and_then(|d| d.gmt_modified),
+            };
+            summaries.push(summary);
+        }
+
+        Ok(batata_persistence::model::Page {
+            total_count: config_page.total_count,
+            page_number: config_page.page_number,
+            pages_available: config_page.pages_available,
+            page_items: summaries,
+        })
+    }
 }
 
 use md5::Digest;

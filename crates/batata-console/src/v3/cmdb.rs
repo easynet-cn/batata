@@ -20,7 +20,7 @@ fn get_cmdb_plugin(cmdb_data: Option<&web::Data<Arc<dyn CmdbPlugin>>>) -> Arc<dy
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntityListQuery {
-    #[serde(default)]
+    #[serde(default, alias = "entityType")]
     pub entity_type: Option<String>,
 }
 

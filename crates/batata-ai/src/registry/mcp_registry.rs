@@ -206,11 +206,10 @@ async fn list_servers(
     let limit = query.limit.unwrap_or(30).min(100) as usize;
 
     // Get all servers sorted by name
-    let all_servers = registry.list(&crate::model::McpServerQuery::default());
-    let total = all_servers.servers.len();
+    let all_servers = registry.list_all_servers();
+    let total = all_servers.len();
 
     let page: Vec<McpRegistryServerDetail> = all_servers
-        .servers
         .iter()
         .skip(offset)
         .take(limit)

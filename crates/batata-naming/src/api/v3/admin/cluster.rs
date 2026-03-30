@@ -18,13 +18,15 @@ use batata_api::naming::NamingServiceProvider;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateClusterForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
+    #[serde(alias = "clusterName")]
     cluster_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "healthChecker")]
     health_checker: Option<HealthCheckerForm>,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
@@ -58,7 +60,7 @@ async fn create_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<CreateClusterForm>,
+    form: web::Form<CreateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form
         .namespace_id
@@ -141,7 +143,7 @@ async fn update_cluster(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<UpdateClusterForm>,
+    form: web::Form<UpdateClusterForm>,
 ) -> impl Responder {
     let namespace_id = form.namespace_id_or_default();
     let group_name = form.group_name_or_default();

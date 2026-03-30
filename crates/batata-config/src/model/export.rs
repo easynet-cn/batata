@@ -104,10 +104,13 @@ impl FromStr for SameConfigPolicy {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ExportRequest {
+    #[serde(alias = "namespaceId")]
     pub namespace_id: String,
     pub group: Option<String>,
+    #[serde(alias = "dataIds")]
     pub data_ids: Option<String>, // Comma-separated dataIds
     pub ids: Option<String>,      // Comma-separated config IDs
+    #[serde(alias = "appName")]
     pub app_name: Option<String>,
 }
 
@@ -115,6 +118,7 @@ pub struct ExportRequest {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ImportRequest {
+    #[serde(alias = "namespaceId")]
     pub namespace_id: String,
     pub policy: Option<String>, // ABORT, SKIP, OVERWRITE
 }

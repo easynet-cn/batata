@@ -20,18 +20,19 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 #[serde(rename_all = "camelCase")]
 #[allow(dead_code)]
 struct InstanceListQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     page_size: u64,
-    #[serde(default)]
+    #[serde(default, alias = "healthyOnly")]
     healthy_only: Option<bool>,
 }
 
@@ -54,14 +55,15 @@ impl InstanceListQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceUpdateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
     #[serde(default = "default_weight")]
     weight: f64,

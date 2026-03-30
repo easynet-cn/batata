@@ -69,7 +69,7 @@ impl A2aServerOperationService {
             version: version.clone(),
             registration_type: registration_type.to_string(),
             description: card.description.clone(),
-            url: card.endpoint.clone(),
+            url: card.url.clone(),
             capabilities: card.capabilities.clone(),
             skills: card.skills.clone(),
             provider: String::new(),
@@ -169,14 +169,17 @@ impl A2aServerOperationService {
                 display_name: detail_info.name.clone(),
                 description: detail_info.description.clone(),
                 version: detail_info.version.clone(),
-                endpoint: detail_info.url.clone(),
+                url: detail_info.url.clone(),
                 protocol_version: "1.0".to_string(),
                 capabilities: detail_info.capabilities.clone(),
                 skills: detail_info.skills.clone(),
-                input_modes: vec![],
-                output_modes: vec![],
-                authentication: None,
-                rate_limits: None,
+                default_input_modes: vec![],
+                default_output_modes: vec![],
+                preferred_transport: None,
+                provider: None,
+                documentation_url: None,
+                icon_url: None,
+                supports_authenticated_extended_card: None,
                 metadata: Default::default(),
                 tags: vec![],
             };
@@ -260,7 +263,7 @@ impl A2aServerOperationService {
             version: version.clone(),
             registration_type: registration_type.to_string(),
             description: card.description.clone(),
-            url: card.endpoint.clone(),
+            url: card.url.clone(),
             capabilities: card.capabilities.clone(),
             skills: card.skills.clone(),
             provider: String::new(),
@@ -364,6 +367,9 @@ impl A2aServerOperationService {
     }
 
     /// List agents with pagination and search
+    ///
+    /// Returns `Page<AgentCardVersionInfo>` to match Nacos A2aServerOperationService.listAgents()
+    /// which returns `Page<AgentCardVersionInfo>` (not full agent details).
     pub async fn list_agents(
         &self,
         namespace: &str,
@@ -371,7 +377,7 @@ impl A2aServerOperationService {
         search_type: &str,
         page_no: u32,
         page_size: u32,
-    ) -> anyhow::Result<AgentListResponse> {
+    ) -> anyhow::Result<batata_api::model::Page<AgentCardVersionInfo>> {
         let page_no = page_no.max(1) as u64;
         let page_size_u64 = page_size as u64;
 
@@ -397,61 +403,11 @@ impl A2aServerOperationService {
             )
             .await?;
 
-        let mut agents = Vec::new();
+        let mut version_infos = Vec::new();
         for item in &page.page_items {
             match serde_json::from_str::<AgentCardVersionInfo>(&item.content) {
                 Ok(version_info) => {
-                    // Fetch the latest version detail
-                    let encoded = encode_agent_name(&version_info.name);
-                    let detail_data_id =
-                        format!("{}-{}", encoded, version_info.latest_published_version);
-
-                    let detail = self
-                        .query_config(&item.tenant, AGENT_VERSION_GROUP, &detail_data_id)
-                        .await
-                        .ok()
-                        .flatten();
-
-                    let agent = if let Some(detail_content) = detail {
-                        if let Ok(detail_info) =
-                            serde_json::from_str::<AgentCardDetailInfo>(&detail_content)
-                        {
-                            if let Some(card) = detail_info.agent_card {
-                                RegisteredAgent {
-                                    id: version_info.id.clone(),
-                                    card,
-                                    namespace: item.tenant.clone(),
-                                    health_status: HealthStatus::Unknown,
-                                    registered_at: item.created_time,
-                                    last_health_check: None,
-                                    updated_at: item.modified_time,
-                                }
-                            } else {
-                                build_agent_stub(
-                                    &version_info,
-                                    &item.tenant,
-                                    item.created_time,
-                                    item.modified_time,
-                                )
-                            }
-                        } else {
-                            build_agent_stub(
-                                &version_info,
-                                &item.tenant,
-                                item.created_time,
-                                item.modified_time,
-                            )
-                        }
-                    } else {
-                        build_agent_stub(
-                            &version_info,
-                            &item.tenant,
-                            item.created_time,
-                            item.modified_time,
-                        )
-                    };
-
-                    agents.push(agent);
+                    version_infos.push(version_info);
                 }
                 Err(e) => {
                     warn!(
@@ -463,12 +419,12 @@ impl A2aServerOperationService {
             }
         }
 
-        Ok(AgentListResponse {
-            agents,
-            total: page.total_count,
-            page: page_no as u32,
-            page_size,
-        })
+        Ok(batata_api::model::Page::new(
+            page.total_count,
+            page_no,
+            page_size_u64,
+            version_infos,
+        ))
     }
 
     /// List versions for a specific agent
@@ -554,6 +510,7 @@ impl A2aServerOperationService {
 }
 
 /// Build a stub RegisteredAgent from version info (when detail is not available)
+#[allow(dead_code)]
 fn build_agent_stub(
     version_info: &AgentCardVersionInfo,
     namespace: &str,
@@ -567,14 +524,17 @@ fn build_agent_stub(
             display_name: version_info.name.clone(),
             description: String::new(),
             version: version_info.latest_published_version.clone(),
-            endpoint: String::new(),
+            url: String::new(),
             protocol_version: "1.0".to_string(),
             capabilities: AgentCapabilities::default(),
             skills: vec![],
-            input_modes: vec![],
-            output_modes: vec![],
-            authentication: None,
-            rate_limits: None,
+            default_input_modes: vec![],
+            default_output_modes: vec![],
+            preferred_transport: None,
+            provider: None,
+            documentation_url: None,
+            icon_url: None,
+            supports_authenticated_extended_card: None,
             metadata: Default::default(),
             tags: vec![],
         },

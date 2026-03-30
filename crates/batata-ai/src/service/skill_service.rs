@@ -13,6 +13,23 @@ use tracing::debug;
 
 use crate::model::skill::*;
 
+/// Convert a NaiveDateTime string (from DB) to epoch millis.
+/// Accepts formats like "2026-03-30 04:05:41.069118" or ISO 8601.
+fn datetime_str_to_millis(s: &Option<String>) -> Option<i64> {
+    s.as_deref().and_then(|dt| {
+        // Try NaiveDateTime (no timezone, from Utc::now().naive_utc().to_string())
+        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(dt, "%Y-%m-%d %H:%M:%S%.f") {
+            return Some(ndt.and_utc().timestamp_millis());
+        }
+        // Try ISO 8601 with timezone
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(dt) {
+            return Some(dt.timestamp_millis());
+        }
+        // Try parsing as millis directly
+        dt.parse::<i64>().ok()
+    })
+}
+
 /// Skill operation service backed by ai_resource/ai_resource_version tables
 pub struct SkillOperationService {
     persistence: Arc<dyn PersistenceService>,
@@ -72,7 +89,7 @@ impl SkillOperationService {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
             description: resource.description.clone(),
-            update_time: resource.gmt_modified.clone(),
+            update_time: datetime_str_to_millis(&resource.gmt_modified),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
             from: Some(resource.from.clone()),
@@ -91,8 +108,8 @@ impl SkillOperationService {
             status: v.status.clone(),
             author: v.author.clone(),
             description: v.description.clone(),
-            create_time: v.gmt_create.clone(),
-            update_time: v.gmt_modified.clone(),
+            create_time: datetime_str_to_millis(&v.gmt_create),
+            update_time: datetime_str_to_millis(&v.gmt_modified),
             publish_pipeline_info: v.publish_pipeline_info.clone(),
             download_count: v.download_count,
         }
@@ -179,7 +196,7 @@ impl SkillOperationService {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
             description: resource.description.clone(),
-            update_time: resource.gmt_modified.clone(),
+            update_time: datetime_str_to_millis(&resource.gmt_modified),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
             from: Some(resource.from.clone()),
@@ -1068,7 +1085,7 @@ impl SkillOperationService {
                 namespace_id: r.namespace_id.clone(),
                 name: r.name.clone(),
                 description: r.description.clone(),
-                update_time: r.gmt_modified.clone(),
+                update_time: datetime_str_to_millis(&r.gmt_modified),
             })
             .collect();
 

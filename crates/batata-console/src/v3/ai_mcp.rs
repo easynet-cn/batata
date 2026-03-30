@@ -9,8 +9,8 @@ use actix_web::{HttpRequest, Responder, Scope, delete, get, post, put, web};
 
 use batata_ai::model::{
     BatchRegistrationResponse, McpDeleteQuery, McpDetailQuery, McpImportExecuteRequest,
-    McpImportValidateRequest, McpImportValidateResponse, McpListQuery, McpServer, McpServerConfig,
-    McpServerImportRequest, McpServerListResponse, McpServerRegistration,
+    McpImportValidateRequest, McpImportValidateResponse, McpListQuery, McpServer,
+    McpServerBasicInfo, McpServerConfig, McpServerImportRequest, McpServerRegistration,
 };
 use batata_ai::{McpRegistryStats, McpServerOperationService, McpServerRegistry};
 use batata_server_common::error;
@@ -50,10 +50,10 @@ async fn list_servers(
             page_no,
             page_size,
         );
-        common_response::Result::<McpServerListResponse>::http_success(result)
+        common_response::Result::<batata_api::model::Page<McpServerBasicInfo>>::http_success(result)
     } else {
         let result = registry.list_with_search(&q);
-        common_response::Result::<McpServerListResponse>::http_success(result)
+        common_response::Result::<batata_api::model::Page<McpServerBasicInfo>>::http_success(result)
     }
 }
 

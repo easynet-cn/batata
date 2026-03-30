@@ -884,10 +884,15 @@ pub struct HeartbeatForm {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct CreateClusterForm {
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
+    #[serde(alias = "groupName")]
     pub group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     pub service_name: String,
+    #[serde(alias = "clusterName")]
     pub cluster_name: String,
+    #[serde(alias = "healthChecker")]
     pub health_checker: Option<HealthCheckerConfigForm>,
     pub metadata: Option<HashMap<String, String>>,
 }
@@ -898,10 +903,13 @@ pub struct CreateClusterForm {
 pub struct HealthCheckerConfigForm {
     #[serde(default = "default_health_check_type")]
     pub r#type: String,
+    #[serde(alias = "checkPort")]
     pub check_port: Option<i32>,
+    #[serde(alias = "useInstancePort")]
     pub use_instance_port: Option<bool>,
     pub path: Option<String>,
     pub headers: Option<String>,
+    #[serde(alias = "expectedCode")]
     pub expected_code: Option<String>,
 }
 

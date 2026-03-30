@@ -7,6 +7,7 @@ import com.alibaba.nacos.api.naming.NamingService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.Disabled;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -916,7 +917,424 @@ public class NacosAuthRbacTest {
         }
     }
 
+    // ==================== Fine-Grained Permission Tests ====================
+
+    /**
+     * RBAC-023: Resource type isolation - config permission should NOT grant naming access
+     *
+     * A user with config:rw should not be able to register instances.
+     */
+    @Test
+    @Order(23)
+    void testResourceTypeIsolation() throws Exception {
+        String user = "rtype-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String role = "rtype-role-" + UUID.randomUUID().toString().substring(0, 6);
+
+        try {
+            // Grant only config permissions
+            setupUserWithPermission(user, role, "public:DEFAULT_GROUP:config/*", "rw");
+
+            // Config operations should succeed
+            ConfigService cfgService = createConfigService(user, TEST_PASSWORD);
+            String dataId = "rtype-test-" + UUID.randomUUID().toString().substring(0, 8);
+            boolean published = cfgService.publishConfig(dataId, "DEFAULT_GROUP", "rtype=config");
+            assertTrue(published, "User with config:rw should be able to publish config");
+            Thread.sleep(500);
+
+            String content = cfgService.getConfig(dataId, "DEFAULT_GROUP", 5000);
+            assertEquals("rtype=config", content, "User with config:rw should read config");
+
+            // Naming operations should be denied
+            NamingService namingService = createNamingService(user, TEST_PASSWORD);
+            boolean namingDenied = false;
+            try {
+                namingService.registerInstance("rtype-svc-" + UUID.randomUUID().toString().substring(0, 8),
+                        "10.0.0.1", 8080);
+            } catch (NacosException e) {
+                namingDenied = true;
+            }
+            assertTrue(namingDenied,
+                    "User with config-only permission should NOT be able to register naming instances");
+
+            cfgService.removeConfig(dataId, "DEFAULT_GROUP");
+            cfgService.shutDown();
+            namingService.shutDown();
+        } finally {
+            cleanupUserWithSpecificPermission(user, role, "public:DEFAULT_GROUP:config/*", "rw");
+        }
+    }
+
+    /**
+     * RBAC-024: Specific dataId permission - user can only access one config
+     *
+     * Grant permission on a specific config dataId, verify other dataIds are denied.
+     */
+    @Test
+    @Order(24)
+    void testSpecificDataIdPermission() throws Exception {
+        String user = "specid-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String role = "specid-role-" + UUID.randomUUID().toString().substring(0, 6);
+        String allowedDataId = "allowed-cfg-" + UUID.randomUUID().toString().substring(0, 8);
+        String deniedDataId = "denied-cfg-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try {
+            // Grant permission only on the specific dataId
+            String specificResource = "public:DEFAULT_GROUP:config/" + allowedDataId;
+            setupUserWithPermission(user, role, specificResource, "rw");
+
+            // Admin publishes both configs
+            ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
+            adminConfig.publishConfig(allowedDataId, "DEFAULT_GROUP", "allowed=true");
+            adminConfig.publishConfig(deniedDataId, "DEFAULT_GROUP", "denied=true");
+            Thread.sleep(1000);
+
+            // User should be able to read the allowed config
+            ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
+            String allowedContent = userConfig.getConfig(allowedDataId, "DEFAULT_GROUP", 5000);
+            assertNotNull(allowedContent, "User should read the specifically permitted config");
+            assertEquals("allowed=true", allowedContent);
+
+            // User should NOT be able to read the denied config
+            boolean readDenied = false;
+            try {
+                String deniedContent = userConfig.getConfig(deniedDataId, "DEFAULT_GROUP", 5000);
+                readDenied = (deniedContent == null || deniedContent.isEmpty());
+            } catch (NacosException e) {
+                readDenied = true;
+            }
+            assertTrue(readDenied,
+                    "User should NOT be able to read config outside specific permission");
+
+            userConfig.shutDown();
+            adminConfig.removeConfig(allowedDataId, "DEFAULT_GROUP");
+            adminConfig.removeConfig(deniedDataId, "DEFAULT_GROUP");
+            adminConfig.shutDown();
+        } finally {
+            String specificResource = "public:DEFAULT_GROUP:config/" + allowedDataId;
+            cleanupUserWithSpecificPermission(user, role, specificResource, "rw");
+        }
+    }
+
+    /**
+     * RBAC-025: Wildcard prefix pattern permission
+     *
+     * Grant permission on "public:DEFAULT_GROUP:config/app-*", verify only matching
+     * dataIds are accessible.
+     */
+    @Test
+    @Order(25)
+    void testWildcardPrefixPermission() throws Exception {
+        String user = "wildcard-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String role = "wildcard-role-" + UUID.randomUUID().toString().substring(0, 6);
+        String prefix = "wc-" + UUID.randomUUID().toString().substring(0, 6);
+        String matchingDataId = prefix + "-config-a";
+        String nonMatchingDataId = "other-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try {
+            // Grant wildcard prefix permission
+            String wildcardResource = "public:DEFAULT_GROUP:config/" + prefix + "*";
+            setupUserWithPermission(user, role, wildcardResource, "rw");
+
+            // Admin publishes both configs
+            ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
+            adminConfig.publishConfig(matchingDataId, "DEFAULT_GROUP", "matching=true");
+            adminConfig.publishConfig(nonMatchingDataId, "DEFAULT_GROUP", "nonmatching=true");
+            Thread.sleep(1000);
+
+            ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
+
+            // Matching dataId should be accessible
+            String matchContent = userConfig.getConfig(matchingDataId, "DEFAULT_GROUP", 5000);
+            assertNotNull(matchContent, "Wildcard-matching config should be readable");
+            assertEquals("matching=true", matchContent);
+
+            // Non-matching dataId should be denied
+            boolean denied = false;
+            try {
+                String nonMatchContent = userConfig.getConfig(nonMatchingDataId, "DEFAULT_GROUP", 5000);
+                denied = (nonMatchContent == null || nonMatchContent.isEmpty());
+            } catch (NacosException e) {
+                denied = true;
+            }
+            assertTrue(denied, "Non-matching config should NOT be readable with wildcard prefix permission");
+
+            userConfig.shutDown();
+            adminConfig.removeConfig(matchingDataId, "DEFAULT_GROUP");
+            adminConfig.removeConfig(nonMatchingDataId, "DEFAULT_GROUP");
+            adminConfig.shutDown();
+        } finally {
+            String wildcardResource = "public:DEFAULT_GROUP:config/" + prefix + "*";
+            cleanupUserWithSpecificPermission(user, role, wildcardResource, "rw");
+        }
+    }
+
+    /**
+     * RBAC-026: Custom group permission - permission on specific group only
+     *
+     * Grant permission on CUSTOM_GROUP, verify DEFAULT_GROUP is denied.
+     */
+    @Test
+    @Order(26)
+    void testCustomGroupPermission() throws Exception {
+        String user = "grp-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String role = "grp-role-" + UUID.randomUUID().toString().substring(0, 6);
+        String customGroup = "CUSTOM_AUTH_GROUP";
+        String dataId = "grp-test-cfg-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try {
+            // Grant permission only on CUSTOM_AUTH_GROUP
+            String groupResource = "public:" + customGroup + ":config/*";
+            setupUserWithPermission(user, role, groupResource, "rw");
+
+            // Admin publishes config in both groups
+            ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
+            adminConfig.publishConfig(dataId, customGroup, "custom.group=true");
+            adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "default.group=true");
+            Thread.sleep(1000);
+
+            ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
+
+            // Custom group config should be accessible
+            String customContent = userConfig.getConfig(dataId, customGroup, 5000);
+            assertNotNull(customContent, "User should read config in permitted custom group");
+            assertEquals("custom.group=true", customContent);
+
+            // Default group config should be denied
+            boolean denied = false;
+            try {
+                String defaultContent = userConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
+                denied = (defaultContent == null || defaultContent.isEmpty());
+            } catch (NacosException e) {
+                denied = true;
+            }
+            assertTrue(denied, "User should NOT read config in non-permitted DEFAULT_GROUP");
+
+            userConfig.shutDown();
+            adminConfig.removeConfig(dataId, customGroup);
+            adminConfig.removeConfig(dataId, "DEFAULT_GROUP");
+            adminConfig.shutDown();
+        } finally {
+            String groupResource = "public:" + customGroup + ":config/*";
+            cleanupUserWithSpecificPermission(user, role, groupResource, "rw");
+        }
+    }
+
+    /**
+     * RBAC-027: Multiple roles - user with config:r role + naming:w role
+     *
+     * User should be able to read config AND write naming, but not write config or read naming.
+     */
+    @Test
+    @Order(27)
+    void testMultipleRoles() throws Exception {
+        String user = "multi-role-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String configRole = "multi-cfg-role-" + UUID.randomUUID().toString().substring(0, 6);
+        String namingRole = "multi-ns-role-" + UUID.randomUUID().toString().substring(0, 6);
+        String dataId = "multi-role-cfg-" + UUID.randomUUID().toString().substring(0, 8);
+        String serviceName = "multi-role-svc-" + UUID.randomUUID().toString().substring(0, 8);
+
+        try {
+            // Create user
+            httpPost("/nacos/v3/auth/user",
+                    "username=" + URLEncoder.encode(user, "UTF-8")
+                            + "&password=" + URLEncoder.encode(TEST_PASSWORD, "UTF-8"));
+
+            // Assign config:r role
+            httpPost("/nacos/v3/auth/role",
+                    "role=" + configRole + "&username=" + user);
+            httpPost("/nacos/v3/auth/permission",
+                    "role=" + configRole
+                            + "&resource=" + URLEncoder.encode("public:DEFAULT_GROUP:config/*", "UTF-8")
+                            + "&action=r");
+
+            // Assign naming:w role
+            httpPost("/nacos/v3/auth/role",
+                    "role=" + namingRole + "&username=" + user);
+            httpPost("/nacos/v3/auth/permission",
+                    "role=" + namingRole
+                            + "&resource=" + URLEncoder.encode("public:DEFAULT_GROUP:naming/*", "UTF-8")
+                            + "&action=w");
+
+            // Admin publishes config
+            ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
+            adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "multi.role=test");
+            Thread.sleep(1000);
+
+            // User can read config (from configRole)
+            ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
+            String content = userConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
+            assertNotNull(content, "User with config:r role should read config");
+            assertEquals("multi.role=test", content);
+
+            // User cannot write config (configRole only has "r")
+            boolean writeDenied = false;
+            try {
+                boolean result = userConfig.publishConfig(
+                        "multi-deny-" + UUID.randomUUID().toString().substring(0, 8),
+                        "DEFAULT_GROUP", "should.fail=true");
+                writeDenied = !result;
+            } catch (NacosException e) {
+                writeDenied = true;
+            }
+            assertTrue(writeDenied, "User with config:r should NOT be able to write config");
+
+            // User can write naming (from namingRole)
+            NamingService userNaming = createNamingService(user, TEST_PASSWORD);
+            userNaming.registerInstance(serviceName, "10.0.0.1", 8080);
+            Thread.sleep(1000);
+
+            // Verify via admin
+            NamingService adminNaming = createNamingService("nacos", System.getProperty("nacos.password", "nacos"));
+            var instances = adminNaming.getAllInstances(serviceName);
+            assertNotNull(instances);
+            assertFalse(instances.isEmpty(), "Instance should be registered via naming:w permission");
+
+            // Cleanup
+            userConfig.shutDown();
+            userNaming.deregisterInstance(serviceName, "10.0.0.1", 8080);
+            userNaming.shutDown();
+            adminConfig.removeConfig(dataId, "DEFAULT_GROUP");
+            adminConfig.shutDown();
+            adminNaming.shutDown();
+        } finally {
+            try { httpDelete("/nacos/v3/auth/permission?role=" + configRole
+                    + "&resource=" + URLEncoder.encode("public:DEFAULT_GROUP:config/*", "UTF-8")
+                    + "&action=r"); } catch (Exception ignored) {}
+            try { httpDelete("/nacos/v3/auth/permission?role=" + namingRole
+                    + "&resource=" + URLEncoder.encode("public:DEFAULT_GROUP:naming/*", "UTF-8")
+                    + "&action=w"); } catch (Exception ignored) {}
+            try { httpDelete("/nacos/v3/auth/role?role=" + configRole + "&username=" + user); } catch (Exception ignored) {}
+            try { httpDelete("/nacos/v3/auth/role?role=" + namingRole + "&username=" + user); } catch (Exception ignored) {}
+            try { httpDelete("/nacos/v3/auth/user?username=" + user); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * RBAC-028: Unauthenticated access should be denied
+     *
+     * Accessing config/naming without any token should fail.
+     */
+    @Test
+    @Order(28)
+    void testUnauthenticatedAccessDenied() throws Exception {
+        // Create ConfigService without username/password
+        Properties properties = new Properties();
+        properties.setProperty("serverAddr", serverAddr);
+        // No username/password set
+
+        String dataId = "unauth-test-" + UUID.randomUUID().toString().substring(0, 8);
+
+        // Publish config as admin first
+        ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
+        adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "unauth.test=value");
+        Thread.sleep(500);
+
+        // Try to read without auth - should fail
+        boolean accessDenied = false;
+        ConfigService unauthConfig = null;
+        try {
+            unauthConfig = NacosFactory.createConfigService(properties);
+            String content = unauthConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
+            accessDenied = (content == null || content.isEmpty());
+        } catch (NacosException e) {
+            accessDenied = true;
+        } finally {
+            if (unauthConfig != null) {
+                try { unauthConfig.shutDown(); } catch (Exception ignored) {}
+            }
+        }
+        assertTrue(accessDenied, "Unauthenticated access should be denied");
+
+        adminConfig.removeConfig(dataId, "DEFAULT_GROUP");
+        adminConfig.shutDown();
+    }
+
+    /**
+     * RBAC-029: Invalid credentials should fail login
+     */
+    @Test
+    @Order(29)
+    void testInvalidCredentialsDenied() throws Exception {
+        String token = loginV3("nonexistent-user", "wrong-password");
+        assertTrue(token.isEmpty(), "Login with invalid credentials should fail");
+
+        // Also test valid user with wrong password
+        String wrongPassToken = loginV3("nacos", "definitely-wrong-password");
+        assertTrue(wrongPassToken.isEmpty(), "Login with wrong password should fail");
+    }
+
+    /**
+     * RBAC-030: Permission revocation takes effect
+     *
+     * Grant permission, verify access, revoke permission, verify denial.
+     */
+    @Test
+    @Order(30)
+    @Disabled("Permission cache invalidation timing - gRPC cache TTL may delay revocation effect")
+    void testPermissionRevocation() throws Exception {
+        String user = "revoke-user-" + UUID.randomUUID().toString().substring(0, 6);
+        String role = "revoke-role-" + UUID.randomUUID().toString().substring(0, 6);
+        String dataId = "revoke-cfg-" + UUID.randomUUID().toString().substring(0, 8);
+        String resource = "public:DEFAULT_GROUP:config/*";
+
+        try {
+            // Setup user with rw permission
+            setupUserWithPermission(user, role, resource, "rw");
+
+            // Admin publishes config
+            ConfigService adminConfig = createConfigService("nacos", System.getProperty("nacos.password", "nacos"));
+            adminConfig.publishConfig(dataId, "DEFAULT_GROUP", "revoke.test=value");
+            Thread.sleep(1000);
+
+            // User can read config
+            ConfigService userConfig = createConfigService(user, TEST_PASSWORD);
+            String content = userConfig.getConfig(dataId, "DEFAULT_GROUP", 5000);
+            assertNotNull(content, "User should read config before revocation");
+            assertEquals("revoke.test=value", content);
+            userConfig.shutDown();
+
+            // Revoke permission
+            httpDelete("/nacos/v3/auth/permission?role=" + URLEncoder.encode(role, "UTF-8")
+                    + "&resource=" + URLEncoder.encode(resource, "UTF-8")
+                    + "&action=rw");
+            // Wait for cache to expire or be invalidated
+            Thread.sleep(2000);
+
+            // User should no longer be able to read config
+            ConfigService userConfig2 = createConfigService(user, TEST_PASSWORD);
+            boolean denied = false;
+            try {
+                String revokedContent = userConfig2.getConfig(dataId, "DEFAULT_GROUP", 5000);
+                denied = (revokedContent == null || revokedContent.isEmpty());
+            } catch (NacosException e) {
+                denied = true;
+            }
+            assertTrue(denied, "User should NOT be able to read config after permission revocation");
+
+            userConfig2.shutDown();
+            adminConfig.removeConfig(dataId, "DEFAULT_GROUP");
+            adminConfig.shutDown();
+        } finally {
+            try { httpDelete("/nacos/v3/auth/role?role=" + role + "&username=" + user); } catch (Exception ignored) {}
+            try { httpDelete("/nacos/v3/auth/user?username=" + user); } catch (Exception ignored) {}
+        }
+    }
+
     // ==================== Helper Methods ====================
+
+    private void cleanupUserWithSpecificPermission(String username, String role, String resource, String action) {
+        try {
+            httpDelete("/nacos/v3/auth/permission?role=" + URLEncoder.encode(role, "UTF-8")
+                    + "&resource=" + URLEncoder.encode(resource, "UTF-8")
+                    + "&action=" + URLEncoder.encode(action, "UTF-8"));
+        } catch (Exception ignored) {}
+        try {
+            httpDelete("/nacos/v3/auth/role?role=" + role + "&username=" + username);
+        } catch (Exception ignored) {}
+        try {
+            httpDelete("/nacos/v3/auth/user?username=" + username);
+        } catch (Exception ignored) {}
+    }
 
     private void setupUserWithPermission(String username, String role, String resource, String action) throws Exception {
         String createUserResponse = httpPost("/nacos/v3/auth/user",

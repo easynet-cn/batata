@@ -16,19 +16,20 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct InstanceRegisterParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Instance IP (required)
     pub ip: String,
     /// Instance port (required)
     pub port: i32,
     /// Cluster name (optional, defaults to "DEFAULT")
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     pub cluster_name: Option<String>,
     /// Weight for load balancing (optional, defaults to 1.0)
     #[serde(default)]
@@ -65,19 +66,20 @@ impl InstanceRegisterParam {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceDeregisterParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Instance IP (required)
     pub ip: String,
     /// Instance port (required)
     pub port: i32,
     /// Cluster name (optional, defaults to "DEFAULT")
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     pub cluster_name: Option<String>,
     /// Whether instance is ephemeral (optional, defaults to true)
     #[serde(default)]
@@ -102,19 +104,20 @@ impl InstanceDeregisterParam {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceUpdateParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Instance IP (required)
     pub ip: String,
     /// Instance port (required)
     pub port: i32,
     /// Cluster name (optional, defaults to "DEFAULT")
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     pub cluster_name: Option<String>,
     /// Weight for load balancing (optional)
     #[serde(default)]
@@ -151,19 +154,20 @@ impl InstanceUpdateParam {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceDetailParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Instance IP (required)
     pub ip: String,
     /// Instance port (required)
     pub port: i32,
     /// Cluster name (optional, defaults to "DEFAULT")
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     pub cluster_name: Option<String>,
 }
 
@@ -185,18 +189,19 @@ impl InstanceDetailParam {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceListParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Cluster name filter (optional, comma-separated)
-    #[serde(default, alias = "clusters")]
+    #[serde(default, alias = "clusters", alias = "clusterName")]
     pub cluster_name: Option<String>,
     /// Only return healthy instances (optional, defaults to false)
-    #[serde(default)]
+    #[serde(default, alias = "healthyOnly")]
     pub healthy_only: Option<bool>,
     /// IP filter (optional)
     #[serde(default)]
@@ -225,19 +230,20 @@ impl InstanceListParam {
 #[serde(rename_all = "camelCase")]
 pub struct BatchMetadataParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Instance list as JSON (ip:port format, comma-separated)
     pub instances: String,
     /// Metadata to add/update (JSON string)
     pub metadata: String,
     /// Consistency type (optional)
-    #[serde(default)]
+    #[serde(default, alias = "consistencyType")]
     pub consistency_type: Option<String>,
 }
 
@@ -293,15 +299,16 @@ pub struct InstanceListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceCreateParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Protection threshold (optional, 0.0-1.0)
-    #[serde(default)]
+    #[serde(default, alias = "protectThreshold")]
     pub protect_threshold: Option<f32>,
     /// Service metadata as JSON string (optional)
     #[serde(default)]
@@ -330,12 +337,13 @@ impl ServiceCreateParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDeleteParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
 }
 
@@ -355,15 +363,16 @@ impl ServiceDeleteParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceUpdateParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Protection threshold (optional, 0.0-1.0)
-    #[serde(default)]
+    #[serde(default, alias = "protectThreshold")]
     pub protect_threshold: Option<f32>,
     /// Service metadata as JSON string (optional)
     #[serde(default)]
@@ -389,12 +398,13 @@ impl ServiceUpdateParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceDetailParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
 }
 
@@ -414,16 +424,16 @@ impl ServiceDetailParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceListParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Page number (1-based, defaults to 1)
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
     /// Page size (defaults to 10)
-    #[serde(default = "default_page_size_small")]
+    #[serde(default = "default_page_size_small", alias = "pageSize")]
     pub page_size: u64,
     /// Selector expression (optional)
     #[serde(default)]
@@ -484,7 +494,7 @@ pub struct ServiceListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ClientListParam {
     /// Client type filter (optional)
-    #[serde(default)]
+    #[serde(default, alias = "clientType")]
     pub client_type: Option<String>,
 }
 
@@ -493,6 +503,7 @@ pub struct ClientListParam {
 #[serde(rename_all = "camelCase")]
 pub struct ClientDetailParam {
     /// Client ID (required)
+    #[serde(alias = "clientId")]
     pub client_id: String,
 }
 
@@ -501,6 +512,7 @@ pub struct ClientDetailParam {
 #[serde(rename_all = "camelCase")]
 pub struct ClientServiceListParam {
     /// Client ID (required)
+    #[serde(alias = "clientId")]
     pub client_id: String,
 }
 
@@ -509,12 +521,13 @@ pub struct ClientServiceListParam {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceClientListParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
 }
 
@@ -687,19 +700,20 @@ pub struct NamingMetricsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceHealthParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Group name (optional, defaults to "DEFAULT_GROUP")
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
     /// Service name (required)
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     /// Instance IP (required)
     pub ip: String,
     /// Instance port (required)
     pub port: i32,
     /// Cluster name (optional, defaults to "DEFAULT")
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     pub cluster_name: Option<String>,
     /// Health status (required)
     pub healthy: bool,

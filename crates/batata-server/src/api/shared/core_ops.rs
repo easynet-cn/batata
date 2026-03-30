@@ -12,7 +12,7 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct RaftOpsParam {
     pub command: String,
-    #[serde(default)]
+    #[serde(default, alias = "groupId")]
     pub group_id: Option<String>,
     #[serde(default)]
     pub value: Option<String>,
@@ -21,7 +21,9 @@ pub struct RaftOpsParam {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LogUpdateParam {
+    #[serde(alias = "logName")]
     pub log_name: String,
+    #[serde(alias = "logLevel")]
     pub log_level: String,
 }
 

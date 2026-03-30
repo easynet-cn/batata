@@ -337,7 +337,7 @@ async fn create_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillDraftCreateForm>,
+    body: web::Form<SkillDraftCreateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -356,10 +356,25 @@ async fn create_draft(
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
 
+    // Resolve skill name: form param takes priority, then from skill_card JSON
+    let skill_name = form
+        .skill_name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .or_else(|| initial_content.as_ref().map(|s| s.name.as_str()))
+        .unwrap_or("");
+
+    if skill_name.is_empty() {
+        return Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "skillName or skillCard with name is required",
+        );
+    }
+
     match skill_service
         .create_draft(
             ns,
-            &form.skill_name,
+            skill_name,
             form.based_on_version.as_deref(),
             form.target_version.as_deref(),
             initial_content.as_ref(),
@@ -381,7 +396,7 @@ async fn update_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillUpdateForm>,
+    body: web::Form<SkillUpdateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -415,8 +430,29 @@ async fn update_draft(
         }
     };
 
+    // Resolve skill name: form param takes priority, then from skillCard JSON content
+    let skill_name = form
+        .skill_name
+        .as_deref()
+        .filter(|n| !n.is_empty())
+        .or_else(|| {
+            if !skill.name.is_empty() {
+                Some(skill.name.as_str())
+            } else {
+                None
+            }
+        })
+        .unwrap_or("");
+
+    if skill_name.is_empty() {
+        return Result::<()>::http_bad_request(
+            &batata_common::error::PARAMETER_MISSING,
+            "skillName or skillCard with name is required",
+        );
+    }
+
     match skill_service
-        .update_draft(ns, &form.skill_name, &skill)
+        .update_draft(ns, skill_name, &skill)
         .await
     {
         Ok(()) => HttpResponse::Ok().json(Result::success(true)),
@@ -469,7 +505,7 @@ async fn submit_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillSubmitForm>,
+    body: web::Form<SkillSubmitForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -500,7 +536,7 @@ async fn publish_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillPublishForm>,
+    body: web::Form<SkillPublishForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -536,7 +572,7 @@ async fn update_labels(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillLabelsUpdateForm>,
+    body: web::Form<SkillLabelsUpdateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -578,7 +614,7 @@ async fn update_biz_tags(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillBizTagsUpdateForm>,
+    body: web::Form<SkillBizTagsUpdateForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -609,7 +645,7 @@ async fn online_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillOnlineForm>,
+    body: web::Form<SkillOnlineForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -646,7 +682,7 @@ async fn offline_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillOnlineForm>,
+    body: web::Form<SkillOnlineForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -683,7 +719,7 @@ async fn update_scope(
     req: HttpRequest,
     data: web::Data<AppState>,
     skill_service: web::Data<Arc<SkillOperationService>>,
-    body: web::Json<SkillScopeForm>,
+    body: web::Form<SkillScopeForm>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -794,7 +830,7 @@ async fn client_search_skills(
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillUploadQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: String,
     #[serde(default)]
     pub overwrite: bool,

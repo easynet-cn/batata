@@ -14,21 +14,21 @@ use batata_server_common::model::response::Result;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TraceListQuery {
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
     #[serde(default)]
     pub service: Option<String>,
     #[serde(default)]
     pub operation: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "traceId")]
     pub trace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "minDurationMs")]
     pub min_duration_ms: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "startTime")]
     pub start_time: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "endTime")]
     pub end_time: Option<String>,
 }
 

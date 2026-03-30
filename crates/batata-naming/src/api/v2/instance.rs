@@ -1141,10 +1141,11 @@ struct BeatInfo {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceBeatParam {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     pub group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     pub service_name: String,
     #[serde(default)]
     pub beat: Option<String>,
@@ -1152,7 +1153,7 @@ pub struct InstanceBeatParam {
     pub ip: Option<String>,
     #[serde(default)]
     pub port: Option<i32>,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     pub cluster_name: Option<String>,
 }
 

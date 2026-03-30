@@ -22,14 +22,15 @@ const DEFAULT_CLUSTER: &str = "DEFAULT";
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceRegisterForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
     #[serde(default)]
     weight: Option<f64>,
@@ -54,14 +55,15 @@ impl InstanceRegisterForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceDeregisterQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
     #[serde(default)]
     ephemeral: Option<bool>,
@@ -78,14 +80,15 @@ impl InstanceDeregisterQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceDetailQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     ip: String,
     port: i32,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
 }
 
@@ -100,14 +103,15 @@ impl InstanceDetailQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct InstanceListQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "clusterName")]
     cluster_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "healthyOnly")]
     healthy_only: Option<bool>,
 }
 
@@ -120,10 +124,11 @@ impl InstanceListQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MetadataUpdateForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
     instances: String,
     metadata: String,
@@ -163,7 +168,7 @@ async fn register_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<InstanceRegisterForm>,
+    form: web::Form<InstanceRegisterForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() {
         return Result::<bool>::http_response(
@@ -329,7 +334,7 @@ async fn update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<InstanceRegisterForm>,
+    form: web::Form<InstanceRegisterForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
         return Result::<bool>::http_response(
@@ -509,9 +514,9 @@ async fn list_instances(
         instances.retain(|i| i.healthy);
     }
 
-    let response = InstanceListResponse { hosts: instances };
-
-    Result::<InstanceListResponse>::http_success(response)
+    // Return List<Instance> directly (not wrapped in InstanceListResponse)
+    // to match Nacos maintainer client's expected format
+    Result::<Vec<batata_api::naming::Instance>>::http_success(instances)
 }
 
 /// PUT /v3/admin/ns/instance/metadata
@@ -520,7 +525,7 @@ async fn update_metadata(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<MetadataUpdateForm>,
+    form: web::Form<MetadataUpdateForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.instances.is_empty() {
         return Result::<bool>::http_response(
@@ -610,7 +615,7 @@ async fn partial_update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
-    form: web::Json<InstanceRegisterForm>,
+    form: web::Form<InstanceRegisterForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
         return Result::<bool>::http_response(

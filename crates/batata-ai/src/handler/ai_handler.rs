@@ -437,7 +437,7 @@ impl PayloadHandler for AgentEndpointHandler {
 
                 let card = AgentCard {
                     name: request.agent_name.clone(),
-                    endpoint: endpoint_url,
+                    url: endpoint_url,
                     version,
                     ..default_agent_card()
                 };
@@ -776,14 +776,17 @@ fn default_agent_card() -> AgentCard {
         display_name: String::new(),
         description: String::new(),
         version: "1.0.0".to_string(),
-        endpoint: String::new(),
+        url: String::new(),
         protocol_version: "1.0".to_string(),
         capabilities: Default::default(),
         skills: vec![],
-        input_modes: vec![],
-        output_modes: vec![],
-        authentication: None,
-        rate_limits: None,
+        default_input_modes: vec![],
+        default_output_modes: vec![],
+        preferred_transport: None,
+        provider: None,
+        documentation_url: None,
+        icon_url: None,
+        supports_authenticated_extended_card: None,
         metadata: Default::default(),
         tags: vec![],
     }

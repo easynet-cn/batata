@@ -3,6 +3,7 @@
 //! Implements SDK connection load balancing across cluster nodes.
 //! Following the Nacos 3.x ServerLoaderController/NacosServerLoaderService pattern.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, Responder, get, post, web};
@@ -51,19 +52,23 @@ struct ConnectionInfo {
 #[serde(rename_all = "camelCase")]
 struct ReloadCurrentParam {
     count: Option<usize>,
+    #[serde(alias = "redirectAddress")]
     redirect_address: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SmartReloadParam {
+    #[serde(alias = "loaderFactor")]
     loader_factor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReloadClientParam {
+    #[serde(alias = "connectionId")]
     connection_id: Option<String>,
+    #[serde(alias = "redirectAddress")]
     redirect_address: Option<String>,
 }
 
@@ -143,12 +148,17 @@ async fn get_current(
     );
 
     let ids = connection_manager.get_all_connection_ids();
-    let connections: Vec<ConnectionInfo> = ids
+    let connections: HashMap<String, ConnectionInfo> = ids
         .into_iter()
-        .map(|id| ConnectionInfo { connection_id: id })
+        .map(|id| {
+            let info = ConnectionInfo {
+                connection_id: id.clone(),
+            };
+            (id, info)
+        })
         .collect();
 
-    Result::<Vec<ConnectionInfo>>::http_success(connections)
+    Result::<HashMap<String, ConnectionInfo>>::http_success(connections)
 }
 
 /// POST /v3/admin/core/loader/reloadCurrent

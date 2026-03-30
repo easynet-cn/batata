@@ -27,7 +27,7 @@ use super::model::{NamingMetricsResponse, SwitchUpdateParam, SwitchesResponse};
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricsParam {
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", alias = "onlyStatus")]
     pub only_status: bool,
 }
 

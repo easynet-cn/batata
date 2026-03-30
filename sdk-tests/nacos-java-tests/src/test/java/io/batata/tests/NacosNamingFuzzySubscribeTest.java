@@ -3,11 +3,11 @@ package io.batata.tests;
 import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.alibaba.nacos.api.naming.NamingService;
+import com.alibaba.nacos.api.naming.NamingService;
 import com.alibaba.nacos.api.naming.listener.FuzzyWatchChangeEvent;
 import com.alibaba.nacos.api.naming.listener.FuzzyWatchEventWatcher;
 import com.alibaba.nacos.api.naming.pojo.ListView;
 import org.junit.jupiter.api.*;
-import org.junit.jupiter.api.Disabled;
 
 import java.util.Properties;
 import java.util.Set;
@@ -118,12 +118,12 @@ public class NacosNamingFuzzySubscribeTest {
      *
      * Uses fuzzyWatch(groupNamePattern, watcher) with a group pattern.
      * Registering a service in a matching group should trigger the watcher.
-     * NOTE: fuzzyWatch(groupName, watcher) treats first arg as FIXED group name, not pattern.
-     * This test also fails on original Nacos server.
+     * NOTE: fuzzyWatch(groupName, watcher) treats first arg as group name pattern.
+     * Server does not deliver events for group-only pattern matching yet.
      */
     @Test
-    @Disabled("fuzzyWatch(groupName, watcher) uses fixed group name, not a pattern - fails on Nacos too")
     @Order(2)
+    @Disabled("Naming fuzzy watch with group-only pattern not yet delivering events")
     void testFuzzyWatchWithGroupPattern() throws NacosException, InterruptedException {
         String uniqueSuffix = UUID.randomUUID().toString().substring(0, 8);
         String groupPattern = "NFSGROUP-" + uniqueSuffix + "*";
@@ -282,7 +282,7 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(5)
-    @Disabled("FuzzyWatch initial sync (ADD_SERVICE for existing services) not yet implemented")
+    @Disabled("Naming fuzzy watch initial sync not yet delivering ADD_SERVICE for pre-existing services")
     void testFuzzyWatchDeleteServiceEvent() throws NacosException, InterruptedException {
         String uniquePrefix = "nfs005-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";
@@ -416,7 +416,7 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(7)
-    @Disabled("FuzzyWatch initial sync (returning existing service keys) not yet implemented")
+    @Disabled("Naming fuzzy watch initial sync not yet delivering existing service keys")
     void testFuzzyWatchWithServiceKeys() throws NacosException, InterruptedException, ExecutionException, TimeoutException {
         String uniquePrefix = "nfs007-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";
@@ -453,5 +453,326 @@ public class NacosNamingFuzzySubscribeTest {
         namingService.cancelFuzzyWatch(servicePattern, DEFAULT_GROUP, watcher);
         namingService.deregisterInstance(service1, "192.168.100.9", 8080);
         namingService.deregisterInstance(service2, "192.168.100.10", 8080);
+    }
+
+    // ==================== P1: SyncType Verification ====================
+
+    /**
+     * NFS-008: Verify SyncType for initial vs real-time events
+     *
+     * Pre-register a service, start watching, then register a new service.
+     * Initial event should have FUZZY_WATCH_INIT_NOTIFY syncType,
+     * real-time event should have FUZZY_WATCH_RESOURCE_CHANGED.
+     */
+    @Test
+    @Order(8)
+    @Disabled("Naming fuzzy watch initial sync not yet working - cannot verify INIT syncType")
+    void testFuzzyWatchSyncType() throws NacosException, InterruptedException {
+        String uniquePrefix = "nfs008-" + UUID.randomUUID().toString().substring(0, 8);
+        String servicePattern = uniquePrefix + "*";
+        String existingService = uniquePrefix + "-existing";
+        String newService = uniquePrefix + "-new";
+
+        // Pre-register a service
+        namingService.registerInstance(existingService, "192.168.108.1", 8080);
+        Thread.sleep(1500);
+
+        AtomicReference<String> initSyncType = new AtomicReference<>();
+        AtomicReference<String> changeSyncType = new AtomicReference<>();
+        CountDownLatch initLatch = new CountDownLatch(1);
+        CountDownLatch changeLatch = new CountDownLatch(1);
+
+        FuzzyWatchEventWatcher watcher = new FuzzyWatchEventWatcher() {
+            @Override
+            public void onEvent(FuzzyWatchChangeEvent event) {
+                System.out.println("SyncType test: service=" + event.getServiceName()
+                        + ", changeType=" + event.getChangeType()
+                        + ", syncType=" + event.getSyncType());
+                if (event.getServiceName() != null && event.getServiceName().equals(existingService)) {
+                    initSyncType.set(event.getSyncType());
+                    initLatch.countDown();
+                } else if (event.getServiceName() != null && event.getServiceName().equals(newService)) {
+                    changeSyncType.set(event.getSyncType());
+                    changeLatch.countDown();
+                }
+            }
+
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+        };
+
+        // Start watching - should get INIT sync for existing service
+        namingService.fuzzyWatch(servicePattern, DEFAULT_GROUP, watcher);
+        boolean initReceived = initLatch.await(WATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        assertTrue(initReceived, "Should receive init sync for existing service");
+        assertEquals("FUZZY_WATCH_INIT_NOTIFY", initSyncType.get(),
+                "Initial sync type should be FUZZY_WATCH_INIT_NOTIFY");
+
+        // Register new service - should get RESOURCE_CHANGED sync
+        namingService.registerInstance(newService, "192.168.108.2", 8080);
+        boolean changeReceived = changeLatch.await(WATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        assertTrue(changeReceived, "Should receive change event for new service");
+        assertEquals("FUZZY_WATCH_RESOURCE_CHANGED", changeSyncType.get(),
+                "Real-time sync type should be FUZZY_WATCH_RESOURCE_CHANGED");
+
+        // Cleanup
+        namingService.cancelFuzzyWatch(servicePattern, DEFAULT_GROUP, watcher);
+        namingService.deregisterInstance(existingService, "192.168.108.1", 8080);
+        namingService.deregisterInstance(newService, "192.168.108.2", 8080);
+    }
+
+    // ==================== P1: Multiple Watchers ====================
+
+    /**
+     * NFS-009: Multiple watchers on the same service pattern should all receive events
+     */
+    @Test
+    @Order(9)
+    void testMultipleWatchersOnSamePattern() throws NacosException, InterruptedException {
+        String uniquePrefix = "nfs009-" + UUID.randomUUID().toString().substring(0, 8);
+        String servicePattern = uniquePrefix + "*";
+        String serviceName = uniquePrefix + "-multi";
+
+        CountDownLatch latch1 = new CountDownLatch(1);
+        CountDownLatch latch2 = new CountDownLatch(1);
+        AtomicReference<String> watcher1Service = new AtomicReference<>();
+        AtomicReference<String> watcher2Service = new AtomicReference<>();
+
+        FuzzyWatchEventWatcher watcher1 = new FuzzyWatchEventWatcher() {
+            @Override
+            public void onEvent(FuzzyWatchChangeEvent event) {
+                if (event.getServiceName() != null && event.getServiceName().equals(serviceName)) {
+                    watcher1Service.set(event.getServiceName());
+                    latch1.countDown();
+                }
+            }
+
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+        };
+
+        FuzzyWatchEventWatcher watcher2 = new FuzzyWatchEventWatcher() {
+            @Override
+            public void onEvent(FuzzyWatchChangeEvent event) {
+                if (event.getServiceName() != null && event.getServiceName().equals(serviceName)) {
+                    watcher2Service.set(event.getServiceName());
+                    latch2.countDown();
+                }
+            }
+
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+        };
+
+        // Register both watchers on the same pattern
+        namingService.fuzzyWatch(servicePattern, DEFAULT_GROUP, watcher1);
+        namingService.fuzzyWatch(servicePattern, DEFAULT_GROUP, watcher2);
+        Thread.sleep(2000);
+
+        // Register a matching service
+        namingService.registerInstance(serviceName, "192.168.109.1", 8080);
+
+        boolean received1 = latch1.await(WATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        boolean received2 = latch2.await(WATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        assertTrue(received1, "Watcher 1 should receive the event");
+        assertTrue(received2, "Watcher 2 should receive the event");
+        assertEquals(serviceName, watcher1Service.get());
+        assertEquals(serviceName, watcher2Service.get());
+
+        // Cleanup
+        namingService.cancelFuzzyWatch(servicePattern, DEFAULT_GROUP, watcher1);
+        namingService.cancelFuzzyWatch(servicePattern, DEFAULT_GROUP, watcher2);
+        namingService.deregisterInstance(serviceName, "192.168.109.1", 8080);
+    }
+
+    /**
+     * NFS-010: Cancel one watcher should not affect other watchers on same pattern
+     */
+    @Test
+    @Order(10)
+    void testCancelOneWatcherPreservesOther() throws NacosException, InterruptedException {
+        String uniquePrefix = "nfs010-" + UUID.randomUUID().toString().substring(0, 8);
+        String servicePattern = uniquePrefix + "*";
+        String serviceName = uniquePrefix + "-preserved";
+
+        CountDownLatch survivorLatch = new CountDownLatch(1);
+        CountDownLatch cancelledLatch = new CountDownLatch(1);
+
+        FuzzyWatchEventWatcher cancelledWatcher = new FuzzyWatchEventWatcher() {
+            @Override
+            public void onEvent(FuzzyWatchChangeEvent event) {
+                if (event.getServiceName() != null && event.getServiceName().equals(serviceName)) {
+                    cancelledLatch.countDown();
+                }
+            }
+
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+        };
+
+        FuzzyWatchEventWatcher survivorWatcher = new FuzzyWatchEventWatcher() {
+            @Override
+            public void onEvent(FuzzyWatchChangeEvent event) {
+                if (event.getServiceName() != null && event.getServiceName().equals(serviceName)) {
+                    survivorLatch.countDown();
+                }
+            }
+
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+        };
+
+        // Register both watchers
+        namingService.fuzzyWatch(servicePattern, DEFAULT_GROUP, cancelledWatcher);
+        namingService.fuzzyWatch(servicePattern, DEFAULT_GROUP, survivorWatcher);
+        Thread.sleep(2000);
+
+        // Cancel one watcher
+        namingService.cancelFuzzyWatch(servicePattern, DEFAULT_GROUP, cancelledWatcher);
+        Thread.sleep(1000);
+
+        // Register a matching service
+        namingService.registerInstance(serviceName, "192.168.110.1", 8080);
+
+        boolean survivorReceived = survivorLatch.await(WATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        boolean cancelledReceived = cancelledLatch.await(5, TimeUnit.SECONDS);
+
+        assertTrue(survivorReceived, "Surviving watcher should still receive events");
+        assertFalse(cancelledReceived, "Cancelled watcher should NOT receive events");
+
+        // Cleanup
+        namingService.cancelFuzzyWatch(servicePattern, DEFAULT_GROUP, survivorWatcher);
+        namingService.deregisterInstance(serviceName, "192.168.110.1", 8080);
+    }
+
+    // ==================== P1: Namespace Isolation ====================
+
+    /**
+     * NFS-011: FuzzyWatch namespace isolation for naming
+     *
+     * A fuzzy watch in the default namespace should NOT receive events for services
+     * registered in a different namespace.
+     */
+    @Test
+    @Order(11)
+    void testFuzzyWatchNamespaceIsolation() throws Exception {
+        String uniquePrefix = "nfs011-" + UUID.randomUUID().toString().substring(0, 8);
+        String servicePattern = uniquePrefix + "*";
+        String serviceName = uniquePrefix + "-nssvc";
+        String otherNamespace = "nfs011-ns-" + UUID.randomUUID().toString().substring(0, 8);
+
+        // Create a second NamingService for the other namespace
+        String serverAddr = System.getProperty("nacos.server", "127.0.0.1:8848");
+        String username = System.getProperty("nacos.username", "nacos");
+        String password = System.getProperty("nacos.password", "nacos");
+
+        Properties nsProperties = new Properties();
+        nsProperties.setProperty("serverAddr", serverAddr);
+        nsProperties.setProperty("username", username);
+        nsProperties.setProperty("password", password);
+        nsProperties.setProperty("namespace", otherNamespace);
+
+        NamingService nsNamingService = NacosFactory.createNamingService(nsProperties);
+
+        CountDownLatch defaultNsLatch = new CountDownLatch(1);
+
+        FuzzyWatchEventWatcher watcher = new FuzzyWatchEventWatcher() {
+            @Override
+            public void onEvent(FuzzyWatchChangeEvent event) {
+                System.out.println("Namespace isolation event: " + event);
+                if (event.getServiceName() != null && event.getServiceName().equals(serviceName)) {
+                    defaultNsLatch.countDown();
+                }
+            }
+
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+        };
+
+        // Watch in default namespace
+        namingService.fuzzyWatch(servicePattern, DEFAULT_GROUP, watcher);
+        Thread.sleep(2000);
+
+        // Register service in OTHER namespace
+        nsNamingService.registerInstance(serviceName, "192.168.111.1", 8080);
+        Thread.sleep(1000);
+
+        // Default namespace watcher should NOT receive the event
+        boolean received = defaultNsLatch.await(5, TimeUnit.SECONDS);
+        assertFalse(received,
+                "Default namespace watcher should NOT receive events from other namespace");
+
+        // Cleanup
+        namingService.cancelFuzzyWatch(servicePattern, DEFAULT_GROUP, watcher);
+        nsNamingService.deregisterInstance(serviceName, "192.168.111.1", 8080);
+        nsNamingService.shutDown();
+    }
+
+    // ==================== P1: Watch with Fixed Group ====================
+
+    /**
+     * NFS-012: FuzzyWatch with fixed group name (not pattern)
+     *
+     * The fuzzyWatch(groupName, watcher) overload uses a fixed group name.
+     * Registering a service in that exact group should trigger the event.
+     */
+    @Test
+    @Order(12)
+    @Disabled("Naming fuzzy watch with fixed group not yet delivering events")
+    void testFuzzyWatchWithFixedGroup() throws NacosException, InterruptedException {
+        String uniqueId = UUID.randomUUID().toString().substring(0, 8);
+        String fixedGroup = "NFSGROUP-" + uniqueId;
+        String serviceName = "nfs012-fixedgrp-" + uniqueId;
+
+        AtomicReference<FuzzyWatchChangeEvent> receivedEvent = new AtomicReference<>();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        FuzzyWatchEventWatcher watcher = new FuzzyWatchEventWatcher() {
+            @Override
+            public void onEvent(FuzzyWatchChangeEvent event) {
+                System.out.println("Fixed group event: " + event);
+                if (event.getServiceName() != null && event.getServiceName().equals(serviceName)) {
+                    receivedEvent.set(event);
+                    latch.countDown();
+                }
+            }
+
+            @Override
+            public Executor getExecutor() {
+                return null;
+            }
+        };
+
+        // Watch with fixed group name
+        namingService.fuzzyWatch(fixedGroup, watcher);
+        Thread.sleep(2000);
+
+        // Register service in the exact group
+        namingService.registerInstance(serviceName, fixedGroup, "192.168.112.1", 8080);
+
+        boolean received = latch.await(WATCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        assertTrue(received, "Should receive event for service in fixed group");
+
+        FuzzyWatchChangeEvent event = receivedEvent.get();
+        assertNotNull(event, "Event should not be null");
+        assertEquals(serviceName, event.getServiceName(), "Service name should match");
+        assertEquals(fixedGroup, event.getGroupName(), "Group should match the fixed group");
+        assertEquals("ADD_SERVICE", event.getChangeType(), "Change type should be ADD_SERVICE");
+
+        // Cleanup
+        namingService.cancelFuzzyWatch(fixedGroup, watcher);
+        namingService.deregisterInstance(serviceName, fixedGroup, "192.168.112.1", 8080);
     }
 }

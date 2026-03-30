@@ -14,11 +14,12 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct ConfigGetParam {
     /// Data ID of the config (required)
+    #[serde(alias = "dataId")]
     pub data_id: String,
     /// Group name (required)
     pub group: String,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Tag for config filtering (optional)
     #[serde(default)]
@@ -39,11 +40,12 @@ impl ConfigGetParam {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigPublishParam {
     /// Data ID of the config (required)
+    #[serde(alias = "dataId")]
     pub data_id: String,
     /// Group name (required)
     pub group: String,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Config content (required)
     pub content: String,
@@ -51,13 +53,13 @@ pub struct ConfigPublishParam {
     #[serde(default)]
     pub tag: Option<String>,
     /// Application name (optional)
-    #[serde(default)]
+    #[serde(default, alias = "appName")]
     pub app_name: Option<String>,
     /// Source user (optional)
-    #[serde(default)]
+    #[serde(default, alias = "srcUser")]
     pub src_user: Option<String>,
     /// Config tags (comma-separated, optional)
-    #[serde(default)]
+    #[serde(default, alias = "configTags")]
     pub config_tags: Option<String>,
     /// Description (optional)
     #[serde(default)]
@@ -75,7 +77,7 @@ pub struct ConfigPublishParam {
     #[serde(default)]
     pub schema: Option<String>,
     /// Encrypted data key (optional)
-    #[serde(default)]
+    #[serde(default, alias = "encryptedDataKey")]
     pub encrypted_data_key: Option<String>,
 }
 
@@ -93,11 +95,12 @@ impl ConfigPublishParam {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigDeleteParam {
     /// Data ID of the config (required)
+    #[serde(alias = "dataId")]
     pub data_id: String,
     /// Group name (required)
     pub group: String,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Tag for config (optional)
     #[serde(default)]
@@ -145,22 +148,22 @@ pub struct ConfigResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigSearchDetailParam {
     /// Data ID filter (optional, supports wildcard *)
-    #[serde(default)]
+    #[serde(default, alias = "dataId")]
     pub data_id: Option<String>,
     /// Group filter (optional)
     #[serde(default)]
     pub group: Option<String>,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default, alias = "tenant")]
+    #[serde(default, alias = "tenant", alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Application name filter (optional)
-    #[serde(default)]
+    #[serde(default, alias = "appName")]
     pub app_name: Option<String>,
     /// Config tags filter (comma-separated, optional)
-    #[serde(default)]
+    #[serde(default, alias = "configTags")]
     pub config_tags: Option<String>,
     /// Config type filter (comma-separated, optional)
-    #[serde(default)]
+    #[serde(default, alias = "configType")]
     pub config_type: Option<String>,
     /// Content search filter (optional)
     #[serde(default)]
@@ -169,13 +172,13 @@ pub struct ConfigSearchDetailParam {
     #[serde(default = "default_search")]
     pub search: String,
     /// Config detail/content search filter (optional)
-    #[serde(default)]
+    #[serde(default, alias = "configDetail")]
     pub config_detail: Option<String>,
     /// Page number (1-based, defaults to 1)
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
     /// Page size (defaults to 100)
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
@@ -197,17 +200,18 @@ impl ConfigSearchDetailParam {
 #[serde(rename_all = "camelCase")]
 pub struct HistoryListParam {
     /// Data ID of the config (required)
+    #[serde(alias = "dataId")]
     pub data_id: String,
     /// Group name (required)
     pub group: String,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Page number (1-based, defaults to 1)
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     pub page_no: u64,
     /// Page size (defaults to 100)
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u64,
 }
 
@@ -231,11 +235,12 @@ pub struct HistoryDetailParam {
     /// History entry ID (nid)
     pub nid: u64,
     /// Data ID of the config (required)
+    #[serde(alias = "dataId")]
     pub data_id: String,
     /// Group name (required)
     pub group: String,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
 }
 
@@ -255,11 +260,12 @@ pub struct HistoryPreviousParam {
     /// Current history entry ID
     pub id: u64,
     /// Data ID of the config (required)
+    #[serde(alias = "dataId")]
     pub data_id: String,
     /// Group name (required)
     pub group: String,
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
 }
 
@@ -277,7 +283,7 @@ impl HistoryPreviousParam {
 #[serde(rename_all = "camelCase")]
 pub struct NamespaceConfigsParam {
     /// Namespace ID (optional, defaults to "public")
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,
 }
 

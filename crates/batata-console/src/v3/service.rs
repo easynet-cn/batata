@@ -16,17 +16,17 @@ use batata_server_common::{
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceListQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default, alias = "groupNameParam")]
+    #[serde(default, alias = "groupName", alias = "groupNameParam")]
     group_name: Option<String>,
-    #[serde(default, alias = "serviceNameParam")]
+    #[serde(default, alias = "serviceName", alias = "serviceNameParam")]
     service_name: Option<String>,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     page_size: u64,
-    #[serde(default)]
+    #[serde(default, alias = "hasIpCount")]
     has_ip_count: Option<bool>,
 }
 
@@ -49,10 +49,11 @@ impl ServiceListQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceDetailQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
 }
 
@@ -75,12 +76,13 @@ impl ServiceDetailQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ServiceForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "protectThreshold")]
     protect_threshold: Option<f32>,
     #[serde(default)]
     metadata: Option<serde_json::Value>,
@@ -107,14 +109,15 @@ impl ServiceForm {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubscriberQuery {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
-    #[serde(default = "default_page_no")]
+    #[serde(default = "default_page_no", alias = "pageNo")]
     page_no: u64,
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     page_size: u64,
 }
 
@@ -138,19 +141,21 @@ impl SubscriberQuery {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateClusterForm {
-    #[serde(default)]
+    #[serde(default, alias = "namespaceId")]
     namespace_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "groupName")]
     group_name: Option<String>,
+    #[serde(alias = "serviceName")]
     service_name: String,
+    #[serde(alias = "clusterName")]
     cluster_name: String,
-    #[serde(default)]
+    #[serde(default, alias = "healthChecker")]
     health_checker: Option<serde_json::Value>,
     #[serde(default)]
     metadata: Option<HashMap<String, String>>,
-    #[serde(default)]
+    #[serde(default, alias = "checkPort")]
     check_port: Option<i32>,
-    #[serde(default)]
+    #[serde(default, alias = "useInstancePort4Check")]
     use_instance_port4_check: Option<bool>,
 }
 

@@ -239,8 +239,23 @@ impl McpServerRegistry {
         self.servers.get(id).map(|s| s.clone())
     }
 
-    /// List servers with optional filtering
-    pub fn list(&self, query: &McpServerQuery) -> McpServerListResponse {
+    /// List all servers as full McpServer objects (for MCP Registry server).
+    pub fn list_all_servers(&self) -> Vec<McpServer> {
+        let mut servers: Vec<McpServer> = self
+            .servers
+            .iter()
+            .map(|e| e.value().clone())
+            .collect();
+        servers.sort_by(|a, b| a.name.cmp(&b.name));
+        servers
+    }
+
+    /// List servers with optional filtering.
+    /// Returns `Page<McpServerBasicInfo>` matching Nacos Java API contract.
+    pub fn list(
+        &self,
+        query: &McpServerQuery,
+    ) -> batata_api::model::Page<McpServerBasicInfo> {
         let mut servers: Vec<McpServer> = self
             .servers
             .iter()
@@ -283,19 +298,19 @@ impl McpServerRegistry {
 
                 // Filter by capabilities
                 if let Some(has_tools) = query.has_tools
-                    && s.capabilities.tools != has_tools
+                    && s.capabilities.contains(&crate::model::McpCapability::Tool) != has_tools
                 {
                     return false;
                 }
 
                 if let Some(has_resources) = query.has_resources
-                    && s.capabilities.resources != has_resources
+                    && s.capabilities.contains(&crate::model::McpCapability::Resource) != has_resources
                 {
                     return false;
                 }
 
                 if let Some(has_prompts) = query.has_prompts
-                    && s.capabilities.prompts != has_prompts
+                    && s.capabilities.contains(&crate::model::McpCapability::Prompt) != has_prompts
                 {
                     return false;
                 }
@@ -314,18 +329,26 @@ impl McpServerRegistry {
         let start = ((page - 1) * query.page_size) as usize;
         let end = (start + query.page_size as usize).min(servers.len());
 
-        let servers = if start < servers.len() {
-            servers[start..end].to_vec()
+        let page_items: Vec<McpServerBasicInfo> = if start < servers.len() {
+            servers[start..end]
+                .iter()
+                .map(|s| McpServerBasicInfo {
+                    namespace_id: s.namespace.clone(),
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    protocol: format!("{:?}", s.server_type).to_lowercase(),
+                    description: s.description.clone(),
+                    version: s.version.clone(),
+                    enabled: true,
+                    status: "ACTIVE".to_string(),
+                    capabilities: s.capabilities.clone(),
+                })
+                .collect()
         } else {
             vec![]
         };
 
-        McpServerListResponse {
-            servers,
-            total,
-            page: query.page,
-            page_size: query.page_size,
-        }
+        batata_api::model::Page::new(total, page as u64, query.page_size as u64, page_items)
     }
 
     /// Import servers from JSON config (claude_desktop_config.json format)
@@ -414,7 +437,9 @@ impl McpServerRegistry {
     pub fn update_tools(&self, id: &str, tools: Vec<McpTool>) {
         if let Some(mut server) = self.servers.get_mut(id) {
             server.tools = tools;
-            server.capabilities.tools = true;
+            if !server.capabilities.contains(&crate::model::McpCapability::Tool) {
+                server.capabilities.push(crate::model::McpCapability::Tool);
+            }
             server.updated_at = Utc::now().timestamp_millis();
         }
     }
@@ -442,8 +467,12 @@ impl McpServerRegistry {
         None
     }
 
-    /// List servers with Nacos-compatible search params
-    pub fn list_with_search(&self, query: &McpListQuery) -> McpServerListResponse {
+    /// List servers with Nacos-compatible search params.
+    /// Returns `Page<McpServerBasicInfo>` matching Nacos Java API contract.
+    pub fn list_with_search(
+        &self,
+        query: &McpListQuery,
+    ) -> batata_api::model::Page<McpServerBasicInfo> {
         let namespace = query.namespace_id.clone();
         let search_type = query.search.as_deref().unwrap_or("blur");
         let page_no = query.page_no.unwrap_or(1).max(1);
@@ -482,18 +511,26 @@ impl McpServerRegistry {
         let start = ((page_no - 1) * page_size) as usize;
         let end = (start + page_size as usize).min(servers.len());
 
-        let servers = if start < servers.len() {
-            servers[start..end].to_vec()
+        let page_items: Vec<McpServerBasicInfo> = if start < servers.len() {
+            servers[start..end]
+                .iter()
+                .map(|s| McpServerBasicInfo {
+                    namespace_id: s.namespace.clone(),
+                    id: s.id.clone(),
+                    name: s.name.clone(),
+                    protocol: format!("{:?}", s.server_type).to_lowercase(),
+                    description: s.description.clone(),
+                    version: s.version.clone(),
+                    enabled: true,
+                    status: "ACTIVE".to_string(),
+                    capabilities: s.capabilities.clone(),
+                })
+                .collect()
         } else {
             vec![]
         };
 
-        McpServerListResponse {
-            servers,
-            total,
-            page: page_no,
-            page_size,
-        }
+        batata_api::model::Page::new(total, page_no as u64, page_size as u64, page_items)
     }
 
     /// Delete a server by query params (Nacos-compatible)
@@ -770,10 +807,7 @@ mod tests {
             endpoint: "http://localhost:8080".to_string(),
             server_type: McpServerType::Http,
             transport: McpTransport::default(),
-            capabilities: McpCapabilities {
-                tools: true,
-                ..Default::default()
-            },
+            capabilities: vec![crate::model::McpCapability::Tool],
             tools: vec![],
             resources: vec![],
             prompts: vec![],
@@ -828,8 +862,8 @@ mod tests {
         }
 
         let result = registry.list(&McpServerQuery::default());
-        assert_eq!(result.total, 5);
-        assert_eq!(result.servers.len(), 5);
+        assert_eq!(result.total_count, 5);
+        assert_eq!(result.page_items.len(), 5);
     }
 
     #[test]
@@ -848,9 +882,9 @@ mod tests {
             ..Default::default()
         });
 
-        assert_eq!(result.total, 25);
-        assert_eq!(result.servers.len(), 10);
-        assert_eq!(result.page, 2);
+        assert_eq!(result.total_count, 25);
+        assert_eq!(result.page_items.len(), 10);
+        assert_eq!(result.page_number, 2);
     }
 
     #[test]
@@ -871,7 +905,7 @@ mod tests {
             ..Default::default()
         });
 
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total_count, 1);
     }
 
     #[test]

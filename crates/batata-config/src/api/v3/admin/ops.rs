@@ -12,7 +12,9 @@ use batata_server_common::{
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LogLevelParam {
+    #[serde(alias = "logName")]
     log_name: String,
+    #[serde(alias = "logLevel")]
     log_level: String,
 }
 

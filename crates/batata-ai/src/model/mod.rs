@@ -17,10 +17,15 @@ use serde::{Deserialize, Serialize};
 // =============================================================================
 
 /// MCP Server registration request
+///
+/// Aligned with Nacos McpServerBasicInfo: all fields are nullable in Java (no required fields).
+/// The name may be filled from the form-level `mcpName` parameter when not present in
+/// the serverSpecification JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerRegistration {
-    /// Server name (unique identifier)
+    /// Server name (unique identifier) — may be empty, filled from form mcpName
+    #[serde(default)]
     pub name: String,
 
     /// Server display name
@@ -39,7 +44,8 @@ pub struct McpServerRegistration {
     #[serde(default = "default_version")]
     pub version: String,
 
-    /// Server endpoint URL
+    /// Server endpoint URL (may be empty for stdio/local servers)
+    #[serde(default)]
     pub endpoint: String,
 
     /// Server type (e.g., "stdio", "http", "sse")
@@ -146,33 +152,19 @@ fn default_timeout() -> u64 {
 }
 
 /// MCP Server capabilities
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpCapabilities {
-    /// Whether server supports tools
-    #[serde(default)]
-    pub tools: bool,
-
-    /// Whether server supports resources
-    #[serde(default)]
-    pub resources: bool,
-
-    /// Whether server supports prompts
-    #[serde(default)]
-    pub prompts: bool,
-
-    /// Whether server supports logging
-    #[serde(default)]
-    pub logging: bool,
-
-    /// Whether server supports sampling
-    #[serde(default)]
-    pub sampling: bool,
-
-    /// Experimental capabilities
-    #[serde(default)]
-    pub experimental: HashMap<String, serde_json::Value>,
+/// MCP Server capability enum — aligned with Nacos McpCapability.
+/// Marks what the MCP server supports (tools, prompts, resources).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum McpCapability {
+    Tool,
+    Prompt,
+    Resource,
 }
+
+/// Legacy McpCapabilities struct — kept as type alias for backward compatibility.
+/// New code should use `Vec<McpCapability>` directly.
+pub type McpCapabilities = Vec<McpCapability>;
 
 /// MCP Tool definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -369,24 +361,30 @@ pub struct McpServerQuery {
     pub namespace: Option<String>,
 
     /// Filter by name pattern (supports wildcards)
+    #[serde(alias = "namePattern")]
     pub name_pattern: Option<String>,
 
     /// Filter by tags (any match)
     pub tags: Option<Vec<String>>,
 
     /// Filter by server type
+    #[serde(alias = "serverType")]
     pub server_type: Option<McpServerType>,
 
     /// Filter by health status
+    #[serde(alias = "healthStatus")]
     pub health_status: Option<HealthStatus>,
 
     /// Filter by capability
+    #[serde(alias = "hasTools")]
     pub has_tools: Option<bool>,
 
     /// Filter by capability
+    #[serde(alias = "hasResources")]
     pub has_resources: Option<bool>,
 
     /// Filter by capability
+    #[serde(alias = "hasPrompts")]
     pub has_prompts: Option<bool>,
 
     /// Page number (1-indexed)
@@ -394,7 +392,7 @@ pub struct McpServerQuery {
     pub page: u32,
 
     /// Page size
-    #[serde(default = "default_page_size")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     pub page_size: u32,
 }
 
@@ -423,21 +421,33 @@ fn default_page_size() -> u32 {
     20
 }
 
-/// MCP Server list response
+/// MCP Server basic info — lightweight summary for list responses.
+/// Aligned with Nacos `McpServerBasicInfo` Java class.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct McpServerListResponse {
-    /// List of servers
-    pub servers: Vec<McpServer>,
+pub struct McpServerBasicInfo {
+    #[serde(default)]
+    pub namespace_id: String,
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub protocol: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_mcp_status")]
+    pub status: String,
+    #[serde(default)]
+    pub capabilities: McpCapabilities,
+}
 
-    /// Total count
-    pub total: u64,
-
-    /// Page number
-    pub page: u32,
-
-    /// Page size
-    pub page_size: u32,
+fn default_mcp_status() -> String {
+    "ACTIVE".to_string()
 }
 
 /// Nacos-compatible MCP detail query params
@@ -445,10 +455,13 @@ pub struct McpServerListResponse {
 #[serde(rename_all = "camelCase")]
 pub struct McpDetailQuery {
     /// Namespace ID (defaults to "public")
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server ID
+    #[serde(alias = "mcpId")]
     pub mcp_id: Option<String>,
     /// MCP server name
+    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// Version
     pub version: Option<String>,
@@ -459,14 +472,18 @@ pub struct McpDetailQuery {
 #[serde(rename_all = "camelCase")]
 pub struct McpListQuery {
     /// Namespace ID
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server name
+    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// Search type: "accurate" or "blur"
     pub search: Option<String>,
     /// Page number (1-indexed)
+    #[serde(alias = "pageNo")]
     pub page_no: Option<u32>,
     /// Page size
+    #[serde(alias = "pageSize")]
     pub page_size: Option<u32>,
 }
 
@@ -475,10 +492,13 @@ pub struct McpListQuery {
 #[serde(rename_all = "camelCase")]
 pub struct McpDeleteQuery {
     /// Namespace ID
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// MCP server ID
+    #[serde(alias = "mcpId")]
     pub mcp_id: Option<String>,
     /// MCP server name
+    #[serde(alias = "mcpName")]
     pub mcp_name: Option<String>,
     /// Version
     pub version: Option<String>,
@@ -489,8 +509,10 @@ pub struct McpDeleteQuery {
 #[serde(rename_all = "camelCase")]
 pub struct AgentDetailQuery {
     /// Namespace ID
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name
+    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// Version
     pub version: Option<String>,
@@ -501,14 +523,18 @@ pub struct AgentDetailQuery {
 #[serde(rename_all = "camelCase")]
 pub struct AgentListQuery {
     /// Namespace ID
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name
+    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// Search type: "accurate" or "blur"
     pub search: Option<String>,
     /// Page number (1-indexed)
+    #[serde(alias = "pageNo")]
     pub page_no: Option<u32>,
     /// Page size
+    #[serde(alias = "pageSize")]
     pub page_size: Option<u32>,
 }
 
@@ -517,8 +543,10 @@ pub struct AgentListQuery {
 #[serde(rename_all = "camelCase")]
 pub struct AgentDeleteQuery {
     /// Namespace ID
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name
+    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
     /// Version
     pub version: Option<String>,
@@ -529,8 +557,10 @@ pub struct AgentDeleteQuery {
 #[serde(rename_all = "camelCase")]
 pub struct AgentVersionListQuery {
     /// Namespace ID
+    #[serde(alias = "namespaceId")]
     pub namespace_id: Option<String>,
     /// Agent name
+    #[serde(alias = "agentName")]
     pub agent_name: Option<String>,
 }
 
@@ -623,10 +653,16 @@ pub struct McpServerConfig {
 // =============================================================================
 
 /// AgentCard - represents an AI agent's capabilities and identity
+///
+/// Aligned with Nacos AgentCard (extends AgentCardBasicInfo):
+/// - AgentCardBasicInfo: protocolVersion, name, description, version, iconUrl, capabilities, skills
+/// - AgentCard: url, preferredTransport, additionalInterfaces, provider, documentationUrl,
+///   securitySchemes, security, defaultInputModes, defaultOutputModes, supportsAuthenticatedExtendedCard
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCard {
     /// Agent name (unique identifier)
+    #[serde(default)]
     pub name: String,
 
     /// Agent display name
@@ -641,8 +677,9 @@ pub struct AgentCard {
     #[serde(default = "default_version")]
     pub version: String,
 
-    /// Agent endpoint URL
-    pub endpoint: String,
+    /// Agent URL (Nacos uses `url`, not `endpoint`)
+    #[serde(default)]
+    pub url: String,
 
     /// Agent protocol version
     #[serde(default = "default_protocol_version")]
@@ -656,29 +693,53 @@ pub struct AgentCard {
     #[serde(default)]
     pub skills: Vec<AgentSkill>,
 
-    /// Supported input modes
+    /// Supported default input modes
     #[serde(default)]
-    pub input_modes: Vec<InputMode>,
+    pub default_input_modes: Vec<String>,
 
-    /// Supported output modes
+    /// Supported default output modes
     #[serde(default)]
-    pub output_modes: Vec<OutputMode>,
+    pub default_output_modes: Vec<String>,
 
-    /// Authentication configuration
+    /// Preferred transport type
     #[serde(default)]
-    pub authentication: Option<AgentAuthentication>,
+    pub preferred_transport: Option<String>,
 
-    /// Rate limiting configuration
+    /// Provider information
     #[serde(default)]
-    pub rate_limits: Option<RateLimits>,
+    pub provider: Option<AgentProvider>,
 
-    /// Agent metadata
+    /// Documentation URL
+    #[serde(default)]
+    pub documentation_url: Option<String>,
+
+    /// Icon URL
+    #[serde(default)]
+    pub icon_url: Option<String>,
+
+    /// Whether supports authenticated extended card
+    #[serde(default)]
+    pub supports_authenticated_extended_card: Option<bool>,
+
+    /// Agent metadata (batata extension)
     #[serde(default)]
     pub metadata: HashMap<String, String>,
 
-    /// Tags for categorization
+    /// Tags for categorization (batata extension)
     #[serde(default)]
     pub tags: Vec<String>,
+}
+
+/// Agent provider information (aligned with Nacos AgentProvider)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentProvider {
+    /// Organization name
+    #[serde(default)]
+    pub organization: String,
+    /// URL
+    #[serde(default)]
+    pub url: String,
 }
 
 fn default_protocol_version() -> String {
@@ -746,87 +807,8 @@ pub struct AgentSkill {
     pub examples: Vec<String>,
 }
 
-/// Input mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum InputMode {
-    Text,
-    Image,
-    Audio,
-    Video,
-    File,
-}
-
-/// Output mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum OutputMode {
-    Text,
-    Image,
-    Audio,
-    Video,
-    File,
-    Json,
-}
-
-/// Agent authentication configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentAuthentication {
-    /// Authentication type
-    pub auth_type: AuthType,
-
-    /// OAuth configuration
-    #[serde(default)]
-    pub oauth: Option<OAuthConfig>,
-}
-
-/// Authentication type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AuthType {
-    /// No authentication required
-    #[default]
-    None,
-    /// API key authentication
-    ApiKey,
-    /// Bearer token authentication
-    Bearer,
-    /// OAuth authentication
-    OAuth,
-}
-
-/// OAuth configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OAuthConfig {
-    /// Authorization URL
-    pub authorization_url: String,
-
-    /// Token URL
-    pub token_url: String,
-
-    /// Scopes
-    #[serde(default)]
-    pub scopes: Vec<String>,
-}
-
-/// Rate limiting configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RateLimits {
-    /// Requests per minute
-    pub requests_per_minute: Option<u32>,
-
-    /// Requests per hour
-    pub requests_per_hour: Option<u32>,
-
-    /// Requests per day
-    pub requests_per_day: Option<u32>,
-
-    /// Tokens per minute
-    pub tokens_per_minute: Option<u64>,
-}
+// Note: Nacos A2A uses string-typed mode arrays (defaultInputModes, defaultOutputModes)
+// and SecurityScheme maps instead of typed enums. Batata uses the same JSON schema.
 
 /// Registered Agent
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1190,37 +1172,6 @@ pub struct AgentCardDetailInfo {
     pub agent_card: Option<AgentCard>,
 }
 
-/// MCP server basic info returned from list queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpServerBasicInfo {
-    /// Server ID
-    pub id: String,
-
-    /// Server name
-    pub name: String,
-
-    /// Protocol type
-    pub protocol: String,
-
-    /// Description
-    pub description: String,
-
-    /// Latest published version
-    pub latest_published_version: String,
-
-    /// Number of versions
-    pub version_count: usize,
-
-    /// Namespace
-    pub namespace: String,
-
-    /// Creation time (milliseconds)
-    pub create_time: i64,
-
-    /// Modification time (milliseconds)
-    pub modify_time: i64,
-}
 
 #[cfg(test)]
 mod tests {
@@ -1237,10 +1188,7 @@ mod tests {
             endpoint: "http://localhost:8080".to_string(),
             server_type: McpServerType::Http,
             transport: McpTransport::default(),
-            capabilities: McpCapabilities {
-                tools: true,
-                ..Default::default()
-            },
+            capabilities: vec![McpCapability::Tool],
             tools: vec![McpTool {
                 name: "test_tool".to_string(),
                 description: "A test tool".to_string(),
@@ -1266,7 +1214,7 @@ mod tests {
             display_name: "Test Agent".to_string(),
             description: "A test agent".to_string(),
             version: "1.0.0".to_string(),
-            endpoint: "http://localhost:8080".to_string(),
+            url: "http://localhost:8080".to_string(),
             protocol_version: "1.0".to_string(),
             capabilities: AgentCapabilities {
                 streaming: true,
@@ -1279,10 +1227,13 @@ mod tests {
                 proficiency: 90,
                 examples: vec!["Write a function".to_string()],
             }],
-            input_modes: vec![InputMode::Text, InputMode::Image],
-            output_modes: vec![OutputMode::Text, OutputMode::Json],
-            authentication: None,
-            rate_limits: None,
+            default_input_modes: vec!["text".to_string(), "image".to_string()],
+            default_output_modes: vec!["text".to_string(), "json".to_string()],
+            preferred_transport: None,
+            provider: None,
+            documentation_url: None,
+            icon_url: None,
+            supports_authenticated_extended_card: None,
             metadata: HashMap::new(),
             tags: vec!["test".to_string()],
         };
@@ -1290,6 +1241,7 @@ mod tests {
         let json = serde_json::to_string(&card).unwrap();
         assert!(json.contains("test-agent"));
         assert!(json.contains("coding"));
+        assert!(json.contains("\"url\":\"http://localhost:8080\""));
     }
 
     #[test]
