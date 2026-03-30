@@ -462,7 +462,7 @@ public class NacosConfigFuzzyWatchTest {
      */
     @Test
     @Order(8)
-    @Disabled("Server sends ADD_CONFIG instead of CONFIG_CHANGED when updating existing config via fuzzy watch")
+    @Disabled("CONFIG_CHANGED notification sent by server but not delivered to SDK watcher - needs syncGroupKeyContext alignment with Nacos")
     void testFuzzyWatchConfigChangedEvent() throws NacosException, InterruptedException {
         String uniquePrefix = "cfw008-" + UUID.randomUUID().toString().substring(0, 8);
         String dataIdPattern = uniquePrefix + "*";

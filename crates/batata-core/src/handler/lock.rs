@@ -13,9 +13,7 @@ use crate::{
         grpc::Payload,
         remote::model::{LockOperationRequest, LockOperationResponse, RequestTrait, ResponseTrait},
     },
-    handler::rpc::{
-        AuthRequirement, PayloadHandler, check_authority, extract_auth_context_from_payload,
-    },
+    handler::rpc::{AuthRequirement, PayloadHandler},
     service::lock::LockService,
 };
 
@@ -44,17 +42,6 @@ impl PayloadHandler for LockOperationHandler {
             );
             return Ok(response.build_payload());
         };
-
-        // Check permission for lock resource
-        let auth_context = extract_auth_context_from_payload(&self.auth_service, payload);
-        let resource = GrpcResource::lock(&lock_instance.key);
-        check_authority(
-            &self.auth_service,
-            &auth_context,
-            &resource,
-            PermissionAction::Write,
-            &[],
-        )?;
 
         let owner = &connection.meta_info.connection_id;
 
@@ -109,6 +96,19 @@ impl PayloadHandler for LockOperationHandler {
 
     fn sign_type(&self) -> &'static str {
         "lock"
+    }
+
+    fn resource_from_payload(
+        &self,
+        payload: &Payload,
+    ) -> Option<(GrpcResource, PermissionAction)> {
+        let request = LockOperationRequest::from(payload);
+        let key = request
+            .lock_instance
+            .as_ref()
+            .map(|li| li.key.as_str())
+            .unwrap_or("*");
+        Some((GrpcResource::lock(key), PermissionAction::Write))
     }
 
     fn resource_type(&self) -> crate::ResourceType {

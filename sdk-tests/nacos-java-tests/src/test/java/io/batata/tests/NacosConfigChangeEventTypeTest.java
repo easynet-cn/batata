@@ -358,7 +358,7 @@ public class NacosConfigChangeEventTypeTest {
      */
     @Test
     @Order(6)
-    @Disabled("Batata sends duplicate config change notifications")
+    @Disabled("Duplicate notification: push notification + ConfigBatchListen MD5 check both trigger listener")
     void testListenerTriggeredOncePerChange() throws NacosException, InterruptedException {
         String dataId = "ccet-once-" + UUID.randomUUID().toString().substring(0, 8);
         AtomicInteger triggerCount = new AtomicInteger(0);

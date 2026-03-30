@@ -23,7 +23,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * that support TTL (expiredTime).
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-@Disabled("LockService gRPC auth not yet supported - all lock operations fail with PERMISSION_DENIED")
 public class NacosLockServiceTest {
 
     private static LockService lockService;
@@ -182,31 +181,34 @@ public class NacosLockServiceTest {
     }
 
     /**
-     * LOCK-005: Concurrent lock attempts - only one should succeed
+     * LOCK-005: Concurrent lock attempts from different clients - only one connection should win
      *
-     * Multiple threads attempt to lock the same key simultaneously.
-     * Exactly one should succeed; the others should fail.
+     * Two separate lock service clients (different gRPC connections, different owners)
+     * attempt to lock the same key simultaneously. Only one connection should win.
+     * Note: Threads sharing the same LockService share the same gRPC connectionId,
+     * so reentrant locking would allow them all to succeed. We use exactly 2 threads
+     * with different clients to test true contention.
      */
     @Test
     @Order(5)
     void testConcurrentLockAttempts() throws InterruptedException {
         String lockKey = "lock005-concurrent-" + UUID.randomUUID();
-        int threadCount = 5;
+        int threadCount = 2;
 
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch = new CountDownLatch(threadCount);
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger failCount = new AtomicInteger(0);
 
+        // Thread 0 uses lockService, Thread 1 uses lockService2 (different connections)
+        LockService[] services = {lockService, lockService2};
         for (int i = 0; i < threadCount; i++) {
             final int index = i;
             new Thread(() -> {
                 try {
                     startLatch.await();
                     LockInstance lockInstance = new LockInstance(lockKey, 30000L, LOCK_TYPE);
-                    // Alternate between the two lock service clients
-                    LockService svc = (index % 2 == 0) ? lockService : lockService2;
-                    Boolean result = svc.lock(lockInstance);
+                    Boolean result = services[index].lock(lockInstance);
                     if (Boolean.TRUE.equals(result)) {
                         successCount.incrementAndGet();
                     } else {
@@ -227,8 +229,8 @@ public class NacosLockServiceTest {
 
         assertEquals(1, successCount.get(),
                 "Exactly one concurrent lock attempt should succeed, got: " + successCount.get());
-        assertTrue(failCount.get() >= threadCount - 1,
-                "The rest should fail, got failures: " + failCount.get());
+        assertEquals(1, failCount.get(),
+                "The other should fail, got failures: " + failCount.get());
 
         // Cleanup - try to unlock with both services
         try {

@@ -116,7 +116,6 @@ public class NacosMaintainServiceTest {
      */
     @Test
     @Order(2)
-    @Disabled("Instance disable via admin API does not propagate to gRPC subscribers")
     void testDisableInstance() throws Exception {
         String serviceName = "nms-disable-" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -378,7 +377,6 @@ public class NacosMaintainServiceTest {
      */
     @Test
     @Order(10)
-    @Disabled("Persistent instance deregistration timing issue")
     void testRegisterAndDeregisterInstanceViaMaintainer() throws Exception {
         String serviceName = "nms-reg-dereg-" + UUID.randomUUID().toString().substring(0, 8);
 

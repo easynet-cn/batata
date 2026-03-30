@@ -267,6 +267,7 @@ async fn deregister_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    connection_manager: Option<web::Data<Arc<dyn batata_core::ClientConnectionManager>>>,
     params: web::Query<InstanceDeregisterQuery>,
 ) -> impl Responder {
     if params.service_name.is_empty() || params.ip.is_empty() || params.port <= 0 {
@@ -317,6 +318,34 @@ async fn deregister_instance(
     );
 
     if result {
+        // Notify gRPC subscribers about the instance change
+        if let Some(ref cm) = connection_manager {
+            let subscribers =
+                naming_service.get_subscribers(namespace_id, group_name, &params.service_name);
+            if !subscribers.is_empty() {
+                let service_info = naming_service.get_service(
+                    namespace_id,
+                    group_name,
+                    &params.service_name,
+                    "",
+                    false,
+                );
+                let notification =
+                    batata_api::naming::model::NotifySubscriberRequest::for_service(
+                        namespace_id,
+                        group_name,
+                        &params.service_name,
+                        service_info,
+                    );
+                use batata_api::remote::model::RequestTrait;
+                let payload = notification.build_server_push_payload();
+                let cm = cm.clone().into_inner();
+                let subs = subscribers;
+                tokio::spawn(async move {
+                    cm.push_message_to_many(&subs, payload).await;
+                });
+            }
+        }
         Result::<bool>::http_success(true)
     } else {
         Result::<bool>::http_response(
@@ -334,6 +363,7 @@ async fn update_instance(
     req: HttpRequest,
     data: web::Data<AppState>,
     naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    connection_manager: Option<web::Data<Arc<dyn batata_core::ClientConnectionManager>>>,
     form: web::Form<InstanceRegisterForm>,
 ) -> impl Responder {
     if form.service_name.is_empty() || form.ip.is_empty() || form.port <= 0 {
@@ -387,6 +417,34 @@ async fn update_instance(
     };
 
     naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
+
+    // Notify gRPC subscribers about the instance update
+    if let Some(ref cm) = connection_manager {
+        let subscribers =
+            naming_service.get_subscribers(namespace_id, group_name, &form.service_name);
+        if !subscribers.is_empty() {
+            let service_info = naming_service.get_service(
+                namespace_id,
+                group_name,
+                &form.service_name,
+                "",
+                false,
+            );
+            let notification = batata_api::naming::model::NotifySubscriberRequest::for_service(
+                namespace_id,
+                group_name,
+                &form.service_name,
+                service_info,
+            );
+            use batata_api::remote::model::RequestTrait;
+            let payload = notification.build_server_push_payload();
+            let cm = cm.clone().into_inner();
+            let subs = subscribers;
+            tokio::spawn(async move {
+                cm.push_message_to_many(&subs, payload).await;
+            });
+        }
+    }
 
     Result::<bool>::http_success(true)
 }

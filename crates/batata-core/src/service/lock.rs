@@ -88,43 +88,55 @@ impl LockService {
     /// acquire again, the lock count is incremented and the existing fencing token
     /// is returned. The TTL is refreshed on each reentrant acquire.
     pub fn acquire(&self, key: &str, owner: &str, expired_time_ms: i64) -> Option<u64> {
+        use dashmap::mapref::entry::Entry;
+
         let ttl = Duration::from_millis(expired_time_ms.max(0) as u64);
         let now = Instant::now();
 
-        // Try to update an existing entry in-place
-        if let Some(mut existing) = self.locks.get_mut(key) {
-            if existing.owner == owner {
-                // Reentrant acquire: increment count, refresh TTL
-                existing.lock_count += 1;
-                existing.acquired_at = now;
-                existing.ttl = ttl;
-                let token = existing.fencing_token;
-                debug!(key = %key, owner = %owner, lock_count = existing.lock_count, "Lock re-acquired (reentrant)");
-                return Some(token);
-            } else if !existing.is_expired() {
-                // Held by another owner and not expired
-                return None;
+        match self.locks.entry(key.to_string()) {
+            Entry::Occupied(mut occupied) => {
+                let existing = occupied.get_mut();
+                if existing.owner == owner {
+                    // Reentrant acquire: increment count, refresh TTL
+                    existing.lock_count += 1;
+                    existing.acquired_at = now;
+                    existing.ttl = ttl;
+                    let token = existing.fencing_token;
+                    debug!(key = %key, owner = %owner, lock_count = existing.lock_count, "Lock re-acquired (reentrant)");
+                    Some(token)
+                } else if existing.is_expired() {
+                    // Expired lock held by another owner -- replace it
+                    let token = self.fencing_counter.fetch_add(1, Ordering::Relaxed);
+                    *existing = LockEntry {
+                        owner: owner.to_string(),
+                        lock_count: 1,
+                        fencing_token: token,
+                        acquired_at: now,
+                        created_at: now,
+                        ttl,
+                    };
+                    debug!(key = %key, owner = %owner, fencing_token = token, "Lock acquired (replaced expired)");
+                    Some(token)
+                } else {
+                    // Held by another owner and not expired
+                    None
+                }
             }
-            // Existing lock is expired -- fall through to replace it
-            drop(existing);
+            Entry::Vacant(vacant) => {
+                // New lock acquisition
+                let token = self.fencing_counter.fetch_add(1, Ordering::Relaxed);
+                vacant.insert(LockEntry {
+                    owner: owner.to_string(),
+                    lock_count: 1,
+                    fencing_token: token,
+                    acquired_at: now,
+                    created_at: now,
+                    ttl,
+                });
+                debug!(key = %key, owner = %owner, fencing_token = token, "Lock acquired");
+                Some(token)
+            }
         }
-
-        // New acquisition (or replacing an expired lock)
-        let token = self.fencing_counter.fetch_add(1, Ordering::Relaxed);
-        self.locks.insert(
-            key.to_string(),
-            LockEntry {
-                owner: owner.to_string(),
-                lock_count: 1,
-                fencing_token: token,
-                acquired_at: now,
-                created_at: now,
-                ttl,
-            },
-        );
-
-        debug!(key = %key, owner = %owner, fencing_token = token, "Lock acquired");
-        Some(token)
     }
 
     /// Release a lock for the given key.

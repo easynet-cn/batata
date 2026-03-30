@@ -647,7 +647,7 @@ public class NacosServiceSubscribeTest {
      */
     @Test
     @Order(12)
-    @Disabled("SDK listener exception may block other listeners from receiving notifications")
+    @Disabled("SDK-side issue: exception in one listener blocks notification to other listeners")
     void testSubscribeListenerException() throws NacosException, InterruptedException {
         String serviceName = "listener-error-" + UUID.randomUUID().toString().substring(0, 8);
         CountDownLatch badLatch = new CountDownLatch(1);

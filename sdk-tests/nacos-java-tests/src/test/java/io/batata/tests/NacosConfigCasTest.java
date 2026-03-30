@@ -77,7 +77,6 @@ public class NacosConfigCasTest {
      */
     @Test
     @Order(1)
-    @Disabled("publishConfigCas API not yet implemented in Batata")
     void testPublishConfigCasWithCorrectMd5() throws NacosException, InterruptedException {
         String dataId = "cas001-correct-md5-" + UUID.randomUUID();
         String initialContent = "cas.initial.value=100";
@@ -116,7 +115,6 @@ public class NacosConfigCasTest {
      */
     @Test
     @Order(2)
-    @Disabled("publishConfigCas API not yet implemented in Batata")
     void testPublishConfigCasWithWrongMd5() throws NacosException, InterruptedException {
         String dataId = "cas002-wrong-md5-" + UUID.randomUUID();
         String initialContent = "cas.stable.value=keep_me";
@@ -148,7 +146,6 @@ public class NacosConfigCasTest {
      */
     @Test
     @Order(3)
-    @Disabled("publishConfigCas API not yet implemented in Batata")
     void testPublishConfigCasWithStaleMd5() throws NacosException, InterruptedException {
         String dataId = "cas003-stale-md5-" + UUID.randomUUID();
         String originalContent = "cas.original=v1";
@@ -193,7 +190,6 @@ public class NacosConfigCasTest {
      */
     @Test
     @Order(4)
-    @Disabled("publishConfigCas API not yet implemented in Batata")
     void testConcurrentCasUpdates() throws NacosException, InterruptedException {
         String dataId = "cas004-concurrent-" + UUID.randomUUID();
         String initialContent = "cas.concurrent.initial=start";
@@ -263,7 +259,6 @@ public class NacosConfigCasTest {
      */
     @Test
     @Order(5)
-    @Disabled("publishConfigCas API not yet implemented in Batata")
     void testPublishConfigCasWithType() throws NacosException, InterruptedException {
         String dataId = "cas005-typed-" + UUID.randomUUID();
         String initialContent = "{\"key\": \"initial\"}";
@@ -298,7 +293,6 @@ public class NacosConfigCasTest {
      */
     @Test
     @Order(6)
-    @Disabled("publishConfigCas API not yet implemented in Batata")
     void testSequentialCasUpdates() throws NacosException, InterruptedException {
         String dataId = "cas006-sequential-" + UUID.randomUUID();
         String content = "cas.seq.v0=initial";

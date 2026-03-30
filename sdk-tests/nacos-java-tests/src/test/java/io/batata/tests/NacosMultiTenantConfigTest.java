@@ -376,7 +376,7 @@ public class NacosMultiTenantConfigTest {
      */
     @Test
     @Order(6)
-    @Disabled("Batata server-side config change push does not yet filter by namespace")
+    @Disabled("ConfigBatchListen initial MD5 mismatch causes spurious listener fire - same root cause as duplicate notification issue")
     void testConfigUpdateDoesNotNotifyCrossNamespace() throws Exception {
         String nsA = "nmtc006-nsA-" + UUID.randomUUID().toString().substring(0, 6);
         String nsB = "nmtc006-nsB-" + UUID.randomUUID().toString().substring(0, 6);
