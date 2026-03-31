@@ -4,16 +4,10 @@ import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.config.listener.Listener;
 import com.alibaba.nacos.api.exception.NacosException;
+import com.alibaba.nacos.maintainer.client.NacosMaintainerFactory;
+import com.alibaba.nacos.maintainer.client.config.ConfigMaintainerService;
 import org.junit.jupiter.api.*;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
@@ -35,7 +29,7 @@ public class NacosMultiTenantConfigTest {
     private static String serverAddr;
     private static String username;
     private static String password;
-    private static String accessToken;
+    private static ConfigMaintainerService maintainerService;
     private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
     private static final List<String> createdNamespaces = new ArrayList<>();
 
@@ -45,7 +39,12 @@ public class NacosMultiTenantConfigTest {
         username = System.getProperty("nacos.username", "nacos");
         password = System.getProperty("nacos.password", "nacos");
 
-        accessToken = loginV3(username, password);
+        Properties props = new Properties();
+        props.setProperty("serverAddr", serverAddr);
+        props.setProperty("username", username);
+        props.setProperty("password", password);
+        maintainerService = NacosMaintainerFactory.createConfigMaintainerService(props);
+
         System.out.println("Multi-Tenant Config Test Setup - Server: " + serverAddr);
     }
 
@@ -54,11 +53,12 @@ public class NacosMultiTenantConfigTest {
         // Cleanup created namespaces
         for (String nsId : createdNamespaces) {
             try {
-                deleteNamespace(nsId);
+                maintainerService.deleteNamespace(nsId);
             } catch (Exception e) {
                 // Ignore cleanup errors
             }
         }
+        maintainerService.close();
     }
 
     private ConfigService createConfigService(String namespace) throws NacosException {
@@ -508,105 +508,8 @@ public class NacosMultiTenantConfigTest {
     // ==================== Helper Methods ====================
 
     private void createTestNamespace(String namespaceId, String namespaceName) throws Exception {
-        String body = String.format(
-                "namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
-                URLEncoder.encode(namespaceId, "UTF-8"),
-                URLEncoder.encode(namespaceName, "UTF-8"),
-                URLEncoder.encode("Test namespace for " + namespaceName, "UTF-8"));
-        httpPost("/nacos/v2/console/namespace", body);
+        maintainerService.createNamespace(namespaceId, namespaceName,
+                "Test namespace for " + namespaceName);
         createdNamespaces.add(namespaceId);
-    }
-
-    private static void deleteNamespace(String namespaceId) throws Exception {
-        httpDeleteStatic("/nacos/v2/console/namespace?namespaceId=" +
-                URLEncoder.encode(namespaceId, "UTF-8"));
-    }
-
-    private static String loginV3(String username, String password) throws Exception {
-        String loginUrl = String.format("http://%s/nacos/v3/auth/user/login", serverAddr);
-        URL url = new URL(loginUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-        String body = "username=" + URLEncoder.encode(username, "UTF-8")
-                + "&password=" + URLEncoder.encode(password, "UTF-8");
-        conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
-
-        if (conn.getResponseCode() == 200) {
-            String resp = readResponse(conn);
-            if (resp.contains("accessToken")) {
-                int start = resp.indexOf("accessToken") + 14;
-                int end = resp.indexOf("\"", start);
-                if (end > start) return resp.substring(start, end);
-            }
-        }
-        return "";
-    }
-
-    private String httpGet(String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("GET");
-        return readResponse(conn);
-    }
-
-    private String httpPost(String path, String body) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-        if (body != null && !body.isEmpty()) {
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(body.getBytes(StandardCharsets.UTF_8));
-            }
-        }
-        return readResponse(conn);
-    }
-
-    private String httpDelete(String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("DELETE");
-        return readResponse(conn);
-    }
-
-    private static String httpDeleteStatic(String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("DELETE");
-        return readResponse(conn);
-    }
-
-    private static String readResponse(HttpURLConnection conn) throws Exception {
-        int responseCode = conn.getResponseCode();
-        InputStream stream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
-        StringBuilder response = new StringBuilder();
-        if (stream != null) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-        }
-        return response.toString();
     }
 }

@@ -5,18 +5,8 @@ import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.alibaba.nacos.api.naming.NamingService;
 import com.alibaba.nacos.api.naming.pojo.Instance;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
 
-import java.io.BufferedReader;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -33,9 +23,7 @@ public class NacosBatchOperationsTest {
     private static NamingService namingService;
     private static ConfigService configService;
     private static String serverAddr;
-    private static String accessToken;
     private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
-    private static final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeAll
     static void setup() throws Exception {
@@ -50,7 +38,6 @@ public class NacosBatchOperationsTest {
 
         namingService = NacosFactory.createNamingService(properties);
         configService = NacosFactory.createConfigService(properties);
-        accessToken = loginV3(username, password);
 
         assertNotNull(namingService, "NamingService should be created successfully");
         assertNotNull(configService, "ConfigService should be created successfully");
@@ -245,30 +232,22 @@ public class NacosBatchOperationsTest {
     // ==================== Batch Config Operations via Open API ====================
 
     /**
-     * NBO-005: Test batch config publish via V2 Open API
+     * NBO-005: Test batch config publish via SDK
      *
-     * Publishes multiple configs via the V2 Open API and verifies all
-     * exist by querying through the SDK.
+     * Publishes multiple configs via SDK and verifies all exist.
      */
     @Test
     @Order(5)
-    void testBatchConfigPublishViaOpenApi() throws Exception {
-        String prefix = "nbo005-api-pub-" + UUID.randomUUID().toString().substring(0, 8);
+    void testBatchConfigPublishViaSdk() throws Exception {
+        String prefix = "nbo005-sdk-pub-" + UUID.randomUUID().toString().substring(0, 8);
         int configCount = 5;
 
-        // Publish multiple configs via Open API
+        // Publish multiple configs via SDK
         for (int i = 0; i < configCount; i++) {
             String dataId = prefix + "-" + i;
-            String content = "batch.api.config=" + i + "\nindex=" + i;
-            String body = String.format(
-                    "dataId=%s&group=%s&content=%s",
-                    URLEncoder.encode(dataId, "UTF-8"),
-                    URLEncoder.encode(DEFAULT_GROUP, "UTF-8"),
-                    URLEncoder.encode(content, "UTF-8"));
-            String response = httpPost("/nacos/v2/cs/config", body);
-            JsonNode json = objectMapper.readTree(response);
-            assertEquals(0, json.get("code").asInt(),
-                    "Config publish via API should succeed for " + dataId + ": " + response);
+            String content = "batch.sdk.config=" + i + "\nindex=" + i;
+            boolean published = configService.publishConfig(dataId, DEFAULT_GROUP, content);
+            assertTrue(published, "Config publish should succeed for " + dataId);
         }
 
         Thread.sleep(1000);
@@ -278,7 +257,7 @@ public class NacosBatchOperationsTest {
             String dataId = prefix + "-" + i;
             String content = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
             assertNotNull(content, "Config " + dataId + " should exist after batch publish");
-            assertTrue(content.contains("batch.api.config=" + i),
+            assertTrue(content.contains("batch.sdk.config=" + i),
                     "Config content should match for " + dataId);
         }
 
@@ -289,15 +268,15 @@ public class NacosBatchOperationsTest {
     }
 
     /**
-     * NBO-006: Test batch config delete via V2 Open API
+     * NBO-006: Test batch config delete via SDK
      *
-     * Publishes multiple configs, then deletes all via the V2 Open API,
+     * Publishes multiple configs, then deletes all via SDK,
      * and verifies all are gone.
      */
     @Test
     @Order(6)
-    void testBatchConfigDeleteViaOpenApi() throws Exception {
-        String prefix = "nbo006-api-del-" + UUID.randomUUID().toString().substring(0, 8);
+    void testBatchConfigDeleteViaSdk() throws Exception {
+        String prefix = "nbo006-sdk-del-" + UUID.randomUUID().toString().substring(0, 8);
         int configCount = 5;
 
         // Setup: publish configs via SDK
@@ -308,16 +287,11 @@ public class NacosBatchOperationsTest {
         }
         Thread.sleep(500);
 
-        // Delete all via Open API
+        // Delete all via SDK
         for (int i = 0; i < configCount; i++) {
             String dataId = prefix + "-" + i;
-            String response = httpDelete(String.format(
-                    "/nacos/v2/cs/config?dataId=%s&group=%s",
-                    URLEncoder.encode(dataId, "UTF-8"),
-                    URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
-            JsonNode json = objectMapper.readTree(response);
-            assertEquals(0, json.get("code").asInt(),
-                    "Config delete via API should succeed for " + dataId + ": " + response);
+            boolean deleted = configService.removeConfig(dataId, DEFAULT_GROUP);
+            assertTrue(deleted, "Config " + dataId + " should be deleted");
         }
 
         Thread.sleep(500);
@@ -377,14 +351,14 @@ public class NacosBatchOperationsTest {
     }
 
     /**
-     * NBO-008: Test batch config publish and verify via API round-trip
+     * NBO-008: Test batch config publish, verify, and delete round-trip via SDK
      *
-     * Tests the complete round-trip: publish via SDK, verify via Open API,
-     * delete via Open API, verify deletion via SDK.
+     * Tests the complete round-trip: publish via SDK, verify via SDK,
+     * delete via SDK, verify deletion via SDK.
      */
     @Test
     @Order(8)
-    void testBatchConfigApiRoundTrip() throws Exception {
+    void testBatchConfigSdkRoundTrip() throws Exception {
         String prefix = "nbo008-roundtrip-" + UUID.randomUUID().toString().substring(0, 8);
         int configCount = 3;
 
@@ -396,29 +370,20 @@ public class NacosBatchOperationsTest {
         }
         Thread.sleep(1000);
 
-        // Step 2: Verify via Open API
+        // Step 2: Verify via SDK
         for (int i = 0; i < configCount; i++) {
             String dataId = prefix + "-" + i;
-            String response = httpGet(String.format(
-                    "/nacos/v2/cs/config?dataId=%s&group=%s",
-                    URLEncoder.encode(dataId, "UTF-8"),
-                    URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
-            JsonNode json = objectMapper.readTree(response);
-            assertEquals(0, json.get("code").asInt(),
-                    "API get should succeed for " + dataId);
-            assertTrue(json.has("data"), "Response should have data for " + dataId);
-            String content = json.get("data").asText();
+            String content = configService.getConfig(dataId, DEFAULT_GROUP, 5000);
+            assertNotNull(content, "Config should exist for " + dataId);
             assertEquals("roundtrip.value=" + i, content,
-                    "API response content should match for " + dataId);
+                    "Config content should match for " + dataId);
         }
 
-        // Step 3: Delete via Open API
+        // Step 3: Delete via SDK
         for (int i = 0; i < configCount; i++) {
             String dataId = prefix + "-" + i;
-            httpDelete(String.format(
-                    "/nacos/v2/cs/config?dataId=%s&group=%s",
-                    URLEncoder.encode(dataId, "UTF-8"),
-                    URLEncoder.encode(DEFAULT_GROUP, "UTF-8")));
+            boolean deleted = configService.removeConfig(dataId, DEFAULT_GROUP);
+            assertTrue(deleted, "Config should be deleted for " + dataId);
         }
         Thread.sleep(500);
 
@@ -426,86 +391,8 @@ public class NacosBatchOperationsTest {
         for (int i = 0; i < configCount; i++) {
             String dataId = prefix + "-" + i;
             String content = configService.getConfig(dataId, DEFAULT_GROUP, 3000);
-            assertNull(content, "Config " + dataId + " should be deleted after API delete");
+            assertNull(content, "Config " + dataId + " should be deleted");
         }
     }
 
-    // ==================== Helper Methods ====================
-
-    private static String loginV3(String username, String password) throws Exception {
-        String loginUrl = String.format("http://%s/nacos/v3/auth/user/login", serverAddr);
-        URL url = new URL(loginUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-        String body = "username=" + URLEncoder.encode(username, "UTF-8")
-                + "&password=" + URLEncoder.encode(password, "UTF-8");
-        conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
-
-        if (conn.getResponseCode() == 200) {
-            String resp = readResponse(conn);
-            if (resp.contains("accessToken")) {
-                int start = resp.indexOf("accessToken") + 14;
-                int end = resp.indexOf("\"", start);
-                if (end > start) return resp.substring(start, end);
-            }
-        }
-        return "";
-    }
-
-    private String httpGet(String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("GET");
-        return readResponse(conn);
-    }
-
-    private String httpPost(String path, String body) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-        if (body != null && !body.isEmpty()) {
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(body.getBytes(StandardCharsets.UTF_8));
-            }
-        }
-        return readResponse(conn);
-    }
-
-    private String httpDelete(String path) throws Exception {
-        String fullUrl = String.format("http://%s%s", serverAddr, path);
-        if (!accessToken.isEmpty()) {
-            fullUrl += (path.contains("?") ? "&" : "?") + "accessToken=" + accessToken;
-        }
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("DELETE");
-        return readResponse(conn);
-    }
-
-    private static String readResponse(HttpURLConnection conn) throws Exception {
-        int responseCode = conn.getResponseCode();
-        InputStream stream = responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream();
-        StringBuilder response = new StringBuilder();
-        if (stream != null) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(stream));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
-        }
-        return response.toString();
-    }
 }

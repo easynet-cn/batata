@@ -128,35 +128,38 @@ public class NacosConfigTagTest {
     /**
      * NCT-TAG-003: Test query without tag returns default config
      *
-     * After publishing both normal and tagged config for the same dataId,
-     * querying without a tag should return the default (untagged) config.
-     * Disabled: Tag-based config is not yet supported in Batata.
+     * After publishing both normal config and a beta gray config for the same dataId,
+     * querying without gray context should return the default (untagged) config.
+     * Uses maintainerService.publishBetaConfig() for gray config publishing.
      */
     @Test
     @Order(3)
-    @Disabled("SDK-side: maintainerService.publishConfig() sends configTags (search metadata), not gray tag - second publish overwrites first content")
     void testQueryWithoutTagReturnsDefault() throws Exception {
         String dataId = "tag-default-" + UUID.randomUUID().toString().substring(0, 8);
         String normalContent = "mode=default";
-        String taggedContent = "mode=tagged-version";
-        String tag = "staging";
+        String grayContent = "mode=gray-version";
 
         // Publish normal config
         maintainerService.publishConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, normalContent);
         cleanupConfigs.add(new String[]{dataId, DEFAULT_GROUP});
 
-        // Publish tagged config
-        maintainerService.publishConfig(
-                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, taggedContent,
-                null, null, tag, null, null);
-
+        // Publish beta gray config via SDK
+        boolean betaPublished = maintainerService.publishBetaConfig(
+                dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE, grayContent,
+                null, null, null, null, null, "10.0.0.1,10.0.0.2");
+        assertTrue(betaPublished, "Beta gray config publish should succeed");
         Thread.sleep(500);
 
-        // Query without tag - should return normal/default content
+        // Query without gray context - should return normal/default content (not gray)
         ConfigDetailInfo configDetail = maintainerService.getConfig(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
         assertNotNull(configDetail, "Config detail should not be null");
         assertEquals(normalContent, configDetail.getContent(),
-                "Query without tag should return the default (untagged) config");
+                "Query without gray context should return the default (untagged) config");
+
+        // Cleanup gray config via SDK
+        try {
+            maintainerService.stopBeta(dataId, DEFAULT_GROUP, DEFAULT_NAMESPACE);
+        } catch (Exception ignored) {}
     }
 
     /**

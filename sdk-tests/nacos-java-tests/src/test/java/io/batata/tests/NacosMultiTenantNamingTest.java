@@ -6,13 +6,10 @@ import com.alibaba.nacos.api.naming.NamingService;
 import com.alibaba.nacos.api.naming.listener.EventListener;
 import com.alibaba.nacos.api.naming.listener.NamingEvent;
 import com.alibaba.nacos.api.naming.pojo.Instance;
+import com.alibaba.nacos.maintainer.client.NacosMaintainerFactory;
+import com.alibaba.nacos.maintainer.client.config.ConfigMaintainerService;
 import org.junit.jupiter.api.*;
 
-import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -32,7 +29,7 @@ public class NacosMultiTenantNamingTest {
     private static String serverAddr;
     private static String username;
     private static String password;
-    private static String accessToken;
+    private static ConfigMaintainerService maintainerService;
     private static final String DEFAULT_GROUP = "DEFAULT_GROUP";
     private static String namespace1;
     private static String namespace2;
@@ -46,13 +43,17 @@ public class NacosMultiTenantNamingTest {
         username = System.getProperty("nacos.username", "nacos");
         password = System.getProperty("nacos.password", "nacos");
 
-        accessToken = getAccessToken();
+        Properties props = new Properties();
+        props.setProperty("serverAddr", serverAddr);
+        props.setProperty("username", username);
+        props.setProperty("password", password);
+        maintainerService = NacosMaintainerFactory.createConfigMaintainerService(props);
 
         namespace1 = "mt-ns1-" + UUID.randomUUID().toString().substring(0, 6);
         namespace2 = "mt-ns2-" + UUID.randomUUID().toString().substring(0, 6);
 
-        createNamespace(namespace1, "Multi-Tenant NS 1", "First test namespace");
-        createNamespace(namespace2, "Multi-Tenant NS 2", "Second test namespace");
+        maintainerService.createNamespace(namespace1, "Multi-Tenant NS 1", "First test namespace");
+        maintainerService.createNamespace(namespace2, "Multi-Tenant NS 2", "Second test namespace");
 
         namingService1 = createNamingService(namespace1);
         namingService2 = createNamingService(namespace2);
@@ -66,8 +67,9 @@ public class NacosMultiTenantNamingTest {
         if (namingService1 != null) namingService1.shutDown();
         if (namingService2 != null) namingService2.shutDown();
         if (defaultNamingService != null) defaultNamingService.shutDown();
-        deleteNamespace(namespace1);
-        deleteNamespace(namespace2);
+        try { maintainerService.deleteNamespace(namespace1); } catch (Exception ignored) {}
+        try { maintainerService.deleteNamespace(namespace2); } catch (Exception ignored) {}
+        maintainerService.close();
     }
 
     // ==================== P0: Same IP/Port Cross-Namespace Isolation ====================
@@ -587,59 +589,4 @@ public class NacosMultiTenantNamingTest {
         return NacosFactory.createNamingService(properties);
     }
 
-    private static String getAccessToken() throws Exception {
-        String loginUrl = String.format("http://%s/nacos/v3/auth/user/login", serverAddr);
-        URL url = new URL(loginUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-        String body = "username=" + URLEncoder.encode(username, "UTF-8")
-                + "&password=" + URLEncoder.encode(password, "UTF-8");
-        conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
-
-        if (conn.getResponseCode() == 200) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) response.append(line);
-            String resp = response.toString();
-            if (resp.contains("accessToken")) {
-                int start = resp.indexOf("accessToken") + 14;
-                int end = resp.indexOf("\"", start);
-                return resp.substring(start, end);
-            }
-        }
-        return "";
-    }
-
-    private static void createNamespace(String id, String name, String desc) throws Exception {
-        String fullUrl = String.format("http://%s/nacos/v2/console/namespace", serverAddr);
-        if (!accessToken.isEmpty()) fullUrl += "?accessToken=" + accessToken;
-
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setDoOutput(true);
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
-
-        String body = String.format("namespaceId=%s&namespaceName=%s&namespaceDesc=%s",
-                URLEncoder.encode(id, "UTF-8"),
-                URLEncoder.encode(name, "UTF-8"),
-                URLEncoder.encode(desc, "UTF-8"));
-        conn.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
-        conn.getResponseCode();
-    }
-
-    private static void deleteNamespace(String id) throws Exception {
-        String fullUrl = String.format("http://%s/nacos/v2/console/namespace?namespaceId=%s",
-                serverAddr, URLEncoder.encode(id, "UTF-8"));
-        if (!accessToken.isEmpty()) fullUrl += "&accessToken=" + accessToken;
-
-        URL url = new URL(fullUrl);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("DELETE");
-        conn.getResponseCode();
-    }
 }

@@ -4,6 +4,8 @@ import com.alibaba.nacos.api.NacosFactory;
 import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.exception.NacosException;
 import com.alibaba.nacos.api.naming.NamingService;
+import com.alibaba.nacos.maintainer.client.NacosMaintainerFactory;
+import com.alibaba.nacos.maintainer.client.config.ConfigMaintainerService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.*;
@@ -31,6 +33,7 @@ public class NacosAuthRbacTest {
 
     private static String serverAddr;
     private static String accessToken;
+    private static ConfigMaintainerService maintainerService;
     private static final String TEST_USER = "rbac-user-" + UUID.randomUUID().toString().substring(0, 6);
     private static final String TEST_PASSWORD = "Test123456";
     private static final String TEST_ROLE = "rbac-role-" + UUID.randomUUID().toString().substring(0, 6);
@@ -45,6 +48,12 @@ public class NacosAuthRbacTest {
 
         accessToken = loginV3(username, password);
         assertFalse(accessToken.isEmpty(), "Admin login should return a valid access token");
+
+        Properties props = new Properties();
+        props.setProperty("serverAddr", serverAddr);
+        props.setProperty("username", username);
+        props.setProperty("password", password);
+        maintainerService = NacosMaintainerFactory.createConfigMaintainerService(props);
     }
 
     @AfterAll
@@ -761,11 +770,8 @@ public class NacosAuthRbacTest {
         String publicDataId = "public-cfg-" + UUID.randomUUID().toString().substring(0, 8);
 
         try {
-            // Create namespace via admin HTTP API
-            String nsBody = "namespaceId=" + URLEncoder.encode(isolatedNs, "UTF-8")
-                    + "&namespaceName=" + URLEncoder.encode(isolatedNs, "UTF-8")
-                    + "&namespaceDesc=Test+isolated+namespace";
-            httpPost("/nacos/v2/console/namespace", nsBody);
+            // Create namespace via SDK
+            maintainerService.createNamespace(isolatedNs, isolatedNs, "Test isolated namespace");
             Thread.sleep(500);
 
             // Create user with permission only on the isolated namespace
@@ -833,7 +839,7 @@ public class NacosAuthRbacTest {
             // Cleanup: delete permission, role, user, namespace
             cleanupUserWithPermissionForNamespace(nsUser, nsRole, isolatedNs);
             try {
-                httpDelete("/nacos/v2/console/namespace?namespaceId=" + URLEncoder.encode(isolatedNs, "UTF-8"));
+                maintainerService.deleteNamespace(isolatedNs);
             } catch (Exception ignored) {}
         }
     }
@@ -850,11 +856,8 @@ public class NacosAuthRbacTest {
         String serviceName = "ns-isolation-svc-" + UUID.randomUUID().toString().substring(0, 8);
 
         try {
-            // Create namespace
-            String nsBody = "namespaceId=" + URLEncoder.encode(namingNs, "UTF-8")
-                    + "&namespaceName=" + URLEncoder.encode(namingNs, "UTF-8")
-                    + "&namespaceDesc=Test+naming+namespace";
-            httpPost("/nacos/v2/console/namespace", nsBody);
+            // Create namespace via SDK
+            maintainerService.createNamespace(namingNs, namingNs, "Test naming namespace");
             Thread.sleep(500);
 
             // Create user with permission only on the naming namespace
@@ -912,7 +915,7 @@ public class NacosAuthRbacTest {
             // Cleanup: delete permission, role, user, namespace
             cleanupUserWithPermissionForNamespace(nsUser, nsRole, namingNs);
             try {
-                httpDelete("/nacos/v2/console/namespace?namespaceId=" + URLEncoder.encode(namingNs, "UTF-8"));
+                maintainerService.deleteNamespace(namingNs);
             } catch (Exception ignored) {}
         }
     }

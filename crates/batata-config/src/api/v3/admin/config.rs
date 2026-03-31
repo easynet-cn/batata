@@ -339,6 +339,74 @@ async fn create_config(
         return model::common::Result::<bool>::http_success(true);
     }
 
+    // Handle tag-based gray config publish (aligned with Nacos ConfigOperationService)
+    let tag = config_form.tag.as_deref().unwrap_or("").trim();
+    if !tag.is_empty() {
+        let gray_name = format!("tag_{}", tag);
+        let gray_rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_tag(
+            tag,
+            crate::model::gray_rule::TagGrayRule::PRIORITY,
+        );
+        let gray_rule = match gray_rule_info.to_json() {
+            Ok(json) => json,
+            Err(e) => {
+                return model::common::Result::<String>::http_response(
+                    StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    error::SERVER_ERROR.code,
+                    error::SERVER_ERROR.message.to_string(),
+                    format!("Failed to serialize gray rule: {}", e),
+                );
+            }
+        };
+
+        // Check max gray version count
+        if let Ok(grays) = data
+            .persistence()
+            .config_find_all_grays(
+                &config_form.data_id,
+                &config_form.group_name,
+                &config_form.namespace_id,
+            )
+            .await
+            && !grays.iter().any(|g| g.gray_name == gray_name)
+            && grays.len() >= 10
+        {
+            return model::common::Result::<String>::http_response(
+                StatusCode::BAD_REQUEST.as_u16(),
+                error::CONFIG_GRAY_OVER_MAX_VERSION_COUNT.code,
+                "gray config version is over max count: 10".to_string(),
+                String::new(),
+            );
+        }
+
+        if let Err(e) = data
+            .persistence()
+            .config_create_or_update_gray(
+                &config_form.data_id,
+                &config_form.group_name,
+                &config_form.namespace_id,
+                &config_form.content,
+                &gray_name,
+                &gray_rule,
+                &src_user,
+                &src_ip,
+                &config_form.app_name,
+                &config_form.encrypted_data_key.unwrap_or_default(),
+                None,
+            )
+            .await
+        {
+            return model::common::Result::<String>::http_response(
+                500,
+                error::SERVER_ERROR.code,
+                e.to_string(),
+                String::new(),
+            );
+        }
+
+        return model::common::Result::<bool>::http_success(true);
+    }
+
     let result = data
         .persistence()
         .config_create_or_update(
@@ -1095,6 +1163,244 @@ async fn stop_beta_config(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GrayPublishForm {
+    #[serde(alias = "dataId")]
+    pub data_id: String,
+    #[serde(default, alias = "groupName")]
+    pub group_name: String,
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    pub content: String,
+    #[serde(default, alias = "betaIps")]
+    pub beta_ips: String,
+    #[serde(default)]
+    pub tag: String,
+    #[serde(default, alias = "appName")]
+    pub app_name: String,
+    #[serde(default, alias = "srcUser")]
+    pub src_user: String,
+    #[serde(default, alias = "encryptedDataKey")]
+    pub encrypted_data_key: String,
+}
+
+/// POST /v3/admin/cs/config/gray
+///
+/// Publish a gray config. Supports both beta (IP-based) and tag-based gray releases.
+/// If `betaIps` is provided, creates a beta gray config.
+/// If `tag` is provided, creates a tag-based gray config.
+#[post("gray")]
+async fn publish_gray_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    form: web::Form<GrayPublishForm>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    if form.data_id.is_empty() || form.content.is_empty() {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Required parameters 'dataId' and 'content' must be present",
+        );
+    }
+
+    let namespace_id = if form.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        form.namespace_id.clone()
+    };
+
+    let group_name = if form.group_name.is_empty() {
+        "DEFAULT_GROUP".to_string()
+    } else {
+        form.group_name.clone()
+    };
+
+    let src_user = if form.src_user.is_empty() {
+        req.extensions()
+            .get::<IdentityContext>()
+            .map(|ctx| ctx.username.clone())
+            .unwrap_or_default()
+    } else {
+        form.src_user.clone()
+    };
+
+    let src_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    // Determine gray type from parameters
+    let (gray_name, gray_rule_json) = if !form.beta_ips.is_empty() {
+        let rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_beta(
+            &form.beta_ips,
+            crate::model::gray_rule::BetaGrayRule::PRIORITY,
+        );
+        match rule_info.to_json() {
+            Ok(json) => ("beta".to_string(), json),
+            Err(e) => {
+                return model::common::Result::<String>::http_response(
+                    StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    error::SERVER_ERROR.code,
+                    error::SERVER_ERROR.message.to_string(),
+                    format!("Failed to serialize gray rule: {}", e),
+                );
+            }
+        }
+    } else if !form.tag.is_empty() {
+        let rule_info = crate::model::gray_rule::GrayRulePersistInfo::new_tag(
+            &form.tag,
+            crate::model::gray_rule::TagGrayRule::PRIORITY,
+        );
+        match rule_info.to_json() {
+            Ok(json) => (format!("tag_{}", form.tag), json),
+            Err(e) => {
+                return model::common::Result::<String>::http_response(
+                    StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                    error::SERVER_ERROR.code,
+                    error::SERVER_ERROR.message.to_string(),
+                    format!("Failed to serialize gray rule: {}", e),
+                );
+            }
+        }
+    } else {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::PARAMETER_MISSING.code,
+            error::PARAMETER_MISSING.message.to_string(),
+            "Either 'betaIps' or 'tag' must be provided",
+        );
+    };
+
+    // Check max gray version count
+    if let Ok(grays) = data
+        .persistence()
+        .config_find_all_grays(&form.data_id, &group_name, &namespace_id)
+        .await
+        && !grays.iter().any(|g| g.gray_name == gray_name)
+        && grays.len() >= 10
+    {
+        return model::common::Result::<String>::http_response(
+            StatusCode::BAD_REQUEST.as_u16(),
+            error::CONFIG_GRAY_OVER_MAX_VERSION_COUNT.code,
+            "gray config version is over max count: 10".to_string(),
+            String::new(),
+        );
+    }
+
+    if let Err(e) = data
+        .persistence()
+        .config_create_or_update_gray(
+            &form.data_id,
+            &group_name,
+            &namespace_id,
+            &form.content,
+            &gray_name,
+            &gray_rule_json,
+            &src_user,
+            &src_ip,
+            &form.app_name,
+            &form.encrypted_data_key,
+            None,
+        )
+        .await
+    {
+        return model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
+    }
+
+    model::common::Result::<bool>::http_success(true)
+}
+
+/// DELETE /v3/admin/cs/config/gray
+#[delete("gray")]
+async fn stop_gray_config(
+    req: HttpRequest,
+    data: web::Data<AppState>,
+    params: web::Query<GrayDeleteParam>,
+) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "")
+            .action(ActionTypes::Write)
+            .sign_type(SignType::Config)
+            .api_type(ApiType::AdminApi)
+            .build()
+    );
+
+    let namespace_id = if params.namespace_id.is_empty() {
+        DEFAULT_NAMESPACE_ID.to_string()
+    } else {
+        params.namespace_id.clone()
+    };
+
+    let client_ip = req
+        .connection_info()
+        .realip_remote_addr()
+        .unwrap_or_default()
+        .to_owned();
+
+    let src_user = req
+        .extensions()
+        .get::<IdentityContext>()
+        .map(|ctx| ctx.username.clone())
+        .unwrap_or_default();
+
+    let gray_name = if !params.gray_name.is_empty() {
+        params.gray_name.clone()
+    } else {
+        "beta".to_string()
+    };
+
+    if let Err(e) = data
+        .persistence()
+        .config_delete_gray(
+            &params.data_id,
+            &params.group_name,
+            &namespace_id,
+            &gray_name,
+            &client_ip,
+            &src_user,
+        )
+        .await
+    {
+        return model::common::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        );
+    }
+
+    model::common::Result::<bool>::http_success(true)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GrayDeleteParam {
+    #[serde(alias = "dataId")]
+    pub data_id: String,
+    #[serde(default, alias = "groupName")]
+    pub group_name: String,
+    #[serde(default, alias = "namespaceId")]
+    pub namespace_id: String,
+    #[serde(default, alias = "grayName")]
+    pub gray_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BatchDeleteParam {
     pub ids: String,
 }
@@ -1395,4 +1701,6 @@ pub fn routes() -> actix_web::Scope {
         .service(get_beta_config)
         .service(publish_beta_config)
         .service(stop_beta_config)
+        .service(publish_gray_config)
+        .service(stop_gray_config)
 }
