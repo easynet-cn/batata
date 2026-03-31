@@ -81,7 +81,7 @@ public class NacosAiAgentSpecTest {
      */
     @Test
     @Order(1)
-    @Disabled("AgentSpec upload via multipart not yet fully compatible with nacos-maintainer-client")
+    // AgentSpec upload via multipart - endpoint and protocol are compatible
     void testUploadAndGetAgentSpec() throws Exception {
         String specName = "aspec-upload-" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -106,7 +106,7 @@ public class NacosAiAgentSpecTest {
      */
     @Test
     @Order(2)
-    @Disabled("AgentSpec upload via multipart not yet fully compatible with nacos-maintainer-client")
+    // AgentSpec upload via multipart - endpoint and protocol are compatible
     void testFullPublishLifecycle() throws Exception {
         String specName = "aspec-lifecycle-" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -150,7 +150,7 @@ public class NacosAiAgentSpecTest {
      */
     @Test
     @Order(3)
-    @Disabled("AgentSpec upload via multipart not yet fully compatible with nacos-maintainer-client")
+    // AgentSpec upload via multipart - endpoint and protocol are compatible
     void testListAgentSpecs() throws Exception {
         String prefix = "aspec-list-" + UUID.randomUUID().toString().substring(0, 6);
         List<String> names = new ArrayList<>();

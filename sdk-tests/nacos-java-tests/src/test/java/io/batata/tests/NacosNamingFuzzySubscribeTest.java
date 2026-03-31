@@ -118,12 +118,14 @@ public class NacosNamingFuzzySubscribeTest {
      *
      * Uses fuzzyWatch(groupNamePattern, watcher) with a group pattern.
      * Registering a service in a matching group should trigger the watcher.
-     * NOTE: fuzzyWatch(groupName, watcher) treats first arg as group name pattern.
-     * Server does not deliver events for group-only pattern matching yet.
+     * NOTE: fuzzyWatch(groupName, watcher) sets serviceNamePattern=".*" (ANY_PATTERN).
+     * SDK bug: FuzzyGroupKeyPattern.itemMatched(".*", name) treats ".*" as prefix "." match,
+     * so client-side filtering drops all notifications for normal service names.
+     * This affects both Nacos and Batata servers.
      */
     @Test
     @Order(2)
-    @Disabled("Naming fuzzy watch with group-only pattern not yet delivering events")
+    @Disabled("SDK bug: FuzzyGroupKeyPattern.itemMatched treats ANY_PATTERN '.*' as prefix '.' match, drops notifications")
     void testFuzzyWatchWithGroupPattern() throws NacosException, InterruptedException {
         String uniqueSuffix = UUID.randomUUID().toString().substring(0, 8);
         String groupPattern = "NFSGROUP-" + uniqueSuffix + "*";
@@ -149,9 +151,9 @@ public class NacosNamingFuzzySubscribeTest {
             }
         };
 
-        // Watch using group pattern
+        // Watch using group pattern - wait for server to complete init sync
         namingService.fuzzyWatch(groupPattern, watcher);
-        Thread.sleep(2000);
+        Thread.sleep(5000);
 
         // Register service in matching group
         namingService.registerInstance(serviceName, group, "192.168.100.2", 8080);
@@ -415,7 +417,6 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(7)
-    @Disabled("SDK future.get() times out - FINISH_FUZZY_WATCH_INIT_NOTIFY not properly completing the Future")
     void testFuzzyWatchWithServiceKeys() throws NacosException, InterruptedException, ExecutionException, TimeoutException {
         String uniquePrefix = "nfs007-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";
@@ -465,7 +466,6 @@ public class NacosNamingFuzzySubscribeTest {
      */
     @Test
     @Order(8)
-    @Disabled("Real-time event sync type shows FUZZY_WATCH_INIT_NOTIFY instead of FUZZY_WATCH_RESOURCE_CHANGED")
     void testFuzzyWatchSyncType() throws NacosException, InterruptedException {
         String uniquePrefix = "nfs008-" + UUID.randomUUID().toString().substring(0, 8);
         String servicePattern = uniquePrefix + "*";

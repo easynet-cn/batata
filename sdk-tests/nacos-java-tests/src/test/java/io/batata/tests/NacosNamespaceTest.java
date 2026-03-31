@@ -53,7 +53,7 @@ public class NacosNamespaceTest {
     @AfterAll
     static void teardown() throws Exception {
         if (maintainerService != null) {
-            maintainerService.close();
+            maintainerService.shutdown();
         }
     }
 

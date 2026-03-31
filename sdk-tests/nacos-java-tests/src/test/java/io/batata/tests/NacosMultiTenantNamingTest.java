@@ -69,7 +69,7 @@ public class NacosMultiTenantNamingTest {
         if (defaultNamingService != null) defaultNamingService.shutDown();
         try { maintainerService.deleteNamespace(namespace1); } catch (Exception ignored) {}
         try { maintainerService.deleteNamespace(namespace2); } catch (Exception ignored) {}
-        maintainerService.close();
+        maintainerService.shutdown();
     }
 
     // ==================== P0: Same IP/Port Cross-Namespace Isolation ====================

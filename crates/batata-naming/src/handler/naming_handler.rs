@@ -1051,17 +1051,19 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                     matched.len(),
                     self.naming_service.get_all_service_keys().len()
                 );
-                if !matched.is_empty() {
+                {
                     let batches = divide_into_batches(&matched, FUZZY_WATCH_BATCH_SIZE);
-                    let total_batch = batches.len() as i32;
+                    let total_batch = batches.len().max(1) as i32;
                     let conn_mgr = self.connection_manager.clone();
                     let conn_id = connection_id.clone();
                     let watch_mgr = self.naming_fuzzy_watch_manager.clone();
                     let ns = pattern.namespace.clone();
                     let gp = pattern.group_pattern.clone();
                     let sp = pattern.service_name_pattern.clone();
+                    let gkp = group_key_pattern.clone();
 
                     tokio::spawn(async move {
+                        // Send batches of matching services
                         for (batch_idx, batch) in batches.iter().enumerate() {
                             let current_batch = (batch_idx + 1) as i32;
                             let contexts: HashSet<NamingContext> = batch
@@ -1073,7 +1075,7 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                                 .collect();
 
                             let mut sync_req = NamingFuzzyWatchSyncRequest::new();
-                            sync_req.group_key_pattern = format!("{}>>{}>>{}", ns, gp, sp);
+                            sync_req.group_key_pattern = gkp.clone();
                             sync_req.pattern_namespace = ns.clone();
                             sync_req.pattern_group_name = gp.clone();
                             sync_req.pattern_service_name = sp.clone();
@@ -1094,8 +1096,10 @@ impl PayloadHandler for NamingFuzzyWatchHandler {
                             }
                         }
 
-                        // Send FINISH notification
+                        // Always send FINISH notification (even when no matches)
+                        // to complete SDK initialization
                         let mut finish_req = NamingFuzzyWatchSyncRequest::new();
+                        finish_req.group_key_pattern = gkp;
                         finish_req.pattern_namespace = ns;
                         finish_req.pattern_group_name = gp;
                         finish_req.pattern_service_name = sp;
@@ -1240,16 +1244,17 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
                 {
                     warn!("Fuzzy watch match count exceeded: {}", e);
                     // Continue with response but don't push batches
-                } else if !matched.is_empty() {
+                } else {
                     // Divide into batches and push asynchronously
                     let batches = divide_into_batches(&matched, FUZZY_WATCH_BATCH_SIZE);
-                    let total_batch = batches.len() as i32;
+                    let total_batch = batches.len().max(1) as i32;
 
                     let conn_mgr = self.connection_manager.clone();
                     let conn_id = connection_id.clone();
                     let ns = namespace.clone();
                     let gp = group_pattern.clone();
                     let sp = service_pattern.clone();
+                    let gkp = group_key_pattern.clone();
                     let watch_mgr = self.naming_fuzzy_watch_manager.clone();
 
                     // Spawn async task to push batches (don't block the handler)
@@ -1266,7 +1271,7 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
                                 .collect();
 
                             let mut sync_req = NamingFuzzyWatchSyncRequest::new();
-                            sync_req.group_key_pattern = format!("{}>>{}>>{}", ns, gp, sp);
+                            sync_req.group_key_pattern = gkp.clone();
                             sync_req.pattern_namespace = ns.clone();
                             sync_req.pattern_group_name = gp.clone();
                             sync_req.pattern_service_name = sp.clone();
@@ -1280,29 +1285,17 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
                             let sent = conn_mgr.push_message(&conn_id, push_payload).await;
 
                             if sent {
-                                // Mark these keys as received
                                 for key in batch {
                                     watch_mgr.mark_received(&conn_id, key);
                                 }
-                                debug!(
-                                    connection_id = %conn_id,
-                                    batch = current_batch,
-                                    total = total_batch,
-                                    count = batch.len(),
-                                    "Pushed fuzzy watch init batch"
-                                );
                             } else {
-                                warn!(
-                                    connection_id = %conn_id,
-                                    batch = current_batch,
-                                    "Failed to push fuzzy watch init batch"
-                                );
-                                break; // Stop sending if connection is lost
+                                break;
                             }
                         }
 
-                        // Send FINISH notification
+                        // Always send FINISH notification to complete SDK initialization
                         let mut finish_req = NamingFuzzyWatchSyncRequest::new();
+                        finish_req.group_key_pattern = gkp;
                         finish_req.pattern_namespace = ns;
                         finish_req.pattern_group_name = gp;
                         finish_req.pattern_service_name = sp;
@@ -1313,13 +1306,6 @@ impl PayloadHandler for NamingFuzzyWatchSyncHandler {
 
                         let finish_payload = finish_req.build_server_push_payload();
                         conn_mgr.push_message(&conn_id, finish_payload).await;
-
-                        debug!(
-                            connection_id = %conn_id,
-                            total_services = matched.len(),
-                            total_batches = total_batch,
-                            "Fuzzy watch init sync completed"
-                        );
                     });
                 }
             }

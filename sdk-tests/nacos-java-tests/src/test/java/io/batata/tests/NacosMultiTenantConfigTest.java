@@ -58,7 +58,7 @@ public class NacosMultiTenantConfigTest {
                 // Ignore cleanup errors
             }
         }
-        maintainerService.close();
+        maintainerService.shutdown();
     }
 
     private ConfigService createConfigService(String namespace) throws NacosException {

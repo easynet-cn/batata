@@ -16,8 +16,8 @@ use crate::{
 };
 
 use crate::api::{
-    grpc::{Payload, bi_request_stream_server::BiRequestStream},
-    remote::model::ConnectionSetupRequest,
+    grpc::{Metadata, Payload, bi_request_stream_server::BiRequestStream},
+    remote::model::{ConnectionSetupRequest, ResponseCode},
 };
 
 use batata_api::model::APPNAME;
@@ -199,6 +199,30 @@ pub fn check_server_identity(
         Err(Status::permission_denied(
             "request not from authorized cluster node",
         ))
+    }
+}
+
+/// Build an auth error response as a gRPC Payload (not a Status error).
+/// Nacos returns auth failures as successful gRPC responses with errorCode=403
+/// in the response body. The SDK checks response.errorCode, not gRPC Status.
+const NO_RIGHT: i32 = 403;
+
+fn build_auth_error_payload(response_type: &str, error_code: i32, message: &str) -> Payload {
+    let response = serde_json::json!({
+        "resultCode": ResponseCode::Fail.code(),
+        "errorCode": error_code,
+        "success": false,
+        "message": message,
+    });
+    Payload {
+        metadata: Some(Metadata {
+            r#type: response_type.to_string(),
+            ..Default::default()
+        }),
+        body: Some(prost_types::Any {
+            type_url: String::new(),
+            value: serde_json::to_vec(&response).unwrap_or_default(),
+        }),
     }
 }
 
@@ -448,12 +472,19 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
             // 4. Check if enableAuth(secured) returns true
             // 5. Validate identity
             // 6. Validate authority (permission)
+            // Derive response type from request type (e.g., ConfigQueryRequest -> ConfigQueryResponse)
+            let response_type = message_type.replace("Request", "Response");
+
             let auth_requirement = handler.auth_requirement();
             match auth_requirement {
                 AuthRequirement::None => {}
                 AuthRequirement::Internal => {
                     // INNER_API: check server identity first
-                    check_server_identity(self.handler_registry.auth_service(), payload)?;
+                    if let Err(e) = check_server_identity(self.handler_registry.auth_service(), payload) {
+                        return Ok(Response::new(build_auth_error_payload(
+                            &response_type, NO_RIGHT, &e.message(),
+                        )));
+                    }
                 }
                 AuthRequirement::Read | AuthRequirement::Write => {
                     // Non-INNER_API: full auth flow
@@ -471,7 +502,11 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                             // Validate identity and load roles from database
                             let auth_context =
                                 resolve_auth_context_from_payload(auth_service, payload).await;
-                            check_authentication(&auth_context)?;
+                            if let Err(e) = check_authentication(&auth_context) {
+                                return Ok(Response::new(build_auth_error_payload(
+                                    &response_type, NO_RIGHT, &e.message(),
+                                )));
+                            }
 
                             // Validate authority (permission)
                             if let Some((resource, action)) = handler.resource_from_payload(payload)
@@ -482,13 +517,17 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                                     let permissions = auth_service
                                         .load_permissions_for_roles(&auth_context.roles)
                                         .await;
-                                    check_authority(
+                                    if let Err(e) = check_authority(
                                         auth_service,
                                         &auth_context,
                                         &resource,
                                         action,
                                         &permissions,
-                                    )?;
+                                    ) {
+                                        return Ok(Response::new(build_auth_error_payload(
+                                            &response_type, NO_RIGHT, &e.message(),
+                                        )));
+                                    }
                                 }
                             }
                         }
@@ -771,7 +810,13 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     message_type,
                                     e.message()
                                 );
-                                if let Err(send_err) = tx.send(Err(e)).await {
+                                // Return auth error as a response payload (not gRPC Status)
+                                // to match Nacos behavior - SDK checks errorCode in response body
+                                let resp_type = message_type.replace("Request", "Response");
+                                let auth_payload = build_auth_error_payload(
+                                    &resp_type, NO_RIGHT, &e.message(),
+                                );
+                                if let Err(send_err) = tx.send(Ok(auth_payload)).await {
                                     tracing::error!(
                                         "Failed to send auth error response: {}",
                                         send_err

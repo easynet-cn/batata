@@ -646,9 +646,10 @@ public class NacosClusterManagementTest {
 
         Thread.sleep(5000);
 
-        // Get service list with pagination - use larger page size to ensure all services are returned
+        // Get service list with pagination - use large enough page size to cover all services
+        // Other tests may have registered many services, so we need a page large enough
         com.alibaba.nacos.api.naming.pojo.ListView<String> serviceList =
-                namingService.getServicesOfServer(1, 200, DEFAULT_GROUP);
+                namingService.getServicesOfServer(1, 10000, DEFAULT_GROUP);
 
         assertNotNull(serviceList, "Service list should not be null");
         assertNotNull(serviceList.getData(), "Service data list should not be null");

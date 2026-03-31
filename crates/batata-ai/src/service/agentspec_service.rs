@@ -15,6 +15,20 @@ use tracing::debug;
 
 use crate::model::agentspec::*;
 
+/// Parse ISO8601 datetime string to epoch milliseconds
+fn parse_datetime_to_millis(s: &str) -> Option<i64> {
+    // Try chrono parsing for ISO8601 with timezone
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp_millis());
+    }
+    // Try parsing as "YYYY-MM-DD HH:MM:SS" (no timezone)
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Some(dt.and_utc().timestamp_millis());
+    }
+    // Try parsing as epoch millis string
+    s.parse::<i64>().ok()
+}
+
 /// AgentSpec operation service backed by ai_resource/ai_resource_version tables
 pub struct AgentSpecOperationService {
     persistence: Arc<dyn PersistenceService>,
@@ -76,7 +90,7 @@ impl AgentSpecOperationService {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
             description: resource.description.clone(),
-            update_time: resource.gmt_modified.clone(),
+            update_time: resource.gmt_modified.as_deref().and_then(parse_datetime_to_millis),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
             from: Some(resource.from.clone()),
@@ -95,8 +109,8 @@ impl AgentSpecOperationService {
             status: v.status.clone(),
             author: v.author.clone(),
             description: v.description.clone(),
-            create_time: v.gmt_create.clone(),
-            update_time: v.gmt_modified.clone(),
+            create_time: v.gmt_create.as_deref().and_then(parse_datetime_to_millis),
+            update_time: v.gmt_modified.as_deref().and_then(parse_datetime_to_millis),
             publish_pipeline_info: v.publish_pipeline_info.clone(),
             download_count: v.download_count,
         }
@@ -170,7 +184,7 @@ impl AgentSpecOperationService {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
             description: resource.description.clone(),
-            update_time: resource.gmt_modified.clone(),
+            update_time: resource.gmt_modified.as_deref().and_then(parse_datetime_to_millis),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
             from: Some(resource.from.clone()),
@@ -785,7 +799,7 @@ impl AgentSpecOperationService {
                 namespace_id: r.namespace_id.clone(),
                 name: r.name.clone(),
                 description: r.description.clone(),
-                update_time: r.gmt_modified.clone(),
+                update_time: r.gmt_modified.as_deref().and_then(parse_datetime_to_millis),
             })
             .collect();
         let total = filtered.len() as u64;

@@ -1295,12 +1295,13 @@ public class NacosAuthRbacTest {
             assertEquals("revoke.test=value", content);
             userConfig.shutDown();
 
-            // Revoke permission
+            // Revoke permission and remove role binding to ensure clean revocation
             httpDelete("/nacos/v3/auth/permission?role=" + URLEncoder.encode(role, "UTF-8")
                     + "&resource=" + URLEncoder.encode(resource, "UTF-8")
                     + "&action=rw");
-            // Wait for cache to expire or be invalidated
-            Thread.sleep(2000);
+            httpDelete("/nacos/v3/auth/role?role=" + role + "&username=" + user);
+            // Wait for cache invalidation to propagate
+            Thread.sleep(3000);
 
             // User should no longer be able to read config
             ConfigService userConfig2 = createConfigService(user, TEST_PASSWORD);

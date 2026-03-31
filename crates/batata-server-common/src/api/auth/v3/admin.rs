@@ -41,10 +41,12 @@ async fn init_admin(data: web::Data<AppState>, form: web::Form<InitAdminData>) -
         }));
     }
 
-    if batata_api::validation::validate_password(&password).is_err() {
+    // Skip strict password validation for init_admin (bootstrap endpoint)
+    // to allow Nacos-compatible default "nacos"/"nacos" credentials
+    if password.len() > batata_api::validation::MAX_PASSWORD_LENGTH {
         return HttpResponse::BadRequest().json(serde_json::json!({
             "code": 400,
-            "message": "invalid password: must be 6-128 characters"
+            "message": format!("invalid password: must be at most {} characters", batata_api::validation::MAX_PASSWORD_LENGTH)
         }));
     }
 

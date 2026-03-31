@@ -629,12 +629,14 @@ async fn update_metadata(
         Some(batata_api::naming::RegisterSource::Batata),
     );
 
+    let mut updated_ips = Vec::new();
     for instance in instances {
         let matches = instance_keys
             .iter()
             .any(|(ip, port)| instance.ip == *ip && instance.port == *port);
 
         if matches {
+            updated_ips.push(format!("{}:{}", instance.ip, instance.port));
             let mut updated_instance = instance.clone();
             for (k, v) in &metadata {
                 updated_instance.metadata.insert(k.clone(), v.clone());
@@ -648,7 +650,9 @@ async fn update_metadata(
         }
     }
 
-    Result::<bool>::http_success(true)
+    // Return InstanceMetadataBatchResult format: {"updated": ["ip:port", ...]}
+    let batch_result = serde_json::json!({ "updated": updated_ips });
+    Result::<serde_json::Value>::http_success(batch_result)
 }
 
 /// PUT /v3/admin/ns/instance/partial
@@ -858,12 +862,14 @@ async fn delete_metadata_batch(
         Some(batata_api::naming::RegisterSource::Batata),
     );
 
+    let mut updated_ips = Vec::new();
     for instance in instances {
         let matches = instance_keys
             .iter()
             .any(|(ip, port)| instance.ip == *ip && instance.port == *port);
 
         if matches {
+            updated_ips.push(format!("{}:{}", instance.ip, instance.port));
             let mut updated_instance = instance.clone();
             for key in &keys_to_delete {
                 updated_instance.metadata.remove(key);
@@ -877,7 +883,8 @@ async fn delete_metadata_batch(
         }
     }
 
-    Result::<bool>::http_success(true)
+    let batch_result = serde_json::json!({ "updated": updated_ips });
+    Result::<serde_json::Value>::http_success(batch_result)
 }
 
 pub fn routes() -> actix_web::Scope {

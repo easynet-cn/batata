@@ -91,7 +91,7 @@ pub struct AgentSpecMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
+    pub update_time: Option<i64>,
     #[serde(default)]
     pub enable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,7 +121,7 @@ pub struct AgentSpecSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
+    pub update_time: Option<i64>,
     #[serde(default)]
     pub enable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -151,9 +151,9 @@ pub struct AgentSpecVersionSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create_time: Option<String>,
+    pub create_time: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
+    pub update_time: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_pipeline_info: Option<String>,
     pub download_count: i64,
@@ -171,7 +171,7 @@ pub struct AgentSpecBasicInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_time: Option<String>,
+    pub update_time: Option<i64>,
 }
 
 // ============================================================================

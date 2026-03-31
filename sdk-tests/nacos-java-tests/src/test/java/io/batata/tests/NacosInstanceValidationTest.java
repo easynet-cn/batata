@@ -173,7 +173,7 @@ public class NacosInstanceValidationTest {
      */
     @Test
     @Order(4)
-    @Disabled("SDK validates heartbeat interval client-side, causing validation errors")
+    @Disabled("SDK-side: client validates heartbeat interval < timeout < delete_timeout, test metadata values don't satisfy this")
     void testInstanceTtlAutoDeregister() throws NacosException, InterruptedException {
         String serviceName = "niv-ttl-" + UUID.randomUUID().toString().substring(0, 8);
 
