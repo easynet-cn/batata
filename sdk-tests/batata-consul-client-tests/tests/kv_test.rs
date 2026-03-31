@@ -13,7 +13,6 @@ fn kv_pair(key: &str, value: &str) -> KVPair {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_put_and_get() {
     let client = common::create_client();
     let key = format!("test/kv/put-get/{}", common::test_id());
@@ -38,7 +37,6 @@ async fn test_kv_put_and_get() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_delete() {
     let client = common::create_client();
     let key = format!("test/kv/delete/{}", common::test_id());
@@ -59,7 +57,6 @@ async fn test_kv_delete() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_list() {
     let client = common::create_client();
     let prefix = format!("test/kv/list/{}", common::test_id());
@@ -94,7 +91,6 @@ async fn test_kv_list() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_keys() {
     let client = common::create_client();
     let prefix = format!("test/kv/keys/{}", common::test_id());
@@ -128,7 +124,6 @@ async fn test_kv_keys() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_cas() {
     let client = common::create_client();
     let key = format!("test/kv/cas/{}", common::test_id());
@@ -171,7 +166,6 @@ async fn test_kv_cas() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_acquire_release() {
     let client = common::create_client();
     let key = format!("test/kv/lock/{}", common::test_id());
@@ -229,7 +223,6 @@ async fn test_kv_acquire_release() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_delete_tree() {
     let client = common::create_client();
     let prefix = format!("test/kv/tree/{}", common::test_id());
@@ -261,7 +254,6 @@ async fn test_kv_delete_tree() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_flags() {
     let client = common::create_client();
     let key = format!("test/kv/flags/{}", common::test_id());
@@ -281,7 +273,6 @@ async fn test_kv_flags() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_kv_large_value() {
     let client = common::create_client();
     let key = format!("test/kv/large/{}", common::test_id());

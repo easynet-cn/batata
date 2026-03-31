@@ -35,6 +35,38 @@ path = "tests/change_event_test.rs"
 name = "config_advanced_test"
 path = "tests/config_advanced_test.rs"
 
+[[test]]
+name = "redo_test"
+path = "tests/redo_test.rs"
+
+[[test]]
+name = "connection_test"
+path = "tests/connection_test.rs"
+
+[[test]]
+name = "traits_test"
+path = "tests/traits_test.rs"
+
+[[test]]
+name = "config_listener_test"
+path = "tests/config_listener_test.rs"
+
+[[test]]
+name = "instance_selection_test"
+path = "tests/instance_selection_test.rs"
+
+[[test]]
+name = "service_subscribe_test"
+path = "tests/service_subscribe_test.rs"
+
+[[test]]
+name = "parameter_validation_test"
+path = "tests/parameter_validation_test.rs"
+
+[[test]]
+name = "weight_test"
+path = "tests/weight_test.rs"
+
 [dev-dependencies]
 batata-client = { path = "../../crates/batata-client" }
 batata-api = { path = "../../crates/batata-api" }

@@ -8,7 +8,6 @@ mod common;
 // ==================== Config Export & Import ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_export_import() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -80,7 +79,6 @@ async fn test_config_export_import() {
 // ==================== Config Batch Delete ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_batch_delete() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -134,7 +132,6 @@ async fn test_config_batch_delete() {
 // ==================== Config Clone ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_clone() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -199,7 +196,6 @@ async fn test_config_clone() {
 // ==================== Config History Detail ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_history_detail() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -244,7 +240,6 @@ async fn test_config_history_detail() {
 // ==================== Config History Previous ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_history_previous() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -296,7 +291,6 @@ async fn test_config_history_previous() {
 // ==================== Config Listeners by IP ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_listeners_by_ip() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -320,7 +314,6 @@ async fn test_config_listeners_by_ip() {
 // ==================== Config List with Filters ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_list_with_filters() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -384,7 +377,6 @@ async fn test_config_list_with_filters() {
 // ==================== Config Metadata Update ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_metadata_update() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();

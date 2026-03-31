@@ -30,7 +30,6 @@ fn test_instance(ip: &str, port: i32) -> Instance {
 // ==================== Register & Discover ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_register_and_discover() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -51,7 +50,6 @@ async fn test_register_and_discover() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_deregister_instance() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -72,7 +70,6 @@ async fn test_deregister_instance() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_batch_register() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -94,7 +91,6 @@ async fn test_batch_register() {
 // ==================== Select Instances ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_select_instances_healthy() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -111,7 +107,6 @@ async fn test_select_instances_healthy() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_select_one_healthy_instance() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -133,7 +128,6 @@ async fn test_select_one_healthy_instance() {
 // ==================== Subscribe ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_subscribe_and_notify() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -165,7 +159,6 @@ async fn test_subscribe_and_notify() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_get_subscribe_services() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -190,7 +183,6 @@ async fn test_get_subscribe_services() {
 // ==================== List Services ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_list_services() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -208,7 +200,6 @@ async fn test_list_services() {
 // ==================== Server Status ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_naming_server_status() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();

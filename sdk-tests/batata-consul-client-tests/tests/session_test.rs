@@ -3,7 +3,6 @@ mod common;
 use batata_consul_client::SessionEntry;
 
 #[tokio::test]
-#[ignore]
 async fn test_session_create_and_destroy() {
     let client = common::create_client();
 
@@ -44,7 +43,6 @@ async fn test_session_create_and_destroy() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_session_info() {
     let client = common::create_client();
     let name = format!("session-info-{}", common::test_id());
@@ -81,7 +79,6 @@ async fn test_session_info() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_session_list() {
     let client = common::create_client();
     let mut session_ids = Vec::new();
@@ -121,7 +118,6 @@ async fn test_session_list() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_session_node() {
     let client = common::create_client();
 
@@ -161,7 +157,6 @@ async fn test_session_node() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_session_renew() {
     let client = common::create_client();
 
@@ -196,7 +191,6 @@ async fn test_session_renew() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_session_create_no_checks() {
     let client = common::create_client();
 
@@ -229,7 +223,6 @@ async fn test_session_create_no_checks() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_session_with_behavior() {
     let client = common::create_client();
 

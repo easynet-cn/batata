@@ -1,7 +1,6 @@
 mod common;
 
 #[tokio::test]
-#[ignore]
 async fn test_status_leader() {
     let client = common::create_client();
 
@@ -15,7 +14,6 @@ async fn test_status_leader() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_status_peers() {
     let client = common::create_client();
 
@@ -39,7 +37,6 @@ async fn test_status_peers() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_status_leader_format() {
     let client = common::create_client();
 

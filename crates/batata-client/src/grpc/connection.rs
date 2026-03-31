@@ -174,6 +174,35 @@ impl GrpcConnection {
         self.channel.clone()
     }
 
+    /// Perform a health check on the given channel.
+    ///
+    /// Sends a ServerCheckRequest and verifies the response.
+    /// Used by the health check loop without holding the connection lock.
+    pub async fn health_check(channel: &Channel) -> Result<bool> {
+        let mut check_req = ServerCheckRequest::new();
+        check_req.internal_request.request.request_id = Uuid::new_v4().to_string();
+
+        let metadata = Metadata {
+            r#type: check_req.request_type().to_string(),
+            ..Default::default()
+        };
+        let payload = check_req.to_payload(Some(metadata));
+
+        let mut client = RequestClient::new(channel.clone());
+        match client.request(payload).await {
+            Ok(response) => {
+                let resp_payload = response.into_inner();
+                let check_resp: ServerCheckResponse =
+                    super::deserialize_payload(&resp_payload);
+                Ok(check_resp.response.success || check_resp.response.result_code == 200)
+            }
+            Err(e) => {
+                warn!("Health check request failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
     /// Perform server check to verify server and get connection_id.
     async fn server_check(channel: &Channel, access_token: Option<&str>) -> Result<String> {
         let mut check_req = ServerCheckRequest::new();

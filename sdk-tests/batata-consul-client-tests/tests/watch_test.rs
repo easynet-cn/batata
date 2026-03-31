@@ -17,7 +17,6 @@ fn b64(s: &str) -> String {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_watch_kv_change() {
     common::init_tracing();
     let client = Arc::new(common::create_client());
@@ -93,7 +92,6 @@ async fn test_watch_kv_change() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_watch_config_defaults() {
     let config = WatchConfig::default();
 
@@ -114,7 +112,6 @@ async fn test_watch_config_defaults() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_watch_error_recovery() {
     common::init_tracing();
 
@@ -161,7 +158,6 @@ async fn test_watch_error_recovery() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_watch_key_helper() {
     common::init_tracing();
     let client = Arc::new(common::create_client());
@@ -226,7 +222,6 @@ async fn test_watch_key_helper() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_watch_index_tracking() {
     common::init_tracing();
     let client = common::create_client();
@@ -271,7 +266,6 @@ async fn test_watch_index_tracking() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_watch_cancel() {
     common::init_tracing();
     let client = Arc::new(common::create_client());

@@ -3,7 +3,6 @@
 mod common;
 
 #[tokio::test]
-#[ignore]
 async fn test_operator_raft_config() {
     common::init_tracing();
     let client = common::create_client();
@@ -36,7 +35,6 @@ async fn test_operator_raft_config() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_operator_autopilot_get_config() {
     common::init_tracing();
     let client = common::create_client();
@@ -55,7 +53,6 @@ async fn test_operator_autopilot_get_config() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_operator_autopilot_set_config() {
     common::init_tracing();
     let client = common::create_client();
@@ -94,7 +91,6 @@ async fn test_operator_autopilot_set_config() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_operator_autopilot_health() {
     common::init_tracing();
     let client = common::create_client();
@@ -123,7 +119,6 @@ async fn test_operator_autopilot_health() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_operator_autopilot_state() {
     common::init_tracing();
     let client = common::create_client();
@@ -140,7 +135,6 @@ async fn test_operator_autopilot_state() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_operator_keyring_list() {
     common::init_tracing();
     let client = common::create_client();
@@ -176,7 +170,6 @@ async fn test_operator_keyring_list() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_operator_usage() {
     common::init_tracing();
     let client = common::create_client();
@@ -188,7 +181,6 @@ async fn test_operator_usage() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_operator_raft_transfer_leader() {
     common::init_tracing();
     let client = common::create_client();

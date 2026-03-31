@@ -9,6 +9,7 @@ pub mod fuzzy_watch;
 pub mod instances_diff;
 pub mod listener;
 pub mod protect_mode;
+pub mod redo;
 pub mod service_info_holder;
 
 use std::sync::Arc;
@@ -33,27 +34,22 @@ use crate::error::Result;
 use crate::grpc::{GrpcClient, ServerPushHandler};
 
 use self::listener::{EventListener, NamingEvent};
+use self::redo::{InstanceRedoData, NamingGrpcRedoService, SubscriberRedoData};
 use self::service_info_holder::{ServiceInfoHolder, build_service_key};
 
 /// Nacos-compatible naming service backed by gRPC.
+///
+/// Uses `NamingGrpcRedoService` for state-tracked instance registration and
+/// subscription redo, matching the Nacos Java SDK pattern.
 pub struct BatataNamingService {
     grpc_client: Arc<GrpcClient>,
     service_info_holder: Arc<ServiceInfoHolder>,
     /// Subscriptions: key = "groupName@@serviceName"
     subscriptions: DashMap<String, Vec<Arc<dyn EventListener>>>,
-    /// Registered instances for redo on reconnect: key = "namespace#groupName#serviceName#instanceKey"
-    registered_instances: DashMap<String, RegisteredInstance>,
+    /// Redo service with state machine for instance/subscription tracking
+    redo_service: Arc<NamingGrpcRedoService>,
     /// Whether to protect against empty service instance lists
     pub empty_protection: bool,
-}
-
-/// Stored info for a registered instance (for redo on reconnect).
-#[derive(Clone)]
-struct RegisteredInstance {
-    namespace: String,
-    group_name: String,
-    service_name: String,
-    instance: Instance,
 }
 
 impl BatataNamingService {
@@ -63,7 +59,7 @@ impl BatataNamingService {
             grpc_client,
             service_info_holder: Arc::new(ServiceInfoHolder::new()),
             subscriptions: DashMap::new(),
-            registered_instances: DashMap::new(),
+            redo_service: Arc::new(NamingGrpcRedoService::new()),
             empty_protection: false,
         }
     }
@@ -74,9 +70,14 @@ impl BatataNamingService {
             grpc_client,
             service_info_holder: Arc::new(ServiceInfoHolder::new()),
             subscriptions: DashMap::new(),
-            registered_instances: DashMap::new(),
+            redo_service: Arc::new(NamingGrpcRedoService::new()),
             empty_protection,
         }
+    }
+
+    /// Get the redo service (for external access).
+    pub fn redo_service(&self) -> &Arc<NamingGrpcRedoService> {
+        &self.redo_service
     }
 
     /// Register server push handlers on the gRPC client.
@@ -111,19 +112,22 @@ impl BatataNamingService {
         req.r#type = REGISTER_INSTANCE.to_string();
         req.instance = instance.clone();
 
+        // Cache for redo BEFORE sending (matches Nacos pattern)
+        let redo_key = build_instance_redo_key(namespace, group_name, service_name, &instance);
+        self.redo_service.cache_instance_for_redo(
+            redo_key.clone(),
+            InstanceRedoData::new(
+                namespace.to_string(),
+                group_name.to_string(),
+                service_name.to_string(),
+                instance.clone(),
+            ),
+        );
+
         let _resp: InstanceResponse = self.grpc_client.request_typed(&req).await?;
 
-        // Store for redo on reconnect
-        let redo_key = build_instance_redo_key(namespace, group_name, service_name, &instance);
-        self.registered_instances.insert(
-            redo_key,
-            RegisteredInstance {
-                namespace: namespace.to_string(),
-                group_name: group_name.to_string(),
-                service_name: service_name.to_string(),
-                instance,
-            },
-        );
+        // Mark as registered after success
+        self.redo_service.instance_registered(&redo_key);
 
         debug!(
             "Registered instance: namespace={}, group={}, service={}",
@@ -141,19 +145,23 @@ impl BatataNamingService {
         service_name: &str,
         instance: Instance,
     ) -> Result<()> {
+        let redo_key = build_instance_redo_key(namespace, group_name, service_name, &instance);
+
+        // Mark for deregistration in redo service
+        self.redo_service.instance_deregister(&redo_key);
+
         let mut req = InstanceRequest::new();
         req.naming_request.namespace = namespace.to_string();
         req.naming_request.group_name = group_name.to_string();
         req.naming_request.service_name = service_name.to_string();
         req.naming_request.request.request_id = uuid::Uuid::new_v4().to_string();
         req.r#type = DE_REGISTER_INSTANCE.to_string();
-        req.instance = instance.clone();
+        req.instance = instance;
 
         let _resp: InstanceResponse = self.grpc_client.request_typed(&req).await?;
 
-        // Remove from redo map
-        let redo_key = build_instance_redo_key(namespace, group_name, service_name, &instance);
-        self.registered_instances.remove(&redo_key);
+        // Remove from redo tracking after successful deregistration
+        self.redo_service.remove_instance_for_redo(&redo_key);
 
         debug!(
             "Deregistered instance: namespace={}, group={}, service={}",
@@ -203,15 +211,32 @@ impl BatataNamingService {
         req.subscribe = true;
         req.clusters = clusters.to_string();
 
+        // Cache subscription for redo
+        let sub_key = build_service_key(group_name, service_name);
+        self.redo_service.cache_subscriber_for_redo(
+            sub_key.clone(),
+            SubscriberRedoData::new(
+                namespace.to_string(),
+                group_name.to_string(),
+                service_name.to_string(),
+                clusters.to_string(),
+            ),
+        );
+
         let resp: SubscribeServiceResponse = self.grpc_client.request_typed(&req).await?;
 
+        // Mark subscription as registered
+        self.redo_service.subscriber_registered(&sub_key);
+
         // Cache the service info
-        let key = build_service_key(group_name, service_name);
         self.service_info_holder
-            .update(&key, resp.service_info.clone());
+            .update(&sub_key, resp.service_info.clone());
 
         // Store the listener
-        self.subscriptions.entry(key).or_default().push(listener);
+        self.subscriptions
+            .entry(sub_key)
+            .or_default()
+            .push(listener);
 
         debug!(
             "Subscribed to service: namespace={}, group={}, service={}",
@@ -239,8 +264,9 @@ impl BatataNamingService {
 
         let _resp: SubscribeServiceResponse = self.grpc_client.request_typed(&req).await?;
 
-        // Remove listeners
+        // Remove from redo tracking and listeners
         let key = build_service_key(group_name, service_name);
+        self.redo_service.remove_subscriber_for_redo(&key);
         self.subscriptions.remove(&key);
 
         debug!(
@@ -269,18 +295,19 @@ impl BatataNamingService {
 
         let _resp: BatchInstanceResponse = self.grpc_client.request_typed(&req).await?;
 
-        // Store each for redo on reconnect
+        // Cache each for redo on reconnect and mark as registered
         for instance in &instances {
             let redo_key = build_instance_redo_key(namespace, group_name, service_name, instance);
-            self.registered_instances.insert(
-                redo_key,
-                RegisteredInstance {
-                    namespace: namespace.to_string(),
-                    group_name: group_name.to_string(),
-                    service_name: service_name.to_string(),
-                    instance: instance.clone(),
-                },
+            self.redo_service.cache_instance_for_redo(
+                redo_key.clone(),
+                InstanceRedoData::new(
+                    namespace.to_string(),
+                    group_name.to_string(),
+                    service_name.to_string(),
+                    instance.clone(),
+                ),
             );
+            self.redo_service.instance_registered(&redo_key);
         }
 
         debug!(
@@ -312,10 +339,10 @@ impl BatataNamingService {
 
         let _resp: BatchInstanceResponse = self.grpc_client.request_typed(&req).await?;
 
-        // Remove from redo map
+        // Mark for removal in redo service
         for instance in &instances {
             let redo_key = build_instance_redo_key(namespace, group_name, service_name, instance);
-            self.registered_instances.remove(&redo_key);
+            self.redo_service.remove_instance_for_redo(&redo_key);
         }
 
         debug!(
@@ -515,6 +542,76 @@ impl BatataNamingService {
     ///
     /// Returns "UP" if the gRPC connection is active, "DOWN" otherwise.
     /// Equivalent to Nacos `getServerStatus()`.
+    // ========================================================================
+    // Convenience methods matching Nacos Java SDK overloads
+    // ========================================================================
+
+    /// Register instance with just service name, IP, and port.
+    /// Uses empty namespace and DEFAULT_GROUP.
+    pub async fn register_instance_simple(
+        &self,
+        service_name: &str,
+        ip: &str,
+        port: i32,
+    ) -> Result<()> {
+        let instance = Instance::new(ip.to_string(), port);
+        self.register_instance("", "DEFAULT_GROUP", service_name, instance)
+            .await
+    }
+
+    /// Get all instances with explicit subscribe flag.
+    /// When `subscribe=false`, always queries the server directly.
+    pub async fn get_all_instances_with_subscribe(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        subscribe: bool,
+    ) -> Result<Vec<Instance>> {
+        if subscribe {
+            // Try cache first
+            let key = build_service_key(group_name, service_name);
+            if let Some(cached) = self.service_info_holder.get(&key) {
+                if !cached.hosts.is_empty() {
+                    return Ok(cached.hosts);
+                }
+            }
+        }
+        // Direct server query
+        self.get_all_instances(namespace, group_name, service_name)
+            .await
+    }
+
+    /// Select instances with explicit subscribe flag.
+    /// Matches Nacos `selectInstances(serviceName, clusters, healthy, subscribe)`.
+    pub async fn select_instances_full(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        service_name: &str,
+        clusters: &[String],
+        healthy: bool,
+        subscribe: bool,
+    ) -> Result<Vec<Instance>> {
+        let all = self
+            .get_all_instances_with_subscribe(namespace, group_name, service_name, subscribe)
+            .await?;
+        let filtered = all
+            .into_iter()
+            .filter(|i| {
+                let health_match = if healthy {
+                    i.healthy && i.enabled
+                } else {
+                    !i.healthy || !i.enabled
+                };
+                let cluster_match =
+                    clusters.is_empty() || clusters.iter().any(|c| c == &i.cluster_name);
+                health_match && cluster_match
+            })
+            .collect();
+        Ok(filtered)
+    }
+
     pub async fn get_server_status(&self) -> String {
         if self.grpc_client.is_connected().await {
             "UP".to_string()
@@ -527,10 +624,8 @@ impl BatataNamingService {
     /// Clears subscriptions, registered instances, and cached service info.
     pub async fn shutdown(&self) {
         info!("Shutting down naming service...");
-        // Clear subscriptions
         self.subscriptions.clear();
-        // Clear registered instances
-        self.registered_instances.clear();
+        self.redo_service.shutdown();
         info!("Naming service shutdown complete");
     }
 
@@ -592,53 +687,50 @@ impl BatataNamingService {
     }
 
     /// Re-register all instances and re-subscribe all services (called after reconnect).
+    ///
+    /// Uses the `NamingGrpcRedoService` state machine to find items that need
+    /// re-registration or re-subscription, matching the Nacos Java pattern.
     pub async fn redo(&self) -> Result<()> {
-        // Re-register instances
-        let instances: Vec<RegisteredInstance> = self
-            .registered_instances
-            .iter()
-            .map(|e| e.value().clone())
-            .collect();
+        // Signal the redo service that we're connected
+        self.redo_service.on_connected();
 
-        for reg in &instances {
+        // Re-register instances that need redo
+        let redo_instances = self.redo_service.find_instance_redo_data();
+        for data in &redo_instances {
             let mut req = InstanceRequest::new();
-            req.naming_request.namespace = reg.namespace.clone();
-            req.naming_request.group_name = reg.group_name.clone();
-            req.naming_request.service_name = reg.service_name.clone();
+            req.naming_request.namespace = data.namespace.clone();
+            req.naming_request.group_name = data.group_name.clone();
+            req.naming_request.service_name = data.service_name.clone();
             req.naming_request.request.request_id = uuid::Uuid::new_v4().to_string();
             req.r#type = REGISTER_INSTANCE.to_string();
-            req.instance = reg.instance.clone();
+            req.instance = data.instance.clone();
 
             match self
                 .grpc_client
                 .request_typed::<_, InstanceResponse>(&req)
                 .await
             {
-                Ok(_) => debug!("Re-registered instance: service={}", reg.service_name),
+                Ok(_) => {
+                    data.set_registered(true);
+                    debug!("Re-registered instance: service={}", data.service_name);
+                }
                 Err(e) => error!(
                     "Failed to re-register instance: service={}, error={}",
-                    reg.service_name, e
+                    data.service_name, e
                 ),
             }
         }
 
-        // Re-subscribe services
-        let sub_keys: Vec<String> = self.subscriptions.iter().map(|e| e.key().clone()).collect();
-
-        for key in &sub_keys {
-            // Parse key = "groupName@@serviceName"
-            let parts: Vec<&str> = key.splitn(2, "@@").collect();
-            if parts.len() != 2 {
-                continue;
-            }
-            let group_name = parts[0];
-            let service_name = parts[1];
-
+        // Re-subscribe services that need redo
+        let redo_subs = self.redo_service.find_subscriber_redo_data();
+        for (key, data) in &redo_subs {
             let mut req = SubscribeServiceRequest::new();
-            req.naming_request.group_name = group_name.to_string();
-            req.naming_request.service_name = service_name.to_string();
+            req.naming_request.namespace = data.namespace.clone();
+            req.naming_request.group_name = data.group_name.clone();
+            req.naming_request.service_name = data.service_name.clone();
             req.naming_request.request.request_id = uuid::Uuid::new_v4().to_string();
             req.subscribe = true;
+            req.clusters = data.clusters.clone();
 
             match self
                 .grpc_client
@@ -646,6 +738,7 @@ impl BatataNamingService {
                 .await
             {
                 Ok(resp) => {
+                    data.set_registered(true);
                     self.service_info_holder.update(key, resp.service_info);
                     debug!("Re-subscribed to service: {}", key);
                 }
@@ -657,8 +750,8 @@ impl BatataNamingService {
 
         info!(
             "Redo complete: {} instances, {} subscriptions",
-            instances.len(),
-            sub_keys.len()
+            redo_instances.len(),
+            redo_subs.len()
         );
 
         Ok(())
@@ -700,6 +793,151 @@ impl ServerPushHandler for NotifySubscriberHandler {
         // Send acknowledgment
         let resp = NotifySubscriberResponse::new();
         Some(resp.build_payload())
+    }
+}
+
+// ============================================================================
+// NamingService trait implementation
+// ============================================================================
+
+#[async_trait::async_trait]
+impl crate::traits::NamingService for BatataNamingService {
+    async fn register_instance(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        instance: Instance,
+    ) -> Result<()> {
+        self.register_instance("", group_name, service_name, instance)
+            .await
+    }
+
+    async fn deregister_instance(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        instance: Instance,
+    ) -> Result<()> {
+        self.deregister_instance("", group_name, service_name, instance)
+            .await
+    }
+
+    async fn batch_register_instance(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        instances: Vec<Instance>,
+    ) -> Result<()> {
+        self.batch_register_instance("", group_name, service_name, instances)
+            .await
+    }
+
+    async fn batch_deregister_instance(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        instances: Vec<Instance>,
+    ) -> Result<()> {
+        self.batch_deregister_instance("", group_name, service_name, instances)
+            .await
+    }
+
+    async fn get_all_instances(
+        &self,
+        service_name: &str,
+        group_name: &str,
+    ) -> Result<Vec<Instance>> {
+        self.get_all_instances("", group_name, service_name).await
+    }
+
+    async fn get_all_instances_with_clusters(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        clusters: &[String],
+    ) -> Result<Vec<Instance>> {
+        let all = self
+            .get_all_instances("", group_name, service_name)
+            .await?;
+        if clusters.is_empty() {
+            return Ok(all);
+        }
+        Ok(all
+            .into_iter()
+            .filter(|i| clusters.iter().any(|c| c == &i.cluster_name))
+            .collect())
+    }
+
+    async fn select_instances(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        healthy: bool,
+    ) -> Result<Vec<Instance>> {
+        self.select_instances("", group_name, service_name, healthy)
+            .await
+    }
+
+    async fn select_instances_with_clusters(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        clusters: &[String],
+        healthy: bool,
+    ) -> Result<Vec<Instance>> {
+        self.select_instances_with_clusters("", group_name, service_name, clusters, healthy)
+            .await
+    }
+
+    async fn select_one_healthy_instance(
+        &self,
+        service_name: &str,
+        group_name: &str,
+    ) -> Result<Option<Instance>> {
+        self.select_one_healthy_instance("", group_name, service_name)
+            .await
+    }
+
+    async fn subscribe(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        clusters: &str,
+        listener: Arc<dyn EventListener>,
+    ) -> Result<Vec<Instance>> {
+        self.subscribe("", group_name, service_name, clusters, listener)
+            .await
+    }
+
+    async fn unsubscribe(
+        &self,
+        service_name: &str,
+        group_name: &str,
+        clusters: &str,
+    ) -> Result<()> {
+        self.unsubscribe("", group_name, service_name, clusters)
+            .await
+    }
+
+    async fn get_services_of_server(
+        &self,
+        page_no: i32,
+        page_size: i32,
+        group_name: &str,
+    ) -> Result<crate::traits::ListView<String>> {
+        let (count, names) = self.list_services("", group_name, page_no, page_size).await?;
+        Ok(crate::traits::ListView {
+            count,
+            data: names,
+        })
+    }
+
+    async fn get_server_status(&self) -> String {
+        self.get_server_status().await
+    }
+
+    async fn shut_down(&self) {
+        self.shutdown().await;
     }
 }
 
@@ -902,27 +1140,27 @@ mod tests {
             .or_default()
             .push(listener);
 
-        // Add a registered instance
+        // Add a registered instance via redo service
         let instance = make_instance("10.0.0.1", 8080, true);
         let redo_key =
             build_instance_redo_key("public", "DEFAULT_GROUP", "test-service", &instance);
-        naming_service.registered_instances.insert(
+        naming_service.redo_service.cache_instance_for_redo(
             redo_key,
-            super::RegisteredInstance {
-                namespace: "public".to_string(),
-                group_name: "DEFAULT_GROUP".to_string(),
-                service_name: "test-service".to_string(),
+            super::redo::InstanceRedoData::new(
+                "public".to_string(),
+                "DEFAULT_GROUP".to_string(),
+                "test-service".to_string(),
                 instance,
-            },
+            ),
         );
 
         assert_eq!(naming_service.subscriptions.len(), 1);
-        assert_eq!(naming_service.registered_instances.len(), 1);
+        assert_eq!(naming_service.redo_service.instance_count(), 1);
 
         naming_service.shutdown().await;
 
         assert_eq!(naming_service.subscriptions.len(), 0);
-        assert_eq!(naming_service.registered_instances.len(), 0);
+        assert_eq!(naming_service.redo_service.instance_count(), 0);
     }
 
     #[test]

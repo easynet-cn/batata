@@ -24,7 +24,6 @@ async fn create_session(client: &batata_consul_client::ConsulClient) -> String {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_lock_acquire_and_release() {
     common::init_tracing();
     let client = common::create_client();
@@ -71,7 +70,6 @@ async fn test_lock_acquire_and_release() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_lock_contention() {
     common::init_tracing();
     let client = common::create_client();
@@ -121,7 +119,6 @@ async fn test_lock_contention() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_semaphore_acquire_and_release() {
     common::init_tracing();
     let client = common::create_client();
@@ -160,7 +157,6 @@ async fn test_semaphore_acquire_and_release() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_semaphore_limit() {
     common::init_tracing();
     let client = common::create_client();

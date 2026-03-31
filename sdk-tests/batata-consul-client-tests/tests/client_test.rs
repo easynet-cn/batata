@@ -7,7 +7,6 @@ use std::time::Duration;
 use batata_consul_client::{ConsulClient, ConsulClientConfig};
 
 #[tokio::test]
-#[ignore]
 async fn test_client_creation() {
     let config = ConsulClientConfig::new(common::CONSUL_ADDR);
     let client = ConsulClient::new(config);
@@ -27,7 +26,6 @@ async fn test_client_creation() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_client_custom_config() {
     let config = ConsulClientConfig::new(common::CONSUL_ADDR)
         .with_datacenter("dc1")
@@ -73,7 +71,6 @@ async fn test_client_custom_config() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_client_metrics_initial() {
     let client = common::create_client();
 
@@ -101,7 +98,6 @@ async fn test_client_metrics_initial() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_client_metrics_after_request() {
     let client = common::create_client();
 
@@ -126,7 +122,6 @@ async fn test_client_metrics_after_request() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_client_error_on_bad_address() {
     let config = ConsulClientConfig::new("http://127.0.0.1:19999").with_retry(0, 100); // No retries for faster failure
 
@@ -150,7 +145,6 @@ async fn test_client_error_on_bad_address() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_client_address_rotation() {
     // First address is bad, second is good
     let config = ConsulClientConfig::new("http://127.0.0.1:19999")
@@ -183,7 +177,6 @@ async fn test_client_address_rotation() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_client_retry_on_error() {
     // Point to a non-existent server to force retries
     let config = ConsulClientConfig::new("http://127.0.0.1:19999").with_retry(2, 50);
@@ -206,7 +199,6 @@ async fn test_client_retry_on_error() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_client_token_file() {
     common::init_tracing();
 

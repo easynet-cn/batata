@@ -58,7 +58,6 @@ fn test_instance_with_metadata(ip: &str, port: i32, metadata: HashMap<String, St
 // ==================== Batch Deregister ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_batch_deregister() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -96,7 +95,6 @@ async fn test_batch_deregister() {
 // ==================== Instance Metadata ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_instance_metadata() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -145,7 +143,6 @@ async fn test_instance_metadata() {
 // ==================== Instance Weight ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_instance_weight() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -204,7 +201,6 @@ async fn test_instance_weight() {
 // ==================== Multiple Clusters ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_multiple_clusters() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -288,7 +284,6 @@ async fn test_multiple_clusters() {
 // ==================== Ephemeral Flag ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_ephemeral_flag() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -330,7 +325,6 @@ async fn test_ephemeral_flag() {
 // ==================== Multiple Subscriptions ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_multiple_subscriptions() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -414,7 +408,6 @@ async fn test_multiple_subscriptions() {
 // ==================== Concurrent Register ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_concurrent_register() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();
@@ -468,7 +461,6 @@ async fn test_concurrent_register() {
 // ==================== Multi-Tenant Naming ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_multi_tenant_naming() {
     common::init_tracing();
 
@@ -547,7 +539,6 @@ async fn test_multi_tenant_naming() {
 // ==================== Service List Pagination ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_service_list_pagination() {
     common::init_tracing();
     let svc = common::create_naming_service().await.unwrap();

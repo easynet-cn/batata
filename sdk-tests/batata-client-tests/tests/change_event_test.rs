@@ -24,7 +24,6 @@ impl ConfigChangeEventListener for CaptureChangeListener {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_change_event_added_property() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -67,7 +66,6 @@ async fn test_change_event_added_property() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_change_event_modified_property() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();

@@ -9,7 +9,6 @@ use std::collections::HashMap;
 use batata_consul_client::{AgentCheckRegistration, AgentServiceRegistration};
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_self() {
     common::init_tracing();
     let client = common::create_client();
@@ -30,7 +29,6 @@ async fn test_agent_self() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_members() {
     common::init_tracing();
     let client = common::create_client();
@@ -49,7 +47,6 @@ async fn test_agent_members() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_service_register_and_deregister() {
     common::init_tracing();
     let client = common::create_client();
@@ -97,7 +94,6 @@ async fn test_agent_service_register_and_deregister() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_service_get() {
     common::init_tracing();
     let client = common::create_client();
@@ -144,7 +140,6 @@ async fn test_agent_service_get() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_check_register_and_deregister() {
     common::init_tracing();
     let client = common::create_client();
@@ -191,7 +186,6 @@ async fn test_agent_check_register_and_deregister() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_check_pass_warn_fail() {
     common::init_tracing();
     let client = common::create_client();
@@ -253,7 +247,6 @@ async fn test_agent_check_pass_warn_fail() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_node_maintenance() {
     common::init_tracing();
     let client = common::create_client();
@@ -292,7 +285,6 @@ async fn test_agent_node_maintenance() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_service_maintenance() {
     common::init_tracing();
     let client = common::create_client();
@@ -342,7 +334,6 @@ async fn test_agent_service_maintenance() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_host() {
     common::init_tracing();
     let client = common::create_client();
@@ -357,7 +348,6 @@ async fn test_agent_host() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_version() {
     common::init_tracing();
     let client = common::create_client();
@@ -369,7 +359,6 @@ async fn test_agent_version() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_metrics() {
     common::init_tracing();
     let client = common::create_client();
@@ -385,7 +374,6 @@ async fn test_agent_metrics() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_agent_services_with_filter() {
     common::init_tracing();
     let client = common::create_client();

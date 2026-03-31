@@ -108,6 +108,13 @@ pub mod admin_api_path {
     pub const AI_AGENT_VERSION_LIST: &str = "/v3/admin/ai/a2a/version/list";
     pub const AI_AGENT_LIST: &str = "/v3/admin/ai/a2a/list";
 
+    // Plugin Management
+    pub const PLUGIN_LIST: &str = "/v3/admin/core/plugin/list";
+    pub const PLUGIN_DETAIL: &str = "/v3/admin/core/plugin/detail";
+    pub const PLUGIN_STATUS: &str = "/v3/admin/core/plugin/status";
+    pub const PLUGIN_CONFIG: &str = "/v3/admin/core/plugin/config";
+    pub const PLUGIN_AVAILABILITY: &str = "/v3/admin/core/plugin/availability";
+
     // Auth
     pub const AUTH_LOGIN: &str = "/v3/auth/user/login";
 }

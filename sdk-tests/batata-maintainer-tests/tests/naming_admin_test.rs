@@ -7,7 +7,6 @@ mod common;
 // ==================== Instance CRUD ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_instance_create_and_delete() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -59,7 +58,6 @@ async fn test_instance_create_and_delete() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_instance_get_detail() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -104,7 +102,6 @@ async fn test_instance_get_detail() {
 // ==================== Service CRUD ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_service_create_and_delete() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -132,7 +129,6 @@ async fn test_service_create_and_delete() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_service_list() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -158,7 +154,6 @@ async fn test_service_list() {
 // ==================== Health ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_instance_health_update() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -199,7 +194,6 @@ async fn test_instance_health_update() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_health_checkers() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -215,7 +209,6 @@ async fn test_health_checkers() {
 // ==================== Metrics ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_naming_metrics() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -227,7 +220,6 @@ async fn test_naming_metrics() {
 // ==================== Service Subscribers ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_service_subscribers() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();

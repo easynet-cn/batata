@@ -7,7 +7,6 @@ mod common;
 // ==================== Server Health ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_server_state() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -17,7 +16,6 @@ async fn test_server_state() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_liveness() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -27,7 +25,6 @@ async fn test_liveness() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_readiness() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -39,7 +36,6 @@ async fn test_readiness() {
 // ==================== Namespace CRUD ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_namespace_lifecycle() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -82,7 +78,6 @@ async fn test_namespace_lifecycle() {
 // ==================== Cluster ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_cluster_members() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -92,7 +87,6 @@ async fn test_cluster_members() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_cluster_self() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -106,7 +100,6 @@ async fn test_cluster_self() {
 // ==================== Log Level ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_update_log_level() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();

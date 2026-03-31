@@ -10,7 +10,6 @@ use batata_client::auth::{
 };
 
 #[tokio::test]
-#[ignore]
 async fn test_jwt_login_success() {
     common::init_tracing();
     let provider = JwtAuthProvider::new(common::USERNAME, common::PASSWORD, "/nacos");
@@ -31,7 +30,6 @@ async fn test_jwt_login_success() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_jwt_login_failure() {
     common::init_tracing();
     let provider = JwtAuthProvider::new("wrong_user", "wrong_pass", "/nacos");
@@ -60,7 +58,6 @@ fn test_aksk_signing() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_security_proxy_merge() {
     common::init_tracing();
     let mut proxy = SecurityProxy::new();

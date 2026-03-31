@@ -19,13 +19,14 @@ use batata_api::{
     },
 };
 use dashmap::DashMap;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{Notify, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 use crate::error::{ClientError, Result};
 
 use self::auth::AuthProvider;
 use self::connection::GrpcConnection;
+use self::health::ConnectionHealthChecker;
 
 /// Deserialize a payload body into a concrete type.
 pub fn deserialize_payload<T>(payload: &Payload) -> T
@@ -189,6 +190,10 @@ pub struct GrpcClient {
     event_listeners: Arc<std::sync::RwLock<Vec<Arc<dyn ConnectionEventListener>>>>,
     /// Connection and request metrics
     pub metrics: Arc<metrics::ClientMetrics>,
+    /// Health checker with exponential backoff
+    health_checker: Arc<ConnectionHealthChecker>,
+    /// Signal to trigger reconnection from push dispatch or health check
+    reconnect_notify: Arc<Notify>,
 }
 
 impl GrpcClient {
@@ -224,6 +229,11 @@ impl GrpcClient {
             AuthProvider::none()
         };
 
+        let health_checker = Arc::new(ConnectionHealthChecker::new(
+            grpc_config.health_check_max_failures,
+            std::time::Duration::from_secs(grpc_config.health_check_interval_secs),
+        ));
+
         Ok(Self {
             config: grpc_config,
             connection: Arc::new(RwLock::new(None)),
@@ -236,6 +246,8 @@ impl GrpcClient {
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             event_listeners: Arc::new(std::sync::RwLock::new(Vec::new())),
             metrics: Arc::new(metrics::ClientMetrics::new()),
+            health_checker,
+            reconnect_notify: Arc::new(Notify::new()),
         })
     }
 
@@ -258,6 +270,11 @@ impl GrpcClient {
             )?
         };
 
+        let health_checker = Arc::new(ConnectionHealthChecker::new(
+            config.health_check_max_failures,
+            std::time::Duration::from_secs(config.health_check_interval_secs),
+        ));
+
         Ok(Self {
             config,
             connection: Arc::new(RwLock::new(None)),
@@ -270,6 +287,8 @@ impl GrpcClient {
             shutdown: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             event_listeners: Arc::new(std::sync::RwLock::new(Vec::new())),
             metrics: Arc::new(metrics::ClientMetrics::new()),
+            health_checker,
+            reconnect_notify: Arc::new(Notify::new()),
         })
     }
 
@@ -307,6 +326,10 @@ impl GrpcClient {
         self.auth_provider.start_token_refresh_task();
 
         self.set_state(ConnectionState::Running);
+        self.health_checker.set_connected();
+
+        // Start background health check and reconnection loop
+        self.start_health_check_loop();
 
         Ok(())
     }
@@ -533,15 +556,229 @@ impl GrpcClient {
         self.config.server_addrs[index % self.config.server_addrs.len()].clone()
     }
 
+    /// Signal the reconnection loop to attempt a reconnect.
+    pub fn signal_reconnect(&self) {
+        self.reconnect_notify.notify_one();
+    }
+
+    /// Start the background health check and auto-reconnection loop.
+    ///
+    /// Matches Nacos Java RpcClient behavior:
+    /// - Periodic health checks at configurable intervals
+    /// - Multiple retry attempts per check cycle (default: 3)
+    /// - Exponential backoff on reconnection: min(retryTurns+1, 50) * 100ms
+    /// - Reconnection triggered by health check failure or external signal
+    fn start_health_check_loop(&self) {
+        let connection = self.connection.clone();
+        let state = self.state.clone();
+        let shutdown = self.shutdown.clone();
+        let health_checker = self.health_checker.clone();
+        let reconnect_notify = self.reconnect_notify.clone();
+        let event_listeners = self.event_listeners.clone();
+        let metrics = self.metrics.clone();
+
+        // Clone what we need for reconnection
+        let server_addrs = self.config.server_addrs.clone();
+        let module = self.config.module.clone();
+        let labels = self.config.labels.clone();
+        let tenant = self.config.tenant.clone();
+        let push_handlers = self.push_handlers.clone();
+        let push_channel_capacity = self.config.push_channel_capacity;
+
+        tokio::spawn(async move {
+            let interval = health_checker.interval();
+
+            loop {
+                if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    debug!("Health check loop: shutdown signal received");
+                    break;
+                }
+
+                // Wait for either the check interval or an external reconnect signal
+                tokio::select! {
+                    _ = tokio::time::sleep(interval) => {},
+                    _ = reconnect_notify.notified() => {
+                        debug!("Health check loop: reconnect signal received");
+                    },
+                }
+
+                if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+
+                let current_state = state.load(std::sync::atomic::Ordering::Relaxed);
+                if current_state == ConnectionState::Shutdown as u8 {
+                    break;
+                }
+
+                // If we're in Running state, perform health check
+                if current_state == ConnectionState::Running as u8 {
+                    let is_healthy = {
+                        let guard = connection.read().await;
+                        if let Some(conn) = guard.as_ref() {
+                            // Try health check with retries (matches Nacos healthCheck())
+                            let mut healthy = false;
+                            for retry in 0..health_checker.health_check_retry_times() {
+                                let channel = conn.channel();
+                                match GrpcConnection::health_check(&channel).await {
+                                    Ok(true) => {
+                                        healthy = true;
+                                        break;
+                                    }
+                                    Ok(false) | Err(_) => {
+                                        if retry < health_checker.health_check_retry_times() - 1 {
+                                            // Random sleep 0-500ms between retries (matches Nacos)
+                                            let jitter = rand::random::<u64>() % 500;
+                                            tokio::time::sleep(
+                                                std::time::Duration::from_millis(jitter),
+                                            )
+                                            .await;
+                                        }
+                                    }
+                                }
+                            }
+                            healthy
+                        } else {
+                            false
+                        }
+                    };
+
+                    if is_healthy {
+                        health_checker.record_success();
+                        continue;
+                    }
+
+                    // Health check failed
+                    if health_checker.record_failure() {
+                        warn!("Health check failed {} times, triggering reconnection",
+                            health_checker.failure_count());
+                        state.store(
+                            ConnectionState::Unhealthy as u8,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        // Fall through to reconnection logic below
+                    } else {
+                        continue;
+                    }
+                }
+
+                // Reconnection logic (for Unhealthy or Reconnecting states)
+                if current_state == ConnectionState::Unhealthy as u8
+                    || current_state == ConnectionState::Reconnecting as u8
+                {
+                    state.store(
+                        ConnectionState::Reconnecting as u8,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+
+                    // Fire disconnected event
+                    {
+                        let listeners = event_listeners
+                            .read()
+                            .map(|l| l.clone())
+                            .unwrap_or_default();
+                        for listener in &listeners {
+                            listener.on_disconnected().await;
+                        }
+                    }
+
+                    // Exponential backoff delay
+                    let delay = health_checker.next_reconnect_delay();
+                    debug!("Reconnecting after {:?} delay (retry turn {})",
+                        delay, health_checker.retry_turns());
+                    tokio::time::sleep(delay).await;
+
+                    // Clear old connection
+                    {
+                        let mut guard = connection.write().await;
+                        *guard = None;
+                    }
+
+                    // Try to reconnect
+                    // Note: we don't have auth_provider here, so pass None for token
+                    // The auth will be re-established on the next request
+                    let result = GrpcConnection::connect(
+                        &server_addrs[0], // TODO: cycle through servers
+                        &module,
+                        labels.clone(),
+                        &tenant,
+                        None, // Token will be injected on next request
+                        push_channel_capacity,
+                    )
+                    .await;
+
+                    match result {
+                        Ok((conn, push_rx)) => {
+                            info!(
+                                "Reconnected to server, connection_id={}",
+                                conn.connection_id()
+                            );
+
+                            {
+                                let mut guard = connection.write().await;
+                                *guard = Some(conn);
+                            }
+
+                            // Start push dispatch for new connection
+                            Self::start_push_dispatch_static(
+                                push_rx,
+                                connection.clone(),
+                                push_handlers.clone(),
+                                shutdown.clone(),
+                                reconnect_notify.clone(),
+                            );
+
+                            state.store(
+                                ConnectionState::Running as u8,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
+                            health_checker.set_connected();
+                            metrics.record_reconnect(true);
+
+                            // Fire connected event
+                            {
+                                let listeners = event_listeners
+                                    .read()
+                                    .map(|l| l.clone())
+                                    .unwrap_or_default();
+                                for listener in &listeners {
+                                    listener.on_connected().await;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Reconnection failed: {}, will retry", e);
+                            metrics.record_reconnect(false);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     /// Start the server push dispatch loop.
     ///
     /// The push receiver is passed separately so the dispatch loop does not
     /// need to hold the connection lock while waiting for messages.
-    fn start_push_dispatch(&self, mut push_rx: mpsc::Receiver<Payload>) {
-        let connection = self.connection.clone();
-        let handlers = self.push_handlers.clone();
-        let shutdown = self.shutdown.clone();
+    fn start_push_dispatch(&self, push_rx: mpsc::Receiver<Payload>) {
+        Self::start_push_dispatch_static(
+            push_rx,
+            self.connection.clone(),
+            self.push_handlers.clone(),
+            self.shutdown.clone(),
+            self.reconnect_notify.clone(),
+        );
+    }
 
+    /// Static version of push dispatch that doesn't require &self.
+    /// Used by both initial connect and reconnection in the health check loop.
+    fn start_push_dispatch_static(
+        mut push_rx: mpsc::Receiver<Payload>,
+        connection: Arc<RwLock<Option<GrpcConnection>>>,
+        handlers: Arc<DashMap<String, Box<dyn ServerPushHandler>>>,
+        shutdown: Arc<std::sync::atomic::AtomicBool>,
+        reconnect_notify: Arc<Notify>,
+    ) {
         tokio::spawn(async move {
             loop {
                 if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
@@ -552,7 +789,9 @@ impl GrpcClient {
                 let payload = push_rx.recv().await;
 
                 let Some(payload) = payload else {
-                    debug!("Push dispatch: stream ended");
+                    // Stream ended — signal reconnection (matches Nacos onError/onCompleted)
+                    warn!("Push dispatch: stream ended, signaling reconnect");
+                    reconnect_notify.notify_one();
                     break;
                 };
 
@@ -572,13 +811,13 @@ impl GrpcClient {
                             "Received ConnectResetRequest, server_ip={}, server_port={}",
                             req.server_ip, req.server_port
                         );
-                        // Signal that reconnection is needed
-                        // The connection will be re-established by the next request
-                        // or by the health check loop
+                        // Clear connection and signal reconnection
+                        // (matches Nacos: trigger server switch)
                         {
                             let mut guard = connection.write().await;
                             *guard = None;
                         }
+                        reconnect_notify.notify_one();
                         None
                     }
                     "ClientDetectionRequest" => {

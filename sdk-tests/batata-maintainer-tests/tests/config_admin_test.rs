@@ -7,7 +7,6 @@ mod common;
 // ==================== Config CRUD ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_publish_and_get() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -32,7 +31,6 @@ async fn test_config_publish_and_get() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_config_list_paginated() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -58,7 +56,6 @@ async fn test_config_list_paginated() {
 // ==================== Config Metadata ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_update_metadata() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -84,7 +81,6 @@ async fn test_config_update_metadata() {
 // ==================== Config Gray ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_gray_publish_and_stop() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -132,7 +128,6 @@ async fn test_config_gray_publish_and_stop() {
 // ==================== Config History ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_history_list() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -165,7 +160,6 @@ async fn test_config_history_list() {
 // ==================== Config Listeners ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_listeners() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();

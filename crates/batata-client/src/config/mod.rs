@@ -2,6 +2,12 @@
 //!
 //! Provides `BatataConfigService` for config CRUD operations,
 //! config listening, and server push handling.
+//!
+//! Matches Nacos Java `ClientWorker` with:
+//! - Background listen loop coordinated by a bell signal (`tokio::sync::Notify`)
+//! - MD5-based change detection with per-listener tracking
+//! - `receiveNotifyChanged` + `consistentWithServer` state flags
+//! - Batch listen protocol with deduplication
 
 pub mod cache;
 pub mod change_parser;
@@ -11,6 +17,7 @@ pub mod fuzzy_watch;
 pub mod listener;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use batata_api::{
     config::model::{
@@ -23,7 +30,8 @@ use batata_api::{
     remote::model::ResponseTrait,
 };
 use dashmap::DashMap;
-use tracing::{debug, error, info};
+use tokio::sync::Notify;
+use tracing::{debug, error, info, warn};
 
 use crate::error::Result;
 use crate::grpc::{GrpcClient, ServerPushHandler};
@@ -43,14 +51,24 @@ use self::filter::{
     ConfigFilterChainManager, ConfigRequest as FilterConfigRequest,
     ConfigResponse as FilterConfigResponse,
 };
-use self::listener::{ConfigChangeListener, ConfigResponse};
+use self::listener::ConfigChangeListener;
+
+/// Default listen loop poll timeout in seconds.
+const DEFAULT_LISTEN_POLL_TIMEOUT_SECS: u64 = 5;
 
 /// Nacos-compatible config service backed by gRPC.
+///
+/// Implements the ClientWorker pattern with a background listen loop
+/// that coordinates between server push notifications and batch listen requests.
 pub struct BatataConfigService {
     grpc_client: Arc<GrpcClient>,
     cache_map: DashMap<String, CacheData>,
     filter_chain: Arc<tokio::sync::RwLock<ConfigFilterChainManager>>,
     local_processor: Option<Arc<LocalConfigInfoProcessor>>,
+    /// Bell signal to wake the listen loop (matches Nacos `listenExecutebell`)
+    listen_bell: Arc<Notify>,
+    /// Shutdown flag for the listen loop
+    shutdown: Arc<AtomicBool>,
 }
 
 impl BatataConfigService {
@@ -61,6 +79,8 @@ impl BatataConfigService {
             cache_map: DashMap::new(),
             filter_chain: Arc::new(tokio::sync::RwLock::new(ConfigFilterChainManager::new())),
             local_processor: None,
+            listen_bell: Arc::new(Notify::new()),
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -74,6 +94,8 @@ impl BatataConfigService {
             cache_map: DashMap::new(),
             filter_chain: Arc::new(tokio::sync::RwLock::new(ConfigFilterChainManager::new())),
             local_processor: Some(local_processor),
+            listen_bell: Arc::new(Notify::new()),
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -87,6 +109,8 @@ impl BatataConfigService {
             cache_map: DashMap::new(),
             filter_chain: Arc::new(tokio::sync::RwLock::new(filter_chain)),
             local_processor: None,
+            listen_bell: Arc::new(Notify::new()),
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -101,10 +125,12 @@ impl BatataConfigService {
             cache_map: DashMap::new(),
             filter_chain: Arc::new(tokio::sync::RwLock::new(filter_chain)),
             local_processor,
+            listen_bell: Arc::new(Notify::new()),
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Register server push handlers on the gRPC client.
+    /// Register server push handlers on the gRPC client and start the listen loop.
     ///
     /// Must be called after wrapping in `Arc` to enable the push handler
     /// to call back into the config service when config change notifications arrive.
@@ -113,6 +139,9 @@ impl BatataConfigService {
             "ConfigChangeNotifyRequest",
             ConfigChangeNotifyHandler::new(self.clone()),
         );
+
+        // Start the background listen loop
+        self.start_listen_loop();
     }
 
     /// Add a filter to the chain
@@ -126,33 +155,72 @@ impl BatataConfigService {
         self.filter_chain.clone()
     }
 
+    /// Signal the listen loop to run a check cycle.
+    ///
+    /// Equivalent to Nacos `notifyListenConfig()`.
+    pub fn notify_listen_config(&self) {
+        self.listen_bell.notify_one();
+    }
+
     /// Get a config value from the server.
     pub async fn get_config(&self, data_id: &str, group: &str, tenant: &str) -> Result<String> {
-        let content = match self.get_config_inner(data_id, group, tenant).await {
-            Ok(content) => content,
+        match self.get_config_full(data_id, group, tenant).await {
+            Ok(result) => Ok(result.content),
             Err(e) => {
                 // Try failover if available
                 if let Some(processor) = &self.local_processor
                     && let Ok(Some(failover_content)) =
                         processor.get_failover(data_id, group, tenant)
                 {
-                    tracing::warn!(
+                    warn!(
                         "Using failover config for dataId={}, group={}, tenant={}",
-                        data_id,
-                        group,
-                        tenant
+                        data_id, group, tenant
                     );
                     return Ok(failover_content);
                 }
-                return Err(e);
+                Err(e)
             }
-        };
-
-        Ok(content)
+        }
     }
 
-    /// Get config from server with optional failover fallback
-    async fn get_config_inner(&self, data_id: &str, group: &str, tenant: &str) -> Result<String> {
+    /// Get a config value with full metadata (MD5, type, encrypted_data_key).
+    ///
+    /// Equivalent to Nacos `getConfigWithResult()`.
+    pub async fn get_config_with_result(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+    ) -> Result<crate::traits::ConfigQueryResult> {
+        match self.get_config_full(data_id, group, tenant).await {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                // Try failover if available
+                if let Some(processor) = &self.local_processor
+                    && let Ok(Some(failover_content)) =
+                        processor.get_failover(data_id, group, tenant)
+                {
+                    warn!(
+                        "Using failover config for dataId={}, group={}, tenant={}",
+                        data_id, group, tenant
+                    );
+                    return Ok(crate::traits::ConfigQueryResult {
+                        content: failover_content,
+                        ..Default::default()
+                    });
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// Internal: get config with full metadata from server
+    async fn get_config_full(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+    ) -> Result<crate::traits::ConfigQueryResult> {
         let mut req = ConfigQueryRequest {
             config_request: make_config_request(data_id, group, tenant),
             tag: String::new(),
@@ -172,11 +240,12 @@ impl BatataConfigService {
         {
             let chain = self.filter_chain.read().await;
             if let Err(e) = chain.do_filter_query(&mut filter_resp).await {
-                tracing::warn!("Filter query failed: {}", e);
+                warn!("Filter query failed: {}", e);
             }
         }
 
         let content = filter_resp.content;
+        let md5 = crate::config::cache::compute_md5(&content);
 
         // Cache the content
         let key = build_cache_key(data_id, group, tenant);
@@ -184,10 +253,14 @@ impl BatataConfigService {
             .entry(key)
             .and_modify(|cache| {
                 cache.update_content(&content);
+                cache.encrypted_data_key = resp.encrypted_data_key.clone();
+                cache.config_type = resp.content_type.clone();
             })
             .or_insert_with(|| {
                 let mut cache = CacheData::new(data_id, group, tenant);
                 cache.update_content(&content);
+                cache.encrypted_data_key = resp.encrypted_data_key.clone();
+                cache.config_type = resp.content_type.clone();
                 cache
             });
 
@@ -195,10 +268,15 @@ impl BatataConfigService {
         if let Some(processor) = &self.local_processor
             && let Err(e) = processor.save_snapshot(data_id, group, tenant, Some(&content))
         {
-            tracing::warn!("Failed to save snapshot: {}", e);
+            warn!("Failed to save snapshot: {}", e);
         }
 
-        Ok(content)
+        Ok(crate::traits::ConfigQueryResult {
+            content,
+            md5,
+            config_type: resp.content_type,
+            encrypted_data_key: resp.encrypted_data_key,
+        })
     }
 
     /// Publish (create or update) a config on the server.
@@ -276,7 +354,7 @@ impl BatataConfigService {
         {
             let chain = self.filter_chain.read().await;
             if let Err(e) = chain.do_filter_publish(&mut filter_req).await {
-                tracing::warn!("Filter publish failed: {}", e);
+                warn!("Filter publish failed: {}", e);
             }
         }
 
@@ -301,7 +379,7 @@ impl BatataConfigService {
                 && let Err(e) =
                     processor.save_snapshot(data_id, group, tenant, Some(&filter_req.content))
             {
-                tracing::warn!("Failed to save snapshot: {}", e);
+                warn!("Failed to save snapshot: {}", e);
             }
         }
 
@@ -327,7 +405,7 @@ impl BatataConfigService {
             if let Some(processor) = &self.local_processor
                 && let Err(e) = processor.save_snapshot(data_id, group, tenant, None)
             {
-                tracing::warn!("Failed to remove snapshot: {}", e);
+                warn!("Failed to remove snapshot: {}", e);
             }
         }
 
@@ -337,7 +415,8 @@ impl BatataConfigService {
     /// Add a listener for config changes.
     ///
     /// If this is the first listener for the config, a `ConfigBatchListenRequest`
-    /// is sent to the server.
+    /// is sent to the server. The background listen loop will handle subsequent
+    /// change detection.
     pub async fn add_listener(
         &self,
         data_id: &str,
@@ -358,10 +437,8 @@ impl BatataConfigService {
                 .entry(key.clone())
                 .or_insert_with(|| CacheData::new(data_id, group, tenant));
             entry.add_listener(listener);
-            should_subscribe = !entry.is_listening;
-            if should_subscribe {
-                entry.is_listening = true;
-            }
+            entry.is_discard = false;
+            should_subscribe = !entry.is_consistent_with_server.load(Ordering::Relaxed);
         }
 
         if should_subscribe {
@@ -373,16 +450,13 @@ impl BatataConfigService {
             );
         }
 
+        // Signal listen loop to pick up the new listener
+        self.notify_listen_config();
+
         Ok(())
     }
 
     /// Add a detailed change event listener that receives field-level diffs.
-    ///
-    /// When config changes, the change parser compares old and new content
-    /// and produces `ConfigChangeEvent` with individual `ConfigChangeItem`s
-    /// showing which properties were added, modified, or deleted.
-    ///
-    /// Equivalent to Nacos `AbstractConfigChangeListener`.
     pub async fn add_change_event_listener(
         &self,
         data_id: &str,
@@ -394,8 +468,6 @@ impl BatataConfigService {
         let key = build_cache_key(data_id, group, tenant);
         let should_subscribe;
 
-        // Pre-populate cache with current content so the MD5 in the listen
-        // request matches the server and no spurious notification fires.
         self.ensure_cache_populated(data_id, group, tenant).await;
 
         {
@@ -403,14 +475,12 @@ impl BatataConfigService {
                 .cache_map
                 .entry(key.clone())
                 .or_insert_with(|| CacheData::new(data_id, group, tenant));
-            entry.change_event_listeners.push(listener);
+            entry.add_change_event_listener(listener);
             if !config_type.is_empty() {
                 entry.config_type = config_type.to_string();
             }
-            should_subscribe = !entry.is_listening;
-            if should_subscribe {
-                entry.is_listening = true;
-            }
+            entry.is_discard = false;
+            should_subscribe = !entry.is_consistent_with_server.load(Ordering::Relaxed);
         }
 
         if should_subscribe {
@@ -418,158 +488,97 @@ impl BatataConfigService {
                 .await?;
         }
 
+        self.notify_listen_config();
+
         Ok(())
     }
 
     /// Remove all listeners for a config.
     ///
-    /// If no listeners remain, a `ConfigBatchListenRequest` (listen=false)
-    /// is sent to the server.
+    /// Marks the cache entry for discard. The listen loop will send
+    /// the unsubscribe request.
     pub async fn remove_listener(&self, data_id: &str, group: &str, tenant: &str) -> Result<()> {
         let key = build_cache_key(data_id, group, tenant);
-        let should_unsubscribe;
 
         {
             if let Some(mut entry) = self.cache_map.get_mut(&key) {
                 entry.remove_all_listeners();
-                should_unsubscribe = entry.is_listening;
-                entry.is_listening = false;
+                // is_discard is set by remove_all_listeners
+                entry
+                    .is_consistent_with_server
+                    .store(false, Ordering::Relaxed);
             } else {
                 return Ok(());
             }
         }
 
-        if should_unsubscribe {
-            self.send_listen_request(data_id, group, tenant, false)
-                .await?;
-            debug!(
-                "Stopped listening for config: data_id={}, group={}, tenant={}",
-                data_id, group, tenant
-            );
-        }
+        // Signal listen loop to process the discard
+        self.notify_listen_config();
+
+        debug!(
+            "Stopped listening for config: data_id={}, group={}, tenant={}",
+            data_id, group, tenant
+        );
 
         Ok(())
     }
 
-    /// Handle a `ConfigChangeNotifyRequest` from the server.
+    /// Remove a specific listener for a config.
     ///
-    /// Re-fetches the config and notifies listeners if the content changed.
-    pub async fn handle_config_change_notify(&self, data_id: &str, group: &str, tenant: &str) {
-        info!(
-            "Config change notification: data_id={}, group={}, tenant={}",
-            data_id, group, tenant
-        );
-
+    /// Unlike `remove_listener` which removes ALL listeners, this removes only
+    /// the specified listener instance (matched by pointer equality).
+    /// Matches Nacos Java `removeListener(dataId, group, listener)`.
+    pub async fn remove_specific_listener(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        listener: &Arc<dyn ConfigChangeListener>,
+    ) -> Result<()> {
         let key = build_cache_key(data_id, group, tenant);
 
-        // Snapshot old content and config_type BEFORE re-fetching,
-        // because get_config() updates the cache and would make old == new.
-        let (old_content, config_type) = self
-            .cache_map
-            .get(&key)
-            .map(|entry| (entry.content.clone(), entry.config_type.clone()))
-            .unwrap_or_default();
-
-        // Re-fetch from server (this also updates the cache)
-        match self.get_config(data_id, group, tenant).await {
-            Ok(new_content) => {
-                if let Some(entry) = self.cache_map.get(&key) {
-                    let response = ConfigResponse {
-                        data_id: data_id.to_string(),
-                        group: group.to_string(),
-                        tenant: tenant.to_string(),
-                        content: new_content.clone(),
-                    };
-
-                    // Notify basic listeners
-                    for listener in &entry.listeners {
-                        listener.receive_config_info(response.clone());
-                    }
-
-                    // Notify change event listeners with field-level diffs
-                    if !entry.change_event_listeners.is_empty() {
-                        let items = change_parser::parse_change_items(
-                            &config_type,
-                            &old_content,
-                            &new_content,
-                        );
-                        if !items.is_empty() {
-                            let event = change_parser::ConfigChangeEvent {
-                                data_id: data_id.to_string(),
-                                group: group.to_string(),
-                                tenant: tenant.to_string(),
-                                items,
-                            };
-                            for listener in &entry.change_event_listeners {
-                                listener.receive_config_change(event.clone());
-                            }
-                        }
-                    }
+        let should_unsubscribe = {
+            if let Some(mut entry) = self.cache_map.get_mut(&key) {
+                entry.remove_listener(listener);
+                if !entry.has_listeners() {
+                    entry
+                        .is_consistent_with_server
+                        .store(false, Ordering::Relaxed);
+                    true
+                } else {
+                    false
                 }
+            } else {
+                return Ok(());
             }
-            Err(e) => {
-                error!(
-                    "Failed to re-fetch config on change notify: data_id={}, error={}",
-                    data_id, e
-                );
-            }
+        };
+
+        if should_unsubscribe {
+            self.notify_listen_config();
         }
+
+        Ok(())
     }
 
     /// Re-establish all config listen subscriptions (called after reconnect).
     pub async fn redo_listeners(&self) -> Result<()> {
-        let listen_entries: Vec<(String, String, String, String)> = self
-            .cache_map
-            .iter()
-            .filter(|entry| entry.is_listening)
-            .map(|entry| {
-                (
-                    entry.data_id.clone(),
-                    entry.group.clone(),
-                    entry.tenant.clone(),
-                    entry.md5.clone(),
-                )
-            })
-            .collect();
-
-        if listen_entries.is_empty() {
-            return Ok(());
+        // Mark all listening entries as inconsistent
+        for entry in self.cache_map.iter_mut() {
+            if entry.has_listeners() {
+                entry
+                    .is_consistent_with_server
+                    .store(false, Ordering::Relaxed);
+            }
         }
 
-        let contexts: Vec<ConfigListenContext> = listen_entries
-            .iter()
-            .map(|(data_id, group, tenant, md5)| ConfigListenContext {
-                data_id: data_id.clone(),
-                group: group.clone(),
-                tenant: tenant.clone(),
-                md5: md5.clone(),
-            })
-            .collect();
+        // Signal the listen loop to re-sync
+        self.notify_listen_config();
 
-        let mut req = ConfigBatchListenRequest {
-            config_request: ConfigRequest::default(),
-            listen: true,
-            config_listen_contexts: contexts,
-        };
-        req.config_request.request.request_id = uuid::Uuid::new_v4().to_string();
-
-        let _resp: ConfigChangeBatchListenResponse = self.grpc_client.request_typed(&req).await?;
-
-        info!(
-            "Re-established {} config listen subscriptions",
-            listen_entries.len()
-        );
-
+        info!("Marked config listeners for re-sync after reconnect");
         Ok(())
     }
 
     /// Get config and atomically register a listener in one call.
-    ///
-    /// This prevents the race condition where a config change happens between
-    /// `get_config()` and `add_listener()` — the listener is registered
-    /// before the initial content is returned, so no changes are missed.
-    ///
-    /// Equivalent to Nacos `getConfigAndSignListener()`.
     pub async fn get_config_and_sign_listener(
         &self,
         data_id: &str,
@@ -584,9 +593,6 @@ impl BatataConfigService {
     }
 
     /// Check if the config server is healthy.
-    ///
-    /// Returns "UP" if the gRPC connection is active, "DOWN" otherwise.
-    /// Equivalent to Nacos `getServerStatus()`.
     pub async fn get_server_status(&self) -> String {
         if self.grpc_client.is_connected().await {
             "UP".to_string()
@@ -596,17 +602,276 @@ impl BatataConfigService {
     }
 
     /// Gracefully shutdown the config service.
-    /// Removes all listeners and clears cached config data.
     pub async fn shutdown(&self) {
         info!("Shutting down config service...");
-        // Clear all cached config data (including listeners within each CacheData)
+        self.shutdown.store(true, Ordering::Relaxed);
+        self.listen_bell.notify_one(); // Wake loop to exit
         self.cache_map.clear();
         info!("Config service shutdown complete");
     }
 
+    // --- Background Listen Loop (ClientWorker pattern) ---
+
+    /// Start the background listen loop.
+    ///
+    /// Equivalent to Nacos Java `ClientWorker.startInternal()`.
+    /// Spawns a tokio task that:
+    /// 1. Waits on the bell signal or a 5-second timeout
+    /// 2. Collects inconsistent cache entries
+    /// 3. Sends batch listen requests and processes responses
+    /// 4. Notifies listeners via `check_listener_md5()`
+    fn start_listen_loop(self: &Arc<Self>) {
+        let service = Arc::downgrade(self);
+        let bell = self.listen_bell.clone();
+        let shutdown = self.shutdown.clone();
+
+        tokio::spawn(async move {
+            loop {
+                if shutdown.load(Ordering::Relaxed) {
+                    debug!("Config listen loop: shutdown");
+                    break;
+                }
+
+                // Wait for bell signal or timeout (matches Nacos 5s poll)
+                tokio::select! {
+                    _ = bell.notified() => {},
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(DEFAULT_LISTEN_POLL_TIMEOUT_SECS)) => {},
+                }
+
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                let Some(service) = service.upgrade() else {
+                    debug!("Config listen loop: service dropped");
+                    break;
+                };
+
+                if let Err(e) = service.execute_config_listen().await {
+                    error!("Config listen loop error: {}", e);
+                    // Signal to retry (matches Nacos: notifyListenConfig on error)
+                    service.notify_listen_config();
+                }
+            }
+        });
+    }
+
+    /// Execute one config listen cycle.
+    ///
+    /// Matches Nacos Java `ClientWorker.executeConfigListen()` and `checkListenCache()`.
+    async fn execute_config_listen(&self) -> Result<()> {
+        // Step 1: Collect entries that need checking
+        let mut listen_contexts = Vec::new();
+        let mut discard_contexts = Vec::new();
+
+        for entry in self.cache_map.iter() {
+            // Handle discarded entries (no listeners left)
+            if entry.is_discard {
+                discard_contexts.push((
+                    entry.data_id.clone(),
+                    entry.group.clone(),
+                    entry.tenant.clone(),
+                ));
+                continue;
+            }
+
+            // Handle entries with receiveNotifyChanged flag (set by server push)
+            if entry.receive_notify_changed.load(Ordering::Relaxed) {
+                // Reset the flag
+                entry.receive_notify_changed.store(false, Ordering::Relaxed);
+
+                // Re-fetch config from server
+                let data_id = entry.data_id.clone();
+                let group = entry.group.clone();
+                let tenant = entry.tenant.clone();
+                let is_initializing = entry.is_initializing;
+
+                drop(entry); // Release the entry guard before async call
+
+                if let Err(e) = self.refresh_content_and_check(&data_id, &group, &tenant, !is_initializing).await {
+                    warn!("Failed to refresh config on notify: data_id={}, error={}", data_id, e);
+                }
+                continue;
+            }
+
+            // Collect inconsistent entries for batch listen
+            if !entry.is_consistent_with_server.load(Ordering::Relaxed) && entry.has_listeners() {
+                listen_contexts.push(ConfigListenContext {
+                    data_id: entry.data_id.clone(),
+                    group: entry.group.clone(),
+                    tenant: entry.tenant.clone(),
+                    md5: entry.md5.clone(),
+                });
+            }
+        }
+
+        // Step 2: Send unsubscribe for discarded entries
+        for (data_id, group, tenant) in &discard_contexts {
+            if let Err(e) = self.send_listen_request(data_id, group, tenant, false).await {
+                warn!("Failed to unsubscribe discarded config: {}", e);
+            }
+            let key = build_cache_key(data_id, group, tenant);
+            self.cache_map.remove(&key);
+        }
+
+        // Step 3: Send batch listen for inconsistent entries
+        if listen_contexts.is_empty() {
+            return Ok(());
+        }
+
+        let mut req = ConfigBatchListenRequest {
+            config_request: ConfigRequest::default(),
+            listen: true,
+            config_listen_contexts: listen_contexts.clone(),
+        };
+        req.config_request.request.request_id = uuid::Uuid::new_v4().to_string();
+
+        let resp: ConfigChangeBatchListenResponse = self.grpc_client.request_typed(&req).await?;
+
+        // Step 4: Process changed configs from response
+        let mut changed_keys = std::collections::HashSet::new();
+
+        for changed in &resp.changed_configs {
+            let key = build_cache_key(&changed.data_id, &changed.group, &changed.tenant);
+            changed_keys.insert(key);
+
+            let is_initializing = self
+                .cache_map
+                .get(&build_cache_key(&changed.data_id, &changed.group, &changed.tenant))
+                .map(|e| e.is_initializing)
+                .unwrap_or(false);
+
+            if let Err(e) = self
+                .refresh_content_and_check(
+                    &changed.data_id,
+                    &changed.group,
+                    &changed.tenant,
+                    !is_initializing,
+                )
+                .await
+            {
+                warn!("Failed to refresh changed config: {}", e);
+            }
+        }
+
+        // Step 5: Also check entries that were pushed during our listen request
+        for ctx in &listen_contexts {
+            let key = build_cache_key(&ctx.data_id, &ctx.group, &ctx.tenant);
+            if changed_keys.contains(&key) {
+                continue; // Already handled
+            }
+
+            let was_pushed = self
+                .cache_map
+                .get(&key)
+                .map(|e| e.receive_notify_changed.load(Ordering::Relaxed))
+                .unwrap_or(false);
+
+            if was_pushed {
+                if let Some(entry) = self.cache_map.get(&key) {
+                    entry.receive_notify_changed.store(false, Ordering::Relaxed);
+                    let is_initializing = entry.is_initializing;
+                    let data_id = entry.data_id.clone();
+                    let group = entry.group.clone();
+                    let tenant = entry.tenant.clone();
+                    drop(entry);
+
+                    if let Err(e) = self
+                        .refresh_content_and_check(&data_id, &group, &tenant, !is_initializing)
+                        .await
+                    {
+                        warn!("Failed to refresh pushed config: {}", e);
+                    }
+                    changed_keys.insert(key);
+                }
+            }
+        }
+
+        // Step 6: Mark unchanged configs as consistent with server
+        for ctx in &listen_contexts {
+            let key = build_cache_key(&ctx.data_id, &ctx.group, &ctx.tenant);
+            if !changed_keys.contains(&key) {
+                if let Some(mut entry) = self.cache_map.get_mut(&key) {
+                    if !entry.receive_notify_changed.load(Ordering::Relaxed) {
+                        entry
+                            .is_consistent_with_server
+                            .store(true, Ordering::Relaxed);
+                        entry.is_initializing = false;
+                    }
+                }
+            }
+        }
+
+        // If there were changes, signal another cycle
+        if !changed_keys.is_empty() {
+            self.notify_listen_config();
+        }
+
+        Ok(())
+    }
+
+    /// Re-fetch config content from server and notify listeners if changed.
+    ///
+    /// Matches Nacos Java `ClientWorker.refreshContentAndCheck()`.
+    async fn refresh_content_and_check(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        notify: bool,
+    ) -> Result<()> {
+        let content = self.get_config_full(data_id, group, tenant).await?.content;
+
+        let key = build_cache_key(data_id, group, tenant);
+        if let Some(mut entry) = self.cache_map.get_mut(&key) {
+            let changed = entry.update_content(&content);
+            entry.is_initializing = false;
+
+            if changed && notify {
+                // Notify listeners via MD5 check (only those not yet notified)
+                entry.check_listener_md5();
+
+                // Notify change event listeners with field-level diffs
+                if !entry.change_event_listeners.is_empty() {
+                    // Get old content from the first change event listener's last_content
+                    let old_content = entry
+                        .change_event_listeners
+                        .first()
+                        .map(|w| w.last_content.clone())
+                        .unwrap_or_default();
+
+                    let items = change_parser::parse_change_items(
+                        &entry.config_type,
+                        &old_content,
+                        &content,
+                    );
+                    if !items.is_empty() {
+                        let event = change_parser::ConfigChangeEvent {
+                            data_id: data_id.to_string(),
+                            group: group.to_string(),
+                            tenant: tenant.to_string(),
+                            items,
+                        };
+                        for wrap in &entry.change_event_listeners {
+                            wrap.listener.receive_config_change(event.clone());
+                            // Update last state (same unsafe pattern as check_listener_md5)
+                            unsafe {
+                                let wrap_ptr = wrap
+                                    as *const cache::ManagerChangeEventListenerWrap
+                                    as *mut cache::ManagerChangeEventListenerWrap;
+                                (*wrap_ptr).last_call_md5 = entry.md5.clone();
+                                (*wrap_ptr).last_content = content.clone();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Pre-fetch config into the cache if not already present.
-    /// This ensures the MD5 in subsequent listen requests matches the server
-    /// so no spurious change notification is triggered on first subscribe.
     async fn ensure_cache_populated(&self, data_id: &str, group: &str, tenant: &str) {
         let key = build_cache_key(data_id, group, tenant);
         let already_has_content = self
@@ -615,7 +880,9 @@ impl BatataConfigService {
             .map(|e| !e.content.is_empty())
             .unwrap_or(false);
 
-        if !already_has_content && let Ok(content) = self.get_config(data_id, group, tenant).await {
+        if !already_has_content
+            && let Ok(content) = self.get_config(data_id, group, tenant).await
+        {
             debug!(
                 "Pre-populated cache for: data_id={}, group={}, tenant={}, len={}",
                 data_id,
@@ -663,8 +930,9 @@ impl BatataConfigService {
 
 /// Server push handler for `ConfigChangeNotifyRequest`.
 ///
-/// When the server pushes a config change notification, this handler
-/// delegates to `BatataConfigService` to re-fetch and notify listeners.
+/// Instead of immediately re-fetching (old behavior), this handler sets
+/// the `receive_notify_changed` flag and signals the listen loop, matching
+/// the Nacos Java `ClientWorker.handleConfigChangeNotifyRequest()` pattern.
 pub struct ConfigChangeNotifyHandler {
     config_service: Arc<BatataConfigService>,
 }
@@ -678,20 +946,161 @@ impl ConfigChangeNotifyHandler {
 impl ServerPushHandler for ConfigChangeNotifyHandler {
     fn handle(&self, payload: &Payload) -> Option<Payload> {
         let req: ConfigChangeNotifyRequest = crate::grpc::deserialize_payload(payload);
-        let data_id = req.data_id.clone();
-        let group = req.group.clone();
-        let tenant = req.tenant.clone();
 
-        let service = self.config_service.clone();
-        tokio::spawn(async move {
-            service
-                .handle_config_change_notify(&data_id, &group, &tenant)
-                .await;
-        });
+        info!(
+            "[server-push] config changed: data_id={}, group={}, tenant={}",
+            req.data_id, req.group, req.tenant
+        );
+
+        let key = build_cache_key(&req.data_id, &req.group, &req.tenant);
+
+        // Set flags on the cache entry (matches Nacos Java pattern)
+        if let Some(entry) = self.config_service.cache_map.get(&key) {
+            entry.receive_notify_changed.store(true, Ordering::Relaxed);
+            entry
+                .is_consistent_with_server
+                .store(false, Ordering::Relaxed);
+        }
+
+        // Signal the listen loop to process the change
+        self.config_service.notify_listen_config();
 
         // Send acknowledgment
         let resp = ConfigChangeNotifyResponse::new();
         Some(resp.build_payload())
+    }
+}
+
+// ============================================================================
+// ConfigService trait implementation
+// ============================================================================
+
+#[async_trait::async_trait]
+impl crate::traits::ConfigService for BatataConfigService {
+    async fn get_config(
+        &self,
+        data_id: &str,
+        group: &str,
+        timeout: std::time::Duration,
+    ) -> Result<String> {
+        tokio::time::timeout(timeout, self.get_config(data_id, group, ""))
+            .await
+            .map_err(|_| crate::error::ClientError::Timeout)?
+    }
+
+    async fn get_config_with_result(
+        &self,
+        data_id: &str,
+        group: &str,
+        timeout: std::time::Duration,
+    ) -> Result<crate::traits::ConfigQueryResult> {
+        tokio::time::timeout(timeout, self.get_config_with_result(data_id, group, ""))
+            .await
+            .map_err(|_| crate::error::ClientError::Timeout)?
+    }
+
+    async fn get_config_and_sign_listener(
+        &self,
+        data_id: &str,
+        group: &str,
+        timeout: std::time::Duration,
+        listener: Arc<dyn ConfigChangeListener>,
+    ) -> Result<String> {
+        tokio::time::timeout(
+            timeout,
+            self.get_config_and_sign_listener(data_id, group, "", listener),
+        )
+        .await
+        .map_err(|_| crate::error::ClientError::Timeout)?
+    }
+
+    async fn publish_config(
+        &self,
+        data_id: &str,
+        group: &str,
+        content: &str,
+    ) -> Result<bool> {
+        self.publish_config(data_id, group, "", content).await
+    }
+
+    async fn publish_config_with_type(
+        &self,
+        data_id: &str,
+        group: &str,
+        content: &str,
+        config_type: &str,
+    ) -> Result<bool> {
+        self.publish_config_with_type(data_id, group, "", content, config_type)
+            .await
+    }
+
+    async fn publish_config_cas(
+        &self,
+        data_id: &str,
+        group: &str,
+        content: &str,
+        cas_md5: &str,
+    ) -> Result<bool> {
+        self.publish_config_cas(data_id, group, "", content, cas_md5)
+            .await
+    }
+
+    async fn publish_config_cas_with_type(
+        &self,
+        data_id: &str,
+        group: &str,
+        content: &str,
+        cas_md5: &str,
+        config_type: &str,
+    ) -> Result<bool> {
+        self.publish_config_cas_with_type(data_id, group, "", content, cas_md5, config_type)
+            .await
+    }
+
+    async fn remove_config(&self, data_id: &str, group: &str) -> Result<bool> {
+        self.remove_config(data_id, group, "").await
+    }
+
+    async fn add_listener(
+        &self,
+        data_id: &str,
+        group: &str,
+        listener: Arc<dyn ConfigChangeListener>,
+    ) -> Result<()> {
+        self.add_listener(data_id, group, "", listener).await
+    }
+
+    async fn add_change_event_listener(
+        &self,
+        data_id: &str,
+        group: &str,
+        config_type: &str,
+        listener: Arc<dyn listener::ConfigChangeEventListener>,
+    ) -> Result<()> {
+        self.add_change_event_listener(data_id, group, "", config_type, listener)
+            .await
+    }
+
+    async fn remove_listener(&self, data_id: &str, group: &str) -> Result<()> {
+        self.remove_listener(data_id, group, "").await
+    }
+
+    async fn remove_specific_listener(
+        &self,
+        data_id: &str,
+        group: &str,
+        listener: &Arc<dyn ConfigChangeListener>,
+    ) -> Result<()> {
+        self.remove_specific_listener(data_id, group, "", listener)
+            .await
+    }
+
+    async fn get_server_status(&self) -> String {
+        self.get_server_status().await
+    }
+
+    async fn shut_down(&self) {
+        self.shutdown().await;
     }
 }
 

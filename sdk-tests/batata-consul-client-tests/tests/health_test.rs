@@ -7,7 +7,6 @@ mod common;
 use batata_consul_client::AgentServiceRegistration;
 
 #[tokio::test]
-#[ignore]
 async fn test_health_node() {
     common::init_tracing();
     let client = common::create_client();
@@ -40,7 +39,6 @@ async fn test_health_node() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_health_service() {
     common::init_tracing();
     let client = common::create_client();
@@ -93,7 +91,6 @@ async fn test_health_service() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_health_checks() {
     common::init_tracing();
     let client = common::create_client();
@@ -148,7 +145,6 @@ async fn test_health_checks() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_health_state() {
     common::init_tracing();
     let client = common::create_client();
@@ -177,7 +173,6 @@ async fn test_health_state() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_health_connect() {
     common::init_tracing();
     let client = common::create_client();
@@ -204,7 +199,6 @@ async fn test_health_connect() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_health_service_multiple_tags() {
     common::init_tracing();
     let client = common::create_client();
@@ -261,7 +255,6 @@ async fn test_health_service_multiple_tags() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_health_passing_filter() {
     common::init_tracing();
     let client = common::create_client();
@@ -312,7 +305,6 @@ async fn test_health_passing_filter() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_health_ingress() {
     common::init_tracing();
     let client = common::create_client();

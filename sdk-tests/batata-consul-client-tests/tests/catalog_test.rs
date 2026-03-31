@@ -9,7 +9,6 @@ use batata_consul_client::{
 };
 
 #[tokio::test]
-#[ignore]
 async fn test_catalog_datacenters() {
     common::init_tracing();
     let client = common::create_client();
@@ -28,7 +27,6 @@ async fn test_catalog_datacenters() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_catalog_nodes() {
     common::init_tracing();
     let client = common::create_client();
@@ -47,7 +45,6 @@ async fn test_catalog_nodes() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_catalog_services() {
     common::init_tracing();
     let client = common::create_client();
@@ -66,7 +63,6 @@ async fn test_catalog_services() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_catalog_service() {
     common::init_tracing();
     let client = common::create_client();
@@ -112,7 +108,6 @@ async fn test_catalog_service() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_catalog_node() {
     common::init_tracing();
     let client = common::create_client();
@@ -134,7 +129,6 @@ async fn test_catalog_node() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_catalog_register_and_deregister() {
     common::init_tracing();
     let client = common::create_client();
@@ -209,7 +203,6 @@ async fn test_catalog_register_and_deregister() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_catalog_gateway_services() {
     common::init_tracing();
     let client = common::create_client();
@@ -234,7 +227,6 @@ async fn test_catalog_gateway_services() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_catalog_service_multiple_tags() {
     common::init_tracing();
     let client = common::create_client();

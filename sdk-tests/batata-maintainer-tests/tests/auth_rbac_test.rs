@@ -8,7 +8,6 @@ mod common;
 // ==================== User Management ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_user_list() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -22,7 +21,6 @@ async fn test_user_list() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_user_create_and_delete() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -57,7 +55,6 @@ async fn test_user_create_and_delete() {
 // ==================== Role Management ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_role_list() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -70,7 +67,6 @@ async fn test_role_list() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_role_assign_and_remove() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -104,7 +100,6 @@ async fn test_role_assign_and_remove() {
 // ==================== Permission Management ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_permission_list() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -115,7 +110,6 @@ async fn test_permission_list() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_permission_create_and_delete() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -159,7 +153,6 @@ async fn test_permission_create_and_delete() {
 // ==================== Permission Enforcement ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_permission_enforcement() {
     common::init_tracing();
     let admin = common::create_api_client().await.unwrap();

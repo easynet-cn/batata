@@ -1,9 +1,9 @@
 use md5::Digest;
-//! Advanced Config Service Functional Tests
-//!
-//! Tests for config types, large content, concurrency, special characters,
-//! empty content, multi-tenant, multiple listeners, and CAS with type.
-//! Requires a running Batata server.
+// Advanced Config Service Functional Tests
+//
+// Tests for config types, large content, concurrency, special characters,
+// empty content, multi-tenant, multiple listeners, and CAS with type.
+// Requires a running Batata server.
 
 mod common;
 
@@ -20,7 +20,6 @@ const GROUP: &str = "DEFAULT_GROUP";
 // ==================== Config Types ====================
 
 #[tokio::test]
-#[ignore] // Requires running server
 async fn test_publish_config_with_all_types() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -64,7 +63,6 @@ async fn test_publish_config_with_all_types() {
 // ==================== Large Content ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_large_content() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -91,7 +89,6 @@ async fn test_config_large_content() {
 // ==================== Concurrent Publish ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_concurrent_publish() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -138,7 +135,6 @@ async fn test_config_concurrent_publish() {
 // ==================== Special Characters ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_special_characters() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -171,7 +167,6 @@ async fn test_config_special_characters() {
 // ==================== Empty Content ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_empty_content() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -200,7 +195,6 @@ async fn test_config_empty_content() {
 // ==================== Multi-Tenant ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_multi_tenant() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -252,7 +246,6 @@ async fn test_config_multi_tenant() {
 // ==================== Multiple Listeners ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_listener_multiple() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -334,7 +327,6 @@ async fn test_config_listener_multiple() {
 // ==================== CAS With Type ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_cas_with_type() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();

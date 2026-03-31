@@ -1,12 +1,62 @@
-//! Config cache data for tracking per-config state and listeners
+//! Config cache data for tracking per-config state and listeners.
+//!
+//! Matches Nacos Java `CacheData` with per-listener MD5 tracking,
+//! server consistency state, and notification coordination flags.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use md5::{Digest, Md5};
 
-use super::listener::{ConfigChangeEventListener, ConfigChangeListener};
+use super::listener::{ConfigChangeEventListener, ConfigChangeListener, ConfigResponse};
+
+/// Wraps a config listener with per-listener state tracking.
+///
+/// Matches Nacos Java `ManagerListenerWrap`:
+/// - `last_call_md5`: the MD5 of the content last delivered to this listener
+/// - `last_content`: the content last delivered (for change event diff computation)
+/// - `in_notifying`: prevents concurrent notification of the same listener
+pub struct ManagerListenerWrap {
+    pub listener: Arc<dyn ConfigChangeListener>,
+    pub last_call_md5: String,
+    pub last_content: String,
+    pub in_notifying: AtomicBool,
+}
+
+impl ManagerListenerWrap {
+    pub fn new(listener: Arc<dyn ConfigChangeListener>, md5: &str, content: &str) -> Self {
+        Self {
+            listener,
+            last_call_md5: md5.to_string(),
+            last_content: content.to_string(),
+            in_notifying: AtomicBool::new(false),
+        }
+    }
+}
+
+/// Wraps a change event listener with per-listener state tracking.
+pub struct ManagerChangeEventListenerWrap {
+    pub listener: Arc<dyn ConfigChangeEventListener>,
+    pub last_call_md5: String,
+    pub last_content: String,
+    pub in_notifying: AtomicBool,
+}
+
+impl ManagerChangeEventListenerWrap {
+    pub fn new(listener: Arc<dyn ConfigChangeEventListener>, md5: &str, content: &str) -> Self {
+        Self {
+            listener,
+            last_call_md5: md5.to_string(),
+            last_content: content.to_string(),
+            in_notifying: AtomicBool::new(false),
+        }
+    }
+}
 
 /// Cache entry for a single config item, tracking content, MD5, and listeners.
+///
+/// Matches Nacos Java `CacheData` with all state flags for coordinating
+/// between server push notifications and the listen loop.
 pub struct CacheData {
     pub data_id: String,
     pub group: String,
@@ -15,10 +65,35 @@ pub struct CacheData {
     pub md5: String,
     /// Config type (e.g., "properties", "yaml", "json") for change parsing
     pub config_type: String,
-    pub listeners: Vec<Arc<dyn ConfigChangeListener>>,
-    /// Listeners that receive detailed field-level change events
-    pub change_event_listeners: Vec<Arc<dyn ConfigChangeEventListener>>,
-    pub is_listening: bool,
+    /// Encrypted data key for encrypted configs
+    pub encrypted_data_key: String,
+    /// Listeners wrapped with per-listener MD5 tracking
+    pub listeners: Vec<ManagerListenerWrap>,
+    /// Change event listeners wrapped with per-listener state
+    pub change_event_listeners: Vec<ManagerChangeEventListenerWrap>,
+
+    // --- State flags matching Nacos Java CacheData ---
+
+    /// Whether the client's MD5 is consistent (synced) with the server.
+    /// Set to `false` when a listener is added, on server push, or on disconnect.
+    /// Set to `true` after a successful batch listen confirms no changes.
+    pub is_consistent_with_server: AtomicBool,
+
+    /// Set by the server push handler (`ConfigChangeNotifyRequest`).
+    /// The listen loop checks this flag and re-fetches if set.
+    /// Reset to `false` at the start of each listen cycle.
+    pub receive_notify_changed: AtomicBool,
+
+    /// `true` during the first listen cycle (before any response from server).
+    /// While initializing, listeners are NOT notified to avoid spurious events.
+    pub is_initializing: bool,
+
+    /// Marked for removal when all listeners have been removed.
+    /// The listen loop will send an unsubscribe for discarded entries.
+    pub is_discard: bool,
+
+    /// Task ID for parallel listen grouping (future optimization).
+    pub task_id: u32,
 }
 
 impl CacheData {
@@ -31,19 +106,26 @@ impl CacheData {
             content: String::new(),
             md5: String::new(),
             config_type: String::new(),
+            encrypted_data_key: String::new(),
             listeners: Vec::new(),
             change_event_listeners: Vec::new(),
-            is_listening: false,
+            is_consistent_with_server: AtomicBool::new(false),
+            receive_notify_changed: AtomicBool::new(false),
+            is_initializing: true,
+            is_discard: false,
+            task_id: 0,
         }
     }
 
     /// Update the content and recompute the MD5 hash.
     /// Returns `true` if the content actually changed.
+    /// Also marks as inconsistent with server when content changes.
     pub fn update_content(&mut self, content: &str) -> bool {
         let new_md5 = compute_md5(content);
         if new_md5 != self.md5 {
             self.content = content.to_string();
             self.md5 = new_md5;
+            self.is_consistent_with_server.store(false, Ordering::Relaxed);
             true
         } else {
             false
@@ -51,20 +133,110 @@ impl CacheData {
     }
 
     /// Add a listener to this cache entry.
+    ///
+    /// The listener is wrapped with the current MD5 and content so that
+    /// `check_listener_md5()` won't trigger a spurious first notification.
     pub fn add_listener(&mut self, listener: Arc<dyn ConfigChangeListener>) {
-        self.listeners.push(listener);
+        let wrap = ManagerListenerWrap::new(listener, &self.md5, &self.content);
+        self.listeners.push(wrap);
+        // Mark inconsistent so the listen loop will re-check this config
+        self.is_consistent_with_server.store(false, Ordering::Relaxed);
+    }
+
+    /// Add a change event listener.
+    pub fn add_change_event_listener(&mut self, listener: Arc<dyn ConfigChangeEventListener>) {
+        let wrap = ManagerChangeEventListenerWrap::new(listener, &self.md5, &self.content);
+        self.change_event_listeners.push(wrap);
+        self.is_consistent_with_server.store(false, Ordering::Relaxed);
+    }
+
+    /// Remove a specific listener by pointer equality.
+    /// Returns true if the listener was found and removed.
+    pub fn remove_listener(&mut self, listener: &Arc<dyn ConfigChangeListener>) -> bool {
+        let before = self.listeners.len();
+        self.listeners
+            .retain(|w| !Arc::ptr_eq(&w.listener, listener));
+        let removed = self.listeners.len() < before;
+        if removed && !self.has_listeners() {
+            self.is_discard = true;
+            self.is_consistent_with_server
+                .store(false, Ordering::Relaxed);
+        }
+        removed
     }
 
     /// Remove all listeners (returns the count of removed listeners).
     pub fn remove_all_listeners(&mut self) -> usize {
-        let count = self.listeners.len();
+        let count = self.listeners.len() + self.change_event_listeners.len();
         self.listeners.clear();
+        self.change_event_listeners.clear();
+        if count > 0 {
+            self.is_discard = true;
+            self.is_consistent_with_server.store(false, Ordering::Relaxed);
+        }
         count
     }
 
     /// Check if there are any registered listeners.
     pub fn has_listeners(&self) -> bool {
-        !self.listeners.is_empty()
+        !self.listeners.is_empty() || !self.change_event_listeners.is_empty()
+    }
+
+    /// Check each listener's `last_call_md5` against the current MD5.
+    /// If different, notify the listener and update `last_call_md5`.
+    ///
+    /// This is the core notification mechanism matching Nacos `CacheData.checkListenerMd5()`.
+    /// Returns the number of listeners that were notified.
+    pub fn check_listener_md5(&self) -> usize {
+        let mut notified = 0;
+
+        for wrap in &self.listeners {
+            if wrap.last_call_md5 != self.md5 {
+                // Skip if already notifying (prevent concurrent notification)
+                if wrap
+                    .in_notifying
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
+                {
+                    continue;
+                }
+
+                let response = ConfigResponse {
+                    data_id: self.data_id.clone(),
+                    group: self.group.clone(),
+                    tenant: self.tenant.clone(),
+                    content: self.content.clone(),
+                };
+
+                wrap.listener.receive_config_info(response);
+
+                // SAFETY: We have exclusive write access through compare_exchange
+                // Update last_call_md5 — this is a &self method so we use interior mutability
+                // pattern. In practice, the listen loop holds the DashMap entry guard.
+                // Since ManagerListenerWrap fields are not behind AtomicBool,
+                // we cast through a raw pointer. This is safe because the listen loop
+                // is single-threaded per CacheData.
+                unsafe {
+                    let wrap_ptr = wrap as *const ManagerListenerWrap as *mut ManagerListenerWrap;
+                    (*wrap_ptr).last_call_md5 = self.md5.clone();
+                    (*wrap_ptr).last_content = self.content.clone();
+                }
+
+                wrap.in_notifying.store(false, Ordering::SeqCst);
+                notified += 1;
+            }
+        }
+
+        notified
+    }
+
+    /// Check if all listeners have been notified with the current MD5.
+    pub fn check_listeners_md5_consistent(&self) -> bool {
+        self.listeners.iter().all(|w| w.last_call_md5 == self.md5)
+            && self
+                .change_event_listeners
+                .iter()
+                .all(|w| w.last_call_md5 == self.md5)
     }
 
     /// Build the cache key for this config.
@@ -154,7 +326,9 @@ mod tests {
         assert!(cache.content.is_empty());
         assert!(cache.md5.is_empty());
         assert!(cache.listeners.is_empty());
-        assert!(!cache.is_listening);
+        assert!(!cache.is_consistent_with_server.load(Ordering::Relaxed));
+        assert!(cache.is_initializing);
+        assert!(!cache.is_discard);
     }
 
     #[test]
@@ -168,7 +342,7 @@ mod tests {
         let called = Arc::new(AtomicBool::new(false));
         let called_clone = called.clone();
         let listener = Arc::new(super::super::listener::FnConfigChangeListener::new(
-            move |_info: super::super::listener::ConfigResponse| {
+            move |_info: ConfigResponse| {
                 called_clone.store(true, Ordering::SeqCst);
             },
         ));
@@ -209,5 +383,76 @@ mod tests {
             build_cache_key("data.id", "my-group", "ns:public"),
             "data.id+my-group+ns:public"
         );
+    }
+
+    #[test]
+    fn test_check_listener_md5_notifies_on_change() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let mut cache = CacheData::new("id", "group", "");
+        cache.update_content("initial");
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let cc = call_count.clone();
+        let listener = Arc::new(super::super::listener::FnConfigChangeListener::new(
+            move |_: ConfigResponse| {
+                cc.fetch_add(1, Ordering::SeqCst);
+            },
+        ));
+
+        // Add listener with current MD5 — should NOT trigger
+        cache.add_listener(listener);
+        assert_eq!(cache.check_listener_md5(), 0);
+        assert_eq!(call_count.load(Ordering::SeqCst), 0);
+
+        // Change content — listener's last_call_md5 differs from cache.md5
+        cache.update_content("changed");
+        assert_eq!(cache.check_listener_md5(), 1);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+
+        // Call again — should NOT trigger (md5 now matches)
+        assert_eq!(cache.check_listener_md5(), 0);
+        assert_eq!(call_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_consistent_with_server_flag() {
+        let mut cache = CacheData::new("id", "group", "");
+
+        // Initially not consistent
+        assert!(!cache.is_consistent_with_server.load(Ordering::Relaxed));
+
+        // Set consistent
+        cache.is_consistent_with_server.store(true, Ordering::Relaxed);
+        assert!(cache.is_consistent_with_server.load(Ordering::Relaxed));
+
+        // Update content resets to inconsistent
+        cache.update_content("new");
+        assert!(!cache.is_consistent_with_server.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_receive_notify_changed_flag() {
+        let cache = CacheData::new("id", "group", "");
+        assert!(!cache.receive_notify_changed.load(Ordering::Relaxed));
+
+        cache.receive_notify_changed.store(true, Ordering::Relaxed);
+        assert!(cache.receive_notify_changed.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_discard_on_remove_all_listeners() {
+        use std::sync::Arc;
+
+        let mut cache = CacheData::new("id", "group", "");
+        let listener = Arc::new(super::super::listener::FnConfigChangeListener::new(
+            |_: ConfigResponse| {},
+        ));
+        cache.add_listener(listener);
+        assert!(!cache.is_discard);
+
+        cache.remove_all_listeners();
+        assert!(cache.is_discard);
     }
 }

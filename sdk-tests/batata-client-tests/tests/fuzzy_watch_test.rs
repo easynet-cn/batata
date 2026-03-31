@@ -24,7 +24,6 @@ impl ConfigFuzzyWatchListener for CountFuzzyListener {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_config_fuzzy_watch_with_keys() {
     common::init_tracing();
     let grpc = common::create_config_grpc_client().await.unwrap();

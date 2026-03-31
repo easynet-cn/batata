@@ -32,6 +32,7 @@ pub mod redo;
 pub mod retry;
 pub mod server_list;
 pub mod signing;
+pub mod traits;
 pub mod transport;
 
 // AI/MCP client re-exports
@@ -84,3 +85,8 @@ pub use grpc::health::ConnectionHealthChecker;
 // Additional re-exports
 pub use limiter::{RateLimiter, SlidingWindowLimiter};
 pub use metrics::{MetricsMonitor, SimpleCounter, Timer};
+
+// SDK trait contracts and typed responses
+pub use traits::{
+    ConfigQueryResult, ConfigService, ListView, NamingService, DEFAULT_TIMEOUT_MS,
+};

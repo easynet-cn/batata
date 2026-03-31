@@ -8,7 +8,6 @@ mod common;
 // ==================== Client List ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_client_list() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -22,7 +21,6 @@ async fn test_client_list() {
 // ==================== Loader ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_loader_current() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -35,7 +33,6 @@ async fn test_loader_current() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_loader_cluster_metrics() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -50,7 +47,6 @@ async fn test_loader_cluster_metrics() {
 // ==================== Combined: gRPC client + HTTP introspection ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_client_detail_with_grpc_connection() {
     common::init_tracing();
 
@@ -87,7 +83,6 @@ async fn test_client_detail_with_grpc_connection() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_service_publisher_and_subscriber_clients() {
     common::init_tracing();
 

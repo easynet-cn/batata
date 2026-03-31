@@ -5,7 +5,6 @@ mod common;
 use batata_consul_client::Intention;
 
 #[tokio::test]
-#[ignore]
 async fn test_connect_ca_roots() {
     common::init_tracing();
     let client = common::create_client();
@@ -34,7 +33,6 @@ async fn test_connect_ca_roots() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_connect_ca_config() {
     common::init_tracing();
     let client = common::create_client();
@@ -52,7 +50,6 @@ async fn test_connect_ca_config() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_connect_intentions_list() {
     common::init_tracing();
     let client = common::create_client();
@@ -71,7 +68,6 @@ async fn test_connect_intentions_list() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_connect_intention_upsert_and_delete() {
     common::init_tracing();
     let client = common::create_client();
@@ -121,7 +117,6 @@ async fn test_connect_intention_upsert_and_delete() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_connect_intention_match() {
     common::init_tracing();
     let client = common::create_client();
@@ -161,7 +156,6 @@ async fn test_connect_intention_match() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_connect_intention_check() {
     common::init_tracing();
     let client = common::create_client();
@@ -203,7 +197,6 @@ async fn test_connect_intention_check() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_connect_discovery_chain() {
     common::init_tracing();
     let client = common::create_client();
@@ -224,7 +217,6 @@ async fn test_connect_discovery_chain() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_connect_leaf_cert() {
     common::init_tracing();
     let client = common::create_client();

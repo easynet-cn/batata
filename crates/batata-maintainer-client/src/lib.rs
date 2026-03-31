@@ -5,7 +5,9 @@ pub mod config;
 pub mod constants;
 pub mod error;
 pub mod model;
+pub mod traits;
 
 pub use client::MaintainerClient;
 pub use config::MaintainerClientConfig;
 pub use error::MaintainerError;
+pub use traits::{ConfigMaintainerService, CoreMaintainerService, NamingMaintainerService};

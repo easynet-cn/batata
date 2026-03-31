@@ -1,8 +1,9 @@
+// Config Service Functional Tests
+//
+// Tests BatataConfigService: CRUD, CAS, listeners, server status.
+// Requires a running Batata server.
+
 use md5::Digest;
-//! Config Service Functional Tests
-//!
-//! Tests BatataConfigService: CRUD, CAS, listeners, server status.
-//! Requires a running Batata server.
 
 mod common;
 
@@ -15,7 +16,6 @@ const GROUP: &str = "DEFAULT_GROUP";
 // ==================== Config CRUD ====================
 
 #[tokio::test]
-#[ignore] // Requires running server
 async fn test_publish_and_get_config() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -37,7 +37,6 @@ async fn test_publish_and_get_config() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_publish_config_with_type() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -56,7 +55,6 @@ async fn test_publish_config_with_type() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_remove_config() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -77,7 +75,6 @@ async fn test_remove_config() {
 // ==================== Config CAS ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_publish_config_cas_success() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -103,7 +100,6 @@ async fn test_publish_config_cas_success() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_publish_config_cas_conflict() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -127,7 +123,6 @@ async fn test_publish_config_cas_conflict() {
 // ==================== Config Listener ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_config_listener() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -163,7 +158,6 @@ async fn test_config_listener() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_get_config_and_sign_listener() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();
@@ -202,7 +196,6 @@ async fn test_get_config_and_sign_listener() {
 // ==================== Server Status ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_get_server_status() {
     common::init_tracing();
     let svc = common::create_config_service().await.unwrap();

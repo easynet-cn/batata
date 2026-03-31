@@ -9,6 +9,7 @@ pub mod core;
 pub mod import_export;
 pub mod namespace;
 pub mod naming;
+pub mod plugin;
 pub mod service;
 
 pub use ai::{
@@ -30,6 +31,7 @@ pub use core::{ConnectionInfo, IdGeneratorInfo, IdInfo, ServerLoaderInfo, Server
 pub use import_export::{ImportFailItem, ImportResult, SameConfigPolicy};
 pub use namespace::Namespace;
 pub use naming::Instance;
+pub use plugin::{ConfigItemDefinition, PluginAvailability, PluginDetail, PluginInfo};
 pub use service::{
     ClusterInfo, InstanceMetadataBatchResult, MetricsInfo, ServiceDetailInfo, ServiceView,
     SubscriberInfo,

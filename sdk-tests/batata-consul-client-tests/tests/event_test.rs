@@ -4,7 +4,6 @@ use base64::Engine;
 use batata_consul_client::ConsulClient;
 
 #[tokio::test]
-#[ignore]
 async fn test_event_fire_and_list() {
     let client = common::create_client();
     let event_name = format!("test-event-{}", common::test_id());
@@ -26,7 +25,6 @@ async fn test_event_fire_and_list() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_event_filter_by_name() {
     let client = common::create_client();
     let id = common::test_id();
@@ -68,7 +66,6 @@ async fn test_event_filter_by_name() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_event_id_to_index() {
     let client = common::create_client();
     let event_name = format!("evt-idx-{}", common::test_id());
@@ -89,7 +86,6 @@ async fn test_event_id_to_index() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_event_payload() {
     let client = common::create_client();
     let event_name = format!("evt-payload-{}", common::test_id());

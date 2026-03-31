@@ -34,8 +34,17 @@ path = "tests/config_extended_test.rs"
 name = "cluster_extended_test"
 path = "tests/cluster_extended_test.rs"
 
+[[test]]
+name = "plugin_model_test"
+path = "tests/plugin_model_test.rs"
+
+[[test]]
+name = "traits_test"
+path = "tests/traits_test.rs"
+
 [dev-dependencies]
 batata-client = { path = "../../crates/batata-client" }
+batata-maintainer-client = { path = "../../crates/batata-maintainer-client" }
 batata-api = { path = "../../crates/batata-api" }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"

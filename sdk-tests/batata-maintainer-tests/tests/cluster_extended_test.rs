@@ -8,7 +8,6 @@ mod common;
 // ==================== Cluster Info ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_cluster_healthy_members() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -19,7 +18,6 @@ async fn test_cluster_healthy_members() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_cluster_member_by_address() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -38,7 +36,6 @@ async fn test_cluster_member_by_address() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_cluster_member_count() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -48,7 +45,6 @@ async fn test_cluster_member_count() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_cluster_is_standalone() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -59,7 +55,6 @@ async fn test_cluster_is_standalone() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_cluster_health() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -71,7 +66,6 @@ async fn test_cluster_health() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_cluster_refresh_self() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -83,7 +77,6 @@ async fn test_cluster_refresh_self() {
 // ==================== Loader Management ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_loader_current_detail() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -96,7 +89,6 @@ async fn test_loader_current_detail() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_loader_cluster_metrics_detail() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -111,7 +103,6 @@ async fn test_loader_cluster_metrics_detail() {
 // ==================== Service Selector Types ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_service_selector_types() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -124,7 +115,6 @@ async fn test_service_selector_types() {
 // ==================== Naming Metrics Detail ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_naming_metrics_keys() {
     common::init_tracing();
     let client = common::create_api_client().await.unwrap();
@@ -143,7 +133,6 @@ async fn test_naming_metrics_keys() {
 // ==================== Client Introspection Extended ====================
 
 #[tokio::test]
-#[ignore]
 async fn test_client_published_services() {
     common::init_tracing();
 
@@ -192,7 +181,6 @@ async fn test_client_published_services() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_client_subscribed_services() {
     common::init_tracing();
 

@@ -16,8 +16,9 @@ use crate::{
         ConfigDetailInfo, ConfigGrayInfo, ConfigHistoryBasicInfo, ConfigHistoryDetailInfo,
         ConfigListenerInfo, ConnectionInfo, IdGeneratorInfo, ImportResult, Instance,
         InstanceMetadataBatchResult, McpEndpointSpec, McpServerBasicInfo, McpServerDetailInfo,
-        McpToolSpecification, Member, MetricsInfo, Namespace, Page, SameConfigPolicy,
-        SelfMemberResponse, ServerLoaderMetrics, ServiceDetailInfo, ServiceView, SubscriberInfo,
+        McpToolSpecification, Member, MetricsInfo, Namespace, Page, PluginAvailability,
+        PluginDetail, PluginInfo, SameConfigPolicy, SelfMemberResponse, ServerLoaderMetrics,
+        ServiceDetailInfo, ServiceView, SubscriberInfo,
     },
 };
 
@@ -2598,4 +2599,157 @@ impl MaintainerClient {
             .await?;
         Ok(response.data)
     }
+
+    // ============================================================================
+    // Plugin Management APIs
+    // ============================================================================
+
+    /// List all plugins, optionally filtered by type.
+    ///
+    /// Matches Nacos `CoreMaintainerService.listPlugins()`.
+    pub async fn plugin_list(
+        &self,
+        plugin_type: Option<&str>,
+    ) -> anyhow::Result<Vec<PluginInfo>> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            plugin_type: Option<&'a str>,
+        }
+
+        let response: ApiResponse<Vec<PluginInfo>> = self
+            .http_client
+            .get_with_query(admin_api_path::PLUGIN_LIST, &Query { plugin_type })
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Get detailed information for a specific plugin.
+    ///
+    /// Matches Nacos `CoreMaintainerService.getPluginDetail()`.
+    pub async fn plugin_detail(
+        &self,
+        plugin_type: &str,
+        plugin_name: &str,
+    ) -> anyhow::Result<PluginDetail> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            plugin_type: &'a str,
+            plugin_name: &'a str,
+        }
+
+        let response: ApiResponse<PluginDetail> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::PLUGIN_DETAIL,
+                &Query {
+                    plugin_type,
+                    plugin_name,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Enable or disable a plugin.
+    ///
+    /// When `local_only` is true, only the current node is affected.
+    /// Matches Nacos `CoreMaintainerService.updatePluginStatus()`.
+    pub async fn plugin_update_status(
+        &self,
+        plugin_type: &str,
+        plugin_name: &str,
+        enabled: bool,
+        local_only: bool,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Form<'a> {
+            plugin_type: &'a str,
+            plugin_name: &'a str,
+            enabled: bool,
+            local_only: bool,
+        }
+
+        let response: ApiResponse<bool> = self
+            .http_client
+            .put_form(
+                admin_api_path::PLUGIN_STATUS,
+                &Form {
+                    plugin_type,
+                    plugin_name,
+                    enabled,
+                    local_only,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Update plugin configuration.
+    ///
+    /// When `local_only` is true, only the current node is affected.
+    /// Matches Nacos `CoreMaintainerService.updatePluginConfig()`.
+    pub async fn plugin_update_config(
+        &self,
+        plugin_type: &str,
+        plugin_name: &str,
+        config: &HashMap<String, String>,
+        local_only: bool,
+    ) -> anyhow::Result<bool> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Form<'a> {
+            plugin_type: &'a str,
+            plugin_name: &'a str,
+            config: &'a str,
+            local_only: bool,
+        }
+
+        let config_json = serde_json::to_string(config)?;
+        let response: ApiResponse<bool> = self
+            .http_client
+            .put_form(
+                admin_api_path::PLUGIN_CONFIG,
+                &Form {
+                    plugin_type,
+                    plugin_name,
+                    config: &config_json,
+                    local_only,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
+    /// Check plugin availability across cluster nodes.
+    ///
+    /// Matches Nacos `CoreMaintainerService.getPluginAvailability()`.
+    pub async fn plugin_availability(
+        &self,
+        plugin_type: &str,
+        plugin_name: &str,
+    ) -> anyhow::Result<PluginAvailability> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Query<'a> {
+            plugin_type: &'a str,
+            plugin_name: &'a str,
+        }
+
+        let response: ApiResponse<PluginAvailability> = self
+            .http_client
+            .get_with_query(
+                admin_api_path::PLUGIN_AVAILABILITY,
+                &Query {
+                    plugin_type,
+                    plugin_name,
+                },
+            )
+            .await?;
+        Ok(response.data)
+    }
+
 }
