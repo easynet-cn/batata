@@ -90,7 +90,10 @@ impl AgentSpecOperationService {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
             description: resource.description.clone(),
-            update_time: resource.gmt_modified.as_deref().and_then(parse_datetime_to_millis),
+            update_time: resource
+                .gmt_modified
+                .as_deref()
+                .and_then(parse_datetime_to_millis),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
             from: Some(resource.from.clone()),
@@ -184,7 +187,10 @@ impl AgentSpecOperationService {
             namespace_id: resource.namespace_id.clone(),
             name: resource.name.clone(),
             description: resource.description.clone(),
-            update_time: resource.gmt_modified.as_deref().and_then(parse_datetime_to_millis),
+            update_time: resource
+                .gmt_modified
+                .as_deref()
+                .and_then(parse_datetime_to_millis),
             enable: resource.status.as_deref() == Some(RESOURCE_STATUS_ENABLE),
             biz_tags: resource.biz_tags.clone(),
             from: Some(resource.from.clone()),
@@ -863,5 +869,165 @@ impl AgentSpecOperationService {
         } else {
             Ok(next)
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl super::traits::AgentSpecService for AgentSpecOperationService {
+    async fn get_detail(
+        &self,
+        namespace_id: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<AgentSpecMeta>> {
+        self.get_detail(namespace_id, name).await
+    }
+
+    async fn get_version_detail(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<Option<AgentSpec>> {
+        self.get_version_detail(namespace_id, name, version).await
+    }
+
+    async fn delete(&self, namespace_id: &str, name: &str) -> anyhow::Result<()> {
+        self.delete(namespace_id, name).await
+    }
+
+    async fn list(
+        &self,
+        namespace_id: &str,
+        name_filter: Option<&str>,
+        search: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<batata_common::model::Page<AgentSpecSummary>> {
+        self.list(namespace_id, name_filter, search, page_no, page_size)
+            .await
+    }
+
+    async fn upload(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        spec: &AgentSpec,
+        author: &str,
+        overwrite: bool,
+    ) -> anyhow::Result<String> {
+        self.upload(namespace_id, name, spec, author, overwrite)
+            .await
+    }
+
+    async fn create_draft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        based_on_version: Option<&str>,
+        target_version: Option<&str>,
+        initial_content: Option<&AgentSpec>,
+        author: &str,
+    ) -> anyhow::Result<String> {
+        self.create_draft(
+            namespace_id,
+            name,
+            based_on_version,
+            target_version,
+            initial_content,
+            author,
+        )
+        .await
+    }
+
+    async fn update_draft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        spec: &AgentSpec,
+    ) -> anyhow::Result<()> {
+        self.update_draft(namespace_id, name, spec).await
+    }
+
+    async fn delete_draft(&self, namespace_id: &str, name: &str) -> anyhow::Result<()> {
+        self.delete_draft(namespace_id, name).await
+    }
+
+    async fn submit(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<String> {
+        self.submit(namespace_id, name, version).await
+    }
+
+    async fn publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        update_latest_label: bool,
+    ) -> anyhow::Result<()> {
+        self.publish(namespace_id, name, version, update_latest_label)
+            .await
+    }
+
+    async fn update_labels(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        labels: HashMap<String, String>,
+    ) -> anyhow::Result<()> {
+        self.update_labels(namespace_id, name, labels).await
+    }
+
+    async fn update_biz_tags(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        biz_tags: &str,
+    ) -> anyhow::Result<()> {
+        self.update_biz_tags(namespace_id, name, biz_tags).await
+    }
+
+    async fn change_online_status(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        scope: Option<&str>,
+        version: Option<&str>,
+        online: bool,
+    ) -> anyhow::Result<()> {
+        self.change_online_status(namespace_id, name, scope, version, online)
+            .await
+    }
+
+    async fn update_scope(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        scope: &str,
+    ) -> anyhow::Result<()> {
+        self.update_scope(namespace_id, name, scope).await
+    }
+
+    async fn query(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: Option<&str>,
+        label: Option<&str>,
+    ) -> anyhow::Result<Option<AgentSpec>> {
+        self.query(namespace_id, name, version, label).await
+    }
+
+    async fn search(
+        &self,
+        namespace_id: &str,
+        keyword: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<batata_common::model::Page<AgentSpecBasicInfo>> {
+        self.search(namespace_id, keyword, page_no, page_size).await
     }
 }

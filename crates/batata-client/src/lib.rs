@@ -87,6 +87,4 @@ pub use limiter::{RateLimiter, SlidingWindowLimiter};
 pub use metrics::{MetricsMonitor, SimpleCounter, Timer};
 
 // SDK trait contracts and typed responses
-pub use traits::{
-    ConfigQueryResult, ConfigService, ListView, NamingService, DEFAULT_TIMEOUT_MS,
-};
+pub use traits::{ConfigQueryResult, ConfigService, DEFAULT_TIMEOUT_MS, ListView, NamingService};

@@ -7,15 +7,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use batata_plugin::{CmdbEntity, CmdbEntityType, CmdbPlugin, DefaultCmdbPlugin, LabelMapping};
+use batata_common::CmdbPlugin;
+use batata_common::model::plugin::cmdb::{CmdbEntity, CmdbEntityType, LabelMapping};
 use batata_server_common::{ActionTypes, ApiType, Secured, SignType, model::AppState, secured};
-
-/// Get the CMDB plugin from app_data, or create a default in-memory one.
-fn get_cmdb_plugin(cmdb_data: Option<&web::Data<Arc<dyn CmdbPlugin>>>) -> Arc<dyn CmdbPlugin> {
-    cmdb_data
-        .map(|d| d.get_ref().clone())
-        .unwrap_or_else(|| Arc::new(DefaultCmdbPlugin::default()))
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +55,7 @@ fn parse_entity_type(s: &str) -> CmdbEntityType {
 async fn list_entities(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
     query: web::Query<EntityListQuery>,
 ) -> impl Responder {
     secured!(
@@ -72,7 +66,6 @@ async fn list_entities(
             .build()
     );
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     let entity_type = query.entity_type.as_deref().map(parse_entity_type);
 
     match plugin.list_entities(entity_type).await {
@@ -92,7 +85,7 @@ async fn list_entities(
 async fn create_entity(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
     body: web::Json<CreateEntityRequest>,
 ) -> impl Responder {
     secured!(
@@ -103,7 +96,6 @@ async fn create_entity(
             .build()
     );
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     let entity_type = parse_entity_type(&body.entity_type);
     let mut entity = CmdbEntity::new(entity_type, &body.name);
     if !body.namespace.is_empty() {
@@ -134,7 +126,7 @@ async fn create_entity(
 async fn delete_entity(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
     query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
     secured!(
@@ -153,7 +145,6 @@ async fn delete_entity(
         }));
     }
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     match plugin.delete_entity(&id).await {
         Ok(true) => HttpResponse::Ok().json(serde_json::json!({
             "code": 0,
@@ -175,7 +166,7 @@ async fn delete_entity(
 async fn list_label_mappings(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -185,7 +176,6 @@ async fn list_label_mappings(
             .build()
     );
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     match plugin.get_label_mappings().await {
         Ok(mappings) => HttpResponse::Ok().json(serde_json::json!({
             "code": 0,
@@ -203,7 +193,7 @@ async fn list_label_mappings(
 async fn add_label_mapping(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
     body: web::Json<LabelMapping>,
 ) -> impl Responder {
     secured!(
@@ -214,7 +204,6 @@ async fn add_label_mapping(
             .build()
     );
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     match plugin.add_label_mapping(body.into_inner()).await {
         Ok(id) => HttpResponse::Ok().json(serde_json::json!({
             "code": 0,
@@ -232,7 +221,7 @@ async fn add_label_mapping(
 async fn remove_label_mapping(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
     query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
     secured!(
@@ -251,7 +240,6 @@ async fn remove_label_mapping(
         }));
     }
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     match plugin.remove_label_mapping(&id).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({
             "code": 0,
@@ -269,7 +257,7 @@ async fn remove_label_mapping(
 async fn trigger_sync(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -279,7 +267,6 @@ async fn trigger_sync(
             .build()
     );
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     match plugin.full_sync().await {
         Ok(result) => HttpResponse::Ok().json(serde_json::json!({
             "code": 0,
@@ -297,7 +284,7 @@ async fn trigger_sync(
 async fn get_stats(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "")
@@ -307,7 +294,6 @@ async fn get_stats(
             .build()
     );
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     let stats = plugin.get_stats().await;
     HttpResponse::Ok().json(serde_json::json!({
         "code": 0,
@@ -320,7 +306,7 @@ async fn get_stats(
 async fn search_by_labels(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
     query: web::Query<HashMap<String, String>>,
 ) -> impl Responder {
     secured!(
@@ -338,7 +324,6 @@ async fn search_by_labels(
         .filter(|(k, _)| k != "pageNo" && k != "pageSize")
         .collect();
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     match plugin.search_by_labels(&labels).await {
         Ok(entities) => HttpResponse::Ok().json(serde_json::json!({
             "code": 0,
@@ -356,7 +341,7 @@ async fn search_by_labels(
 async fn update_entity(
     req: HttpRequest,
     data: web::Data<AppState>,
-    cmdb_data: Option<web::Data<Arc<dyn CmdbPlugin>>>,
+    plugin: web::Data<Arc<dyn CmdbPlugin>>,
     body: web::Json<CmdbEntity>,
 ) -> impl Responder {
     secured!(
@@ -367,7 +352,6 @@ async fn update_entity(
             .build()
     );
 
-    let plugin = get_cmdb_plugin(cmdb_data.as_ref());
     match plugin.update_entity(body.into_inner()).await {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({
             "code": 0,

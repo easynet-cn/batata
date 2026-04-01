@@ -605,15 +605,112 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
     name == pattern
 }
 
-/// Agent Registry statistics
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentRegistryStats {
-    pub total_agents: u32,
-    pub healthy_agents: u32,
-    pub unhealthy_agents: u32,
-    pub by_namespace: HashMap<String, u32>,
-    pub by_skill: HashMap<String, u32>,
+/// Agent Registry statistics (re-exported from batata-common)
+pub use batata_common::model::ai::a2a::AgentRegistryStats;
+
+// =============================================================================
+// Trait implementation for AgentRegistry
+// =============================================================================
+
+#[async_trait::async_trait]
+impl batata_common::A2aAgentService for AgentRegistry {
+    async fn register_agent(
+        &self,
+        card: &AgentCard,
+        namespace: &str,
+        _registration_type: &str,
+    ) -> anyhow::Result<String> {
+        let request = AgentRegistrationRequest {
+            card: card.clone(),
+            namespace: namespace.to_string(),
+        };
+        self.register(request)
+            .map(|a| a.id)
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn get_agent_card(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        _version: Option<&str>,
+    ) -> anyhow::Result<Option<RegisteredAgent>> {
+        Ok(self.get(namespace, agent_name))
+    }
+
+    async fn update_agent_card(
+        &self,
+        card: &AgentCard,
+        namespace: &str,
+        _registration_type: &str,
+    ) -> anyhow::Result<()> {
+        let request = AgentRegistrationRequest {
+            card: card.clone(),
+            namespace: namespace.to_string(),
+        };
+        self.update(namespace, &card.name, request)
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn delete_agent(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        _version: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.deregister(namespace, agent_name)
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn list_agents(
+        &self,
+        namespace: &str,
+        agent_name: Option<&str>,
+        search_type: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<batata_common::model::Page<AgentCardVersionInfo>> {
+        let query = AgentListQuery {
+            namespace_id: Some(namespace.to_string()),
+            agent_name: agent_name.map(String::from),
+            search: Some(search_type.to_string()),
+            page_no: Some(page_no),
+            page_size: Some(page_size),
+        };
+        Ok(self.list_with_search(&query))
+    }
+
+    async fn list_versions(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+    ) -> anyhow::Result<Vec<VersionDetail>> {
+        let agents = self.list_versions(namespace, agent_name);
+        Ok(agents
+            .into_iter()
+            .map(|a| VersionDetail {
+                version: a.card.version.clone(),
+                release_date: String::new(),
+                is_latest: true,
+            })
+            .collect())
+    }
+
+    async fn find_by_skill(&self, skill: &str) -> anyhow::Result<Vec<RegisteredAgent>> {
+        Ok(self.find_by_skill(skill))
+    }
+
+    async fn batch_register(
+        &self,
+        request: batata_common::model::ai::a2a::BatchAgentRegistrationRequest,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::BatchRegistrationResponse> {
+        Ok(self.batch_register(request))
+    }
+
+    async fn stats(&self) -> anyhow::Result<AgentRegistryStats> {
+        Ok(self.stats())
+    }
 }
 
 // =============================================================================

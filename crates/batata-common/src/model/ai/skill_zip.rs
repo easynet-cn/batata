@@ -8,7 +8,7 @@ use std::io::{Cursor, Read, Write};
 
 use zip::write::SimpleFileOptions;
 
-use crate::model::skill::{Skill, SkillResource};
+use super::skill::{Skill, SkillResource};
 
 /// Max decompressed ZIP size: 50 MB
 const MAX_TOTAL_UNCOMPRESSED_BYTES: u64 = 50 * 1024 * 1024;
@@ -348,15 +348,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_yaml_front_matter_nested() {
-        let content = "---\nname: test\nmetadata:\n  version: 2.0.0\n  author: alice\n---\n";
-        let (map, _) = parse_yaml_front_matter(content);
-        assert_eq!(map.get("name").unwrap(), "test");
-        assert_eq!(map.get("metadata.version").unwrap(), "2.0.0");
-        assert_eq!(map.get("metadata.author").unwrap(), "alice");
-    }
-
-    #[test]
     fn test_validate_path_safety_ok() {
         assert!(validate_path_safety("skill/SKILL.md").is_ok());
         assert!(validate_path_safety("skill/resources/file.txt").is_ok());
@@ -371,21 +362,6 @@ mod tests {
     #[test]
     fn test_validate_path_safety_absolute() {
         assert!(validate_path_safety("/etc/passwd").is_err());
-    }
-
-    #[test]
-    fn test_is_macos_metadata() {
-        assert!(is_macos_metadata("__MACOSX/"));
-        assert!(is_macos_metadata("__MACOSX/._file"));
-        assert!(is_macos_metadata("skill/__MACOSX/file"));
-        assert!(is_macos_metadata("skill/._hidden"));
-        assert!(!is_macos_metadata("skill/file.txt"));
-    }
-
-    #[test]
-    fn test_strip_bom() {
-        assert_eq!(strip_bom("\u{FEFF}hello"), "hello");
-        assert_eq!(strip_bom("hello"), "hello");
     }
 
     #[test]
@@ -445,18 +421,6 @@ mod tests {
         assert_eq!(
             extract_version_from_skill_md(&skill),
             Some("1.2.3".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_version_from_nested_metadata() {
-        let skill = Skill {
-            skill_md: Some("---\nname: s\nmetadata:\n  version: 2.0.0\n---\n".to_string()),
-            ..Default::default()
-        };
-        assert_eq!(
-            extract_version_from_skill_md(&skill),
-            Some("2.0.0".to_string())
         );
     }
 }

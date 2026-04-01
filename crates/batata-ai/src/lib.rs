@@ -25,6 +25,9 @@ pub use service::mcp_service::McpServerOperationService;
 pub use service::pipeline_service::PipelineQueryService;
 pub use service::prompt::PromptOperationService;
 pub use service::skill_service::SkillOperationService;
+pub use service::traits::{
+    A2aAgentService, AgentSpecService, McpServerService, PipelineService, SkillService,
+};
 
 // Re-export configure functions for route setup
 pub use api::a2a::configure as configure_a2a;

@@ -5,8 +5,8 @@
 //! - Scheduled redo task (configurable interval, default 500ms)
 //! - Connection event integration (`onDisConnect` / `onConnected`)
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use batata_api::naming::model::Instance;
@@ -118,8 +118,7 @@ impl SubscriberRedoData {
 
     /// Whether this subscription needs to be re-established.
     pub fn is_need_redo(&self) -> bool {
-        !self.registered.load(Ordering::Relaxed)
-            && self.expected_registered.load(Ordering::Relaxed)
+        !self.registered.load(Ordering::Relaxed) && self.expected_registered.load(Ordering::Relaxed)
     }
 
     pub fn set_registered(&self, registered: bool) {
@@ -479,7 +478,12 @@ mod tests {
         let service = NamingGrpcRedoService::new();
         service.cache_instance_for_redo(
             "k1".into(),
-            InstanceRedoData::new("ns".into(), "g".into(), "s".into(), make_instance("1.1.1.1", 80)),
+            InstanceRedoData::new(
+                "ns".into(),
+                "g".into(),
+                "s".into(),
+                make_instance("1.1.1.1", 80),
+            ),
         );
         assert_eq!(service.instance_count(), 1);
 

@@ -304,18 +304,25 @@ pub fn console_server(
             .wrap(Authentication)
             .app_data(web::PayloadConfig::new(max_payload_size))
             .app_data(web::JsonConfig::default().limit(max_json_size))
-            .app_data(web::Data::from(app_state.clone()))
-            // AI services (MCP Server Registry, A2A Agent Registry)
+            .app_data(web::Data::from(app_state.clone()));
+
+        // AI services: always provide trait objects (config-backed or registry fallback)
+        {
+            let mcp_svc: Arc<dyn batata_common::McpServerService> = ai_services
+                .mcp_service
+                .clone()
+                .unwrap_or_else(|| ai_services.mcp_registry.clone());
+            app = app.app_data(web::Data::new(mcp_svc));
+            let a2a_svc: Arc<dyn batata_common::A2aAgentService> = ai_services
+                .a2a_service
+                .clone()
+                .unwrap_or_else(|| ai_services.agent_registry.clone());
+            app = app.app_data(web::Data::new(a2a_svc));
+        }
+        // Also provide concrete registries for direct API endpoints
+        app = app
             .app_data(web::Data::new(ai_services.mcp_registry.clone()))
             .app_data(web::Data::new(ai_services.agent_registry.clone()));
-
-        // Inject persistent AI operation services if available
-        if let Some(ref svc) = ai_services.mcp_service {
-            app = app.app_data(web::Data::new(svc.clone()));
-        }
-        if let Some(ref svc) = ai_services.a2a_service {
-            app = app.app_data(web::Data::new(svc.clone()));
-        }
         if let Some(ref svc) = ai_services.endpoint_service {
             app = app.app_data(web::Data::new(svc.clone()));
         }
@@ -485,14 +492,14 @@ pub fn mcp_registry_server(
 pub struct AIServices {
     pub mcp_registry: Arc<McpServerRegistry>,
     pub agent_registry: Arc<AgentRegistry>,
-    pub mcp_service: Option<Arc<crate::service::ai::McpServerOperationService>>,
-    pub a2a_service: Option<Arc<crate::service::ai::A2aServerOperationService>>,
+    pub mcp_service: Option<Arc<dyn batata_ai::McpServerService>>,
+    pub a2a_service: Option<Arc<dyn batata_ai::A2aAgentService>>,
     pub endpoint_service: Option<Arc<crate::service::ai::AiEndpointService>>,
     pub mcp_index: Option<Arc<crate::service::ai::McpServerIndex>>,
     pub prompt_service: Option<Arc<batata_ai::PromptOperationService>>,
-    pub skill_service: Option<Arc<batata_ai::SkillOperationService>>,
-    pub agentspec_service: Option<Arc<batata_ai::AgentSpecOperationService>>,
-    pub pipeline_service: Option<Arc<batata_ai::PipelineQueryService>>,
+    pub skill_service: Option<Arc<dyn batata_ai::SkillService>>,
+    pub agentspec_service: Option<Arc<dyn batata_ai::AgentSpecService>>,
+    pub pipeline_service: Option<Arc<dyn batata_ai::PipelineService>>,
     pub copilot_agent_manager: Option<Arc<batata_copilot::CopilotAgentManager>>,
     pub copilot_services: Option<CopilotServices>,
 }
@@ -694,7 +701,7 @@ pub fn main_server(
             .app_data(web::Data::new(connection_manager_trait))
             // Config change notifier for long-polling listeners
             .app_data(web::Data::new(config_change_notifier.clone()))
-            // AI services (MCP Server Registry, A2A Agent Registry)
+            // AI services: concrete registries for direct API endpoints
             .app_data(web::Data::new(ai_services.mcp_registry.clone()))
             .app_data(web::Data::new(ai_services.agent_registry.clone()))
             // Cloud services (Prometheus SD, Kubernetes Sync)
@@ -705,17 +712,23 @@ pub fn main_server(
             // Config encryption service
             .app_data(web::Data::new(encryption_service.clone()));
 
+        // AI services: always provide trait objects (config-backed or registry fallback)
+        {
+            let mcp_svc: Arc<dyn batata_common::McpServerService> = ai_services
+                .mcp_service
+                .clone()
+                .unwrap_or_else(|| ai_services.mcp_registry.clone());
+            app = app.app_data(web::Data::new(mcp_svc));
+            let a2a_svc: Arc<dyn batata_common::A2aAgentService> = ai_services
+                .a2a_service
+                .clone()
+                .unwrap_or_else(|| ai_services.agent_registry.clone());
+            app = app.app_data(web::Data::new(a2a_svc));
+        }
+
         // Inject distro protocol for cluster data synchronization (cluster mode only)
         if let Some(ref distro) = distro_protocol {
             app = app.app_data(web::Data::new(distro.clone()));
-        }
-
-        // Inject persistent AI operation services if available
-        if let Some(ref svc) = ai_services.mcp_service {
-            app = app.app_data(web::Data::new(svc.clone()));
-        }
-        if let Some(ref svc) = ai_services.a2a_service {
-            app = app.app_data(web::Data::new(svc.clone()));
         }
         if let Some(ref svc) = ai_services.endpoint_service {
             app = app.app_data(web::Data::new(svc.clone()));

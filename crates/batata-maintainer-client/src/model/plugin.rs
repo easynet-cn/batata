@@ -139,7 +139,10 @@ mod tests {
         let detail: PluginDetail = serde_json::from_str(json).unwrap();
         assert_eq!(detail.plugin_name, "aes");
         assert!(detail.configurable);
-        assert_eq!(detail.config.as_ref().unwrap().get("keySize").unwrap(), "256");
+        assert_eq!(
+            detail.config.as_ref().unwrap().get("keySize").unwrap(),
+            "256"
+        );
         let defs = detail.config_definitions.as_ref().unwrap();
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].key, "keySize");

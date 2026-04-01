@@ -12,7 +12,7 @@ use batata_server_common::{
     secured,
 };
 
-use batata_auth::model::ONLY_IDENTITY;
+use batata_server_common::ONLY_IDENTITY;
 
 static NAMESPACE_ID_REGEX: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^[\w-]+").expect("Invalid regex pattern"));

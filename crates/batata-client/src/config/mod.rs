@@ -688,8 +688,14 @@ impl BatataConfigService {
 
                 drop(entry); // Release the entry guard before async call
 
-                if let Err(e) = self.refresh_content_and_check(&data_id, &group, &tenant, !is_initializing).await {
-                    warn!("Failed to refresh config on notify: data_id={}, error={}", data_id, e);
+                if let Err(e) = self
+                    .refresh_content_and_check(&data_id, &group, &tenant, !is_initializing)
+                    .await
+                {
+                    warn!(
+                        "Failed to refresh config on notify: data_id={}, error={}",
+                        data_id, e
+                    );
                 }
                 continue;
             }
@@ -707,7 +713,10 @@ impl BatataConfigService {
 
         // Step 2: Send unsubscribe for discarded entries
         for (data_id, group, tenant) in &discard_contexts {
-            if let Err(e) = self.send_listen_request(data_id, group, tenant, false).await {
+            if let Err(e) = self
+                .send_listen_request(data_id, group, tenant, false)
+                .await
+            {
                 warn!("Failed to unsubscribe discarded config: {}", e);
             }
             let key = build_cache_key(data_id, group, tenant);
@@ -737,7 +746,11 @@ impl BatataConfigService {
 
             let is_initializing = self
                 .cache_map
-                .get(&build_cache_key(&changed.data_id, &changed.group, &changed.tenant))
+                .get(&build_cache_key(
+                    &changed.data_id,
+                    &changed.group,
+                    &changed.tenant,
+                ))
                 .map(|e| e.is_initializing)
                 .unwrap_or(false);
 
@@ -856,8 +869,7 @@ impl BatataConfigService {
                             wrap.listener.receive_config_change(event.clone());
                             // Update last state (same unsafe pattern as check_listener_md5)
                             unsafe {
-                                let wrap_ptr = wrap
-                                    as *const cache::ManagerChangeEventListenerWrap
+                                let wrap_ptr = wrap as *const cache::ManagerChangeEventListenerWrap
                                     as *mut cache::ManagerChangeEventListenerWrap;
                                 (*wrap_ptr).last_call_md5 = entry.md5.clone();
                                 (*wrap_ptr).last_content = content.clone();
@@ -880,9 +892,7 @@ impl BatataConfigService {
             .map(|e| !e.content.is_empty())
             .unwrap_or(false);
 
-        if !already_has_content
-            && let Ok(content) = self.get_config(data_id, group, tenant).await
-        {
+        if !already_has_content && let Ok(content) = self.get_config(data_id, group, tenant).await {
             debug!(
                 "Pre-populated cache for: data_id={}, group={}, tenant={}, len={}",
                 data_id,
@@ -1014,12 +1024,7 @@ impl crate::traits::ConfigService for BatataConfigService {
         .map_err(|_| crate::error::ClientError::Timeout)?
     }
 
-    async fn publish_config(
-        &self,
-        data_id: &str,
-        group: &str,
-        content: &str,
-    ) -> Result<bool> {
+    async fn publish_config(&self, data_id: &str, group: &str, content: &str) -> Result<bool> {
         self.publish_config(data_id, group, "", content).await
     }
 

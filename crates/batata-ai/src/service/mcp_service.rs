@@ -656,3 +656,90 @@ mod tests {
         assert!(parsed.enabled);
     }
 }
+
+#[async_trait::async_trait]
+impl super::traits::McpServerService for McpServerOperationService {
+    async fn create_mcp_server(
+        &self,
+        namespace: &str,
+        registration: &McpServerRegistration,
+    ) -> anyhow::Result<String> {
+        self.create_mcp_server(namespace, registration).await
+    }
+
+    async fn get_mcp_server_detail(
+        &self,
+        namespace: &str,
+        id: Option<&str>,
+        name: Option<&str>,
+        version: Option<&str>,
+    ) -> anyhow::Result<Option<McpServer>> {
+        self.get_mcp_server_detail(namespace, id, name, version)
+            .await
+    }
+
+    async fn update_mcp_server(
+        &self,
+        namespace: &str,
+        registration: &McpServerRegistration,
+    ) -> anyhow::Result<()> {
+        self.update_mcp_server(namespace, registration).await
+    }
+
+    async fn delete_mcp_server(
+        &self,
+        namespace: &str,
+        name: Option<&str>,
+        id: Option<&str>,
+        version: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.delete_mcp_server(namespace, name, id, version).await
+    }
+
+    fn list_mcp_servers(
+        &self,
+        namespace: &str,
+        name: Option<&str>,
+        search_type: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> batata_api::model::Page<McpServerBasicInfo> {
+        self.list_mcp_servers(namespace, name, search_type, page_no, page_size)
+    }
+
+    async fn import_tools_from_mcp(
+        &self,
+        base_url: &str,
+        endpoint: &str,
+        auth_token: Option<&str>,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<Vec<McpTool>> {
+        crate::service::mcp_client::import_tools_from_mcp_sse(
+            base_url, endpoint, auth_token, timeout,
+        )
+        .await
+    }
+
+    async fn import_mcp_servers(
+        &self,
+        _request: batata_common::model::ai::mcp::McpServerImportRequest,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::BatchRegistrationResponse> {
+        // Config-backed service does not support bulk import yet
+        Ok(batata_common::model::ai::a2a::BatchRegistrationResponse {
+            success_count: 0,
+            failed_count: 0,
+            errors: vec![],
+        })
+    }
+
+    async fn mcp_stats(&self) -> anyhow::Result<batata_common::model::ai::mcp::McpRegistryStats> {
+        // Config-backed service returns basic stats
+        Ok(batata_common::model::ai::mcp::McpRegistryStats {
+            total_servers: 0,
+            healthy_servers: 0,
+            unhealthy_servers: 0,
+            by_namespace: std::collections::HashMap::new(),
+            by_type: std::collections::HashMap::new(),
+        })
+    }
+}

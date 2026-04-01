@@ -15,7 +15,7 @@ use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
 use crate::model::skill::*;
-use crate::service::skill_service::SkillOperationService;
+use crate::service::traits::SkillService;
 use crate::service::skill_zip;
 
 fn normalize_namespace(ns: &str) -> &str {
@@ -42,7 +42,7 @@ fn get_username(req: &HttpRequest) -> String {
 async fn get_skill_detail(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillForm>,
 ) -> impl Responder {
     secured!(
@@ -79,7 +79,7 @@ async fn get_skill_detail(
 async fn get_skill_version(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillForm>,
 ) -> impl Responder {
     secured!(
@@ -128,7 +128,7 @@ async fn get_skill_version(
 async fn download_skill_version(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillForm>,
 ) -> impl Responder {
     secured!(
@@ -186,7 +186,7 @@ async fn download_skill_version(
 async fn delete_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillForm>,
 ) -> impl Responder {
     secured!(
@@ -219,7 +219,7 @@ async fn delete_skill(
 async fn list_skills(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillListForm>,
 ) -> impl Responder {
     secured!(
@@ -254,7 +254,7 @@ async fn list_skills(
 async fn upload_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillUploadQuery>,
     mut payload: Multipart,
 ) -> impl Responder {
@@ -336,7 +336,7 @@ async fn upload_skill(
 async fn create_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillDraftCreateForm>,
 ) -> impl Responder {
     secured!(
@@ -395,7 +395,7 @@ async fn create_draft(
 async fn update_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillUpdateForm>,
 ) -> impl Responder {
     secured!(
@@ -465,7 +465,7 @@ async fn update_draft(
 async fn delete_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillForm>,
 ) -> impl Responder {
     secured!(
@@ -501,7 +501,7 @@ async fn delete_draft(
 async fn submit_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillSubmitForm>,
 ) -> impl Responder {
     secured!(
@@ -532,7 +532,7 @@ async fn submit_skill(
 async fn publish_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillPublishForm>,
 ) -> impl Responder {
     secured!(
@@ -568,7 +568,7 @@ async fn publish_skill(
 async fn update_labels(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillLabelsUpdateForm>,
 ) -> impl Responder {
     secured!(
@@ -610,7 +610,7 @@ async fn update_labels(
 async fn update_biz_tags(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillBizTagsUpdateForm>,
 ) -> impl Responder {
     secured!(
@@ -641,7 +641,7 @@ async fn update_biz_tags(
 async fn online_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillOnlineForm>,
 ) -> impl Responder {
     secured!(
@@ -678,7 +678,7 @@ async fn online_skill(
 async fn offline_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillOnlineForm>,
 ) -> impl Responder {
     secured!(
@@ -715,7 +715,7 @@ async fn offline_skill(
 async fn update_scope(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     body: web::Form<SkillScopeForm>,
 ) -> impl Responder {
     secured!(
@@ -751,7 +751,7 @@ async fn update_scope(
 async fn client_query_skill(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillQueryForm>,
 ) -> impl Responder {
     // Nacos uses OPEN_API + ALLOW_ANONYMOUS for client SDK access
@@ -797,7 +797,7 @@ async fn client_query_skill(
 async fn client_search_skills(
     req: HttpRequest,
     data: web::Data<AppState>,
-    skill_service: web::Data<Arc<SkillOperationService>>,
+    skill_service: web::Data<Arc<dyn SkillService>>,
     query: web::Query<SkillSearchForm>,
 ) -> impl Responder {
     secured!(

@@ -629,9 +629,9 @@ impl GrpcClient {
                                         if retry < health_checker.health_check_retry_times() - 1 {
                                             // Random sleep 0-500ms between retries (matches Nacos)
                                             let jitter = rand::random::<u64>() % 500;
-                                            tokio::time::sleep(
-                                                std::time::Duration::from_millis(jitter),
-                                            )
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                jitter,
+                                            ))
                                             .await;
                                         }
                                     }
@@ -650,8 +650,10 @@ impl GrpcClient {
 
                     // Health check failed
                     if health_checker.record_failure() {
-                        warn!("Health check failed {} times, triggering reconnection",
-                            health_checker.failure_count());
+                        warn!(
+                            "Health check failed {} times, triggering reconnection",
+                            health_checker.failure_count()
+                        );
                         state.store(
                             ConnectionState::Unhealthy as u8,
                             std::sync::atomic::Ordering::Relaxed,
@@ -684,8 +686,11 @@ impl GrpcClient {
 
                     // Exponential backoff delay
                     let delay = health_checker.next_reconnect_delay();
-                    debug!("Reconnecting after {:?} delay (retry turn {})",
-                        delay, health_checker.retry_turns());
+                    debug!(
+                        "Reconnecting after {:?} delay (retry turn {})",
+                        delay,
+                        health_checker.retry_turns()
+                    );
                     tokio::time::sleep(delay).await;
 
                     // Clear old connection

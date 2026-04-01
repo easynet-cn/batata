@@ -48,20 +48,20 @@ impl ServiceInfoHolder {
     /// Returns the computed diff if there was a previous entry.
     pub fn process_service_info(&self, key: &str, new_service: Service) -> Option<InstancesDiff> {
         // Compute diff against existing cached data
-        let diff = self.service_info_map.get(key).map(|old_service| {
-            InstancesDiff::diff(&old_service.hosts, &new_service.hosts)
-        });
+        let diff = self
+            .service_info_map
+            .get(key)
+            .map(|old_service| InstancesDiff::diff(&old_service.hosts, &new_service.hosts));
 
         // Update in-memory cache
-        self.service_info_map.insert(key.to_string(), new_service.clone());
+        self.service_info_map
+            .insert(key.to_string(), new_service.clone());
 
         // Persist to disk (non-blocking best-effort)
         if let Some(reactor) = &self.failover_reactor {
-            if let Err(e) = reactor.save_failover(
-                &new_service.group_name,
-                &new_service.name,
-                &new_service,
-            ) {
+            if let Err(e) =
+                reactor.save_failover(&new_service.group_name, &new_service.name, &new_service)
+            {
                 warn!("Failed to save failover for service {}: {}", key, e);
             }
         }
@@ -89,7 +89,12 @@ impl ServiceInfoHolder {
     /// Get service info from cache, falling back to failover data if not in cache.
     ///
     /// Matches Nacos Java `ServiceInfoHolder` failover behavior.
-    pub fn get_or_failover(&self, key: &str, group_name: &str, service_name: &str) -> Option<Service> {
+    pub fn get_or_failover(
+        &self,
+        key: &str,
+        group_name: &str,
+        service_name: &str,
+    ) -> Option<Service> {
         // Try in-memory cache first
         if let Some(service) = self.get(key) {
             return Some(service);
@@ -101,7 +106,8 @@ impl ServiceInfoHolder {
                 Ok(Some(service)) => {
                     debug!("Loaded failover data for service: {}", key);
                     // Put it in memory cache too
-                    self.service_info_map.insert(key.to_string(), service.clone());
+                    self.service_info_map
+                        .insert(key.to_string(), service.clone());
                     return Some(service);
                 }
                 Ok(None) => {}
@@ -276,7 +282,9 @@ mod tests {
         let key = "DEFAULT_GROUP@@test-service";
 
         let mut service = Service::new("test-service".to_string(), "DEFAULT_GROUP".to_string());
-        service.hosts.push(Instance::new("10.0.0.1".to_string(), 8080));
+        service
+            .hosts
+            .push(Instance::new("10.0.0.1".to_string(), 8080));
 
         // First time — no diff (no previous entry)
         let diff = holder.process_service_info(key, service);
@@ -294,13 +302,19 @@ mod tests {
 
         // Initial
         let mut service1 = Service::new("test-service".to_string(), "DEFAULT_GROUP".to_string());
-        service1.hosts.push(Instance::new("10.0.0.1".to_string(), 8080));
+        service1
+            .hosts
+            .push(Instance::new("10.0.0.1".to_string(), 8080));
         holder.update(key, service1);
 
         // Update with additional instance
         let mut service2 = Service::new("test-service".to_string(), "DEFAULT_GROUP".to_string());
-        service2.hosts.push(Instance::new("10.0.0.1".to_string(), 8080));
-        service2.hosts.push(Instance::new("10.0.0.2".to_string(), 8081));
+        service2
+            .hosts
+            .push(Instance::new("10.0.0.1".to_string(), 8080));
+        service2
+            .hosts
+            .push(Instance::new("10.0.0.2".to_string(), 8081));
 
         let diff = holder.process_service_info(key, service2);
         assert!(diff.is_some());

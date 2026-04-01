@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
     api::ai::{
-        A2aServerOperationService, AgentRegistry,
+        A2aAgentService, AgentRegistry,
         model::{
             AgentDeleteQuery, AgentDetailQuery, AgentListQuery, AgentRegistrationRequest,
             AgentVersionListQuery,
@@ -53,7 +53,7 @@ async fn register_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
+    a2a_service: Option<web::Data<Arc<dyn A2aAgentService>>>,
     form: web::Form<AgentForm>,
 ) -> impl Responder {
     secured!(
@@ -108,7 +108,7 @@ async fn get_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
+    a2a_service: Option<web::Data<Arc<dyn A2aAgentService>>>,
     query: web::Query<AgentDetailQuery>,
 ) -> impl Responder {
     secured!(
@@ -148,7 +148,7 @@ async fn update_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
+    a2a_service: Option<web::Data<Arc<dyn A2aAgentService>>>,
     query: web::Query<AgentDetailQuery>,
     form: web::Form<AgentForm>,
 ) -> impl Responder {
@@ -202,7 +202,7 @@ async fn delete_agent(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
+    a2a_service: Option<web::Data<Arc<dyn A2aAgentService>>>,
     query: web::Query<AgentDeleteQuery>,
 ) -> impl Responder {
     secured!(
@@ -244,7 +244,7 @@ async fn list_agents(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
+    a2a_service: Option<web::Data<Arc<dyn A2aAgentService>>>,
     query: web::Query<AgentListQuery>,
 ) -> impl Responder {
     secured!(
@@ -286,7 +286,7 @@ async fn list_versions(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<AgentRegistry>>,
-    a2a_service: Option<web::Data<Arc<A2aServerOperationService>>>,
+    a2a_service: Option<web::Data<Arc<dyn A2aAgentService>>>,
     query: web::Query<AgentVersionListQuery>,
 ) -> impl Responder {
     secured!(

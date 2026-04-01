@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Responder, Scope, get, web};
 
-use batata_ai::model::pipeline::*;
-use batata_ai::service::pipeline_service::PipelineQueryService;
+use batata_common::PipelineService;
+use batata_common::model::ai::pipeline::*;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response as common_response;
 use batata_server_common::secured::Secured;
@@ -17,7 +17,7 @@ use batata_server_common::{ActionTypes, ApiType, SignType, secured};
 async fn get_pipeline(
     req: HttpRequest,
     data: web::Data<AppState>,
-    pipeline_service: web::Data<Arc<PipelineQueryService>>,
+    pipeline_service: web::Data<Arc<dyn PipelineService>>,
     path: web::Path<String>,
 ) -> impl Responder {
     secured!(
@@ -45,7 +45,7 @@ async fn get_pipeline(
 async fn list_pipelines(
     req: HttpRequest,
     data: web::Data<AppState>,
-    pipeline_service: web::Data<Arc<PipelineQueryService>>,
+    pipeline_service: web::Data<Arc<dyn PipelineService>>,
     query: web::Query<PipelineListForm>,
 ) -> impl Responder {
     secured!(

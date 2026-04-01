@@ -1,16 +1,9 @@
 // Common model types
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-/// Generic paginated response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Page<T> {
-    pub total_count: u64,
-    pub page_number: u64,
-    pub pages_available: u64,
-    pub page_items: Vec<T>,
-}
+/// Generic paginated response (re-exported from batata-common via batata-client)
+pub use batata_client::Page;
 
 /// Generic API response wrapper (used internally)
 #[derive(Debug, Deserialize)]

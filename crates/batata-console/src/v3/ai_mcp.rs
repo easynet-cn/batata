@@ -1,18 +1,20 @@
 // Console MCP server management API endpoints
 // Aligned with Nacos V3 Console API contract
-// Uses config-backed McpServerOperationService when available, falls back to in-memory McpServerRegistry
+// Uses Arc<dyn McpServerService> trait object (wired in batata-server)
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, Responder, Scope, delete, get, post, put, web};
 
-use batata_ai::model::{
-    BatchRegistrationResponse, McpDeleteQuery, McpDetailQuery, McpImportExecuteRequest,
-    McpImportValidateRequest, McpImportValidateResponse, McpListQuery, McpServer,
-    McpServerBasicInfo, McpServerConfig, McpServerImportRequest, McpServerRegistration,
+use batata_common::McpServerService;
+use batata_common::model::Page;
+use batata_common::model::ai::a2a::BatchRegistrationResponse;
+use batata_common::model::ai::mcp::{
+    ImportToolsQuery, McpDeleteQuery, McpDetailQuery, McpImportExecuteRequest,
+    McpImportValidateRequest, McpImportValidateResponse, McpListQuery, McpRegistryStats, McpServer,
+    McpServerBasicInfo, McpServerConfig, McpServerImportRequest, McpServerRegistration, McpTool,
 };
-use batata_ai::{McpRegistryStats, McpServerOperationService, McpServerRegistry};
 use batata_server_common::error;
 use batata_server_common::model::app_state::AppState;
 use batata_server_common::model::response as common_response;
@@ -25,8 +27,7 @@ use batata_server_common::{ActionTypes, ApiType, SignType, secured};
 async fn list_servers(
     req: HttpRequest,
     data: web::Data<AppState>,
-    registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    svc: web::Data<Arc<dyn McpServerService>>,
     params: web::Query<McpListQuery>,
 ) -> impl Responder {
     secured!(
@@ -38,23 +39,18 @@ async fn list_servers(
     );
 
     let q = params.into_inner();
-    if let Some(svc) = mcp_service {
-        let namespace = q.namespace_id.as_deref().unwrap_or("public");
-        let search_type = q.search.as_deref().unwrap_or("blur");
-        let page_no = q.page_no.unwrap_or(1);
-        let page_size = q.page_size.unwrap_or(20);
-        let result = svc.list_mcp_servers(
-            namespace,
-            q.mcp_name.as_deref(),
-            search_type,
-            page_no,
-            page_size,
-        );
-        common_response::Result::<batata_api::model::Page<McpServerBasicInfo>>::http_success(result)
-    } else {
-        let result = registry.list_with_search(&q);
-        common_response::Result::<batata_api::model::Page<McpServerBasicInfo>>::http_success(result)
-    }
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    let search_type = q.search.as_deref().unwrap_or("blur");
+    let page_no = q.page_no.unwrap_or(1);
+    let page_size = q.page_size.unwrap_or(20);
+    let result = svc.list_mcp_servers(
+        namespace,
+        q.mcp_name.as_deref(),
+        search_type,
+        page_no,
+        page_size,
+    );
+    common_response::Result::<Page<McpServerBasicInfo>>::http_success(result)
 }
 
 /// Get MCP server by query params
@@ -63,8 +59,7 @@ async fn list_servers(
 async fn get_server(
     req: HttpRequest,
     data: web::Data<AppState>,
-    registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    svc: web::Data<Arc<dyn McpServerService>>,
     query: web::Query<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
@@ -76,41 +71,29 @@ async fn get_server(
     );
 
     let q = query.into_inner();
-    if let Some(svc) = mcp_service {
-        let namespace = q.namespace_id.as_deref().unwrap_or("public");
-        match svc
-            .get_mcp_server_detail(
-                namespace,
-                q.mcp_id.as_deref(),
-                q.mcp_name.as_deref(),
-                q.version.as_deref(),
-            )
-            .await
-        {
-            Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
-            Ok(None) => common_response::Result::<String>::http_response(
-                404,
-                error::MCP_SERVER_NOT_FOUND.code,
-                "MCP server not found".to_string(),
-                String::new(),
-            ),
-            Err(e) => common_response::Result::<String>::http_response(
-                500,
-                error::SERVER_ERROR.code,
-                e.to_string(),
-                String::new(),
-            ),
-        }
-    } else {
-        match registry.get_by_query(&q) {
-            Some(server) => common_response::Result::<McpServer>::http_success(server),
-            None => common_response::Result::<String>::http_response(
-                404,
-                error::MCP_SERVER_NOT_FOUND.code,
-                "MCP server not found".to_string(),
-                String::new(),
-            ),
-        }
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    match svc
+        .get_mcp_server_detail(
+            namespace,
+            q.mcp_id.as_deref(),
+            q.mcp_name.as_deref(),
+            q.version.as_deref(),
+        )
+        .await
+    {
+        Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
+        Ok(None) => common_response::Result::<String>::http_response(
+            404,
+            error::MCP_SERVER_NOT_FOUND.code,
+            "MCP server not found".to_string(),
+            String::new(),
+        ),
+        Err(e) => common_response::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -120,8 +103,7 @@ async fn get_server(
 async fn register_server(
     req: HttpRequest,
     data: web::Data<AppState>,
-    registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    svc: web::Data<Arc<dyn McpServerService>>,
     body: web::Json<McpServerRegistration>,
 ) -> impl Responder {
     secured!(
@@ -133,40 +115,21 @@ async fn register_server(
     );
 
     let reg = body.into_inner();
-    if let Some(svc) = mcp_service {
-        let namespace = reg.namespace.clone();
-        match svc.create_mcp_server(&namespace, &reg).await {
-            Ok(id) => {
-                // Also register in in-memory for backward compat
-                if let Err(e) = registry.register(reg.clone()) {
-                    tracing::warn!("Failed to register MCP server in memory: {}", e);
-                }
-                // Fetch the full server from operation service
-                match svc
-                    .get_mcp_server_detail(&namespace, Some(&id), None, None)
-                    .await
-                {
-                    Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
-                    _ => common_response::Result::<String>::http_success(id),
-                }
-            }
-            Err(e) => common_response::Result::<String>::http_response(
-                400,
-                error::PARAMETER_VALIDATE_ERROR.code,
-                e.to_string(),
-                String::new(),
-            ),
-        }
-    } else {
-        match registry.register(reg) {
-            Ok(server) => common_response::Result::<McpServer>::http_success(server),
-            Err(e) => common_response::Result::<String>::http_response(
-                400,
-                error::PARAMETER_VALIDATE_ERROR.code,
-                e,
-                String::new(),
-            ),
-        }
+    let namespace = reg.namespace.clone();
+    match svc.create_mcp_server(&namespace, &reg).await {
+        Ok(id) => match svc
+            .get_mcp_server_detail(&namespace, Some(&id), None, None)
+            .await
+        {
+            Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
+            _ => common_response::Result::<String>::http_success(id),
+        },
+        Err(e) => common_response::Result::<String>::http_response(
+            400,
+            error::PARAMETER_VALIDATE_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -176,8 +139,7 @@ async fn register_server(
 async fn update_server(
     req: HttpRequest,
     data: web::Data<AppState>,
-    registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    svc: web::Data<Arc<dyn McpServerService>>,
     query: web::Query<McpDetailQuery>,
     body: web::Json<McpServerRegistration>,
 ) -> impl Responder {
@@ -197,39 +159,20 @@ async fn update_server(
     }
     reg.namespace = namespace.clone();
 
-    if let Some(svc) = mcp_service {
-        match svc.update_mcp_server(&namespace, &reg).await {
-            Ok(()) => {
-                // Also update in-memory
-                if let Err(e) = registry.update(&namespace, &reg.name, reg.clone()) {
-                    tracing::warn!("Failed to update MCP server in memory: {}", e);
-                }
-                match svc
-                    .get_mcp_server_detail(&namespace, None, Some(&reg.name), None)
-                    .await
-                {
-                    Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
-                    _ => common_response::Result::<bool>::http_success(true),
-                }
-            }
-            Err(e) => common_response::Result::<String>::http_response(
-                404,
-                error::MCP_SERVER_NOT_FOUND.code,
-                e.to_string(),
-                String::new(),
-            ),
-        }
-    } else {
-        let name = reg.name.clone();
-        match registry.update(&namespace, &name, reg) {
-            Ok(server) => common_response::Result::<McpServer>::http_success(server),
-            Err(e) => common_response::Result::<String>::http_response(
-                404,
-                error::MCP_SERVER_NOT_FOUND.code,
-                e,
-                String::new(),
-            ),
-        }
+    match svc.update_mcp_server(&namespace, &reg).await {
+        Ok(()) => match svc
+            .get_mcp_server_detail(&namespace, None, Some(&reg.name), None)
+            .await
+        {
+            Ok(Some(server)) => common_response::Result::<McpServer>::http_success(server),
+            _ => common_response::Result::<bool>::http_success(true),
+        },
+        Err(e) => common_response::Result::<String>::http_response(
+            404,
+            error::MCP_SERVER_NOT_FOUND.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
@@ -239,8 +182,7 @@ async fn update_server(
 async fn delete_server(
     req: HttpRequest,
     data: web::Data<AppState>,
-    registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    svc: web::Data<Arc<dyn McpServerService>>,
     query: web::Query<McpDeleteQuery>,
 ) -> impl Responder {
     secured!(
@@ -252,60 +194,34 @@ async fn delete_server(
     );
 
     let q = query.into_inner();
-    if let Some(svc) = mcp_service {
-        let namespace = q.namespace_id.as_deref().unwrap_or("public");
-        match svc
-            .delete_mcp_server(
-                namespace,
-                q.mcp_name.as_deref(),
-                q.mcp_id.as_deref(),
-                q.version.as_deref(),
-            )
-            .await
-        {
-            Ok(()) => {
-                // Also remove from in-memory
-                if let Err(e) = registry.delete_by_query(&McpDeleteQuery {
-                    namespace_id: Some(namespace.to_string()),
-                    mcp_name: q.mcp_name.clone(),
-                    mcp_id: q.mcp_id.clone(),
-                    version: q.version.clone(),
-                }) {
-                    tracing::warn!("Failed to delete MCP server from memory: {}", e);
-                }
-                common_response::Result::<bool>::http_success(true)
-            }
-            Err(e) => common_response::Result::<String>::http_response(
-                404,
-                error::MCP_SERVER_NOT_FOUND.code,
-                e.to_string(),
-                String::new(),
-            ),
-        }
-    } else {
-        match registry.delete_by_query(&q) {
-            Ok(()) => common_response::Result::<bool>::http_success(true),
-            Err(e) => common_response::Result::<String>::http_response(
-                404,
-                error::MCP_SERVER_NOT_FOUND.code,
-                e,
-                String::new(),
-            ),
-        }
+    let namespace = q.namespace_id.as_deref().unwrap_or("public");
+    match svc
+        .delete_mcp_server(
+            namespace,
+            q.mcp_name.as_deref(),
+            q.mcp_id.as_deref(),
+            q.version.as_deref(),
+        )
+        .await
+    {
+        Ok(()) => common_response::Result::<bool>::http_success(true),
+        Err(e) => common_response::Result::<String>::http_response(
+            404,
+            error::MCP_SERVER_NOT_FOUND.code,
+            e.to_string(),
+            String::new(),
+        ),
     }
 }
 
 /// Import tools from a running MCP server via SSE transport.
-/// Connects to the remote MCP server, performs initialize handshake,
-/// and calls tools/list to discover available tools.
-/// Matches Nacos ConsoleMcpController.importToolsFromMcp behavior.
-///
 /// GET /v3/console/ai/mcp/importToolsFromMcp
 #[get("/importToolsFromMcp")]
 async fn import_tools_from_mcp(
     req: HttpRequest,
     data: web::Data<AppState>,
-    query: web::Query<batata_ai::model::ImportToolsQuery>,
+    svc: web::Data<Arc<dyn McpServerService>>,
+    query: web::Query<ImportToolsQuery>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/mcp")
@@ -316,8 +232,6 @@ async fn import_tools_from_mcp(
     );
 
     let q = query.into_inner();
-
-    // Only mcp-sse transport is supported (matching Nacos behavior)
     if q.transport_type != "mcp-sse" {
         return common_response::Result::<String>::http_response(
             500,
@@ -328,15 +242,11 @@ async fn import_tools_from_mcp(
     }
 
     let timeout = std::time::Duration::from_secs(10);
-    match batata_ai::service::mcp_client::import_tools_from_mcp_sse(
-        &q.base_url,
-        &q.endpoint,
-        q.auth_token.as_deref(),
-        timeout,
-    )
-    .await
+    match svc
+        .import_tools_from_mcp(&q.base_url, &q.endpoint, q.auth_token.as_deref(), timeout)
+        .await
     {
-        Ok(tools) => common_response::Result::<Vec<batata_ai::model::McpTool>>::http_success(tools),
+        Ok(tools) => common_response::Result::<Vec<McpTool>>::http_success(tools),
         Err(e) => common_response::Result::<String>::http_response(
             500,
             error::SERVER_ERROR.code,
@@ -389,7 +299,7 @@ async fn import_validate(
 async fn import_execute(
     req: HttpRequest,
     data: web::Data<AppState>,
-    registry: web::Data<Arc<McpServerRegistry>>,
+    svc: web::Data<Arc<dyn McpServerService>>,
     body: web::Json<McpImportExecuteRequest>,
 ) -> impl Responder {
     secured!(
@@ -408,8 +318,17 @@ async fn import_execute(
                 namespace: exec.namespace,
                 overwrite: exec.overwrite,
             };
-            let result = registry.import(import_request);
-            common_response::Result::<BatchRegistrationResponse>::http_success(result)
+            match svc.import_mcp_servers(import_request).await {
+                Ok(result) => {
+                    common_response::Result::<BatchRegistrationResponse>::http_success(result)
+                }
+                Err(e) => common_response::Result::<String>::http_response(
+                    500,
+                    error::SERVER_ERROR.code,
+                    e.to_string(),
+                    String::new(),
+                ),
+            }
         }
         Err(e) => common_response::Result::<String>::http_response(
             400,
@@ -426,7 +345,7 @@ async fn import_execute(
 async fn import_servers(
     req: HttpRequest,
     data: web::Data<AppState>,
-    registry: web::Data<Arc<McpServerRegistry>>,
+    svc: web::Data<Arc<dyn McpServerService>>,
     body: web::Json<McpServerImportRequest>,
 ) -> impl Responder {
     secured!(
@@ -437,8 +356,15 @@ async fn import_servers(
             .build()
     );
 
-    let result = registry.import(body.into_inner());
-    common_response::Result::<BatchRegistrationResponse>::http_success(result)
+    match svc.import_mcp_servers(body.into_inner()).await {
+        Ok(result) => common_response::Result::<BatchRegistrationResponse>::http_success(result),
+        Err(e) => common_response::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
+    }
 }
 
 /// Get MCP registry statistics
@@ -447,7 +373,7 @@ async fn import_servers(
 async fn get_stats(
     req: HttpRequest,
     data: web::Data<AppState>,
-    registry: web::Data<Arc<McpServerRegistry>>,
+    svc: web::Data<Arc<dyn McpServerService>>,
 ) -> impl Responder {
     secured!(
         Secured::builder(&req, &data, "console/ai/mcp")
@@ -457,8 +383,15 @@ async fn get_stats(
             .build()
     );
 
-    let stats = registry.stats();
-    common_response::Result::<McpRegistryStats>::http_success(stats)
+    match svc.mcp_stats().await {
+        Ok(stats) => common_response::Result::<McpRegistryStats>::http_success(stats),
+        Err(e) => common_response::Result::<String>::http_response(
+            500,
+            error::SERVER_ERROR.code,
+            e.to_string(),
+            String::new(),
+        ),
+    }
 }
 
 pub fn routes() -> Scope {

@@ -305,24 +305,8 @@ impl ConnectionLimiter {
     }
 }
 
-/// Control Plugin SPI (PLG-001)
-#[async_trait]
-pub trait ControlPlugin: Plugin {
-    /// Check rate limit for a request
-    async fn check_rate_limit(&self, ctx: &ControlContext) -> RateLimitResult;
-
-    /// Check connection limit
-    async fn check_connection_limit(&self, ctx: &ControlContext) -> ConnectionLimitResult;
-
-    /// Release a connection (call when connection closes)
-    async fn release_connection(&self, ctx: &ControlContext);
-
-    /// Get control statistics
-    async fn get_stats(&self) -> ControlStats;
-
-    /// Reload rules from storage
-    async fn reload_rules(&self) -> anyhow::Result<()>;
-}
+/// Control Plugin SPI (re-exported from batata-common)
+pub use batata_common::ControlPlugin;
 
 /// Default control plugin implementation
 pub struct DefaultControlPlugin {

@@ -590,3 +590,108 @@ mod tests {
         assert_eq!(parsed.id, "test-id");
     }
 }
+
+#[async_trait::async_trait]
+impl super::traits::A2aAgentService for A2aServerOperationService {
+    async fn register_agent(
+        &self,
+        card: &AgentCard,
+        namespace: &str,
+        registration_type: &str,
+    ) -> anyhow::Result<String> {
+        self.register_agent(card, namespace, registration_type)
+            .await
+    }
+
+    async fn get_agent_card(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        version: Option<&str>,
+    ) -> anyhow::Result<Option<RegisteredAgent>> {
+        self.get_agent_card(namespace, agent_name, version).await
+    }
+
+    async fn update_agent_card(
+        &self,
+        card: &AgentCard,
+        namespace: &str,
+        registration_type: &str,
+    ) -> anyhow::Result<()> {
+        self.update_agent_card(card, namespace, registration_type)
+            .await
+    }
+
+    async fn delete_agent(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+        version: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.delete_agent(namespace, agent_name, version).await
+    }
+
+    async fn list_agents(
+        &self,
+        namespace: &str,
+        agent_name: Option<&str>,
+        search_type: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> anyhow::Result<batata_api::model::Page<AgentCardVersionInfo>> {
+        self.list_agents(namespace, agent_name, search_type, page_no, page_size)
+            .await
+    }
+
+    async fn list_versions(
+        &self,
+        namespace: &str,
+        agent_name: &str,
+    ) -> anyhow::Result<Vec<VersionDetail>> {
+        self.list_versions(namespace, agent_name).await
+    }
+
+    async fn find_by_skill(&self, _skill: &str) -> anyhow::Result<Vec<RegisteredAgent>> {
+        // Config-backed service does not support skill-based search yet
+        Ok(vec![])
+    }
+
+    async fn batch_register(
+        &self,
+        request: batata_common::model::ai::a2a::BatchAgentRegistrationRequest,
+    ) -> anyhow::Result<batata_common::model::ai::a2a::BatchRegistrationResponse> {
+        let mut success_count = 0u32;
+        let mut errors = Vec::new();
+        for agent_req in request.agents {
+            let name = agent_req.card.name.clone();
+            let namespace = &agent_req.namespace;
+            match self
+                .register_agent(&agent_req.card, namespace, "direct")
+                .await
+            {
+                Ok(_) => success_count += 1,
+                Err(e) => errors.push(batata_common::model::ai::a2a::RegistrationError {
+                    name,
+                    error: e.to_string(),
+                }),
+            }
+        }
+        let failed_count = errors.len() as u32;
+        Ok(batata_common::model::ai::a2a::BatchRegistrationResponse {
+            success_count,
+            failed_count,
+            errors,
+        })
+    }
+
+    async fn stats(&self) -> anyhow::Result<batata_common::model::ai::a2a::AgentRegistryStats> {
+        // Config-backed service returns basic stats
+        Ok(batata_common::model::ai::a2a::AgentRegistryStats {
+            total_agents: 0,
+            healthy_agents: 0,
+            unhealthy_agents: 0,
+            by_namespace: std::collections::HashMap::new(),
+            by_skill: std::collections::HashMap::new(),
+        })
+    }
+}

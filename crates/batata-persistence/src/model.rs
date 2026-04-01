@@ -90,39 +90,8 @@ pub struct PipelineExecutionInfo {
     pub update_time: i64,
 }
 
-/// Generic paginated result
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Page<T> {
-    pub total_count: u64,
-    pub page_number: u64,
-    pub pages_available: u64,
-    pub page_items: Vec<T>,
-}
-
-impl<T> Page<T> {
-    pub fn new(total_count: u64, page_number: u64, page_size: u64, page_items: Vec<T>) -> Self {
-        Self {
-            total_count,
-            page_number,
-            pages_available: if page_size > 0 {
-                (total_count as f64 / page_size as f64).ceil() as u64
-            } else {
-                0
-            },
-            page_items,
-        }
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            total_count: 0,
-            page_number: 0,
-            pages_available: 0,
-            page_items: Vec::new(),
-        }
-    }
-}
+/// Generic paginated result (re-exported from batata-common)
+pub use batata_common::model::Page;
 
 /// Storage backend type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

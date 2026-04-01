@@ -856,9 +856,7 @@ impl crate::traits::NamingService for BatataNamingService {
         group_name: &str,
         clusters: &[String],
     ) -> Result<Vec<Instance>> {
-        let all = self
-            .get_all_instances("", group_name, service_name)
-            .await?;
+        let all = self.get_all_instances("", group_name, service_name).await?;
         if clusters.is_empty() {
             return Ok(all);
         }
@@ -925,11 +923,10 @@ impl crate::traits::NamingService for BatataNamingService {
         page_size: i32,
         group_name: &str,
     ) -> Result<crate::traits::ListView<String>> {
-        let (count, names) = self.list_services("", group_name, page_no, page_size).await?;
-        Ok(crate::traits::ListView {
-            count,
-            data: names,
-        })
+        let (count, names) = self
+            .list_services("", group_name, page_no, page_size)
+            .await?;
+        Ok(crate::traits::ListView { count, data: names })
     }
 
     async fn get_server_status(&self) -> String {

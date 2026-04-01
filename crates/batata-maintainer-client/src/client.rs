@@ -2607,10 +2607,7 @@ impl MaintainerClient {
     /// List all plugins, optionally filtered by type.
     ///
     /// Matches Nacos `CoreMaintainerService.listPlugins()`.
-    pub async fn plugin_list(
-        &self,
-        plugin_type: Option<&str>,
-    ) -> anyhow::Result<Vec<PluginInfo>> {
+    pub async fn plugin_list(&self, plugin_type: Option<&str>) -> anyhow::Result<Vec<PluginInfo>> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct Query<'a> {
@@ -2751,5 +2748,4 @@ impl MaintainerClient {
             .await?;
         Ok(response.data)
     }
-
 }

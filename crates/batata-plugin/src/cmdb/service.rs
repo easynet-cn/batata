@@ -16,58 +16,8 @@ use tokio::sync::RwLock;
 use super::model::*;
 use crate::Plugin;
 
-/// CMDB Plugin SPI (PLG-201)
-#[async_trait]
-pub trait CmdbPlugin: Plugin {
-    /// Register an entity with CMDB
-    async fn register_entity(&self, entity: CmdbEntity) -> anyhow::Result<String>;
-
-    /// Update an entity in CMDB
-    async fn update_entity(&self, entity: CmdbEntity) -> anyhow::Result<()>;
-
-    /// Delete an entity from CMDB
-    async fn delete_entity(&self, id: &str) -> anyhow::Result<bool>;
-
-    /// Get an entity by ID
-    async fn get_entity(&self, id: &str) -> anyhow::Result<Option<CmdbEntity>>;
-
-    /// List entities by type
-    async fn list_entities(
-        &self,
-        entity_type: Option<CmdbEntityType>,
-    ) -> anyhow::Result<Vec<CmdbEntity>>;
-
-    /// Search entities by labels
-    async fn search_by_labels(
-        &self,
-        labels: &HashMap<String, String>,
-    ) -> anyhow::Result<Vec<CmdbEntity>>;
-
-    /// Sync labels from source to target (PLG-202)
-    async fn sync_labels(
-        &self,
-        entity_id: &str,
-        labels: &HashMap<String, String>,
-    ) -> anyhow::Result<HashMap<String, String>>;
-
-    /// Map entity to CMDB format (PLG-203)
-    async fn map_entity(&self, entity: &CmdbEntity) -> anyhow::Result<serde_json::Value>;
-
-    /// Perform full sync
-    async fn full_sync(&self) -> anyhow::Result<CmdbSyncResult>;
-
-    /// Get label mappings
-    async fn get_label_mappings(&self) -> anyhow::Result<Vec<LabelMapping>>;
-
-    /// Add a label mapping
-    async fn add_label_mapping(&self, mapping: LabelMapping) -> anyhow::Result<String>;
-
-    /// Remove a label mapping
-    async fn remove_label_mapping(&self, id: &str) -> anyhow::Result<bool>;
-
-    /// Get CMDB statistics
-    async fn get_stats(&self) -> CmdbStats;
-}
+/// CMDB Plugin SPI (re-exported from batata-common)
+pub use batata_common::CmdbPlugin;
 
 /// Default CMDB plugin implementation
 pub struct DefaultCmdbPlugin {

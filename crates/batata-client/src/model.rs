@@ -289,26 +289,8 @@ pub struct ClientListResponse {
     pub client_ids: Vec<String>,
 }
 
-/// Paginated response
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Page<T> {
-    #[serde(alias = "count", default)]
-    pub total_count: u64,
-    #[serde(default)]
-    pub page_number: u64,
-    #[serde(default)]
-    pub pages_available: u64,
-    #[serde(
-        alias = "serviceList",
-        alias = "configList",
-        alias = "hosts",
-        alias = "subscribers",
-        alias = "list",
-        default
-    )]
-    pub page_items: Vec<T>,
-}
+/// Paginated response (re-exported from batata-common)
+pub use batata_common::model::Page;
 
 // ============== Service/Naming Models ==============
 

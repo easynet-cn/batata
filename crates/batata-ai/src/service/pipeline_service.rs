@@ -78,3 +78,37 @@ impl PipelineQueryService {
         }
     }
 }
+
+#[async_trait::async_trait]
+impl super::traits::PipelineService for PipelineQueryService {
+    async fn get_pipeline(&self, execution_id: &str) -> anyhow::Result<Option<PipelineExecution>> {
+        self.get_pipeline(execution_id).await
+    }
+
+    async fn list_pipelines(
+        &self,
+        resource_type: &str,
+        resource_name: Option<&str>,
+        namespace_id: Option<&str>,
+        version: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<batata_api::model::Page<PipelineExecution>> {
+        let p = self
+            .list_pipelines(
+                resource_type,
+                resource_name,
+                namespace_id,
+                version,
+                page_no,
+                page_size,
+            )
+            .await?;
+        Ok(batata_api::model::Page {
+            total_count: p.total_count,
+            page_number: p.page_number,
+            pages_available: p.pages_available,
+            page_items: p.page_items,
+        })
+    }
+}

@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::{
     ActionTypes, ApiType, Secured, SignType,
     api::ai::{
-        McpServerOperationService, McpServerRegistry,
+        McpServerRegistry, McpServerService,
         model::{McpDeleteQuery, McpDetailQuery, McpListQuery, McpServerRegistration},
     },
     model::{common::AppState, response::Result},
@@ -90,7 +90,7 @@ async fn list_mcp(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    mcp_service: Option<web::Data<Arc<dyn McpServerService>>>,
     query: web::Query<McpListQuery>,
 ) -> impl Responder {
     secured!(
@@ -127,7 +127,7 @@ async fn get_mcp(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    mcp_service: Option<web::Data<Arc<dyn McpServerService>>>,
     query: web::Query<McpDetailQuery>,
 ) -> impl Responder {
     secured!(
@@ -174,7 +174,7 @@ async fn create_mcp(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    mcp_service: Option<web::Data<Arc<dyn McpServerService>>>,
     form: web::Form<McpForm>,
 ) -> impl Responder {
     secured!(
@@ -232,7 +232,7 @@ async fn update_mcp(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    mcp_service: Option<web::Data<Arc<dyn McpServerService>>>,
     query: web::Query<McpDetailQuery>,
     form: web::Form<McpForm>,
 ) -> impl Responder {
@@ -282,7 +282,7 @@ async fn delete_mcp(
     req: HttpRequest,
     data: web::Data<AppState>,
     registry: web::Data<Arc<McpServerRegistry>>,
-    mcp_service: Option<web::Data<Arc<McpServerOperationService>>>,
+    mcp_service: Option<web::Data<Arc<dyn McpServerService>>>,
     query: web::Query<McpDeleteQuery>,
 ) -> impl Responder {
     secured!(

@@ -31,18 +31,8 @@ pub use cmdb::{
     DefaultCmdbPlugin, LabelMapping,
 };
 
-/// Plugin trait for extensibility
-#[async_trait]
-pub trait Plugin: Send + Sync {
-    /// Get the plugin name
-    fn name(&self) -> &str;
-
-    /// Initialize the plugin
-    async fn init(&self) -> anyhow::Result<()>;
-
-    /// Shutdown the plugin
-    async fn shutdown(&self) -> anyhow::Result<()>;
-}
+/// Plugin trait (re-exported from batata-common)
+pub use batata_common::Plugin;
 
 /// Plugin registry for managing multiple plugins
 pub struct PluginRegistry {

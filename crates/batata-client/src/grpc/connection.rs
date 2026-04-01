@@ -192,8 +192,7 @@ impl GrpcConnection {
         match client.request(payload).await {
             Ok(response) => {
                 let resp_payload = response.into_inner();
-                let check_resp: ServerCheckResponse =
-                    super::deserialize_payload(&resp_payload);
+                let check_resp: ServerCheckResponse = super::deserialize_payload(&resp_payload);
                 Ok(check_resp.response.success || check_resp.response.result_code == 200)
             }
             Err(e) => {

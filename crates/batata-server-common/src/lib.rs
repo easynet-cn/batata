@@ -33,6 +33,9 @@ pub use secured::{
     ConfigHttpResourceParser, NamingHttpResourceParser, Secured, SecuredBuilder, join_resource,
 };
 
+// Re-export auth constants for downstream crates
+pub use batata_auth::model::ONLY_IDENTITY;
+
 // Re-export AppState and server status types
 pub use model::AppState;
 pub use model::server_status::{ServerStatus, ServerStatusManager};

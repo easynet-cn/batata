@@ -13,14 +13,14 @@ use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
 use crate::model::pipeline::*;
-use crate::service::pipeline_service::PipelineQueryService;
+use crate::service::traits::PipelineService;
 
 /// GET /v3/admin/ai/pipelines/{pipelineId} — Get pipeline execution by ID
 #[get("/{pipeline_id}")]
 async fn get_pipeline(
     req: HttpRequest,
     data: web::Data<AppState>,
-    pipeline_service: web::Data<Arc<PipelineQueryService>>,
+    pipeline_service: web::Data<Arc<dyn PipelineService>>,
     path: web::Path<String>,
 ) -> impl Responder {
     secured!(
@@ -48,7 +48,7 @@ async fn get_pipeline(
 async fn list_pipelines(
     req: HttpRequest,
     data: web::Data<AppState>,
-    pipeline_service: web::Data<Arc<PipelineQueryService>>,
+    pipeline_service: web::Data<Arc<dyn PipelineService>>,
     query: web::Query<PipelineListForm>,
 ) -> impl Responder {
     secured!(

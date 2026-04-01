@@ -15,7 +15,7 @@ use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
 use crate::model::agentspec::*;
-use crate::service::agentspec_service::AgentSpecOperationService;
+use crate::service::traits::AgentSpecService;
 
 fn normalize_namespace(ns: &str) -> &str {
     if ns.is_empty() {
@@ -41,7 +41,7 @@ fn get_username(req: &HttpRequest) -> String {
 async fn get_agentspec_detail(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecForm>,
 ) -> impl Responder {
     secured!(
@@ -78,7 +78,7 @@ async fn get_agentspec_detail(
 async fn get_agentspec_version(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecForm>,
 ) -> impl Responder {
     secured!(
@@ -127,7 +127,7 @@ async fn get_agentspec_version(
 async fn download_agentspec_version(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecForm>,
 ) -> impl Responder {
     secured!(
@@ -188,7 +188,7 @@ async fn download_agentspec_version(
 async fn delete_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecForm>,
 ) -> impl Responder {
     secured!(
@@ -221,7 +221,7 @@ async fn delete_agentspec(
 async fn list_agentspecs(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecListForm>,
 ) -> impl Responder {
     secured!(
@@ -259,7 +259,7 @@ async fn list_agentspecs(
 async fn upload_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecUploadQuery>,
     mut payload: Multipart,
 ) -> impl Responder {
@@ -390,7 +390,7 @@ fn parse_agentspec_zip(zip_data: &[u8]) -> std::result::Result<AgentSpec, String
 async fn create_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecDraftCreateForm>,
 ) -> impl Responder {
     secured!(
@@ -449,7 +449,7 @@ async fn create_draft(
 async fn update_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecUpdateForm>,
 ) -> impl Responder {
     secured!(
@@ -522,7 +522,7 @@ async fn update_draft(
 async fn delete_draft(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecForm>,
 ) -> impl Responder {
     secured!(
@@ -558,7 +558,7 @@ async fn delete_draft(
 async fn submit_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecSubmitForm>,
 ) -> impl Responder {
     secured!(
@@ -589,7 +589,7 @@ async fn submit_agentspec(
 async fn publish_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecPublishForm>,
 ) -> impl Responder {
     secured!(
@@ -625,7 +625,7 @@ async fn publish_agentspec(
 async fn update_labels(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecLabelsUpdateForm>,
 ) -> impl Responder {
     secured!(
@@ -667,7 +667,7 @@ async fn update_labels(
 async fn update_biz_tags(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecBizTagsUpdateForm>,
 ) -> impl Responder {
     secured!(
@@ -698,7 +698,7 @@ async fn update_biz_tags(
 async fn online_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecOnlineForm>,
 ) -> impl Responder {
     secured!(
@@ -735,7 +735,7 @@ async fn online_agentspec(
 async fn offline_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecOnlineForm>,
 ) -> impl Responder {
     secured!(
@@ -772,7 +772,7 @@ async fn offline_agentspec(
 async fn update_scope(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     body: web::Form<AgentSpecScopeForm>,
 ) -> impl Responder {
     secured!(
@@ -809,7 +809,7 @@ async fn update_scope(
 async fn client_query_agentspec(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecQueryForm>,
 ) -> impl Responder {
     // Nacos uses OPEN_API + ALLOW_ANONYMOUS for client SDK access
@@ -847,7 +847,7 @@ async fn client_query_agentspec(
 async fn client_search_agentspecs(
     req: HttpRequest,
     data: web::Data<AppState>,
-    agentspec_service: web::Data<Arc<AgentSpecOperationService>>,
+    agentspec_service: web::Data<Arc<dyn AgentSpecService>>,
     query: web::Query<AgentSpecSearchForm>,
 ) -> impl Responder {
     secured!(

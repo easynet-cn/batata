@@ -59,12 +59,7 @@ pub trait ConfigService: Send + Sync {
     /// Get a config value from the server.
     ///
     /// Returns the raw content string. For metadata (MD5, type), use `get_config_with_result`.
-    async fn get_config(
-        &self,
-        data_id: &str,
-        group: &str,
-        timeout: Duration,
-    ) -> Result<String>;
+    async fn get_config(&self, data_id: &str, group: &str, timeout: Duration) -> Result<String>;
 
     /// Get a config value with full metadata.
     ///
@@ -90,12 +85,7 @@ pub trait ConfigService: Send + Sync {
     ) -> Result<String>;
 
     /// Publish (create or update) a config on the server.
-    async fn publish_config(
-        &self,
-        data_id: &str,
-        group: &str,
-        content: &str,
-    ) -> Result<bool>;
+    async fn publish_config(&self, data_id: &str, group: &str, content: &str) -> Result<bool>;
 
     /// Publish config with a specific type.
     async fn publish_config_with_type(
@@ -255,12 +245,8 @@ pub trait NamingService: Send + Sync {
     ) -> Result<Vec<Instance>>;
 
     /// Unsubscribe from service changes.
-    async fn unsubscribe(
-        &self,
-        service_name: &str,
-        group_name: &str,
-        clusters: &str,
-    ) -> Result<()>;
+    async fn unsubscribe(&self, service_name: &str, group_name: &str, clusters: &str)
+    -> Result<()>;
 
     /// List services with pagination.
     async fn get_services_of_server(

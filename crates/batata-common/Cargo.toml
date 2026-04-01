@@ -33,6 +33,13 @@ aes-gcm = { workspace = true }
 rand = { workspace = true }
 base64 = { workspace = true }
 
+# ZIP support (for skill_zip)
+zip = { workspace = true, optional = true }
+
+[features]
+default = ["skill-zip"]
+skill-zip = ["zip"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 proptest = { workspace = true }

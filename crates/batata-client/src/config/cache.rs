@@ -73,7 +73,6 @@ pub struct CacheData {
     pub change_event_listeners: Vec<ManagerChangeEventListenerWrap>,
 
     // --- State flags matching Nacos Java CacheData ---
-
     /// Whether the client's MD5 is consistent (synced) with the server.
     /// Set to `false` when a listener is added, on server push, or on disconnect.
     /// Set to `true` after a successful batch listen confirms no changes.
@@ -125,7 +124,8 @@ impl CacheData {
         if new_md5 != self.md5 {
             self.content = content.to_string();
             self.md5 = new_md5;
-            self.is_consistent_with_server.store(false, Ordering::Relaxed);
+            self.is_consistent_with_server
+                .store(false, Ordering::Relaxed);
             true
         } else {
             false
@@ -140,14 +140,16 @@ impl CacheData {
         let wrap = ManagerListenerWrap::new(listener, &self.md5, &self.content);
         self.listeners.push(wrap);
         // Mark inconsistent so the listen loop will re-check this config
-        self.is_consistent_with_server.store(false, Ordering::Relaxed);
+        self.is_consistent_with_server
+            .store(false, Ordering::Relaxed);
     }
 
     /// Add a change event listener.
     pub fn add_change_event_listener(&mut self, listener: Arc<dyn ConfigChangeEventListener>) {
         let wrap = ManagerChangeEventListenerWrap::new(listener, &self.md5, &self.content);
         self.change_event_listeners.push(wrap);
-        self.is_consistent_with_server.store(false, Ordering::Relaxed);
+        self.is_consistent_with_server
+            .store(false, Ordering::Relaxed);
     }
 
     /// Remove a specific listener by pointer equality.
@@ -172,7 +174,8 @@ impl CacheData {
         self.change_event_listeners.clear();
         if count > 0 {
             self.is_discard = true;
-            self.is_consistent_with_server.store(false, Ordering::Relaxed);
+            self.is_consistent_with_server
+                .store(false, Ordering::Relaxed);
         }
         count
     }
@@ -424,7 +427,9 @@ mod tests {
         assert!(!cache.is_consistent_with_server.load(Ordering::Relaxed));
 
         // Set consistent
-        cache.is_consistent_with_server.store(true, Ordering::Relaxed);
+        cache
+            .is_consistent_with_server
+            .store(true, Ordering::Relaxed);
         assert!(cache.is_consistent_with_server.load(Ordering::Relaxed));
 
         // Update content resets to inconsistent

@@ -46,6 +46,9 @@ reqwest = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 
+# Async traits
+async-trait = { workspace = true }
+
 # Error handling
 anyhow = { workspace = true }
 

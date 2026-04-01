@@ -6,7 +6,9 @@
 use actix_web::{HttpRequest, HttpResponse, Responder, Scope, delete, get, post, web};
 use serde::{Deserialize, Serialize};
 
-use batata_plugin::{ControlStats, ExceedAction, RateLimitRule, RuleMatchType, RuleTargetType};
+use batata_common::model::plugin::control::{
+    ControlStats, ExceedAction, RateLimitRule, RuleMatchType, RuleTargetType,
+};
 use batata_server_common::{ActionTypes, ApiType, Secured, SignType, model::AppState, secured};
 
 // ========================================================================

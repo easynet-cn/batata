@@ -665,15 +665,108 @@ fn matches_pattern(name: &str, pattern: &str) -> bool {
     name == pattern
 }
 
-/// MCP Registry statistics
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct McpRegistryStats {
-    pub total_servers: u32,
-    pub healthy_servers: u32,
-    pub unhealthy_servers: u32,
-    pub by_namespace: HashMap<String, u32>,
-    pub by_type: HashMap<String, u32>,
+/// MCP Registry statistics (re-exported from batata-common)
+pub use batata_common::model::ai::mcp::McpRegistryStats;
+
+// =============================================================================
+// Trait implementation for McpServerRegistry
+// =============================================================================
+
+#[async_trait::async_trait]
+impl batata_common::McpServerService for McpServerRegistry {
+    async fn create_mcp_server(
+        &self,
+        namespace: &str,
+        registration: &McpServerRegistration,
+    ) -> anyhow::Result<String> {
+        let mut reg = registration.clone();
+        reg.namespace = namespace.to_string();
+        self.register(reg)
+            .map(|s| s.id)
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn get_mcp_server_detail(
+        &self,
+        namespace: &str,
+        _id: Option<&str>,
+        name: Option<&str>,
+        _version: Option<&str>,
+    ) -> anyhow::Result<Option<McpServer>> {
+        if let Some(name) = name {
+            Ok(self.get(namespace, name))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn update_mcp_server(
+        &self,
+        namespace: &str,
+        registration: &McpServerRegistration,
+    ) -> anyhow::Result<()> {
+        let reg = registration.clone();
+        self.update(namespace, &registration.name, reg)
+            .map(|_| ())
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn delete_mcp_server(
+        &self,
+        namespace: &str,
+        name: Option<&str>,
+        _id: Option<&str>,
+        _version: Option<&str>,
+    ) -> anyhow::Result<()> {
+        if let Some(name) = name {
+            self.deregister(namespace, name)
+                .map_err(|e| anyhow::anyhow!(e))
+        } else {
+            Err(anyhow::anyhow!("mcpName must be provided"))
+        }
+    }
+
+    fn list_mcp_servers(
+        &self,
+        namespace: &str,
+        name: Option<&str>,
+        search_type: &str,
+        page_no: u32,
+        page_size: u32,
+    ) -> batata_common::model::Page<McpServerBasicInfo> {
+        let query = McpListQuery {
+            namespace_id: Some(namespace.to_string()),
+            mcp_name: name.map(String::from),
+            search: Some(search_type.to_string()),
+            page_no: Some(page_no),
+            page_size: Some(page_size),
+        };
+        self.list_with_search(&query)
+    }
+
+    async fn import_tools_from_mcp(
+        &self,
+        base_url: &str,
+        endpoint: &str,
+        auth_token: Option<&str>,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<Vec<McpTool>> {
+        crate::service::mcp_client::import_tools_from_mcp_sse(
+            base_url, endpoint, auth_token, timeout,
+        )
+        .await
+    }
+
+    async fn import_mcp_servers(
+        &self,
+        request: McpServerImportRequest,
+    ) -> anyhow::Result<BatchRegistrationResponse> {
+        Ok(self.import(request))
+    }
+
+    async fn mcp_stats(&self) -> anyhow::Result<McpRegistryStats> {
+        Ok(self.stats())
+    }
 }
 
 // =============================================================================

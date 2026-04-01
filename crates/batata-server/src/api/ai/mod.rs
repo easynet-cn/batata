@@ -26,5 +26,9 @@ pub use mcp::{McpChangeType, McpRegistryStats, McpServerChangeEvent, McpServerRe
 pub use batata_ai::service::A2aServerOperationService;
 pub use batata_ai::service::McpServerOperationService;
 
+// Re-export trait types for trait object usage
+pub use batata_ai::service::A2aAgentService;
+pub use batata_ai::service::McpServerService;
+
 // Re-export configure functions for route setup
 pub use batata_ai::configure_mcp_registry;

@@ -1164,3 +1164,197 @@ impl SkillOperationService {
         }
     }
 }
+
+#[async_trait::async_trait]
+impl super::traits::SkillService for SkillOperationService {
+    async fn get_skill_detail(
+        &self,
+        namespace_id: &str,
+        name: &str,
+    ) -> anyhow::Result<Option<SkillMeta>> {
+        self.get_skill_detail(namespace_id, name).await
+    }
+
+    async fn get_skill_version_detail(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<Option<Skill>> {
+        self.get_skill_version_detail(namespace_id, name, version)
+            .await
+    }
+
+    async fn download_skill_version(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<Option<Skill>> {
+        self.download_skill_version(namespace_id, name, version)
+            .await
+    }
+
+    async fn delete_skill(&self, namespace_id: &str, name: &str) -> anyhow::Result<()> {
+        self.delete_skill(namespace_id, name).await
+    }
+
+    async fn list_skills(
+        &self,
+        namespace_id: &str,
+        skill_name: Option<&str>,
+        search: Option<&str>,
+        order_by: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<batata_api::model::Page<SkillSummary>> {
+        let p = self
+            .list_skills(
+                namespace_id,
+                skill_name,
+                search,
+                order_by,
+                page_no,
+                page_size,
+            )
+            .await?;
+        Ok(batata_api::model::Page {
+            total_count: p.total_count,
+            page_number: p.page_number,
+            pages_available: p.pages_available,
+            page_items: p.page_items,
+        })
+    }
+
+    async fn upload_skill(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        skill: &Skill,
+        author: &str,
+        overwrite: bool,
+    ) -> anyhow::Result<String> {
+        self.upload_skill(namespace_id, name, skill, author, overwrite)
+            .await
+    }
+
+    async fn create_draft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        based_on_version: Option<&str>,
+        target_version: Option<&str>,
+        initial_content: Option<&Skill>,
+        author: &str,
+    ) -> anyhow::Result<String> {
+        self.create_draft(
+            namespace_id,
+            name,
+            based_on_version,
+            target_version,
+            initial_content,
+            author,
+        )
+        .await
+    }
+
+    async fn update_draft(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        skill: &Skill,
+    ) -> anyhow::Result<()> {
+        self.update_draft(namespace_id, name, skill).await
+    }
+
+    async fn delete_draft(&self, namespace_id: &str, name: &str) -> anyhow::Result<()> {
+        self.delete_draft(namespace_id, name).await
+    }
+
+    async fn submit(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+    ) -> anyhow::Result<String> {
+        self.submit(namespace_id, name, version).await
+    }
+
+    async fn publish(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: &str,
+        update_latest_label: bool,
+    ) -> anyhow::Result<()> {
+        self.publish(namespace_id, name, version, update_latest_label)
+            .await
+    }
+
+    async fn update_labels(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        labels: HashMap<String, String>,
+    ) -> anyhow::Result<()> {
+        self.update_labels(namespace_id, name, labels).await
+    }
+
+    async fn update_biz_tags(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        biz_tags: &str,
+    ) -> anyhow::Result<()> {
+        self.update_biz_tags(namespace_id, name, biz_tags).await
+    }
+
+    async fn change_online_status(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        scope: Option<&str>,
+        version: Option<&str>,
+        online: bool,
+    ) -> anyhow::Result<()> {
+        self.change_online_status(namespace_id, name, scope, version, online)
+            .await
+    }
+
+    async fn update_scope(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        scope: &str,
+    ) -> anyhow::Result<()> {
+        self.update_scope(namespace_id, name, scope).await
+    }
+
+    async fn query_skill(
+        &self,
+        namespace_id: &str,
+        name: &str,
+        version: Option<&str>,
+        label: Option<&str>,
+    ) -> anyhow::Result<Option<Skill>> {
+        self.query_skill(namespace_id, name, version, label).await
+    }
+
+    async fn search_skills(
+        &self,
+        namespace_id: &str,
+        keyword: Option<&str>,
+        page_no: u64,
+        page_size: u64,
+    ) -> anyhow::Result<batata_api::model::Page<SkillBasicInfo>> {
+        let p = self
+            .search_skills(namespace_id, keyword, page_no, page_size)
+            .await?;
+        Ok(batata_api::model::Page {
+            total_count: p.total_count,
+            page_number: p.page_number,
+            pages_available: p.pages_available,
+            page_items: p.page_items,
+        })
+    }
+}

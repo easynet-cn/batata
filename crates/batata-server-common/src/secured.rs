@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use actix_web::{HttpRequest, web};
 
-use batata_auth::model::{ONLY_IDENTITY, Resource, UPDATE_PASSWORD_ENTRY_POINT};
+use batata_auth::model::{ONLY_IDENTITY, UPDATE_PASSWORD_ENTRY_POINT};
 use batata_common::SERVICE_NAME;
 
 use crate::model::app_state::AppState;
@@ -14,6 +14,7 @@ use crate::model::constants::{DATA_ID, GROUP, GROUP_NAME, NAMESPACE_ID, TENANT};
 // These are referenced via $crate::secured:: in the macro expansion
 pub use batata_auth::model::CONSOLE_RESOURCE_NAME_PREFIX;
 pub use batata_auth::model::GLOBAL_ADMIN_ROLE;
+pub use batata_auth::model::Resource;
 pub use batata_common::AuthPermission;
 pub use batata_common::IdentityContext;
 pub use batata_common::RequestToken;
@@ -242,7 +243,7 @@ macro_rules! secured {
                         }
 
                         // Parse the resource from the request based on SignType
-                        let __resource: batata_auth::model::Resource =
+                        let __resource: $crate::secured::Resource =
                             if __secured.sign_type == $crate::SignType::Config {
                                 $crate::ConfigHttpResourceParser::parse(__secured.req, &__secured)
                             } else if __secured.sign_type == $crate::SignType::Naming {

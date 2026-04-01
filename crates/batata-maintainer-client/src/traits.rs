@@ -50,12 +50,7 @@ pub trait CoreMaintainerService: Send + Sync {
     async fn update_lookup_mode(&self, mode: &str) -> anyhow::Result<bool>;
 
     /// Execute Raft operations.
-    async fn raft_ops(
-        &self,
-        command: &str,
-        value: &str,
-        group_id: &str,
-    ) -> anyhow::Result<String>;
+    async fn raft_ops(&self, command: &str, value: &str, group_id: &str) -> anyhow::Result<String>;
 
     /// Get ID generator status.
     async fn get_id_generators(&self) -> anyhow::Result<HashMap<String, IdGeneratorInfo>>;
@@ -106,10 +101,7 @@ pub trait CoreMaintainerService: Send + Sync {
     ) -> anyhow::Result<bool>;
 
     /// Smart reload cluster connections.
-    async fn smart_reload_cluster(
-        &self,
-        loader_factor: Option<f64>,
-    ) -> anyhow::Result<bool>;
+    async fn smart_reload_cluster(&self, loader_factor: Option<f64>) -> anyhow::Result<bool>;
 
     /// Get cluster loader metrics.
     async fn get_cluster_loader_metrics(&self) -> anyhow::Result<ServerLoaderMetrics>;
@@ -117,10 +109,7 @@ pub trait CoreMaintainerService: Send + Sync {
     // --- Plugin management ---
 
     /// List all plugins, optionally filtered by type.
-    async fn list_plugins(
-        &self,
-        plugin_type: Option<&str>,
-    ) -> anyhow::Result<Vec<PluginInfo>>;
+    async fn list_plugins(&self, plugin_type: Option<&str>) -> anyhow::Result<Vec<PluginInfo>>;
 
     /// Get detailed information for a specific plugin.
     async fn get_plugin_detail(

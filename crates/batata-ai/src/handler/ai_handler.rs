@@ -26,7 +26,10 @@ use crate::{
     model::{AgentCard, AgentRegistrationRequest, McpServerRegistration},
     registry::a2a::AgentRegistry,
     registry::mcp::McpServerRegistry,
-    service::{A2aServerOperationService, AiEndpointService, McpServerOperationService},
+    service::{
+        AiEndpointService,
+        traits::{A2aAgentService, McpServerService},
+    },
 };
 
 // =============================================================================
@@ -37,7 +40,7 @@ use crate::{
 #[derive(Clone)]
 pub struct McpServerEndpointHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
-    pub mcp_service: Option<Arc<McpServerOperationService>>,
+    pub mcp_service: Option<Arc<dyn McpServerService>>,
     pub endpoint_service: Option<Arc<AiEndpointService>>,
 }
 
@@ -151,7 +154,7 @@ impl PayloadHandler for McpServerEndpointHandler {
 #[derive(Clone)]
 pub struct QueryMcpServerHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
-    pub mcp_service: Option<Arc<McpServerOperationService>>,
+    pub mcp_service: Option<Arc<dyn McpServerService>>,
 }
 
 #[tonic::async_trait]
@@ -243,7 +246,7 @@ impl PayloadHandler for QueryMcpServerHandler {
 #[derive(Clone)]
 pub struct ReleaseMcpServerHandler {
     pub mcp_registry: Arc<McpServerRegistry>,
-    pub mcp_service: Option<Arc<McpServerOperationService>>,
+    pub mcp_service: Option<Arc<dyn McpServerService>>,
 }
 
 #[tonic::async_trait]
@@ -384,7 +387,7 @@ impl PayloadHandler for ReleaseMcpServerHandler {
 #[derive(Clone)]
 pub struct AgentEndpointHandler {
     pub agent_registry: Arc<AgentRegistry>,
-    pub a2a_service: Option<Arc<A2aServerOperationService>>,
+    pub a2a_service: Option<Arc<dyn A2aAgentService>>,
     pub endpoint_service: Option<Arc<AiEndpointService>>,
 }
 
@@ -516,7 +519,7 @@ impl PayloadHandler for AgentEndpointHandler {
 #[derive(Clone)]
 pub struct QueryAgentCardHandler {
     pub agent_registry: Arc<AgentRegistry>,
-    pub a2a_service: Option<Arc<A2aServerOperationService>>,
+    pub a2a_service: Option<Arc<dyn A2aAgentService>>,
 }
 
 #[tonic::async_trait]
@@ -608,7 +611,7 @@ impl PayloadHandler for QueryAgentCardHandler {
 #[derive(Clone)]
 pub struct ReleaseAgentCardHandler {
     pub agent_registry: Arc<AgentRegistry>,
-    pub a2a_service: Option<Arc<A2aServerOperationService>>,
+    pub a2a_service: Option<Arc<dyn A2aAgentService>>,
 }
 
 #[tonic::async_trait]
