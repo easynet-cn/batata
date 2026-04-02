@@ -21,6 +21,16 @@ pub enum RaftRequest {
         tag: Option<String>,
         desc: Option<String>,
         src_user: Option<String>,
+        #[serde(default)]
+        src_ip: Option<String>,
+        #[serde(default)]
+        r#use: Option<String>,
+        #[serde(default)]
+        effect: Option<String>,
+        #[serde(default)]
+        schema: Option<String>,
+        #[serde(default)]
+        encrypted_data_key: Option<String>,
         /// CAS (Compare-And-Swap) MD5: if set, only publish when current config MD5 matches.
         /// Returns conflict error if MD5 mismatch. Prevents concurrent write data loss.
         /// Nacos SDK sends this via `casMd5` header.
@@ -128,9 +138,19 @@ pub enum RaftRequest {
         tenant: String,
         content: String,
         md5: String,
+        #[serde(default)]
+        app_name: Option<String>,
         src_user: Option<String>,
         src_ip: Option<String>,
         op_type: String,
+        #[serde(default)]
+        publish_type: Option<String>,
+        #[serde(default)]
+        gray_name: Option<String>,
+        #[serde(default)]
+        ext_info: Option<String>,
+        #[serde(default)]
+        encrypted_data_key: Option<String>,
         created_time: i64,
         last_modified_time: i64,
     },
@@ -322,6 +342,11 @@ mod tests {
             tag: None,
             desc: None,
             src_user: None,
+            src_ip: None,
+            r#use: None,
+            effect: None,
+            schema: None,
+            encrypted_data_key: None,
             cas_md5: None,
         };
 

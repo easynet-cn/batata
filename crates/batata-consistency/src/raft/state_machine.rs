@@ -330,6 +330,11 @@ impl RocksStateMachine {
                 tag,
                 desc,
                 src_user,
+                src_ip,
+                r#use,
+                effect,
+                schema,
+                encrypted_data_key,
                 cas_md5,
             } => self.apply_config_publish(
                 &data_id,
@@ -342,6 +347,11 @@ impl RocksStateMachine {
                 tag,
                 desc,
                 src_user,
+                src_ip,
+                r#use,
+                effect,
+                schema,
+                encrypted_data_key,
                 cas_md5.as_deref(),
             ),
 
@@ -437,9 +447,14 @@ impl RocksStateMachine {
                 tenant,
                 content,
                 md5,
+                app_name,
                 src_user,
                 src_ip,
                 op_type,
+                publish_type,
+                gray_name,
+                ext_info,
+                encrypted_data_key,
                 created_time,
                 last_modified_time,
             } => self.apply_config_history_insert(
@@ -449,9 +464,14 @@ impl RocksStateMachine {
                 &tenant,
                 &content,
                 &md5,
+                app_name,
                 src_user,
                 src_ip,
                 &op_type,
+                publish_type,
+                gray_name,
+                ext_info,
+                encrypted_data_key,
                 created_time,
                 last_modified_time,
             ),
@@ -577,6 +597,7 @@ impl RocksStateMachine {
     }
 
     // Config operations
+    #[allow(clippy::too_many_arguments)]
     fn apply_config_publish(
         &self,
         data_id: &str,
@@ -589,9 +610,15 @@ impl RocksStateMachine {
         tag: Option<String>,
         desc: Option<String>,
         src_user: Option<String>,
+        src_ip: Option<String>,
+        r#use: Option<String>,
+        effect: Option<String>,
+        schema: Option<String>,
+        encrypted_data_key: Option<String>,
         cas_md5: Option<&str>,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
+        let now = chrono::Utc::now().timestamp_millis();
 
         // CAS (Compare-And-Swap) check: if cas_md5 is provided, verify current config
         // MD5 matches before overwriting. Returns conflict error on mismatch.
@@ -626,6 +653,15 @@ impl RocksStateMachine {
             }
         }
 
+        // Preserve created_time from existing config on update
+        let created_time = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
+            Ok(Some(existing_bytes)) => serde_json::from_slice::<serde_json::Value>(&existing_bytes)
+                .ok()
+                .and_then(|v| v["created_time"].as_i64())
+                .unwrap_or(now),
+            _ => now,
+        };
+
         let value = serde_json::json!({
             "data_id": data_id,
             "group": group,
@@ -634,10 +670,16 @@ impl RocksStateMachine {
             "md5": md5,
             "config_type": config_type,
             "app_name": app_name,
-            "tag": tag,
+            "config_tags": tag,
             "desc": desc,
+            "use": r#use,
+            "effect": effect,
+            "schema": schema,
+            "encrypted_data_key": encrypted_data_key,
             "src_user": src_user,
-            "modified_time": chrono::Utc::now().timestamp_millis(),
+            "src_ip": src_ip,
+            "created_time": created_time,
+            "modified_time": now,
         });
 
         match self.db.put_cf(
@@ -825,6 +867,7 @@ impl RocksStateMachine {
 
     // Config history operations
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn apply_config_history_insert(
         &self,
         id: i64,
@@ -833,9 +876,14 @@ impl RocksStateMachine {
         tenant: &str,
         content: &str,
         md5: &str,
+        app_name: Option<String>,
         src_user: Option<String>,
         src_ip: Option<String>,
         op_type: &str,
+        publish_type: Option<String>,
+        gray_name: Option<String>,
+        ext_info: Option<String>,
+        encrypted_data_key: Option<String>,
         created_time: i64,
         last_modified_time: i64,
     ) -> RaftResponse {
@@ -847,11 +895,16 @@ impl RocksStateMachine {
             "tenant": tenant,
             "content": content,
             "md5": md5,
+            "app_name": app_name.unwrap_or_default(),
             "src_user": src_user,
             "src_ip": src_ip,
             "op_type": op_type,
+            "publish_type": publish_type.unwrap_or_else(|| "formal".to_string()),
+            "gray_name": gray_name.unwrap_or_default(),
+            "ext_info": ext_info.unwrap_or_default(),
+            "encrypted_data_key": encrypted_data_key.unwrap_or_default(),
             "created_time": created_time,
-            "last_modified_time": last_modified_time,
+            "modified_time": last_modified_time,
         });
 
         match self.db.put_cf(

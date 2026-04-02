@@ -142,9 +142,13 @@ impl ConfigPersistence for DistributedPersistService {
         encrypted_data_key: &str,
         cas_md5: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let _ = (r#use, effect, schema, encrypted_data_key);
         // Compute MD5 once here — passed through Raft to state machine and history
         let md5_val = Self::compute_md5(content);
+
+        // Determine op_type: check if config already exists
+        let existing = self.reader.get_config(data_id, group_id, tenant_id)?;
+        let is_update = existing.is_some();
+        let op_type = if is_update { "U" } else { "I" };
 
         let request = RaftRequest::ConfigPublish {
             data_id: data_id.to_string(),
@@ -161,10 +165,26 @@ impl ConfigPersistence for DistributedPersistService {
             },
             desc: Some(desc.to_string()),
             src_user: Some(src_user.to_string()),
+            src_ip: Some(src_ip.to_string()),
+            r#use: Some(r#use.to_string()),
+            effect: Some(effect.to_string()),
+            schema: Some(schema.to_string()),
+            encrypted_data_key: Some(encrypted_data_key.to_string()),
             cas_md5: cas_md5.map(|s| s.to_string()),
         };
 
         self.raft_write(request).await?;
+
+        // Build ext_info JSON consistent with SQL and embedded modes
+        let ext_info = serde_json::json!({
+            "config_tags": config_tags,
+            "desc": desc,
+            "use": r#use,
+            "effect": effect,
+            "type": r#type,
+            "schema": schema,
+        })
+        .to_string();
 
         // Insert history through Raft (reuse pre-computed MD5)
         let now = chrono::Utc::now().timestamp_millis();
@@ -175,9 +195,14 @@ impl ConfigPersistence for DistributedPersistService {
             tenant: tenant_id.to_string(),
             content: content.to_string(),
             md5: md5_val,
+            app_name: Some(app_name.to_string()),
             src_user: Some(src_user.to_string()),
             src_ip: Some(src_ip.to_string()),
-            op_type: "I".to_string(), // simplified: always "I" for now
+            op_type: op_type.to_string(),
+            publish_type: Some("formal".to_string()),
+            gray_name: None,
+            ext_info: Some(ext_info),
+            encrypted_data_key: Some(encrypted_data_key.to_string()),
             created_time: now,
             last_modified_time: now,
         };
@@ -193,9 +218,12 @@ impl ConfigPersistence for DistributedPersistService {
         group: &str,
         namespace_id: &str,
         _gray_name: &str,
-        _client_ip: &str,
-        _src_user: &str,
+        client_ip: &str,
+        src_user: &str,
     ) -> anyhow::Result<bool> {
+        // Get existing config for history before deleting
+        let existing = self.reader.get_config(data_id, group, namespace_id)?;
+
         let request = RaftRequest::ConfigRemove {
             data_id: data_id.to_string(),
             group: group.to_string(),
@@ -203,6 +231,48 @@ impl ConfigPersistence for DistributedPersistService {
         };
 
         self.raft_write(request).await?;
+
+        // Record delete history (consistent with SQL and embedded modes)
+        if let Some(ref existing) = existing {
+            let ext_info = serde_json::json!({
+                "config_tags": existing["config_tags"].as_str().unwrap_or(""),
+                "desc": existing["desc"].as_str().unwrap_or(""),
+                "use": existing["use"].as_str().unwrap_or(""),
+                "effect": existing["effect"].as_str().unwrap_or(""),
+                "type": existing["config_type"].as_str().unwrap_or(""),
+                "schema": existing["schema"].as_str().unwrap_or(""),
+            })
+            .to_string();
+
+            let now = chrono::Utc::now().timestamp_millis();
+            let history_request = RaftRequest::ConfigHistoryInsert {
+                id: now,
+                data_id: data_id.to_string(),
+                group: group.to_string(),
+                tenant: namespace_id.to_string(),
+                content: existing["content"].as_str().unwrap_or("").to_string(),
+                md5: existing["md5"].as_str().unwrap_or("").to_string(),
+                app_name: Some(
+                    existing["app_name"].as_str().unwrap_or("").to_string(),
+                ),
+                src_user: Some(src_user.to_string()),
+                src_ip: Some(client_ip.to_string()),
+                op_type: "D".to_string(),
+                publish_type: Some("formal".to_string()),
+                gray_name: None,
+                ext_info: Some(ext_info),
+                encrypted_data_key: Some(
+                    existing["encrypted_data_key"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
+                ),
+                created_time: now,
+                last_modified_time: now,
+            };
+            let _ = self.raft_write(history_request).await;
+        }
+
         Ok(true)
     }
 
