@@ -22,7 +22,7 @@ use tracing::{error, info, warn};
 
 use base64::Engine;
 
-use batata_consistency::raft::state_machine::CF_CONSUL_OPERATOR;
+use crate::constants::CF_CONSUL_OPERATOR;
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;

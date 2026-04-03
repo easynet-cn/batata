@@ -16,16 +16,12 @@ use tracing::{debug, error, info, warn};
 
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
 use super::types::*;
+use crate::constants::{CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS};
 use crate::index_provider::{ConsulTable, ConsulTableIndex};
 
 /// Snapshot data: column family name -> list of (key, value) pairs
 type SnapshotCfData = std::collections::HashMap<String, Vec<(Vec<u8>, Vec<u8>)>>;
 
-// Column family names
-const CF_CONSUL_KV: &str = "consul_kv";
-const CF_CONSUL_SESSIONS: &str = "consul_sessions";
-const CF_CONSUL_ACL: &str = "consul_acl";
-const CF_CONSUL_QUERIES: &str = "consul_queries";
 const CF_META: &str = "meta";
 
 // Meta keys

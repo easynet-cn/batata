@@ -93,9 +93,9 @@ async fn build_skills_index(
     skill_service: &SkillOperationService,
     namespace_id: &str,
 ) -> Result<WellKnownSkillsIndex, actix_web::Error> {
-    // List all skills (large page to get everything; registry is a public index)
+    // List all skills (no limit, get everything for registry index)
     let page = skill_service
-        .list_skills(namespace_id, None, None, None, 1, 10000)
+        .list_skills(namespace_id, None, None, None, 1, u64::MAX)
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
 

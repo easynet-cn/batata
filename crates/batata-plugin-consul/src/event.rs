@@ -128,8 +128,7 @@ impl ConsulEventService {
 // Persistent Event Service (RocksDB-backed)
 // ============================================================================
 
-/// RocksDB column family for Consul events
-const CF_CONSUL_EVENTS: &str = "consul_kv";
+use crate::constants::CF_CONSUL_EVENTS;
 
 /// Event service with persistent storage via RocksDB
 /// Events are stored in the consul_kv column family and cached in memory

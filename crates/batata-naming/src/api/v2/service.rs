@@ -191,9 +191,15 @@ pub async fn delete_service(
         );
     }
 
-    // Check if service has instances
-    let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+    // Check if service has Batata-registered instances
+    let instances = naming_service.get_instances_by_source(
+        namespace_id,
+        group_name,
+        &params.service_name,
+        "",
+        false,
+        Some(batata_api::naming::RegisterSource::Batata),
+    );
 
     if !instances.is_empty() {
         return Result::<String>::http_response(
@@ -396,18 +402,18 @@ pub async fn get_service(
         Some(batata_api::naming::RegisterSource::Batata),
     );
 
-    // Calculate cluster count
-    let clusters: std::collections::HashSet<_> =
+    // Collect cluster names from instances
+    let mut clusters: std::collections::HashSet<_> =
         instances.iter().map(|i| i.cluster_name.clone()).collect();
 
-    let (protect_threshold, metadata, selector) = if let Some(meta) = metadata_opt {
+    let (protect_threshold, metadata, selector, ephemeral) = if let Some(meta) = &metadata_opt {
         let selector = if meta.selector_type != "none" && !meta.selector_type.is_empty() {
             Some(SelectorResponse {
-                r#type: meta.selector_type,
+                r#type: meta.selector_type.clone(),
                 expression: if meta.selector_expression.is_empty() {
                     None
                 } else {
-                    Some(meta.selector_expression)
+                    Some(meta.selector_expression.clone())
                 },
             })
         } else {
@@ -419,25 +425,53 @@ pub async fn get_service(
             if meta.metadata.is_empty() {
                 None
             } else {
-                Some(meta.metadata)
+                Some(meta.metadata.clone())
             },
             selector,
+            meta.ephemeral,
         )
     } else {
-        (0.0, None, None)
+        (0.0, None, None, true)
     };
 
-    // Build cluster map from cluster names
-    let cluster_map: Option<std::collections::HashMap<String, serde_json::Value>> =
-        if clusters.is_empty() {
-            None
-        } else {
-            let map: std::collections::HashMap<String, serde_json::Value> = clusters
-                .iter()
-                .map(|c| (c.clone(), serde_json::json!({})))
+    // Build cluster map from real cluster configs
+    let cluster_configs =
+        naming_service.get_all_cluster_configs(namespace_id, group_name, &params.service_name);
+    let cluster_config_map: std::collections::HashMap<&str, _> = cluster_configs
+        .iter()
+        .map(|c| (c.name.as_str(), c))
+        .collect();
+
+    // Merge cluster names from both instances and configs
+    for cfg in &cluster_configs {
+        clusters.insert(cfg.name.clone());
+    }
+
+    let cluster_map: Option<std::collections::HashMap<String, serde_json::Value>> = if clusters
+        .is_empty()
+    {
+        None
+    } else {
+        let map: std::collections::HashMap<String, serde_json::Value> = clusters
+                .into_iter()
+                .map(|c| {
+                    let config = cluster_config_map.get(c.as_str());
+                    (
+                        c.clone(),
+                        serde_json::json!({
+                            "clusterName": c,
+                            "healthChecker": {
+                                "type": config.map(|cfg| cfg.health_check_type.as_str()).unwrap_or("TCP"),
+                            },
+                            "healthyCheckPort": config.map(|cfg| cfg.check_port).unwrap_or(80),
+                            "useInstancePortForCheck": config.map(|cfg| cfg.use_instance_port).unwrap_or(true),
+                            "metadata": config.map(|cfg| &cfg.metadata).cloned().unwrap_or_default(),
+                        }),
+                    )
+                })
                 .collect();
-            Some(map)
-        };
+        Some(map)
+    };
 
     let response = ServiceDetailResponse {
         namespace: namespace_id.to_string(),
@@ -447,7 +481,7 @@ pub async fn get_service(
         metadata,
         selector,
         cluster_map,
-        ephemeral: true, // Default to ephemeral
+        ephemeral,
     };
 
     Result::<ServiceDetailResponse>::http_success(response)
@@ -481,12 +515,13 @@ pub async fn get_service_list(
     // Cap page_size at 500
     let page_size = params.page_size.min(500);
 
-    // Get service list
-    let (total_count, service_names) = naming_service.list_services(
+    // Get service list (only Batata-registered services)
+    let (total_count, service_names) = naming_service.list_services_by_source(
         namespace_id,
         group_name,
         params.page_no as i32,
         page_size as i32,
+        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let response = ServiceListResponse {

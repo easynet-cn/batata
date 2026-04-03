@@ -113,7 +113,13 @@ async fn init_raft_cluster(
     // Wait for all peer Raft gRPC servers to be reachable before
     // initializing the cluster. This prevents premature leader
     // election when some peers haven't bound their ports yet.
-    wait_for_raft_peers(raft_node, &members).await;
+    wait_for_raft_peers(
+        raft_node,
+        &members,
+        configuration.raft_peer_connect_timeout_secs(),
+        configuration.raft_peer_connect_retry_interval_ms(),
+    )
+    .await;
 
     if let Err(e) = raft_node.initialize(members).await {
         // Already initialized is OK (e.g. on restart)
@@ -128,10 +134,12 @@ async fn init_raft_cluster(
     Ok(())
 }
 
-/// Wait for peer Raft gRPC servers to become reachable (30s timeout per peer).
+/// Wait for peer Raft gRPC servers to become reachable before initialization.
 async fn wait_for_raft_peers(
     raft_node: &RaftNode,
     members: &std::collections::BTreeMap<u64, openraft::BasicNode>,
+    timeout_secs: u64,
+    retry_interval_ms: u64,
 ) {
     let self_raft_addr = raft_node.addr().to_string();
     let peer_addrs: Vec<String> = members
@@ -145,10 +153,11 @@ async fn wait_for_raft_peers(
     }
 
     info!(
-        "Waiting for {} Raft peer(s) to become reachable...",
-        peer_addrs.len()
+        "Waiting for {} Raft peer(s) to become reachable (timeout: {}s)...",
+        peer_addrs.len(),
+        timeout_secs
     );
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
 
     for addr in &peer_addrs {
         loop {
@@ -165,7 +174,7 @@ async fn wait_for_raft_peers(
                         );
                         break;
                     }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(Duration::from_millis(retry_interval_ms)).await;
                 }
             }
         }

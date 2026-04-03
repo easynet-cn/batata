@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use batata_consistency::raft::state_machine::CF_CONSUL_COORDINATES;
+use crate::constants::CF_CONSUL_COORDINATES;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};

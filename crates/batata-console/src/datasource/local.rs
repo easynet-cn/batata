@@ -537,8 +537,13 @@ impl ConsoleDataSource for LocalDataSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("NamingService not available"))?;
 
-        let (total_count, service_names) =
-            naming.list_services(namespace_id, group_name, page_no as i32, page_size as i32);
+        let (total_count, service_names) = naming.list_services_by_source(
+            namespace_id,
+            group_name,
+            page_no as i32,
+            page_size as i32,
+            Some(batata_api::naming::RegisterSource::Batata),
+        );
 
         let service_list: Vec<serde_json::Value> = service_names
             .iter()
@@ -609,18 +614,9 @@ impl ConsoleDataSource for LocalDataSource {
             return Ok(None);
         }
 
-        let instances = naming.get_instances_by_source(
-            namespace_id,
-            group_name,
-            service_name,
-            "",
-            false,
-            Some(batata_api::naming::RegisterSource::Batata),
-        );
-        let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
         let metadata_opt = naming.get_service_metadata(namespace_id, group_name, service_name);
 
-        let (protect_threshold, metadata, selector) = if let Some(meta) = metadata_opt {
+        let (protect_threshold, metadata, selector, ephemeral) = if let Some(meta) = &metadata_opt {
             let sel = if meta.selector_type != "none" && !meta.selector_type.is_empty() {
                 serde_json::json!({
                     "type": meta.selector_type,
@@ -637,22 +633,13 @@ impl ConsoleDataSource for LocalDataSource {
                     serde_json::to_value(&meta.metadata).unwrap_or_default()
                 },
                 sel,
+                Some(meta.ephemeral),
             )
         } else {
-            (0.0, serde_json::Value::Null, serde_json::Value::Null)
+            (0.0, serde_json::Value::Null, serde_json::Value::Null, None)
         };
 
-        // Group instances by cluster name
-        let mut cluster_instances: HashMap<String, Vec<&batata_api::naming::Instance>> =
-            HashMap::new();
-        for inst in &instances {
-            cluster_instances
-                .entry(inst.cluster_name.clone())
-                .or_default()
-                .push(inst);
-        }
-
-        // Build cluster info array with instances and cluster config
+        // Build clusterMap from real cluster configs — matches Nacos ServiceDetailInfo format
         let cluster_configs =
             naming.get_all_cluster_configs(namespace_id, group_name, service_name);
         let cluster_config_map: HashMap<&str, _> = cluster_configs
@@ -660,63 +647,47 @@ impl ConsoleDataSource for LocalDataSource {
             .map(|c| (c.name.as_str(), c))
             .collect();
 
-        // Collect all cluster names from both instances and configs
-        let mut all_cluster_names: HashSet<String> = cluster_instances.keys().cloned().collect();
+        // Collect cluster names from service storage (clusters that have instances)
+        let instances = naming.get_instances_by_source(
+            namespace_id,
+            group_name,
+            service_name,
+            "",
+            false,
+            Some(batata_api::naming::RegisterSource::Batata),
+        );
+        let mut all_cluster_names: HashSet<String> =
+            instances.iter().map(|i| i.cluster_name.clone()).collect();
         for cfg in &cluster_configs {
             all_cluster_names.insert(cfg.name.clone());
         }
 
-        let clusters: Vec<serde_json::Value> = all_cluster_names
-            .iter()
-            .map(|cluster_name| {
-                let config = cluster_config_map.get(cluster_name.as_str());
-                let health_checker = serde_json::json!({
-                    "type": config.map(|c| c.health_check_type.as_str()).unwrap_or("TCP"),
-                });
-                let insts = cluster_instances.get(cluster_name);
-                let instances_json: Vec<serde_json::Value> = insts
-                    .map(|list| {
-                        list.iter()
-                            .map(|i| {
-                                serde_json::json!({
-                                    "instanceId": i.instance_id,
-                                    "ip": i.ip,
-                                    "port": i.port,
-                                    "weight": i.weight,
-                                    "healthy": i.healthy,
-                                    "enabled": i.enabled,
-                                    "ephemeral": i.ephemeral,
-                                    "clusterName": i.cluster_name,
-                                    "serviceName": i.service_name,
-                                    "metadata": i.metadata,
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
+        let mut cluster_map = serde_json::Map::new();
+        for cluster_name in &all_cluster_names {
+            let config = cluster_config_map.get(cluster_name.as_str());
+            cluster_map.insert(
+                cluster_name.clone(),
                 serde_json::json!({
-                    "name": cluster_name,
-                    "healthChecker": health_checker,
+                    "clusterName": cluster_name,
+                    "healthChecker": {
+                        "type": config.map(|c| c.health_check_type.as_str()).unwrap_or("TCP"),
+                    },
                     "healthyCheckPort": config.map(|c| c.check_port).unwrap_or(80),
                     "useInstancePortForCheck": config.map(|c| c.use_instance_port).unwrap_or(true),
                     "metadata": config.map(|c| &c.metadata).cloned().unwrap_or_default(),
-                    "instances": instances_json,
-                })
-            })
-            .collect();
+                }),
+            );
+        }
 
         Ok(Some(serde_json::json!({
-            "name": service_name,
+            "namespaceId": namespace_id,
+            "serviceName": service_name,
             "groupName": group_name,
-            "clusterCount": clusters.len(),
-            "ipCount": instances.len(),
-            "healthyInstanceCount": healthy_count,
-            "triggerFlag": false,
-            "protectThreshold": protect_threshold,
+            "clusterMap": cluster_map,
             "metadata": metadata,
+            "protectThreshold": protect_threshold,
             "selector": selector,
-            "clusters": clusters,
+            "ephemeral": ephemeral,
         })))
     }
 
@@ -837,7 +808,14 @@ impl ConsoleDataSource for LocalDataSource {
             return Err(anyhow::anyhow!("service {} not found", service_name));
         }
 
-        let instances = naming.get_instances(namespace_id, group_name, service_name, "", false);
+        let instances = naming.get_instances_by_source(
+            namespace_id,
+            group_name,
+            service_name,
+            "",
+            false,
+            Some(batata_api::naming::RegisterSource::Batata),
+        );
         if !instances.is_empty() {
             return Err(anyhow::anyhow!(
                 "service {} has {} instances, cannot delete",

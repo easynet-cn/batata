@@ -15,8 +15,8 @@ use batata_server_common::model::response::Result;
 use batata_server_common::{Secured, secured};
 
 use crate::model::skill::*;
-use crate::service::traits::SkillService;
 use crate::service::skill_zip;
+use crate::service::traits::SkillService;
 
 fn normalize_namespace(ns: &str) -> &str {
     if ns.is_empty() {

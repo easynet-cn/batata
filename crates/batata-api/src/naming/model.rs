@@ -944,6 +944,9 @@ pub struct ServiceMetadata {
     pub ephemeral: bool,
     /// Revision counter for change detection / cache invalidation
     pub revision: u64,
+    /// Registration source (Batata or Consul)
+    #[serde(default)]
+    pub register_source: RegisterSource,
 }
 
 /// Protection threshold information

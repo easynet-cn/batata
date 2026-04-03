@@ -542,7 +542,7 @@ impl McpServerOperationService {
 
     /// Get all servers (for MCP Registry server)
     pub fn list_all_servers(&self) -> Vec<McpServerIndexData> {
-        self.index.search_by_name("", None, "blur", 0, 10000).0
+        self.index.search_by_name("", None, "blur", 0, usize::MAX).0
     }
 
     // =========================================================================

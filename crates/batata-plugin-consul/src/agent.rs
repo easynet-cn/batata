@@ -42,8 +42,8 @@ impl ConsulAgentService {
         Self {
             naming_service,
             registry,
-            default_namespace: "public".to_string(),
-            default_group: "DEFAULT_GROUP".to_string(),
+            default_namespace: "consul".to_string(),
+            default_group: "CONSUL_GROUP".to_string(),
             default_cluster: "DEFAULT".to_string(),
         }
     }
@@ -445,7 +445,7 @@ pub async fn deregister_service(
             let services =
                 agent
                     .naming_service
-                    .list_services(&namespace, &dc_config.default_group, 1, 10000);
+                    .list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
             for service_name in services.1 {
                 let instances = agent.naming_service.get_instances_by_source(
@@ -546,7 +546,7 @@ pub async fn list_services(
     let (_, service_names) =
         agent
             .naming_service
-            .list_services(&namespace, &dc_config.default_group, 1, 10000);
+            .list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
     let mut services: std::collections::HashMap<String, AgentService> =
         std::collections::HashMap::new();
@@ -607,7 +607,7 @@ pub async fn get_service(
     let (_, service_names) =
         agent
             .naming_service
-            .list_services(&namespace, &dc_config.default_group, 1, 10000);
+            .list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
     for service_name in service_names {
         let instances = agent.naming_service.get_instances_by_source(
@@ -729,7 +729,7 @@ pub async fn agent_health_service_by_id(
     let (_, service_names) =
         agent
             .naming_service
-            .list_services(&namespace, &dc_config.default_group, 1, 10000);
+            .list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
     for service_name in service_names {
         let instances = agent.naming_service.get_instances_by_source(
@@ -1697,11 +1697,12 @@ pub async fn get_agent_metrics_real(
     ));
 
     // Service metrics from NamingService
-    let (total_services, service_names) = agent.naming_service.list_services(
+    let (total_services, service_names) = agent.naming_service.list_services_by_source(
         &dc_config.default_namespace,
         &dc_config.default_group,
         1,
-        10000,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
 
     gauges.push(
@@ -1913,11 +1914,12 @@ fn collect_metrics_snapshot(
     naming_service: &dyn NamingServiceProvider,
     dc_config: &ConsulDatacenterConfig,
 ) -> MetricsResponse {
-    let (_, service_names) = naming_service.list_services(
+    let (_, service_names) = naming_service.list_services_by_source(
         &dc_config.default_namespace,
         &dc_config.default_group,
         1,
-        10000,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
     let service_count = service_names.len();
 

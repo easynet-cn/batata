@@ -10,9 +10,8 @@ use rocksdb::{DB, WriteBatch};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
+use crate::constants::CF_CONSUL_SESSIONS;
 use crate::raft::{ConsulRaftNode, ConsulRaftRequest};
-
-const CF_CONSUL_SESSIONS: &str = "consul_sessions";
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};

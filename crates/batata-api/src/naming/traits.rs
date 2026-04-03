@@ -112,6 +112,46 @@ pub trait NamingServiceProvider: Send + Sync {
         page_size: i32,
     ) -> (i32, Vec<String>);
 
+    /// List services filtered by registration source.
+    ///
+    /// Filters by `ServiceMetadata.register_source`. Services without metadata
+    /// are treated as Batata-registered (default source).
+    /// Pagination is applied after filtering.
+    fn list_services_by_source(
+        &self,
+        namespace: &str,
+        group_name: &str,
+        page_no: i32,
+        page_size: i32,
+        source: Option<RegisterSource>,
+    ) -> (i32, Vec<String>) {
+        let (_, all_names) = self.list_services(namespace, group_name, 1, i32::MAX);
+
+        let filtered: Vec<String> = match source {
+            Some(src) => all_names
+                .into_iter()
+                .filter(|name| {
+                    let meta_source = self
+                        .get_service_metadata(namespace, group_name, name)
+                        .map(|m| m.register_source)
+                        .unwrap_or_default(); // Default = Batata
+                    meta_source == src
+                })
+                .collect(),
+            None => all_names,
+        };
+
+        let total = filtered.len() as i32;
+        let start = ((page_no.max(1) - 1) * page_size) as usize;
+        let end = (start + page_size as usize).min(filtered.len());
+        let page = if start < filtered.len() {
+            filtered[start..end].to_vec()
+        } else {
+            vec![]
+        };
+        (total, page)
+    }
+
     fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool;
 
     fn get_all_service_keys(&self) -> Vec<String>;

@@ -12,12 +12,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tracing::{error, info};
 
+use crate::constants::{CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS};
 use crate::raft::{ConsulRaftNode, ConsulRaftRequest};
-
-const CF_CONSUL_KV: &str = "consul_kv";
-const CF_CONSUL_SESSIONS: &str = "consul_sessions";
-const CF_CONSUL_ACL: &str = "consul_acl";
-const CF_CONSUL_QUERIES: &str = "consul_queries";
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -1323,7 +1319,8 @@ pub fn open_temp_consul_db() -> (Arc<DB>, Arc<tempfile::TempDir>) {
         rocksdb::ColumnFamilyDescriptor::new(CF_CONSUL_KV, cf_opts.clone()),
         rocksdb::ColumnFamilyDescriptor::new(CF_CONSUL_SESSIONS, cf_opts.clone()),
         rocksdb::ColumnFamilyDescriptor::new(CF_CONSUL_ACL, cf_opts.clone()),
-        rocksdb::ColumnFamilyDescriptor::new(CF_CONSUL_QUERIES, cf_opts),
+        rocksdb::ColumnFamilyDescriptor::new(CF_CONSUL_QUERIES, cf_opts.clone()),
+        rocksdb::ColumnFamilyDescriptor::new(crate::constants::CF_CONSUL_EVENTS, cf_opts),
     ];
 
     let db = DB::open_cf_descriptors(&db_opts, temp_dir.path(), cfs)

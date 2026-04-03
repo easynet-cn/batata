@@ -6,10 +6,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use batata_consistency::raft::state_machine::{
+use batata_plugin_consul::constants::{
     CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CONFIG_ENTRIES, CF_CONSUL_COORDINATES,
-    CF_CONSUL_INTENTIONS, CF_CONSUL_KV, CF_CONSUL_OPERATOR, CF_CONSUL_PEERING, CF_CONSUL_QUERIES,
-    CF_CONSUL_SESSIONS,
+    CF_CONSUL_EVENTS, CF_CONSUL_INTENTIONS, CF_CONSUL_KV, CF_CONSUL_OPERATOR, CF_CONSUL_PEERING,
+    CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
 };
 use batata_naming::InstanceCheckRegistry;
 use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
@@ -187,6 +187,11 @@ async fn init_consul_cluster(
 }
 
 /// Spawn background task to initialize Consul Raft cluster members.
+///
+/// Waits for all peer Consul Raft gRPC servers to become reachable before
+/// calling initialize(), matching the Nacos Raft initialization pattern
+/// (see cluster.rs). This prevents premature leader election when some
+/// peers haven't bound their Consul Raft ports yet.
 fn spawn_consul_raft_init(
     configuration: &Configuration,
     nacos_raft: &Arc<batata_consistency::RaftNode>,
@@ -225,9 +230,49 @@ fn spawn_consul_raft_init(
 
     if !members.is_empty() {
         let consul_raft_bg = consul_raft.clone();
+        let local_addr = format!("127.0.0.1:{}", consul_raft_port);
+        let timeout_secs = configuration.raft_peer_connect_timeout_secs();
+        let retry_interval_ms = configuration.raft_peer_connect_retry_interval_ms();
         info!("Consul Raft members: {:?}", members);
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            // Wait for all peer Consul Raft gRPC servers to become reachable
+            let peer_addrs: Vec<String> = members
+                .values()
+                .filter(|n| n.addr != local_addr)
+                .map(|n| n.addr.clone())
+                .collect();
+
+            if !peer_addrs.is_empty() {
+                info!(
+                    "Waiting for {} Consul Raft peer(s) to become reachable (timeout: {}s)...",
+                    peer_addrs.len(),
+                    timeout_secs
+                );
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+
+                for addr in &peer_addrs {
+                    loop {
+                        match tokio::net::TcpStream::connect(addr).await {
+                            Ok(_) => {
+                                info!("Consul Raft peer {} is reachable", addr);
+                                break;
+                            }
+                            Err(_) => {
+                                if tokio::time::Instant::now() >= deadline {
+                                    tracing::warn!(
+                                        "Timeout waiting for Consul Raft peer {} - proceeding anyway",
+                                        addr
+                                    );
+                                    break;
+                                }
+                                tokio::time::sleep(Duration::from_millis(retry_interval_ms)).await;
+                            }
+                        }
+                    }
+                }
+                info!("All Consul Raft peers checked, proceeding with initialization");
+            }
+
             if let Err(e) = consul_raft_bg.initialize(members).await {
                 tracing::debug!("Consul Raft init: {} (may already be initialized)", e);
             } else {
@@ -331,7 +376,8 @@ fn open_consul_rocks_db(
         ColumnFamilyDescriptor::new(CF_CONSUL_INTENTIONS, cf_opts.clone()),
         ColumnFamilyDescriptor::new(CF_CONSUL_COORDINATES, cf_opts.clone()),
         ColumnFamilyDescriptor::new(CF_CONSUL_PEERING, cf_opts.clone()),
-        ColumnFamilyDescriptor::new(CF_CONSUL_OPERATOR, cf_opts),
+        ColumnFamilyDescriptor::new(CF_CONSUL_OPERATOR, cf_opts.clone()),
+        ColumnFamilyDescriptor::new(CF_CONSUL_EVENTS, cf_opts),
     ];
 
     match rocksdb::DB::open_cf_descriptors(&db_opts, data_dir, consul_cfs) {

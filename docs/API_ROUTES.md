@@ -6,6 +6,7 @@ This document provides the complete HTTP API routing tables for the two original
 
 | Date | Description |
 |------|-------------|
+| 2026-04-02 | Comprehensive API audit against Nacos source. Fixes: (1) Permission alignment — `GET /v3/admin/ns/instance` and `GET /v3/admin/ns/health/checkers` now use WRITE to match Nacos; console `selector/types` now has auth check. (2) `PUT /v3/admin/ns/service/cluster` now reads `checkPort` and `useInstancePort4Check` from request instead of hardcoding. (3) Admin service list default pageSize changed from 20 to 100. (4) `POST /v3/admin/ns/service` now accepts `ephemeral` field. (5) Service detail response: `ephemeral` from real metadata, ClusterInfo from real cluster configs with all fields (`healthyCheckPort`, `useInstancePortForCheck`, `metadata`). (6) Console `GET /v3/console/ns/service` response aligned to Nacos `ServiceDetailInfo` format. (7) Console service list now accepts `withInstances` and `ignoreEmptyService` params. Added Permission Compatibility Notes section. |
 | 2026-03-29 | Added Nacos 3.2 new AI endpoints: Skills Admin (16 endpoints), AgentSpec Admin (15 endpoints), Prompts Admin (9 endpoints), Pipeline Admin (2 endpoints), AI Client (4 endpoints). All marked TODO for Batata implementation. Updated MCP and A2A tables with query parameter details and Batata status column. |
 | 2026-03-20 | Fixed V3 Admin CS routes verified against nacos-maintainer-client. History detail path corrected: `GET /v3/admin/cs/history` (base) not `/history/detail`. Config publish also handles beta via `betaIps` header. Blur search wildcard stripping (`*pattern*`) added. Namespace normalization (empty→"public") fixed for get_config, list_history. ConfigGrayInfo response flattened (was nested under `configDetailInfo`). Added Batata implementation status comparison section at end. |
 | 2026-03-01 | Re-verified all V3 Admin routes against Nacos source (`~/work/github/easynet-cn/nacos`). Major corrections: Config Controller (removed separate PUT, fixed `/search`→`/list`, added `/metadata`, `/batch`, `/beta`, `/config/listener`, Config Ops section); removed Config Gray Rules section (Nacos uses `/beta` not `/gray/{dataId}`); Listener Controller corrected to single base endpoint (IP query); History Controller added `/previous` and `/configs`, fixed `/detail/{nid}`→base GET with query param; Capacity added POST; Metrics fixed to `/cluster` and `/ip` sub-paths. Naming Admin: Health fixed (removed base GET, added `/checkers`); Client expanded to 7 endpoints; Operator fixed to sub-paths only (`/switches`, `/metrics`, `/log`); Instance added `DELETE /metadata/batch` and `PUT /partial`, fixed POST→PUT for metadata; Cluster removed non-existent GET; Service added `PUT /service/cluster`. Comparison section: ~20 items previously marked EXTRA corrected to OK (they exist in Nacos). |
@@ -669,7 +670,7 @@ This section documents all differences between the original Nacos routes and Bat
 | `GET /v3/admin/cs/config/list` | **OK** | List/search configs (paginated) |
 | `POST /v3/admin/cs/config/clone` | **OK** | Clone config (both Nacos and Batata use POST) |
 | `PUT /v3/admin/cs/config/metadata` | **OK** | Update config metadata |
-| `DELETE /v3/admin/cs/config/batch` | **PATH** | Nacos uses `/batch`; Batata may use `/batchDelete` |
+| `DELETE /v3/admin/cs/config/batch` | **OK** | Both Nacos and Batata use `/batch` |
 | `GET /v3/admin/cs/config/beta` | **OK** | Query beta config |
 | `DELETE /v3/admin/cs/config/beta` | **OK** | Remove beta config |
 | `GET /v3/admin/cs/config/listener` | **OK** | Get config listeners by dataId/group |
@@ -690,7 +691,7 @@ This section documents all differences between the original Nacos routes and Bat
 
 | Nacos Route | Batata Status | Notes |
 |-------------|---------------|-------|
-| `PUT /v3/admin/ns/instance/metadata/batch` | **PATH** | Batata uses `PUT /v3/admin/ns/instance/metadata` (without `/batch` suffix) |
+| `PUT /v3/admin/ns/instance/metadata/batch` | **OK** | Both Nacos and Batata use `/metadata/batch` |
 | `DELETE /v3/admin/ns/instance/metadata/batch` | **OK** | Batch delete metadata |
 | `PUT /v3/admin/ns/instance/partial` | **OK** | Partial instance update (patch) |
 | `PUT /v3/admin/ns/health/instance` | **OK** | Update instance health status |
@@ -775,15 +776,22 @@ These are additional features provided by Batata:
 | Console Plugin | `/v3/console/core/plugin/*` | Plugin management |
 | OAuth2 Auth | `/v3/auth/oauth/*` | OAuth2/OIDC authentication |
 
+#### Permission Notes
+
+| Endpoint | Nacos | Batata | Notes |
+|----------|-------|--------|-------|
+| `GET /v3/admin/ns/instance` (detail) | WRITE | **READ** | Nacos uses WRITE for a GET (likely a bug); Batata uses READ which is more correct |
+| `GET /v3/admin/ns/health/checkers` | WRITE | **READ** | Same — Batata intentionally uses READ for query endpoints |
+| `GET /v3/console/ns/service/selector/types` | READ | **READ** | Uses resource `console:naming` with ONLY_IDENTITY tag |
+
 #### Summary of Differences
 
 The following are **intentional design differences** between Nacos and Batata (not missing features):
 
 1. **`GET /v3/console/cs/config/export2`**: Nacos uses `export2` but Batata uses `export`.
-2. **Admin Listener path**: Nacos has a separate `ListenerControllerV3` at `/v3/admin/cs/listener` (base) for IP-based query; Batata puts this under `/v3/admin/cs/listener/ip`.
-3. **Admin Config batch delete**: Nacos uses `DELETE /v3/admin/cs/config/batch`; Batata may use a slightly different path.
-4. **No separate PUT for config**: Nacos uses `POST` for both create and update (publish); there is no separate `PUT /v3/admin/cs/config`.
-5. **No gray/{dataId} endpoints**: Nacos V3 admin uses `GET /beta` and `DELETE /beta` (not `gray/{dataId}` path params).
+2. **Admin Listener path**: Nacos `ListenerControllerV3` has the base `GET /v3/admin/cs/listener` for IP-based query; Batata uses that base path for config-based query and puts IP-based query under `/v3/admin/cs/listener/ip`.
+3. **No separate PUT for config**: Nacos uses `POST` for both create and update (publish); there is no separate `PUT /v3/admin/cs/config`.
+4. **No gray/{dataId} endpoints**: Nacos V3 admin uses `GET /beta` and `DELETE /beta` (not `gray/{dataId}` path params).
 
 ---
 

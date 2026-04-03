@@ -176,11 +176,12 @@ pub async fn ui_nodes(
     let dc = dc_config.resolve_dc(&query.dc);
 
     // Collect unique nodes from all service instances
-    let (_, service_names) = naming_service.list_services(
+    let (_, service_names) = naming_service.list_services_by_source(
         &dc_config.default_namespace,
         &dc_config.default_group,
         1,
-        10000,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
     let mut node_map: HashMap<String, UINode> = HashMap::new();
 
@@ -241,11 +242,12 @@ pub async fn ui_node_info(
     }
 
     let node_name = path.into_inner();
-    let (_, service_names) = naming_service.list_services(
+    let (_, service_names) = naming_service.list_services_by_source(
         &dc_config.default_namespace,
         &dc_config.default_group,
         1,
-        10000,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
 
     for service_name in &service_names {
@@ -330,11 +332,12 @@ pub async fn ui_catalog_overview(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let (service_count, service_names) = naming_service.list_services(
+    let (service_count, service_names) = naming_service.list_services_by_source(
         &dc_config.default_namespace,
         &dc_config.default_group,
         1,
-        10000,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
 
     // Count total instances and collect unique nodes
@@ -521,7 +524,7 @@ pub async fn ui_service_topology(
     // Also check proxy config for upstream dependencies
     let namespace = &dc_config.default_namespace;
     let (_, all_services) =
-        naming_service.list_services(namespace, &dc_config.default_group, 1, 10000);
+        naming_service.list_services_by_source(namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
     for svc in &all_services {
         let instances = naming_service.get_instances_by_source(
@@ -621,7 +624,7 @@ fn collect_mesh_gateways(
     default_group: &str,
 ) -> Vec<serde_json::Value> {
     let (_, service_names) =
-        naming_service.list_services(default_namespace, default_group, 1, 10000);
+        naming_service.list_services_by_source(default_namespace, default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
     let mut gateways = Vec::new();
 
     for svc in service_names {
@@ -725,11 +728,12 @@ pub async fn federation_state_mesh_gateways(
     }
 
     // Find mesh-gateway instances and group by datacenter
-    let (_, service_names) = naming_service.list_services(
+    let (_, service_names) = naming_service.list_services_by_source(
         &dc_config.default_namespace,
         &dc_config.default_group,
         1,
-        10000,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
     );
 
     let mut gateways_by_dc: HashMap<String, Vec<serde_json::Value>> = HashMap::new();

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{error, info, warn};
 
-use batata_consistency::raft::state_machine::CF_CONSUL_ACL;
+use crate::constants::CF_CONSUL_ACL;
 
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulDatacenterConfig;

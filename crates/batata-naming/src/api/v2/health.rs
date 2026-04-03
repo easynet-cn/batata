@@ -63,13 +63,14 @@ async fn do_update_instance_health(
             .build()
     );
 
-    // Check if the instance exists
-    let instances = naming_service.get_instances(
+    // Check if the instance exists (only Batata-registered instances)
+    let instances = naming_service.get_instances_by_source(
         namespace_id,
         group_name,
         &form.service_name,
         cluster_name,
         false,
+        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let instance_exists = instances

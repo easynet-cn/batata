@@ -18,9 +18,9 @@ pub struct ConsulDatacenterConfig {
     pub consul_version: String,
     /// The Batata version (e.g., "0.1.0")
     pub batata_version: String,
-    /// Default Nacos namespace for Consul API mapping (e.g., "public")
+    /// Default Nacos namespace for Consul API mapping (e.g., "consul")
     pub default_namespace: String,
-    /// Default Nacos group for Consul API mapping (e.g., "DEFAULT_GROUP")
+    /// Default Nacos group for Consul API mapping (e.g., "CONSUL_GROUP")
     pub default_group: String,
     /// Default Nacos cluster for Consul API mapping (e.g., "DEFAULT")
     pub default_cluster: String,
@@ -35,8 +35,8 @@ impl ConsulDatacenterConfig {
             datacenter,
             consul_version: "1.22.5".to_string(),
             batata_version: env!("CARGO_PKG_VERSION").to_string(),
-            default_namespace: "public".to_string(),
-            default_group: "DEFAULT_GROUP".to_string(),
+            default_namespace: "consul".to_string(),
+            default_group: "CONSUL_GROUP".to_string(),
             default_cluster: "DEFAULT".to_string(),
             consul_port: 8500,
         }

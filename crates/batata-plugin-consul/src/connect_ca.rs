@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{error, info};
 
-use batata_consistency::raft::state_machine::{CF_CONSUL_CA_ROOTS, CF_CONSUL_INTENTIONS};
+use crate::constants::{CF_CONSUL_CA_ROOTS, CF_CONSUL_INTENTIONS};
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};

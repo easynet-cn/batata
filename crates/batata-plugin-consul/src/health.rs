@@ -50,8 +50,8 @@ impl ConsulHealthService {
         Self {
             registry,
             node_name: "batata-node".to_string(),
-            default_namespace: "public".to_string(),
-            default_group: "DEFAULT_GROUP".to_string(),
+            default_namespace: "consul".to_string(),
+            default_group: "CONSUL_GROUP".to_string(),
             default_cluster: "DEFAULT".to_string(),
         }
     }
@@ -881,7 +881,7 @@ pub async fn get_connect_health(
 
     // Get all services and find Connect-enabled instances for this target service
     let (_, all_service_names) =
-        naming_service.list_services(&namespace, &dc_config.default_group, 1, 10000);
+        naming_service.list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
@@ -970,7 +970,7 @@ pub async fn get_ingress_health(
 
     // Find ingress gateway instances
     let (_, all_service_names) =
-        naming_service.list_services(&namespace, &dc_config.default_group, 1, 10000);
+        naming_service.list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 

@@ -465,7 +465,7 @@ impl ConsulCatalogService {
             naming_service,
             node_name: "batata-node".to_string(),
             datacenter,
-            default_group: "DEFAULT_GROUP".to_string(),
+            default_group: "CONSUL_GROUP".to_string(),
             default_cluster: "DEFAULT".to_string(),
             index_provider: ConsulIndexProvider::default(),
         }
@@ -494,7 +494,7 @@ impl ConsulCatalogService {
     pub fn get_services(&self, namespace: &str) -> HashMap<String, Vec<String>> {
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, &self.default_group, 1, 10000);
+                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
         let mut services: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -572,7 +572,7 @@ impl ConsulCatalogService {
     pub fn get_nodes(&self, namespace: &str) -> Vec<CatalogNode> {
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, &self.default_group, 1, 10000);
+                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
@@ -617,7 +617,7 @@ impl ConsulCatalogService {
 
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, &self.default_group, 1, 10000);
+                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
         let mut node: Option<CatalogNode> = None;
         let mut services: HashMap<String, AgentService> = HashMap::new();
@@ -751,7 +751,7 @@ impl ConsulCatalogService {
             // Find and deregister the service
             let (_, service_names) =
                 self.naming_service
-                    .list_services(namespace, &self.default_group, 1, 10000);
+                    .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
             for service_name in service_names {
                 let instances = self.naming_service.get_instances_by_source(
@@ -780,7 +780,7 @@ impl ConsulCatalogService {
             let node = &deregistration.node;
             let (_, service_names) =
                 self.naming_service
-                    .list_services(namespace, &self.default_group, 1, 10000);
+                    .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
             let mut deregistered = false;
 
@@ -817,7 +817,7 @@ impl ConsulCatalogService {
     pub fn get_service_summary(&self, namespace: &str) -> Vec<ServiceListingSummary> {
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, &self.default_group, 1, 10000);
+                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
         let mut summaries: Vec<ServiceListingSummary> = Vec::new();
 
@@ -958,7 +958,7 @@ impl ConsulCatalogService {
     ) -> Vec<CatalogService> {
         let (_, service_names) =
             self.naming_service
-                .list_services(namespace, &self.default_group, 1, 10000);
+                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
 
         let mut results = Vec::new();
 
@@ -1818,11 +1818,11 @@ mod tests {
             register_source: batata_api::naming::RegisterSource::Consul,
         };
 
-        naming_service.register_instance("public", "DEFAULT_GROUP", "web", instance1);
-        naming_service.register_instance("public", "DEFAULT_GROUP", "db", instance2);
+        naming_service.register_instance("consul", "CONSUL_GROUP", "web", instance1);
+        naming_service.register_instance("consul", "CONSUL_GROUP", "db", instance2);
 
         // Get service summary
-        let summaries = catalog.get_service_summary("public");
+        let summaries = catalog.get_service_summary("consul");
         assert_eq!(summaries.len(), 2);
 
         // Find the web service summary

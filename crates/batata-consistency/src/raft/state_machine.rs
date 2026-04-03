@@ -56,16 +56,6 @@ pub const CF_ROLES: &str = "roles";
 pub const CF_PERMISSIONS: &str = "permissions";
 pub const CF_INSTANCES: &str = "instances";
 pub const CF_LOCKS: &str = "locks";
-pub const CF_CONSUL_KV: &str = "consul_kv";
-pub const CF_CONSUL_ACL: &str = "consul_acl";
-pub const CF_CONSUL_SESSIONS: &str = "consul_sessions";
-pub const CF_CONSUL_QUERIES: &str = "consul_queries";
-pub const CF_CONSUL_CONFIG_ENTRIES: &str = "consul_config_entries";
-pub const CF_CONSUL_CA_ROOTS: &str = "consul_ca_roots";
-pub const CF_CONSUL_INTENTIONS: &str = "consul_intentions";
-pub const CF_CONSUL_COORDINATES: &str = "consul_coordinates";
-pub const CF_CONSUL_PEERING: &str = "consul_peering";
-pub const CF_CONSUL_OPERATOR: &str = "consul_operator";
 pub const CF_AI_RESOURCE: &str = "ai_resource";
 pub const CF_AI_RESOURCE_VERSION: &str = "ai_resource_version";
 pub const CF_PIPELINE_EXECUTION: &str = "pipeline_execution";
@@ -655,10 +645,12 @@ impl RocksStateMachine {
 
         // Preserve created_time from existing config on update
         let created_time = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-            Ok(Some(existing_bytes)) => serde_json::from_slice::<serde_json::Value>(&existing_bytes)
-                .ok()
-                .and_then(|v| v["created_time"].as_i64())
-                .unwrap_or(now),
+            Ok(Some(existing_bytes)) => {
+                serde_json::from_slice::<serde_json::Value>(&existing_bytes)
+                    .ok()
+                    .and_then(|v| v["created_time"].as_i64())
+                    .unwrap_or(now)
+            }
             _ => now,
         };
 

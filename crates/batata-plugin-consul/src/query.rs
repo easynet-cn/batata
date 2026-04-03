@@ -16,7 +16,7 @@ use rocksdb::DB;
 use tracing::{error, info, warn};
 
 use batata_api::naming::NamingServiceProvider;
-use batata_consistency::raft::state_machine::CF_CONSUL_QUERIES;
+use crate::constants::CF_CONSUL_QUERIES;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};

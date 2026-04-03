@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use batata_common::{
     ActionTypes, ApiType, DEFAULT_GROUP, DEFAULT_NAMESPACE_ID, SignType, default_page_no,
-    default_page_size_small, impl_or_default,
+    default_page_size, impl_or_default,
 };
 use batata_server_common::{
     Secured, error, model::app_state::AppState, model::response::Result, secured,
@@ -31,7 +31,7 @@ struct ServiceListQuery {
     service_name: Option<String>,
     #[serde(default = "default_page_no", alias = "pageNo")]
     page_no: u64,
-    #[serde(default = "default_page_size_small", alias = "pageSize")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     page_size: u64,
     /// When true, return ServiceDetailInfo (with metadata, protectThreshold, etc.)
     #[serde(default, alias = "withInstances")]
@@ -73,6 +73,8 @@ struct ServiceForm {
     group_name: Option<String>,
     #[serde(alias = "serviceName")]
     service_name: String,
+    #[serde(default)]
+    ephemeral: Option<bool>,
     #[serde(default, alias = "protectThreshold")]
     protect_threshold: Option<f32>,
     #[serde(default)]
@@ -159,12 +161,13 @@ async fn list_services(
             .build()
     );
 
-    // Get all services first, then filter by service name pattern if provided
-    let (_, raw_names) = naming_service.list_services(
+    // Get Batata-registered services, then filter by service name pattern if provided
+    let (_, raw_names) = naming_service.list_services_by_source(
         namespace_id,
         group_name,
         1,        // get all from page 1
         i32::MAX, // large page to get all
+        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     // Apply service name filter (blur/contains match) if serviceNameParam is provided
@@ -234,23 +237,38 @@ async fn list_services(
                     false,
                     Some(batata_api::naming::RegisterSource::Batata),
                 );
-                // Build cluster map from instances
-                let mut cluster_map: HashMap<String, serde_json::Value> = HashMap::new();
-                for inst in &instances {
-                    let cluster_name = if inst.cluster_name.is_empty() {
-                        "DEFAULT"
-                    } else {
-                        &inst.cluster_name
-                    };
-                    cluster_map
-                        .entry(cluster_name.to_string())
-                        .or_insert_with(|| {
-                            serde_json::json!({
-                                "name": cluster_name,
-                                "hosts": []
-                            })
-                        });
+
+                // Build cluster map from real cluster configs
+                let mut cluster_names: HashSet<String> =
+                    instances.iter().map(|i| i.cluster_name.clone()).collect();
+                let cluster_configs =
+                    naming_service.get_all_cluster_configs(namespace_id, group_name, name);
+                let cluster_config_map: HashMap<&str, _> = cluster_configs
+                    .iter()
+                    .map(|c| (c.name.as_str(), c))
+                    .collect();
+                for cfg in &cluster_configs {
+                    cluster_names.insert(cfg.name.clone());
                 }
+
+                let cluster_map: HashMap<String, serde_json::Value> = cluster_names
+                    .into_iter()
+                    .map(|c| {
+                        let config = cluster_config_map.get(c.as_str());
+                        (
+                            c.clone(),
+                            serde_json::json!({
+                                "clusterName": c,
+                                "healthChecker": {
+                                    "type": config.map(|cfg| cfg.health_check_type.as_str()).unwrap_or("TCP"),
+                                },
+                                "healthyCheckPort": config.map(|cfg| cfg.check_port).unwrap_or(80),
+                                "useInstancePortForCheck": config.map(|cfg| cfg.use_instance_port).unwrap_or(true),
+                                "metadata": config.map(|cfg| &cfg.metadata).cloned().unwrap_or_default(),
+                            }),
+                        )
+                    })
+                    .collect();
 
                 ServiceDetailResponse {
                     namespace_id: namespace_id.to_string(),
@@ -261,7 +279,13 @@ async fn list_services(
                     } else {
                         Some(cluster_map)
                     },
-                    metadata: metadata.as_ref().map(|m| m.metadata.clone()),
+                    metadata: metadata.as_ref().and_then(|m| {
+                        if m.metadata.is_empty() {
+                            None
+                        } else {
+                            Some(m.metadata.clone())
+                        }
+                    }),
                     protect_threshold: metadata
                         .as_ref()
                         .map(|m| m.protect_threshold)
@@ -276,7 +300,7 @@ async fn list_services(
                             })
                         }
                     }),
-                    ephemeral: Some(true),
+                    ephemeral: metadata.as_ref().map(|m| m.ephemeral),
                 }
             })
             .collect();
@@ -366,18 +390,18 @@ async fn get_service(
         false,
         Some(batata_api::naming::RegisterSource::Batata),
     );
-    let clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
+    let mut clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
     let metadata_opt =
         naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
 
-    let (protect_threshold, metadata, selector) = if let Some(meta) = metadata_opt {
+    let (protect_threshold, metadata, selector, ephemeral) = if let Some(meta) = &metadata_opt {
         let sel = if meta.selector_type != "none" && !meta.selector_type.is_empty() {
             Some(SelectorResponse {
-                r#type: meta.selector_type,
+                r#type: meta.selector_type.clone(),
                 expression: if meta.selector_expression.is_empty() {
                     None
                 } else {
-                    Some(meta.selector_expression)
+                    Some(meta.selector_expression.clone())
                 },
             })
         } else {
@@ -388,24 +412,42 @@ async fn get_service(
             if meta.metadata.is_empty() {
                 None
             } else {
-                Some(meta.metadata)
+                Some(meta.metadata.clone())
             },
             sel,
+            Some(meta.ephemeral),
         )
     } else {
-        (0.0, None, None)
+        (0.0, None, None, None)
     };
 
-    // Build clusterMap — Nacos returns Map<String, ClusterInfo>
+    // Build clusterMap from real cluster configs — Nacos returns Map<String, ClusterInfo>
+    let cluster_configs =
+        naming_service.get_all_cluster_configs(namespace_id, group_name, &params.service_name);
+    let cluster_config_map: HashMap<&str, _> = cluster_configs
+        .iter()
+        .map(|c| (c.name.as_str(), c))
+        .collect();
+
+    // Merge cluster names from both instances and configs
+    for cfg in &cluster_configs {
+        clusters.insert(cfg.name.clone());
+    }
+
     let cluster_map: HashMap<String, serde_json::Value> = clusters
         .into_iter()
         .map(|c| {
+            let config = cluster_config_map.get(c.as_str());
             (
                 c.clone(),
                 serde_json::json!({
                     "clusterName": c,
-                    "healthChecker": {"type": "TCP"},
-                    "metadata": {},
+                    "healthChecker": {
+                        "type": config.map(|cfg| cfg.health_check_type.as_str()).unwrap_or("TCP"),
+                    },
+                    "healthyCheckPort": config.map(|cfg| cfg.check_port).unwrap_or(80),
+                    "useInstancePortForCheck": config.map(|cfg| cfg.use_instance_port).unwrap_or(true),
+                    "metadata": config.map(|cfg| &cfg.metadata).cloned().unwrap_or_default(),
                 }),
             )
         })
@@ -423,7 +465,7 @@ async fn get_service(
         metadata,
         protect_threshold,
         selector,
-        ephemeral: Some(true),
+        ephemeral,
     };
 
     Result::<ServiceDetailResponse>::http_success(response)
@@ -494,6 +536,7 @@ async fn create_service(
         metadata,
         selector_type,
         selector_expression,
+        ephemeral: form.ephemeral.unwrap_or(false),
         ..Default::default()
     };
 
@@ -617,8 +660,14 @@ async fn delete_service(
         );
     }
 
-    let instances =
-        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
+    let instances = naming_service.get_instances_by_source(
+        namespace_id,
+        group_name,
+        &params.service_name,
+        "",
+        false,
+        Some(batata_api::naming::RegisterSource::Batata),
+    );
     if !instances.is_empty() {
         return Result::<bool>::http_response(
             400,
@@ -648,7 +697,7 @@ struct SubscriberQuery {
     service_name: String,
     #[serde(default = "default_page_no", alias = "pageNo")]
     page_no: u64,
-    #[serde(default = "default_page_size_small", alias = "pageSize")]
+    #[serde(default = "default_page_size", alias = "pageSize")]
     page_size: u64,
 }
 
@@ -750,6 +799,10 @@ struct UpdateClusterForm {
     service_name: String,
     #[serde(alias = "clusterName")]
     cluster_name: String,
+    #[serde(alias = "checkPort")]
+    check_port: Option<i32>,
+    #[serde(alias = "useInstancePort4Check")]
+    use_instance_port4_check: Option<bool>,
     #[serde(default, alias = "healthChecker")]
     health_checker: Option<ClusterHealthCheckerForm>,
     #[serde(default)]
@@ -804,15 +857,25 @@ async fn update_service_cluster(
             .build()
     );
 
-    if let Some(checker) = &form.health_checker {
+    if form.health_checker.is_some()
+        || form.check_port.is_some()
+        || form.use_instance_port4_check.is_some()
+    {
+        let check_type = form
+            .health_checker
+            .as_ref()
+            .map(|c| c.r#type.as_str())
+            .unwrap_or("TCP");
+        let check_port = form.check_port.unwrap_or(80);
+        let use_instance_port = form.use_instance_port4_check.unwrap_or(true);
         naming_service.update_cluster_health_check(
             namespace_id,
             group_name,
             &form.service_name,
             &form.cluster_name,
-            &checker.r#type,
-            80,
-            true,
+            check_type,
+            check_port,
+            use_instance_port,
         );
     }
 

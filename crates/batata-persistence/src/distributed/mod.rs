@@ -252,9 +252,7 @@ impl ConfigPersistence for DistributedPersistService {
                 tenant: namespace_id.to_string(),
                 content: existing["content"].as_str().unwrap_or("").to_string(),
                 md5: existing["md5"].as_str().unwrap_or("").to_string(),
-                app_name: Some(
-                    existing["app_name"].as_str().unwrap_or("").to_string(),
-                ),
+                app_name: Some(existing["app_name"].as_str().unwrap_or("").to_string()),
                 src_user: Some(src_user.to_string()),
                 src_ip: Some(client_ip.to_string()),
                 op_type: "D".to_string(),

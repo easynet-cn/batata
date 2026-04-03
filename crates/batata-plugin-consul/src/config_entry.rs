@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info};
 
-use batata_consistency::raft::state_machine::CF_CONSUL_CONFIG_ENTRIES;
+use crate::constants::CF_CONSUL_CONFIG_ENTRIES;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};

@@ -1229,18 +1229,18 @@ impl Configuration {
             .unwrap_or_else(|_| self.consul_datacenter())
     }
 
-    /// Get the default Nacos namespace for Consul API mapping (default: "public")
+    /// Get the default Nacos namespace for Consul API mapping (default: "consul")
     pub fn consul_default_namespace(&self) -> String {
         self.config
             .get_string("batata.plugin.consul.default_namespace")
-            .unwrap_or_else(|_| "public".to_string())
+            .unwrap_or_else(|_| "consul".to_string())
     }
 
-    /// Get the default Nacos group for Consul API mapping (default: "DEFAULT_GROUP")
+    /// Get the default Nacos group for Consul API mapping (default: "CONSUL_GROUP")
     pub fn consul_default_group(&self) -> String {
         self.config
             .get_string("batata.plugin.consul.default_group")
-            .unwrap_or_else(|_| "DEFAULT_GROUP".to_string())
+            .unwrap_or_else(|_| "CONSUL_GROUP".to_string())
     }
 
     /// Get the number of HTTP workers for Consul server.
@@ -1657,6 +1657,21 @@ impl Configuration {
         self.config
             .get_int("batata.raft.forward.initial_delay_ms")
             .unwrap_or(200) as u64
+    }
+
+    /// Timeout in seconds for waiting for Raft peer gRPC servers to become reachable
+    /// during cluster initialization (default: 30).
+    pub fn raft_peer_connect_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.peer_connect_timeout_secs")
+            .unwrap_or(30) as u64
+    }
+
+    /// Retry interval in milliseconds when probing Raft peer readiness (default: 500).
+    pub fn raft_peer_connect_retry_interval_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.peer_connect_retry_interval_ms")
+            .unwrap_or(500) as u64
     }
 
     // ========================================================================

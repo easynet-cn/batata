@@ -26,8 +26,12 @@ struct ServiceListQuery {
     page_no: u64,
     #[serde(default = "default_page_size", alias = "pageSize")]
     page_size: u64,
-    #[serde(default, alias = "hasIpCount")]
+    #[serde(default, alias = "hasIpCount", alias = "ignoreEmptyService")]
     has_ip_count: Option<bool>,
+    /// Accepted for Nacos compatibility; full withInstances support requires datasource changes.
+    #[allow(dead_code)]
+    #[serde(default, alias = "withInstances")]
+    with_instances: bool,
 }
 
 impl ServiceListQuery {
@@ -487,7 +491,15 @@ async fn list_subscribers(
 
 /// GET /ns/service/selector/types
 #[get("selector/types")]
-async fn get_selector_types() -> impl Responder {
+async fn get_selector_types(req: HttpRequest, data: web::Data<AppState>) -> impl Responder {
+    secured!(
+        Secured::builder(&req, &data, "console:naming")
+            .action(ActionTypes::Read)
+            .sign_type(SignType::Naming)
+            .api_type(ApiType::ConsoleApi)
+            .build()
+    );
+
     let types = vec!["none".to_string(), "label".to_string()];
     Result::<Vec<String>>::http_success(types)
 }
