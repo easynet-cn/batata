@@ -49,6 +49,9 @@ pub fn context_interceptor<T>(mut request: Request<T>) -> Result<Request<T>, Sta
 /// Maximum idle time before a connection is considered stale (milliseconds).
 const STALE_CONNECTION_THRESHOLD_MS: u64 = 60_000;
 
+/// Default timeout for push_message operations (milliseconds).
+const DEFAULT_PUSH_TIMEOUT_MS: u64 = 5_000;
+
 /// Connection limit checker trait for pluggable connection control.
 #[async_trait::async_trait]
 pub trait ConnectionLimitChecker: Send + Sync {
@@ -64,6 +67,8 @@ pub struct ConnectionManager {
     clients: Arc<DashMap<String, GrpcClient>>,
     listeners: Arc<RwLock<Vec<Arc<dyn ConnectionEventListener>>>>,
     connection_limit_checker: std::sync::Mutex<Option<Arc<dyn ConnectionLimitChecker>>>,
+    /// Timeout for push_message operations
+    push_timeout: std::time::Duration,
 }
 
 impl Default for ConnectionManager {
@@ -78,6 +83,7 @@ impl ConnectionManager {
             clients: Arc::new(DashMap::new()),
             listeners: Arc::new(RwLock::new(Vec::new())),
             connection_limit_checker: std::sync::Mutex::new(None),
+            push_timeout: std::time::Duration::from_millis(DEFAULT_PUSH_TIMEOUT_MS),
         }
     }
 
@@ -86,7 +92,13 @@ impl ConnectionManager {
             clients,
             listeners: Arc::new(RwLock::new(Vec::new())),
             connection_limit_checker: std::sync::Mutex::new(None),
+            push_timeout: std::time::Duration::from_millis(DEFAULT_PUSH_TIMEOUT_MS),
         }
+    }
+
+    /// Set the push message timeout
+    pub fn set_push_timeout(&mut self, timeout: std::time::Duration) {
+        self.push_timeout = timeout;
     }
 
     /// Set the connection limit checker for controlling max connections.
@@ -194,13 +206,17 @@ impl ConnectionManager {
         payload: batata_api::grpc::Payload,
     ) -> bool {
         if let Some(client) = self.clients.get(connection_id) {
-            match client.tx.send(Ok(payload)).await {
-                Ok(_) => {
+            match tokio::time::timeout(self.push_timeout, client.tx.send(Ok(payload))).await {
+                Ok(Ok(_)) => {
                     tracing::debug!(connection_id, "Message pushed successfully");
                     true
                 }
-                Err(e) => {
-                    tracing::warn!(connection_id, error = %e, "Failed to push message");
+                Ok(Err(e)) => {
+                    tracing::warn!(connection_id, error = %e, "Failed to push message, channel closed");
+                    false
+                }
+                Err(_) => {
+                    tracing::warn!(connection_id, "Push message timeout, client may be slow");
                     false
                 }
             }

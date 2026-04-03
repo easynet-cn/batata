@@ -31,6 +31,14 @@ pub struct RaftNetworkConfig {
     pub snapshot_timeout: Duration,
     /// Connection establishment timeout
     pub connect_timeout: Duration,
+    /// TCP keep-alive interval
+    pub tcp_keepalive: Duration,
+    /// Enable TCP_NODELAY
+    pub tcp_nodelay: bool,
+    /// HTTP/2 keep-alive interval
+    pub http2_keepalive_interval: Duration,
+    /// HTTP/2 keep-alive timeout
+    pub http2_keepalive_timeout: Duration,
 }
 
 impl Default for RaftNetworkConfig {
@@ -39,6 +47,27 @@ impl Default for RaftNetworkConfig {
             rpc_timeout: Duration::from_secs(10),
             snapshot_timeout: Duration::from_secs(30),
             connect_timeout: Duration::from_secs(5),
+            tcp_keepalive: Duration::from_secs(10),
+            tcp_nodelay: true,
+            http2_keepalive_interval: Duration::from_secs(10),
+            http2_keepalive_timeout: Duration::from_secs(5),
+        }
+    }
+}
+
+impl RaftNetworkConfig {
+    /// Create from RaftConfig
+    pub fn from_raft_config(config: &super::config::RaftConfig) -> Self {
+        Self {
+            rpc_timeout: config.rpc_timeout(),
+            snapshot_timeout: config.snapshot_transfer_timeout(),
+            connect_timeout: Duration::from_secs(5),
+            tcp_keepalive: Duration::from_secs(config.grpc_tcp_keepalive_secs),
+            tcp_nodelay: config.grpc_tcp_nodelay,
+            http2_keepalive_interval: Duration::from_secs(
+                config.grpc_http2_keepalive_interval_secs,
+            ),
+            http2_keepalive_timeout: Duration::from_secs(config.grpc_http2_keepalive_timeout_secs),
         }
     }
 }
@@ -110,6 +139,10 @@ impl RaftNetworkConnection {
                 .map_err(|e| NetworkError::new(&e))?
                 .connect_timeout(self.network_config.connect_timeout)
                 .timeout(self.network_config.rpc_timeout)
+                .tcp_keepalive(Some(self.network_config.tcp_keepalive))
+                .tcp_nodelay(self.network_config.tcp_nodelay)
+                .http2_keep_alive_interval(self.network_config.http2_keepalive_interval)
+                .keep_alive_timeout(self.network_config.http2_keepalive_timeout)
                 .connect()
                 .await
                 .map_err(|e| {
@@ -201,12 +234,25 @@ impl RaftNetworkConnection {
     }
 }
 
+impl RaftNetworkConnection {
+    /// Get the effective timeout for an RPC, using RPCOption's hard_ttl.
+    fn effective_timeout(&self, option: &RPCOption) -> Duration {
+        let ttl = option.hard_ttl();
+        if ttl.is_zero() {
+            self.network_config.rpc_timeout
+        } else {
+            ttl
+        }
+    }
+}
+
 impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
     async fn append_entries(
         &mut self,
         req: AppendEntriesRequest<TypeConfig>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCError<NodeId, BasicNode, RaftError<NodeId>>> {
+        let timeout = self.effective_timeout(&option);
         let client = self
             .ensure_client()
             .await
@@ -221,9 +267,15 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
             vote: Some(Self::to_proto_vote(&req.vote)),
         };
 
-        let response = client
-            .append_entries(proto_req)
+        let response = tokio::time::timeout(timeout, client.append_entries(proto_req))
             .await
+            .map_err(|_| {
+                warn!("AppendEntries RPC timed out after {:?}", timeout);
+                RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "AppendEntries RPC timed out",
+                )))
+            })?
             .map_err(|e| {
                 error!("AppendEntries RPC failed: {}", e);
                 RPCError::Unreachable(Unreachable::new(&e))
@@ -332,8 +384,9 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
     async fn vote(
         &mut self,
         req: VoteRequest<NodeId>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RPCError<NodeId, BasicNode, RaftError<NodeId>>> {
+        let timeout = self.effective_timeout(&option);
         let client = self
             .ensure_client()
             .await
@@ -346,9 +399,15 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
             vote: Some(Self::to_proto_vote(&req.vote)),
         };
 
-        let response = client
-            .vote(proto_req)
+        let response = tokio::time::timeout(timeout, client.vote(proto_req))
             .await
+            .map_err(|_| {
+                warn!("Vote RPC timed out after {:?}", timeout);
+                RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Vote RPC timed out",
+                )))
+            })?
             .map_err(|e| {
                 error!("Vote RPC failed: {}", e);
                 RPCError::Unreachable(Unreachable::new(&e))

@@ -23,6 +23,22 @@ use crate::api::{
 use batata_api::model::APPNAME;
 use batata_api::remote::RequestTrait;
 
+/// Default timeout for bi-stream send operations (5 seconds).
+const BISTREAM_SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Send a message on the bi-stream channel with timeout protection.
+/// Returns true on success, false on timeout or channel error.
+async fn bistream_send(
+    tx: &mpsc::Sender<Result<Payload, Status>>,
+    msg: Result<Payload, Status>,
+) -> Result<(), String> {
+    match tokio::time::timeout(BISTREAM_SEND_TIMEOUT, tx.send(msg)).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(format!("channel closed: {}", e)),
+        Err(_) => Err("send timeout".to_string()),
+    }
+}
+
 /// Auth requirement level for handlers
 /// Corresponds to Nacos's @Secured annotation with action and apiType parameters
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -685,7 +701,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                             .map(|m| m.r#type.as_str())
                                             .unwrap_or("?")
                                     );
-                                    if let Err(e) = tx.send(Ok(ack_payload)).await {
+                                    if let Err(e) = bistream_send(&tx, Ok(ack_payload)).await {
                                         tracing::warn!("Failed to send SetupAckRequest: {}", e);
                                     } else {
                                         info!(
@@ -722,7 +738,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     message_type,
                                     e.message()
                                 );
-                                if let Err(send_err) = tx.send(Err(e)).await {
+                                if let Err(send_err) = bistream_send(&tx, Err(e)).await {
                                     tracing::error!(
                                         "Failed to send TPS error response: {}",
                                         send_err
@@ -742,7 +758,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                     message_type,
                                     e.message()
                                 );
-                                if let Err(send_err) = tx.send(Err(e)).await {
+                                if let Err(send_err) = bistream_send(&tx, Err(e)).await {
                                     tracing::error!(
                                         "Failed to send param check error: {}",
                                         send_err
@@ -823,7 +839,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                 let resp_type = message_type.replace("Request", "Response");
                                 let auth_payload =
                                     build_auth_error_payload(&resp_type, NO_RIGHT, &e.message());
-                                if let Err(send_err) = tx.send(Ok(auth_payload)).await {
+                                if let Err(send_err) = bistream_send(&tx, Ok(auth_payload)).await {
                                     tracing::error!(
                                         "Failed to send auth error response: {}",
                                         send_err
@@ -835,7 +851,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
 
                             match handler.handle(&connection, &payload).await {
                                 Ok(response_payload) => {
-                                    if let Err(e) = tx.send(Ok(response_payload)).await {
+                                    if let Err(e) = bistream_send(&tx, Ok(response_payload)).await {
                                         tracing::error!("Failed to send response: {}", e);
 
                                         break;
@@ -843,7 +859,7 @@ impl BiRequestStream for GrpcBiRequestStreamService {
                                 }
                                 Err(e) => {
                                     tracing::error!("Handler error: {}", e);
-                                    if let Err(send_err) = tx.send(Err(e)).await {
+                                    if let Err(send_err) = bistream_send(&tx, Err(e)).await {
                                         tracing::error!(
                                             "Failed to send error response: {}",
                                             send_err

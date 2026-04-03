@@ -108,6 +108,9 @@ pub struct NamingService {
     cluster_configs: Arc<DashMap<String, ClusterConfig>>,
     /// Key: connection_id, Value: set of subscribed service keys (HashSet for O(1) lookups)
     subscribers: Arc<DashMap<String, HashSet<String>>>,
+    /// Reverse index: service_key -> set of connection_ids subscribed to this service.
+    /// Avoids full-table scan in get_subscribers().
+    subscriber_index: Arc<DashMap<String, HashSet<String>>>,
     /// Key: connection_id, Value: list of fuzzy watch patterns
     fuzzy_watchers: Arc<DashMap<String, Vec<FuzzyWatchPattern>>>,
     /// Key: connection_id, Value: set of published service keys (for V2 Client API)
@@ -130,6 +133,7 @@ impl NamingService {
             service_metadata: Arc::new(DashMap::new()),
             cluster_configs: Arc::new(DashMap::new()),
             subscribers: Arc::new(DashMap::new()),
+            subscriber_index: Arc::new(DashMap::new()),
             fuzzy_watchers: Arc::new(DashMap::new()),
             publishers: Arc::new(DashMap::new()),
             connection_instances: Arc::new(DashMap::new()),

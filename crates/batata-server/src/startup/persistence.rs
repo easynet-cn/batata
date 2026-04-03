@@ -167,6 +167,10 @@ async fn init_embedded_cluster(
         snapshot_transfer_timeout_ms: configuration.raft_snapshot_transfer_timeout_ms(),
         forward_max_retries: configuration.raft_forward_max_retries(),
         forward_initial_delay_ms: configuration.raft_forward_initial_delay_ms(),
+        grpc_tcp_keepalive_secs: configuration.raft_grpc_tcp_keepalive_secs(),
+        grpc_tcp_nodelay: configuration.raft_grpc_tcp_nodelay(),
+        grpc_http2_keepalive_interval_secs: configuration.raft_grpc_http2_keepalive_interval_secs(),
+        grpc_http2_keepalive_timeout_secs: configuration.raft_grpc_http2_keepalive_timeout_secs(),
         data_dir: std::path::PathBuf::from(&data_dir),
         ..Default::default()
     };

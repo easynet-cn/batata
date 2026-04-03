@@ -44,6 +44,18 @@ pub struct RaftConfig {
     /// Initial retry delay in ms for leader forwarding (default: 200ms)
     /// Doubles each attempt (exponential backoff) with 25% jitter.
     pub forward_initial_delay_ms: u64,
+
+    /// TCP keep-alive interval in seconds for Raft gRPC connections (default: 10s)
+    pub grpc_tcp_keepalive_secs: u64,
+
+    /// Enable TCP_NODELAY for Raft gRPC connections (default: true)
+    pub grpc_tcp_nodelay: bool,
+
+    /// HTTP/2 keep-alive interval in seconds for Raft gRPC connections (default: 10s)
+    pub grpc_http2_keepalive_interval_secs: u64,
+
+    /// HTTP/2 keep-alive timeout in seconds for Raft gRPC connections (default: 5s)
+    pub grpc_http2_keepalive_timeout_secs: u64,
 }
 
 impl Default for RaftConfig {
@@ -60,6 +72,10 @@ impl Default for RaftConfig {
             snapshot_transfer_timeout_ms: 30000,
             forward_max_retries: 3,
             forward_initial_delay_ms: 200,
+            grpc_tcp_keepalive_secs: 10,
+            grpc_tcp_nodelay: true,
+            grpc_http2_keepalive_interval_secs: 10,
+            grpc_http2_keepalive_timeout_secs: 5,
         }
     }
 }
@@ -85,6 +101,10 @@ impl RaftConfig {
             snapshot_transfer_timeout_ms: 30000,
             forward_max_retries: 3,
             forward_initial_delay_ms: 200,
+            grpc_tcp_keepalive_secs: 10,
+            grpc_tcp_nodelay: true,
+            grpc_http2_keepalive_interval_secs: 10,
+            grpc_http2_keepalive_timeout_secs: 5,
         }
     }
 

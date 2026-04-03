@@ -404,6 +404,26 @@ batata.mesh.xds.default.listener.port: 15001
 #batata.server.grpc.initial_stream_window_size: 524288       # 512KB HTTP/2 stream-level flow control
 #batata.server.grpc.max_frame_size: 16384                    # bytes; HTTP/2 max frame size
 
+# Push message timeout: max time to wait when pushing a message to a client.
+# Prevents indefinite blocking when a client's channel buffer is full.
+#batata.server.grpc.push_message_timeout: 5000               # milliseconds
+
+# Bi-directional streaming channel buffer capacity.
+# Higher values reduce backpressure but increase memory per connection.
+#batata.server.grpc.bistream_channel_capacity: 128
+
+# Subscriber notification timeout. 0 = fire-and-forget (non-blocking, default).
+# Non-zero = total timeout for pushing notifications to all subscribers.
+#batata.server.grpc.notify_subscriber_timeout: 0             # milliseconds
+
+# --- Raft gRPC ---
+# Keep-alive and connection tuning for Raft inter-node communication.
+# Shorter intervals than SDK/cluster gRPC because Raft is latency-sensitive.
+#batata.raft.grpc.tcp_keepalive: 10                          # seconds
+#batata.raft.grpc.tcp_nodelay: true
+#batata.raft.grpc.http2_keepalive_interval: 10               # seconds
+#batata.raft.grpc.http2_keepalive_timeout: 5                 # seconds
+
 # --- RocksDB ---
 # These settings apply to all RocksDB instances (state machine, log store, Consul).
 #batata.rocksdb.write_buffer_mb: 128

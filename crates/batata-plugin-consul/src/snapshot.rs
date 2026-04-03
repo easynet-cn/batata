@@ -76,9 +76,7 @@ impl ConsulSnapshotService {
             }
 
             // Include session data from RocksDB
-            if let Some(cf) =
-                db.cf_handle(crate::constants::CF_CONSUL_SESSIONS)
-            {
+            if let Some(cf) = db.cf_handle(crate::constants::CF_CONSUL_SESSIONS) {
                 let mut session_data = HashMap::new();
                 let iter = db.iterator_cf(cf, rocksdb::IteratorMode::Start);
                 for item in iter.flatten() {

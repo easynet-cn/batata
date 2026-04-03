@@ -523,8 +523,13 @@ pub async fn ui_service_topology(
 
     // Also check proxy config for upstream dependencies
     let namespace = &dc_config.default_namespace;
-    let (_, all_services) =
-        naming_service.list_services_by_source(namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+    let (_, all_services) = naming_service.list_services_by_source(
+        namespace,
+        &dc_config.default_group,
+        1,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
+    );
 
     for svc in &all_services {
         let instances = naming_service.get_instances_by_source(
@@ -623,8 +628,13 @@ fn collect_mesh_gateways(
     default_namespace: &str,
     default_group: &str,
 ) -> Vec<serde_json::Value> {
-    let (_, service_names) =
-        naming_service.list_services_by_source(default_namespace, default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+    let (_, service_names) = naming_service.list_services_by_source(
+        default_namespace,
+        default_group,
+        1,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
+    );
     let mut gateways = Vec::new();
 
     for svc in service_names {

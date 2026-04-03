@@ -771,37 +771,45 @@ impl ConfigPublishHandler {
                 }
             }
 
-            // Push notification to each subscriber in parallel.
+            // Push notification to each subscriber in a background task.
+            // This avoids blocking the publish response on slow clients.
             // Use subscriber's client_tenant (original value from SDK) so the SDK
             // can match the notification against its local cache key.
-            let futs: Vec<_> = subscribers
-                .iter()
-                .map(|subscriber| {
-                    let cm = &self.connection_manager;
-                    let sub_tenant = &subscriber.client_tenant;
-                    let notification =
-                        ConfigChangeNotifyRequest::for_config(data_id, group, sub_tenant);
-                    let p = notification.build_server_push_payload();
-                    let cid = subscriber.connection_id.clone();
-                    async move {
-                        if !cm.push_message(&cid, p).await {
-                            warn!(
-                                "Failed to push config change notification to connection {}",
-                                cid
-                            );
+            let cm = self.connection_manager.clone();
+            let data_id_owned = data_id.to_string();
+            let group_owned = group.to_string();
+            let tenant_owned = tenant.to_string();
+            let subscriber_count = subscribers.len();
+            tokio::spawn(async move {
+                let futs: Vec<_> = subscribers
+                    .iter()
+                    .map(|subscriber| {
+                        let cm = &cm;
+                        let sub_tenant = &subscriber.client_tenant;
+                        let notification = ConfigChangeNotifyRequest::for_config(
+                            &data_id_owned,
+                            &group_owned,
+                            sub_tenant,
+                        );
+                        let p = notification.build_server_push_payload();
+                        let cid = subscriber.connection_id.clone();
+                        async move {
+                            if !cm.push_message(&cid, p).await {
+                                warn!(
+                                    "Failed to push config change notification to connection {}",
+                                    cid
+                                );
+                            }
                         }
-                    }
-                })
-                .collect();
-            join_all(futs).await;
+                    })
+                    .collect();
+                join_all(futs).await;
 
-            info!(
-                "Notified {} regular subscribers for config change: {}@@{}@@{}",
-                subscribers.len(),
-                tenant,
-                group,
-                data_id
-            );
+                info!(
+                    "Notified {} regular subscribers for config change: {}@@{}@@{}",
+                    subscriber_count, tenant_owned, group_owned, data_id_owned
+                );
+            });
         }
 
         Ok(())
@@ -1093,28 +1101,31 @@ impl PayloadHandler for ConfigBatchListenHandler {
         // Build client labels once for gray matching
         let labels = build_client_labels(_connection);
 
-        let mut changed_configs = Vec::new();
+        // Phase 1: Register/unregister subscriptions (fast, in-memory DashMap ops)
+        // and collect normalized contexts for DB queries.
+        struct ListenContext<'a> {
+            data_id: &'a str,
+            group: &'a str,
+            tenant: String,
+            response_tenant: &'a str,
+            client_md5: &'a str,
+        }
+        let mut contexts_to_check = Vec::with_capacity(request.config_listen_contexts.len());
 
-        // Check each config in the listen list for changes
         for ctx in &request.config_listen_contexts {
-            let data_id = &ctx.data_id;
-            let group = &ctx.group;
-            // Normalize empty tenant to "public" for server-side operations (DB lookup, subscription)
+            let data_id = ctx.data_id.as_str();
+            let group = ctx.group.as_str();
             let tenant = if ctx.tenant.is_empty() {
-                "public"
+                "public".to_string()
             } else {
-                &ctx.tenant
+                ctx.tenant.clone()
             };
-            // Keep the original tenant from the client for the response.
-            // The SDK uses the original namespace (e.g. "") to build cache keys,
-            // so returning "public" would cause a cache key mismatch.
-            let response_tenant = &ctx.tenant;
-            let client_md5 = &ctx.md5;
+            let response_tenant = ctx.tenant.as_str();
+            let client_md5 = ctx.md5.as_str();
 
-            let config_key = batata_common::ConfigSubscriptionKey::new(data_id, group, tenant);
+            let config_key = batata_common::ConfigSubscriptionKey::new(data_id, group, &tenant);
 
             if request.listen {
-                // Register subscription (pass original tenant for response matching)
                 subscriber_manager.subscribe(
                     connection_id,
                     client_ip,
@@ -1122,61 +1133,82 @@ impl PayloadHandler for ConfigBatchListenHandler {
                     client_md5,
                     response_tenant,
                 );
-                debug!(
-                    "ConfigBatchListen: subscribed data_id={}, group={}, tenant={}, client_md5={}",
-                    data_id, group, tenant, client_md5
-                );
             } else {
-                // Unregister subscription
                 subscriber_manager.unsubscribe(connection_id, &config_key);
-                debug!(
-                    "ConfigBatchListen: unsubscribed data_id={}, group={}, tenant={}",
-                    data_id, group, tenant
-                );
             }
 
-            // First check for matching gray config
-            if let Some((_, gray_md5, _, _, _)) =
-                find_matching_gray_config(persistence, data_id, group, tenant, &labels).await
-            {
-                if client_md5 != &gray_md5 {
-                    changed_configs.push(ConfigContext {
-                        data_id: data_id.clone(),
-                        group: group.clone(),
-                        tenant: response_tenant.clone(),
-                    });
+            contexts_to_check.push(ListenContext {
+                data_id,
+                group,
+                tenant,
+                response_tenant,
+                client_md5,
+            });
+        }
+
+        // Phase 2: Check for changes in parallel using join_all
+        let persistence_arc = self
+            .app_state
+            .persistence
+            .as_ref()
+            .expect("Persistence service not available")
+            .clone();
+        let is_listen = request.listen;
+        let check_futs: Vec<_> = contexts_to_check
+            .iter()
+            .map(|ctx| {
+                let p = persistence_arc.clone();
+                let labels = labels.clone();
+                let data_id = ctx.data_id.to_string();
+                let group = ctx.group.to_string();
+                let tenant = ctx.tenant.clone();
+                let response_tenant = ctx.response_tenant.to_string();
+                let client_md5 = ctx.client_md5.to_string();
+                async move {
+                    // First check gray config
+                    if let Some((_, gray_md5, _, _, _)) =
+                        find_matching_gray_config(p.as_ref(), &data_id, &group, &tenant, &labels)
+                            .await
+                    {
+                        if client_md5 != gray_md5 {
+                            return Some(ConfigContext {
+                                data_id,
+                                group,
+                                tenant: response_tenant,
+                            });
+                        }
+                        return None;
+                    }
+                    // Fall through to formal config
+                    if let Ok(Some(config)) = p.config_find_one(&data_id, &group, &tenant).await {
+                        if client_md5 != config.md5 {
+                            return Some(ConfigContext {
+                                data_id,
+                                group,
+                                tenant: response_tenant,
+                            });
+                        }
+                    } else if is_listen {
+                        return Some(ConfigContext {
+                            data_id,
+                            group,
+                            tenant: response_tenant,
+                        });
+                    }
+                    None
                 }
-                continue;
-            }
+            })
+            .collect();
 
-            // Fall through to formal config comparison
-            if let Ok(Some(config)) = persistence.config_find_one(data_id, group, tenant).await {
-                let server_md5 = &config.md5;
+        let changed_configs: Vec<ConfigContext> =
+            join_all(check_futs).await.into_iter().flatten().collect();
 
-                // If MD5 differs, config has changed
-                if client_md5 != server_md5 {
-                    info!(
-                        "ConfigBatchListen: MD5 changed for data_id={}, group={}, tenant={}, client_md5={}, server_md5={}",
-                        data_id, group, tenant, client_md5, server_md5
-                    );
-                    changed_configs.push(ConfigContext {
-                        data_id: data_id.clone(),
-                        group: group.clone(),
-                        tenant: response_tenant.clone(),
-                    });
-                }
-            } else if request.listen {
-                // Config doesn't exist but client is listening - report as changed
-                info!(
-                    "ConfigBatchListen: config not found (new listen) data_id={}, group={}, tenant={}",
-                    data_id, group, tenant
-                );
-                changed_configs.push(ConfigContext {
-                    data_id: data_id.clone(),
-                    group: group.clone(),
-                    tenant: response_tenant.clone(),
-                });
-            }
+        // Log changes (replicate original logging behavior)
+        for ctx in &changed_configs {
+            info!(
+                "ConfigBatchListen: config changed for data_id={}, group={}, tenant={}",
+                ctx.data_id, ctx.group, ctx.tenant
+            );
         }
 
         info!(

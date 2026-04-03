@@ -492,9 +492,13 @@ impl ConsulCatalogService {
 
     /// Get all unique service names with their tags
     pub fn get_services(&self, namespace: &str) -> HashMap<String, Vec<String>> {
-        let (_, service_names) =
-            self.naming_service
-                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+        let (_, service_names) = self.naming_service.list_services_by_source(
+            namespace,
+            &self.default_group,
+            1,
+            i32::MAX,
+            Some(batata_api::naming::RegisterSource::Consul),
+        );
 
         let mut services: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -570,9 +574,13 @@ impl ConsulCatalogService {
 
     /// Get all nodes (for simplicity, we return one node per unique IP)
     pub fn get_nodes(&self, namespace: &str) -> Vec<CatalogNode> {
-        let (_, service_names) =
-            self.naming_service
-                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+        let (_, service_names) = self.naming_service.list_services_by_source(
+            namespace,
+            &self.default_group,
+            1,
+            i32::MAX,
+            Some(batata_api::naming::RegisterSource::Consul),
+        );
 
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
@@ -615,9 +623,13 @@ impl ConsulCatalogService {
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "batata-node".to_string());
 
-        let (_, service_names) =
-            self.naming_service
-                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+        let (_, service_names) = self.naming_service.list_services_by_source(
+            namespace,
+            &self.default_group,
+            1,
+            i32::MAX,
+            Some(batata_api::naming::RegisterSource::Consul),
+        );
 
         let mut node: Option<CatalogNode> = None;
         let mut services: HashMap<String, AgentService> = HashMap::new();
@@ -749,9 +761,13 @@ impl ConsulCatalogService {
     pub fn deregister(&self, deregistration: &CatalogDeregistration, namespace: &str) -> bool {
         if let Some(ref service_id) = deregistration.service_id {
             // Find and deregister the service
-            let (_, service_names) =
-                self.naming_service
-                    .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+            let (_, service_names) = self.naming_service.list_services_by_source(
+                namespace,
+                &self.default_group,
+                1,
+                i32::MAX,
+                Some(batata_api::naming::RegisterSource::Consul),
+            );
 
             for service_name in service_names {
                 let instances = self.naming_service.get_instances_by_source(
@@ -778,9 +794,13 @@ impl ConsulCatalogService {
         } else {
             // Node deregistration - remove all services on this node
             let node = &deregistration.node;
-            let (_, service_names) =
-                self.naming_service
-                    .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+            let (_, service_names) = self.naming_service.list_services_by_source(
+                namespace,
+                &self.default_group,
+                1,
+                i32::MAX,
+                Some(batata_api::naming::RegisterSource::Consul),
+            );
 
             let mut deregistered = false;
 
@@ -815,9 +835,13 @@ impl ConsulCatalogService {
     /// Get service summary for UI
     /// Returns a list of service summaries with health check information
     pub fn get_service_summary(&self, namespace: &str) -> Vec<ServiceListingSummary> {
-        let (_, service_names) =
-            self.naming_service
-                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+        let (_, service_names) = self.naming_service.list_services_by_source(
+            namespace,
+            &self.default_group,
+            1,
+            i32::MAX,
+            Some(batata_api::naming::RegisterSource::Consul),
+        );
 
         let mut summaries: Vec<ServiceListingSummary> = Vec::new();
 
@@ -956,9 +980,13 @@ impl ConsulCatalogService {
         namespace: &str,
         target_service: &str,
     ) -> Vec<CatalogService> {
-        let (_, service_names) =
-            self.naming_service
-                .list_services_by_source(namespace, &self.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+        let (_, service_names) = self.naming_service.list_services_by_source(
+            namespace,
+            &self.default_group,
+            1,
+            i32::MAX,
+            Some(batata_api::naming::RegisterSource::Consul),
+        );
 
         let mut results = Vec::new();
 

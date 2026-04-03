@@ -114,11 +114,32 @@ pub struct TpsCheckResult {
     pub limit: u64,
 }
 
+/// Protocol adapter plugin for compatibility layers (e.g., Consul, Eureka).
+///
+/// Protocol adapters translate external protocols into Batata-native operations.
+/// They provide HTTP routes and service configuration for their respective protocols.
+pub trait ProtocolAdapterPlugin: Send + Sync {
+    /// Plugin name (e.g., "consul-compatibility")
+    fn name(&self) -> &str;
+
+    /// Protocol identifier (e.g., "consul", "eureka")
+    fn protocol(&self) -> &str;
+
+    /// Whether this adapter is enabled
+    fn is_enabled(&self) -> bool;
+
+    /// Plugin priority (lower = higher priority)
+    fn priority(&self) -> i32 {
+        0
+    }
+}
+
 /// Plugin manager for registering and invoking plugins
 pub struct PluginManager {
     auth_plugins: Vec<Arc<dyn AuthPlugin>>,
     config_change_plugins: Vec<Arc<dyn ConfigChangePlugin>>,
     control_plugins: Vec<Arc<dyn ControlPlugin>>,
+    protocol_adapters: Vec<Arc<dyn ProtocolAdapterPlugin>>,
 }
 
 impl PluginManager {
@@ -127,6 +148,7 @@ impl PluginManager {
             auth_plugins: Vec::new(),
             config_change_plugins: Vec::new(),
             control_plugins: Vec::new(),
+            protocol_adapters: Vec::new(),
         }
     }
 
@@ -198,6 +220,11 @@ impl PluginManager {
         }
     }
 
+    pub fn register_protocol_adapter(&mut self, plugin: Arc<dyn ProtocolAdapterPlugin>) {
+        self.protocol_adapters.push(plugin);
+        self.protocol_adapters.sort_by_key(|p| p.priority());
+    }
+
     pub fn auth_plugins(&self) -> &[Arc<dyn AuthPlugin>] {
         &self.auth_plugins
     }
@@ -208,6 +235,17 @@ impl PluginManager {
 
     pub fn control_plugins(&self) -> &[Arc<dyn ControlPlugin>] {
         &self.control_plugins
+    }
+
+    pub fn protocol_adapters(&self) -> &[Arc<dyn ProtocolAdapterPlugin>] {
+        &self.protocol_adapters
+    }
+
+    /// Get a protocol adapter by protocol name
+    pub fn get_protocol_adapter(&self, protocol: &str) -> Option<&Arc<dyn ProtocolAdapterPlugin>> {
+        self.protocol_adapters
+            .iter()
+            .find(|p| p.protocol() == protocol && p.is_enabled())
     }
 }
 
@@ -412,5 +450,42 @@ mod tests {
         // High priority should be first
         assert_eq!(manager.auth_plugins()[0].name(), "high");
         assert_eq!(manager.auth_plugins()[1].name(), "low");
+    }
+
+    #[test]
+    fn test_protocol_adapter_registration() {
+        struct TestAdapter {
+            enabled: bool,
+        }
+        impl ProtocolAdapterPlugin for TestAdapter {
+            fn name(&self) -> &str {
+                "test-consul"
+            }
+            fn protocol(&self) -> &str {
+                "consul"
+            }
+            fn is_enabled(&self) -> bool {
+                self.enabled
+            }
+        }
+
+        let mut manager = PluginManager::new();
+        manager.register_protocol_adapter(Arc::new(TestAdapter { enabled: true }));
+
+        assert_eq!(manager.protocol_adapters().len(), 1);
+        assert_eq!(manager.protocol_adapters()[0].name(), "test-consul");
+        assert_eq!(manager.protocol_adapters()[0].protocol(), "consul");
+
+        let adapter = manager.get_protocol_adapter("consul");
+        assert!(adapter.is_some());
+        assert_eq!(adapter.unwrap().name(), "test-consul");
+
+        // Disabled adapter should not be found
+        let mut manager2 = PluginManager::new();
+        manager2.register_protocol_adapter(Arc::new(TestAdapter { enabled: false }));
+        assert!(manager2.get_protocol_adapter("consul").is_none());
+
+        // Non-existent protocol should return None
+        assert!(manager.get_protocol_adapter("eureka").is_none());
     }
 }

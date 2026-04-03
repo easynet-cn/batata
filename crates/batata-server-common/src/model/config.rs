@@ -1507,6 +1507,64 @@ impl Configuration {
     }
 
     // ========================================================================
+    // Raft gRPC Tuning
+    // ========================================================================
+
+    /// Raft gRPC TCP keep-alive interval in seconds (default 10s)
+    pub fn raft_grpc_tcp_keepalive_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.grpc.tcp_keepalive")
+            .unwrap_or(10) as u64
+    }
+
+    /// Raft gRPC TCP_NODELAY (default true)
+    pub fn raft_grpc_tcp_nodelay(&self) -> bool {
+        self.config
+            .get_bool("batata.raft.grpc.tcp_nodelay")
+            .unwrap_or(true)
+    }
+
+    /// Raft gRPC HTTP/2 keep-alive interval in seconds (default 10s)
+    pub fn raft_grpc_http2_keepalive_interval_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.grpc.http2_keepalive_interval")
+            .unwrap_or(10) as u64
+    }
+
+    /// Raft gRPC HTTP/2 keep-alive timeout in seconds (default 5s)
+    pub fn raft_grpc_http2_keepalive_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.raft.grpc.http2_keepalive_timeout")
+            .unwrap_or(5) as u64
+    }
+
+    // ========================================================================
+    // Push Message Tuning
+    // ========================================================================
+
+    /// Timeout in milliseconds for pushing a message to a client connection (default 5000ms)
+    pub fn grpc_push_message_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.server.grpc.push_message_timeout")
+            .unwrap_or(5000) as u64
+    }
+
+    /// Buffer size for bi-directional streaming channel (default 128)
+    pub fn grpc_bistream_channel_capacity(&self) -> usize {
+        self.config
+            .get_int("batata.server.grpc.bistream_channel_capacity")
+            .unwrap_or(128) as usize
+    }
+
+    /// Timeout in milliseconds for subscriber notification (default 3000ms).
+    /// 0 means fire-and-forget (non-blocking).
+    pub fn notify_subscriber_timeout_ms(&self) -> u64 {
+        self.config
+            .get_int("batata.server.grpc.notify_subscriber_timeout")
+            .unwrap_or(0) as u64
+    }
+
+    // ========================================================================
     // RocksDB Advanced Tuning
     // ========================================================================
 

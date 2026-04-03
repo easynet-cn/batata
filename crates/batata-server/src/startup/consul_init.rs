@@ -6,18 +6,23 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use batata_naming::InstanceCheckRegistry;
+use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
 use batata_plugin_consul::constants::{
     CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CONFIG_ENTRIES, CF_CONSUL_COORDINATES,
     CF_CONSUL_EVENTS, CF_CONSUL_INTENTIONS, CF_CONSUL_KV, CF_CONSUL_OPERATOR, CF_CONSUL_PEERING,
     CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS,
 };
-use batata_naming::InstanceCheckRegistry;
-use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
 use batata_server_common::model::config::Configuration;
 use rocksdb::ColumnFamilyDescriptor;
 use tracing::{error, info};
 
-use super::{ConsulServices, GrpcServers};
+use batata_plugin_consul::ConsulPlugin;
+
+use super::GrpcServers;
+
+/// Type alias for backward compatibility.
+pub type ConsulServices = ConsulPlugin;
 
 /// Configuration for Consul service initialization.
 pub struct ConsulInitConfig {
@@ -96,7 +101,7 @@ pub async fn init_consul(
         )
     } else {
         info!("Console remote mode: Consul services using in-memory storage");
-        ConsulServices::new(
+        ConsulPlugin::new(
             naming_provider.clone(),
             consul_registry.clone(),
             consul_config.consul_acl_enabled,
@@ -161,7 +166,7 @@ async fn init_consul_cluster(
                 spawn_consul_raft_init(configuration, nacos_raft, &consul_raft);
             }
 
-            ConsulServices::with_consul_raft(
+            ConsulPlugin::with_consul_raft(
                 naming_provider.clone(),
                 consul_registry.clone(),
                 consul_config.consul_acl_enabled,
@@ -295,7 +300,7 @@ fn init_consul_standalone(
     );
     if let Some(db) = consul_rocks_db {
         info!("Consul services using RocksDB persistence");
-        ConsulServices::with_persistence(
+        ConsulPlugin::with_persistence(
             naming_provider.clone(),
             consul_registry.clone(),
             consul_config.consul_acl_enabled,
@@ -304,7 +309,7 @@ fn init_consul_standalone(
         )
     } else {
         info!("Consul services using in-memory storage (no persistence)");
-        ConsulServices::new(
+        ConsulPlugin::new(
             naming_provider.clone(),
             consul_registry.clone(),
             consul_config.consul_acl_enabled,

@@ -78,6 +78,10 @@ impl ConsulRaftNetworkConnection {
             .map_err(|e| Unreachable::new(&e))?
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(10))
+            .tcp_keepalive(Some(std::time::Duration::from_secs(10)))
+            .tcp_nodelay(true)
+            .http2_keep_alive_interval(std::time::Duration::from_secs(10))
+            .keep_alive_timeout(std::time::Duration::from_secs(5))
             .connect()
             .await
             .map_err(|e| {
@@ -120,12 +124,21 @@ fn raft_grpc_addr(member_addr: &str) -> String {
     member_addr.to_string()
 }
 
+/// Default RPC timeout for Consul Raft RPCs.
+const DEFAULT_RAFT_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
     async fn append_entries(
         &mut self,
         rpc: AppendEntriesRequest<ConsulTypeConfig>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCError<NodeId, BasicNode, RaftError<NodeId>>> {
+        let ttl = option.hard_ttl();
+        let timeout = if ttl.is_zero() {
+            DEFAULT_RAFT_RPC_TIMEOUT
+        } else {
+            ttl
+        };
         let channel = self.get_channel().await.map_err(RPCError::Unreachable)?;
         let mut client = ConsulRaftServiceClient::new(channel);
 
@@ -141,9 +154,14 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
             vote: Some(vote_proto),
         };
 
-        let resp = client
-            .append_entries(req)
+        let resp = tokio::time::timeout(timeout, client.append_entries(req))
             .await
+            .map_err(|_| {
+                RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Consul Raft AppendEntries RPC timed out",
+                )))
+            })?
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
             .into_inner();
 
@@ -157,7 +175,7 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
     async fn install_snapshot(
         &mut self,
         rpc: InstallSnapshotRequest<ConsulTypeConfig>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<
         InstallSnapshotResponse<NodeId>,
         RPCError<NodeId, BasicNode, RaftError<NodeId, InstallSnapshotError>>,
@@ -206,8 +224,14 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
     async fn vote(
         &mut self,
         rpc: VoteRequest<NodeId>,
-        _option: RPCOption,
+        option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RPCError<NodeId, BasicNode, RaftError<NodeId>>> {
+        let ttl = option.hard_ttl();
+        let timeout = if ttl.is_zero() {
+            DEFAULT_RAFT_RPC_TIMEOUT
+        } else {
+            ttl
+        };
         let channel = self.get_channel().await.map_err(RPCError::Unreachable)?;
         let mut client = ConsulRaftServiceClient::new(channel);
 
@@ -219,9 +243,14 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
             vote: Some(vote_proto),
         };
 
-        let resp = client
-            .vote(req)
+        let resp = tokio::time::timeout(timeout, client.vote(req))
             .await
+            .map_err(|_| {
+                RPCError::Unreachable(Unreachable::new(&std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Consul Raft Vote RPC timed out",
+                )))
+            })?
             .map_err(|e| RPCError::Unreachable(Unreachable::new(&e)))?
             .into_inner();
 

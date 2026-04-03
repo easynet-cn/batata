@@ -12,6 +12,7 @@ batata-common = { workspace = true }
 batata-api = { workspace = true }
 batata-naming = { workspace = true }
 batata-consistency = { workspace = true }
+batata-plugin = { workspace = true }
 
 # Web framework
 actix-web = { workspace = true }

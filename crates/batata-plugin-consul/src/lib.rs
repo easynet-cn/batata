@@ -25,6 +25,7 @@
 
 pub mod api;
 pub mod constants;
+pub mod plugin;
 pub mod raft;
 
 pub mod acl;
@@ -51,6 +52,9 @@ pub mod status;
 
 // Re-export route functions for easy integration
 pub use route::routes;
+
+// Re-export the plugin
+pub use plugin::ConsulPlugin;
 
 // Re-export key services
 pub use acl::AclService;

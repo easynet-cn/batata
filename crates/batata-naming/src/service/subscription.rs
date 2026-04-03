@@ -18,7 +18,13 @@ impl NamingService {
         self.subscribers
             .entry(connection_id.to_string())
             .or_default()
-            .insert(service_key);
+            .insert(service_key.clone());
+
+        // Maintain reverse index: service_key -> connection_ids
+        self.subscriber_index
+            .entry(service_key)
+            .or_default()
+            .insert(connection_id.to_string());
     }
 
     /// Unsubscribe from a service
@@ -34,9 +40,14 @@ impl NamingService {
         if let Some(mut subs) = self.subscribers.get_mut(connection_id) {
             subs.remove(&service_key);
         }
+
+        // Maintain reverse index
+        if let Some(mut connections) = self.subscriber_index.get_mut(&service_key) {
+            connections.remove(connection_id);
+        }
     }
 
-    /// Get subscribers for a service
+    /// Get subscribers for a service (O(1) lookup via reverse index)
     pub fn get_subscribers(
         &self,
         namespace: &str,
@@ -45,16 +56,22 @@ impl NamingService {
     ) -> Vec<String> {
         let service_key = build_service_key(namespace, group_name, service_name);
 
-        self.subscribers
-            .iter()
-            .filter(|entry| entry.value().contains(&service_key))
-            .map(|entry| entry.key().clone())
-            .collect()
+        self.subscriber_index
+            .get(&service_key)
+            .map(|entry| entry.value().iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Clean up subscriber when connection is closed
     pub fn remove_subscriber(&self, connection_id: &str) {
-        self.subscribers.remove(connection_id);
+        // Remove from reverse index for all subscribed services
+        if let Some((_, service_keys)) = self.subscribers.remove(connection_id) {
+            for service_key in &service_keys {
+                if let Some(mut connections) = self.subscriber_index.get_mut(service_key) {
+                    connections.remove(connection_id);
+                }
+            }
+        }
         self.fuzzy_watchers.remove(connection_id);
         self.publishers.remove(connection_id);
     }

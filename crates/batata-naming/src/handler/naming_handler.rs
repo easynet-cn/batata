@@ -278,16 +278,17 @@ impl InstanceRequestHandler {
             service_name
         );
 
-        // Use push_message_to_many to avoid cloning payload for each subscriber
-        let sent = self
-            .connection_manager
-            .push_message_to_many(&subscribers, payload)
-            .await;
-        debug!(
-            "Pushed subscriber notification to {}/{} connections",
-            sent,
-            subscribers.len()
-        );
+        // Push notifications in background to avoid blocking the registration response
+        let cm = self.connection_manager.clone();
+        let subscriber_count = subscribers.len();
+        tokio::spawn(async move {
+            let sent = cm.push_message_to_many(&subscribers, payload).await;
+            tracing::debug!(
+                "Pushed subscriber notification to {}/{} connections",
+                sent,
+                subscriber_count
+            );
+        });
     }
 
     /// Notify fuzzy watchers about service change

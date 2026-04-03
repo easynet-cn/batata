@@ -15,8 +15,8 @@ use dashmap::DashMap;
 use rocksdb::DB;
 use tracing::{error, info, warn};
 
-use batata_api::naming::NamingServiceProvider;
 use crate::constants::CF_CONSUL_QUERIES;
+use batata_api::naming::NamingServiceProvider;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};

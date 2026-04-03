@@ -442,10 +442,13 @@ pub async fn deregister_service(
         } else {
             // Fallback: O(n) scan for backward compatibility
             let mut found = false;
-            let services =
-                agent
-                    .naming_service
-                    .list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+            let services = agent.naming_service.list_services_by_source(
+                &namespace,
+                &dc_config.default_group,
+                1,
+                i32::MAX,
+                Some(batata_api::naming::RegisterSource::Consul),
+            );
 
             for service_name in services.1 {
                 let instances = agent.naming_service.get_instances_by_source(
@@ -543,10 +546,13 @@ pub async fn list_services(
     }
 
     // Get all services from naming service
-    let (_, service_names) =
-        agent
-            .naming_service
-            .list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+    let (_, service_names) = agent.naming_service.list_services_by_source(
+        &namespace,
+        &dc_config.default_group,
+        1,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
+    );
 
     let mut services: std::collections::HashMap<String, AgentService> =
         std::collections::HashMap::new();
@@ -604,10 +610,13 @@ pub async fn get_service(
     }
 
     // Find the service by ID
-    let (_, service_names) =
-        agent
-            .naming_service
-            .list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+    let (_, service_names) = agent.naming_service.list_services_by_source(
+        &namespace,
+        &dc_config.default_group,
+        1,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
+    );
 
     for service_name in service_names {
         let instances = agent.naming_service.get_instances_by_source(
@@ -726,10 +735,13 @@ pub async fn agent_health_service_by_id(
     }
 
     // Search for the service instance by ID across all services
-    let (_, service_names) =
-        agent
-            .naming_service
-            .list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+    let (_, service_names) = agent.naming_service.list_services_by_source(
+        &namespace,
+        &dc_config.default_group,
+        1,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
+    );
 
     for service_name in service_names {
         let instances = agent.naming_service.get_instances_by_source(

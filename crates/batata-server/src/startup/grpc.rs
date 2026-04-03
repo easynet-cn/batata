@@ -478,7 +478,11 @@ pub fn start_grpc_servers(
         .into_inner();
 
     // Create connection manager first (needed by handlers and stream service)
-    let connection_manager = Arc::new(ConnectionManager::new());
+    let mut cm = ConnectionManager::new();
+    cm.set_push_timeout(std::time::Duration::from_millis(
+        app_state.configuration.grpc_push_message_timeout_ms(),
+    ));
+    let connection_manager = Arc::new(cm);
     // Wire connection limit checker if control plugin is available
     if let Some(ref control_plugin) = app_state.control_plugin {
         let limiter = Arc::new(
@@ -775,6 +779,20 @@ pub fn start_grpc_servers(
         let raft_mgmt_service =
             batata_consistency::raft::RaftManagementGrpcService::new(raft_holder);
 
+        let raft_tcp_keepalive =
+            std::time::Duration::from_secs(app_state.configuration.raft_grpc_tcp_keepalive_secs());
+        let raft_tcp_nodelay = app_state.configuration.raft_grpc_tcp_nodelay();
+        let raft_http2_interval = std::time::Duration::from_secs(
+            app_state
+                .configuration
+                .raft_grpc_http2_keepalive_interval_secs(),
+        );
+        let raft_http2_timeout = std::time::Duration::from_secs(
+            app_state
+                .configuration
+                .raft_grpc_http2_keepalive_timeout_secs(),
+        );
+
         let handle = tokio::spawn(async move {
             let tokio_listener = match tokio::net::TcpListener::from_std(std_listener) {
                 Ok(l) => l,
@@ -785,6 +803,10 @@ pub fn start_grpc_servers(
             };
             let incoming = tokio_stream::wrappers::TcpListenerStream::new(tokio_listener);
             let result = tonic::transport::Server::builder()
+                .tcp_keepalive(Some(raft_tcp_keepalive))
+                .tcp_nodelay(raft_tcp_nodelay)
+                .http2_keepalive_interval(Some(raft_http2_interval))
+                .http2_keepalive_timeout(Some(raft_http2_timeout))
                 .add_service(
                     batata_api::raft::raft_service_server::RaftServiceServer::new(raft_service),
                 )
@@ -822,6 +844,21 @@ pub fn start_grpc_servers(
         let consul_raft_grpc_for_server = consul_raft_grpc.clone_service();
         let consul_raft_mgmt_for_server = consul_raft_grpc.management_service();
 
+        // Reuse Raft keepalive settings for Consul Raft server
+        let c_raft_tcp_keepalive =
+            std::time::Duration::from_secs(app_state.configuration.raft_grpc_tcp_keepalive_secs());
+        let c_raft_tcp_nodelay = app_state.configuration.raft_grpc_tcp_nodelay();
+        let c_raft_http2_interval = std::time::Duration::from_secs(
+            app_state
+                .configuration
+                .raft_grpc_http2_keepalive_interval_secs(),
+        );
+        let c_raft_http2_timeout = std::time::Duration::from_secs(
+            app_state
+                .configuration
+                .raft_grpc_http2_keepalive_timeout_secs(),
+        );
+
         let handle = tokio::spawn(async move {
             let tokio_listener = match tokio::net::TcpListener::from_std(std_listener) {
                 Ok(l) => l,
@@ -832,6 +869,10 @@ pub fn start_grpc_servers(
             };
             let incoming = tokio_stream::wrappers::TcpListenerStream::new(tokio_listener);
             let result = tonic::transport::Server::builder()
+                .tcp_keepalive(Some(c_raft_tcp_keepalive))
+                .tcp_nodelay(c_raft_tcp_nodelay)
+                .http2_keepalive_interval(Some(c_raft_http2_interval))
+                .http2_keepalive_timeout(Some(c_raft_http2_timeout))
                 .add_service(
                     batata_api::raft::consul_raft_service_server::ConsulRaftServiceServer::new(
                         consul_raft_grpc_for_server,

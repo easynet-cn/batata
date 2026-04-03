@@ -7,8 +7,6 @@
 //! - CMDB Plugin: Label sync and entity mapping (PLG-201 to PLG-203)
 //! - Extension points for custom plugins
 
-use async_trait::async_trait;
-
 pub mod cmdb;
 pub mod control;
 pub mod spi;
@@ -34,21 +32,44 @@ pub use cmdb::{
 /// Plugin trait (re-exported from batata-common)
 pub use batata_common::Plugin;
 
+/// Protocol adapter plugin trait (re-exported from spi)
+pub use spi::ProtocolAdapterPlugin;
+
 /// Plugin registry for managing multiple plugins
 pub struct PluginRegistry {
     plugins: Vec<Box<dyn Plugin>>,
+    protocol_adapters: Vec<Box<dyn ProtocolAdapterPlugin>>,
 }
 
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
+            protocol_adapters: Vec::new(),
         }
     }
 
     /// Register a plugin
     pub fn register(&mut self, plugin: Box<dyn Plugin>) {
         self.plugins.push(plugin);
+    }
+
+    /// Register a protocol adapter plugin
+    pub fn register_protocol_adapter(&mut self, adapter: Box<dyn ProtocolAdapterPlugin>) {
+        self.protocol_adapters.push(adapter);
+    }
+
+    /// Get a protocol adapter by protocol name
+    pub fn get_protocol_adapter(&self, protocol: &str) -> Option<&dyn ProtocolAdapterPlugin> {
+        self.protocol_adapters
+            .iter()
+            .find(|a| a.protocol() == protocol && a.is_enabled())
+            .map(|a| a.as_ref())
+    }
+
+    /// List all protocol adapter names
+    pub fn list_protocol_adapters(&self) -> Vec<&str> {
+        self.protocol_adapters.iter().map(|a| a.name()).collect()
     }
 
     /// Initialize all plugins

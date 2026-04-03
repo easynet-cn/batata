@@ -1,7 +1,8 @@
 // Consul-compatible API implementation
 // Re-exports from batata_plugin_consul crate with local extensions
 
-// Re-export all types from batata_plugin_consul
+// Re-export the plugin and all types from batata_plugin_consul
+pub use batata_plugin_consul::ConsulPlugin;
 pub use batata_plugin_consul::acl;
 pub use batata_plugin_consul::agent;
 pub use batata_plugin_consul::catalog;

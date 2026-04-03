@@ -85,11 +85,7 @@ impl RaftNode {
         let db = state_machine.db();
 
         // Create network factory with configured timeouts
-        let network_config = super::network::RaftNetworkConfig {
-            rpc_timeout: config.rpc_timeout(),
-            snapshot_timeout: config.snapshot_transfer_timeout(),
-            connect_timeout: Duration::from_secs(5),
-        };
+        let network_config = super::network::RaftNetworkConfig::from_raft_config(&config);
         let network_factory = BatataRaftNetworkFactory::with_config(network_config);
 
         // Create openraft config

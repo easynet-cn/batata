@@ -880,8 +880,13 @@ pub async fn get_connect_health(
     }
 
     // Get all services and find Connect-enabled instances for this target service
-    let (_, all_service_names) =
-        naming_service.list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+    let (_, all_service_names) = naming_service.list_services_by_source(
+        &namespace,
+        &dc_config.default_group,
+        1,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
+    );
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
@@ -969,8 +974,13 @@ pub async fn get_ingress_health(
     }
 
     // Find ingress gateway instances
-    let (_, all_service_names) =
-        naming_service.list_services_by_source(&namespace, &dc_config.default_group, 1, i32::MAX, Some(batata_api::naming::RegisterSource::Consul));
+    let (_, all_service_names) = naming_service.list_services_by_source(
+        &namespace,
+        &dc_config.default_group,
+        1,
+        i32::MAX,
+        Some(batata_api::naming::RegisterSource::Consul),
+    );
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 

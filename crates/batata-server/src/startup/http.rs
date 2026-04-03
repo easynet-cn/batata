@@ -11,20 +11,11 @@ use actix_web::{
 
 use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;
-use rocksdb::DB;
-
-use batata_naming::InstanceCheckRegistry;
 
 use crate::{
     api::ai::{AgentRegistry, McpServerRegistry, configure_mcp_registry},
     api::cloud::{
         K8sServiceSync, PrometheusServiceDiscovery, configure_kubernetes, configure_prometheus,
-    },
-    api::consul::{
-        AclService, ConsulEventService, ConsulIndexProvider, ConsulLockService,
-        ConsulPeeringService, ConsulQueryService, ConsulSemaphoreService, ConsulSessionService,
-        agent::ConsulAgentService, catalog::ConsulCatalogService, health::ConsulHealthService,
-        kv::ConsulKVService, model::ConsulDatacenterConfig,
     },
     api::metrics::{PrometheusMetricsState, prometheus_metrics},
     api::v2::route::{cluster_routes, config_routes, naming_routes},
@@ -44,229 +35,8 @@ use crate::{
 
 use batata_api::naming::NamingServiceProvider;
 
-/// Consul service adapters for HTTP endpoints.
-#[derive(Clone)]
-pub struct ConsulServices {
-    pub agent: ConsulAgentService,
-    pub health: ConsulHealthService,
-    pub kv: ConsulKVService,
-    pub catalog: ConsulCatalogService,
-    pub acl: AclService,
-    pub session: ConsulSessionService,
-    pub event: ConsulEventService,
-    pub query: ConsulQueryService,
-    pub lock: ConsulLockService,
-    pub semaphore: ConsulSemaphoreService,
-    pub peering: Arc<ConsulPeeringService>,
-    pub config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService,
-    pub connect: batata_plugin_consul::connect::ConsulConnectService,
-    pub connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService,
-    pub coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService,
-    pub snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService,
-    pub operator: batata_plugin_consul::operator::ConsulOperatorService,
-    pub dc_config: ConsulDatacenterConfig,
-    pub index_provider: ConsulIndexProvider,
-}
-
-impl ConsulServices {
-    /// Creates Consul service adapters from a naming service (in-memory mode).
-    pub fn new(
-        naming_service: Arc<dyn NamingServiceProvider>,
-        registry: Arc<InstanceCheckRegistry>,
-        acl_enabled: bool,
-        dc_config: ConsulDatacenterConfig,
-    ) -> Self {
-        let index_provider = ConsulIndexProvider::new();
-        let session = ConsulSessionService::new();
-        let kv = ConsulKVService::new();
-        let kv_arc = Arc::new(kv.clone());
-        let session_arc = Arc::new(session.clone());
-        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
-        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
-
-        Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            health: ConsulHealthService::new(registry).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            kv,
-            catalog: ConsulCatalogService::with_datacenter(
-                naming_service,
-                dc_config.datacenter.clone(),
-            )
-            .with_default_group(dc_config.default_group.clone())
-            .with_default_cluster(dc_config.default_cluster.clone())
-            .with_index_provider(index_provider.clone()),
-            index_provider,
-            acl: if acl_enabled {
-                AclService::new()
-            } else {
-                AclService::disabled()
-            },
-            session,
-            event: ConsulEventService::new(),
-            query: ConsulQueryService::new(),
-            lock,
-            semaphore,
-            peering: Arc::new(ConsulPeeringService::new()),
-            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::new(),
-            connect: batata_plugin_consul::connect::ConsulConnectService::new(),
-            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::new(),
-            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::new(),
-            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::new(),
-            operator: batata_plugin_consul::operator::ConsulOperatorService::new(),
-            dc_config,
-        }
-    }
-
-    /// Creates Consul service adapters with RocksDB persistence.
-    /// KV, ACL, Session, and Query data are persisted directly to RocksDB.
-    pub fn with_persistence(
-        naming_service: Arc<dyn NamingServiceProvider>,
-        registry: Arc<InstanceCheckRegistry>,
-        acl_enabled: bool,
-        db: Arc<DB>,
-        dc_config: ConsulDatacenterConfig,
-    ) -> Self {
-        let index_provider = ConsulIndexProvider::new();
-        let session = ConsulSessionService::with_rocks(db.clone());
-        let kv = ConsulKVService::with_rocks(db.clone());
-        let kv_arc = Arc::new(kv.clone());
-        let session_arc = Arc::new(session.clone());
-        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
-        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
-
-        Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            health: ConsulHealthService::new(registry).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            kv,
-            catalog: ConsulCatalogService::with_datacenter(
-                naming_service,
-                dc_config.datacenter.clone(),
-            )
-            .with_default_group(dc_config.default_group.clone())
-            .with_default_cluster(dc_config.default_cluster.clone())
-            .with_index_provider(index_provider.clone()),
-            acl: if acl_enabled {
-                AclService::with_rocks(db.clone())
-            } else {
-                AclService::disabled()
-            },
-            session,
-            event: ConsulEventService::new(),
-            query: ConsulQueryService::with_rocks(db.clone()),
-            lock,
-            semaphore,
-            peering: Arc::new(ConsulPeeringService::with_rocks(
-                db.clone(),
-                dc_config.datacenter.clone(),
-                8500,
-            )),
-            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::with_rocks(
-                db.clone(),
-            ),
-            connect: batata_plugin_consul::connect::ConsulConnectService::new(),
-            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::with_rocks(
-                db.clone(),
-            ),
-            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::with_rocks(
-                db.clone(),
-                dc_config.datacenter.clone(),
-            ),
-            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::with_rocks(db.clone()),
-            operator: batata_plugin_consul::operator::ConsulOperatorService::with_rocks(db),
-            dc_config,
-            index_provider,
-        }
-    }
-
-    /// Creates Consul service adapters with Raft-replicated RocksDB storage.
-    /// Used in cluster mode for Consul-dedicated Raft consensus.
-    pub fn with_consul_raft(
-        naming_service: Arc<dyn NamingServiceProvider>,
-        registry: Arc<InstanceCheckRegistry>,
-        acl_enabled: bool,
-        db: Arc<DB>,
-        consul_raft: Arc<batata_plugin_consul::raft::ConsulRaftNode>,
-        table_index: batata_plugin_consul::index_provider::ConsulTableIndex,
-        dc_config: ConsulDatacenterConfig,
-    ) -> Self {
-        // Use the table_index from the state machine — it gets updated
-        // on every Raft apply, ensuring blocking queries see latest data.
-        let index_provider: ConsulIndexProvider = table_index;
-        let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone());
-        let kv = ConsulKVService::with_raft(db.clone(), consul_raft);
-        let kv_arc = Arc::new(kv.clone());
-        let session_arc = Arc::new(session.clone());
-        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
-        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
-
-        Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            health: ConsulHealthService::new(registry).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            kv,
-            catalog: ConsulCatalogService::with_datacenter(
-                naming_service,
-                dc_config.datacenter.clone(),
-            )
-            .with_default_group(dc_config.default_group.clone())
-            .with_default_cluster(dc_config.default_cluster.clone())
-            .with_index_provider(index_provider.clone()),
-            acl: if acl_enabled {
-                AclService::with_rocks(db.clone())
-            } else {
-                AclService::disabled()
-            },
-            session,
-            event: ConsulEventService::new(),
-            query: ConsulQueryService::with_rocks(db.clone()),
-            lock,
-            semaphore,
-            peering: Arc::new(ConsulPeeringService::with_rocks(
-                db.clone(),
-                dc_config.datacenter.clone(),
-                8500,
-            )),
-            config_entry: batata_plugin_consul::config_entry::ConsulConfigEntryService::with_rocks(
-                db.clone(),
-            ),
-            connect: batata_plugin_consul::connect::ConsulConnectService::new(),
-            connect_ca: batata_plugin_consul::connect_ca::ConsulConnectCAService::with_rocks(
-                db.clone(),
-            ),
-            coordinate: batata_plugin_consul::coordinate::ConsulCoordinateService::with_rocks(
-                db.clone(),
-                dc_config.datacenter.clone(),
-            ),
-            snapshot: batata_plugin_consul::snapshot::ConsulSnapshotService::with_rocks(db.clone()),
-            operator: batata_plugin_consul::operator::ConsulOperatorService::with_rocks(db),
-            dc_config,
-            index_provider,
-        }
-    }
-}
+/// Consul services type alias - now provided by the consul plugin crate.
+pub type ConsulServices = batata_plugin_consul::ConsulPlugin;
 
 /// Creates and binds the console HTTP server.
 ///
@@ -416,25 +186,6 @@ pub fn consul_server(
             .app_data(web::JsonConfig::default().limit(max_json_size))
             .app_data(web::Data::from(app_state.clone()))
             .app_data(web::Data::new(naming_service.clone()))
-            .app_data(web::Data::new(consul_services.agent.clone()))
-            .app_data(web::Data::new(consul_services.health.clone()))
-            .app_data(web::Data::new(consul_services.kv.clone()))
-            .app_data(web::Data::new(consul_services.catalog.clone()))
-            .app_data(web::Data::new(consul_services.acl.clone()))
-            .app_data(web::Data::new(consul_services.session.clone()))
-            .app_data(web::Data::new(consul_services.event.clone()))
-            .app_data(web::Data::new(consul_services.query.clone()))
-            .app_data(web::Data::new(consul_services.lock.clone()))
-            .app_data(web::Data::new(consul_services.semaphore.clone()))
-            .app_data(web::Data::from(consul_services.peering.clone()))
-            .app_data(web::Data::new(consul_services.config_entry.clone()))
-            .app_data(web::Data::new(consul_services.connect.clone()))
-            .app_data(web::Data::new(consul_services.connect_ca.clone()))
-            .app_data(web::Data::new(consul_services.coordinate.clone()))
-            .app_data(web::Data::new(consul_services.snapshot.clone()))
-            .app_data(web::Data::new(consul_services.operator.clone()))
-            .app_data(web::Data::new(consul_services.dc_config.clone()))
-            .app_data(web::Data::new(consul_services.index_provider.clone()))
             .app_data(web::QueryConfig::default().error_handler(|err, _req| {
                 let err_str = err.to_string();
                 // For duplicate field errors (e.g., ?tag=a&tag=b), return empty result
@@ -454,8 +205,8 @@ pub fn consul_server(
                     .into()
                 }
             }))
-            // All Consul API v1 routes under a single /v1 scope
-            .service(batata_plugin_consul::route::routes())
+            // Delegate all Consul app_data and routes to the plugin
+            .configure(|cfg| consul_services.configure(cfg))
     })
     // Consul uses fewer workers to avoid CPU contention with the main Nacos server.
     // Configurable via batata.plugin.consul.http.workers (default: min(4, cpu_cores/2))
