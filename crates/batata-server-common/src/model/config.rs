@@ -1564,6 +1564,46 @@ impl Configuration {
             .unwrap_or(0) as u64
     }
 
+    /// Config read cache TTL in seconds (default 0 = disabled).
+    /// When enabled, config_find_one results are cached to reduce RocksDB reads.
+    pub fn config_read_cache_ttl_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.config.read_cache_ttl")
+            .unwrap_or(0) as u64
+    }
+
+    /// Config read cache max entries (default 10000).
+    pub fn config_read_cache_max_entries(&self) -> u64 {
+        self.config
+            .get_int("batata.config.read_cache_max_entries")
+            .unwrap_or(10_000) as u64
+    }
+
+    /// Max consecutive push timeouts before closing a slow client connection (default 5).
+    /// 0 = disabled (never close connections due to push timeouts).
+    pub fn grpc_max_push_timeouts(&self) -> u32 {
+        self.config
+            .get_int("batata.server.grpc.max_push_timeouts")
+            .unwrap_or(5) as u32
+    }
+
+    /// Maximum concurrent HTTP/2 streams per gRPC connection (default 200).
+    /// Limits the number of concurrent RPCs a single client can make.
+    /// Protects against resource exhaustion from misbehaving clients.
+    pub fn grpc_max_concurrent_streams(&self) -> u32 {
+        self.config
+            .get_int("batata.server.grpc.max_concurrent_streams")
+            .unwrap_or(200) as u32
+    }
+
+    /// Maximum number of SDK gRPC connections (default 10000).
+    /// 0 means unlimited.
+    pub fn grpc_max_connections(&self) -> usize {
+        self.config
+            .get_int("batata.server.grpc.max_connections")
+            .unwrap_or(10000) as usize
+    }
+
     // ========================================================================
     // RocksDB Advanced Tuning
     // ========================================================================

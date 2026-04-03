@@ -112,10 +112,11 @@ impl RocksDbReader {
         Ok(groups.into_iter().collect())
     }
 
-    /// Search configs with pagination and filters
+    /// Search configs with pagination and filters.
     ///
-    /// Performs in-memory filtering and pagination since RocksDB
-    /// doesn't support SQL-like queries.
+    /// Streams through the RocksDB iterator with inline filtering and pagination.
+    /// Only deserializes and collects the entries needed for the requested page,
+    /// avoiding loading the entire namespace into memory.
     #[allow(clippy::too_many_arguments)]
     pub fn search_configs(
         &self,
@@ -129,66 +130,84 @@ impl RocksDbReader {
         page_no: u64,
         page_size: u64,
     ) -> anyhow::Result<(Vec<serde_json::Value>, u64)> {
-        let configs = self.list_configs(namespace_id)?;
-
-        let filtered: Vec<serde_json::Value> = configs
-            .into_iter()
-            .filter(|v| {
-                // Filter by data_id pattern (supports * wildcards / glob matching)
-                if !data_id_pattern.is_empty() {
-                    let did = v["data_id"].as_str().unwrap_or("");
-                    if !glob_match(data_id_pattern, did) {
-                        return false;
-                    }
-                }
-                // Filter by group pattern (supports * wildcards / glob matching)
-                if !group_pattern.is_empty() {
-                    let grp = v["group"].as_str().unwrap_or("");
-                    if !glob_match(group_pattern, grp) {
-                        return false;
-                    }
-                }
-                // Filter by app_name
-                if !app_name.is_empty() {
-                    let an = v["app_name"].as_str().unwrap_or("");
-                    if an != app_name {
-                        return false;
-                    }
-                }
-                // Filter by tags
-                if !tags.is_empty() {
-                    let config_tags = v["config_tags"].as_str().unwrap_or("");
-                    for tag in tags {
-                        if !config_tags.contains(tag.as_str()) {
-                            return false;
-                        }
-                    }
-                }
-                // Filter by types
-                if !types.is_empty() {
-                    let config_type = v["config_type"].as_str().unwrap_or("");
-                    if !types.iter().any(|t| t == config_type) {
-                        return false;
-                    }
-                }
-                // Filter by content pattern
-                if !content_pattern.is_empty() {
-                    let ct = v["content"].as_str().unwrap_or("");
-                    if !ct.contains(content_pattern) {
-                        return false;
-                    }
-                }
-                true
-            })
-            .collect();
-
-        let total = filtered.len() as u64;
+        let cf = self.cf_handle(CF_CONFIG)?;
         let offset = (page_no.saturating_sub(1)) * page_size;
-        let page_items: Vec<serde_json::Value> = filtered
-            .into_iter()
-            .skip(offset as usize)
-            .take(page_size as usize)
-            .collect();
+
+        let mut total: u64 = 0;
+        let mut page_items: Vec<serde_json::Value> = Vec::new();
+
+        // Use prefix iterator for namespace, or full scan for empty namespace
+        let prefix = if namespace_id.is_empty() {
+            String::new()
+        } else {
+            format!("{}@@", namespace_id)
+        };
+
+        let iter = if prefix.is_empty() {
+            self.db.iterator_cf(cf, rocksdb::IteratorMode::Start)
+        } else {
+            self.db.prefix_iterator_cf(cf, prefix.as_bytes())
+        };
+
+        for item in iter {
+            let (key, value) =
+                item.map_err(|e| anyhow::anyhow!("RocksDB iterator error: {}", e))?;
+            // Stop when prefix no longer matches (prefix iterator may overshoot)
+            if !prefix.is_empty() {
+                let key_str = String::from_utf8_lossy(&key);
+                if !key_str.starts_with(&prefix) {
+                    break;
+                }
+            }
+            let v: serde_json::Value = match serde_json::from_slice(&value) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // Apply filters inline
+            if !data_id_pattern.is_empty() {
+                let did = v["data_id"].as_str().unwrap_or("");
+                if !glob_match(data_id_pattern, did) {
+                    continue;
+                }
+            }
+            if !group_pattern.is_empty() {
+                let grp = v["group"].as_str().unwrap_or("");
+                if !glob_match(group_pattern, grp) {
+                    continue;
+                }
+            }
+            if !app_name.is_empty() {
+                let an = v["app_name"].as_str().unwrap_or("");
+                if an != app_name {
+                    continue;
+                }
+            }
+            if !tags.is_empty() {
+                let config_tags = v["config_tags"].as_str().unwrap_or("");
+                if !tags.iter().all(|tag| config_tags.contains(tag.as_str())) {
+                    continue;
+                }
+            }
+            if !types.is_empty() {
+                let config_type = v["config_type"].as_str().unwrap_or("");
+                if !types.iter().any(|t| t == config_type) {
+                    continue;
+                }
+            }
+            if !content_pattern.is_empty() {
+                let ct = v["content"].as_str().unwrap_or("");
+                if !ct.contains(content_pattern) {
+                    continue;
+                }
+            }
+
+            // Passed all filters — count toward total and collect if in page window
+            if total >= offset && page_items.len() < page_size as usize {
+                page_items.push(v);
+            }
+            total += 1;
+        }
 
         Ok((page_items, total))
     }

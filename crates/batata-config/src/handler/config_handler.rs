@@ -589,12 +589,19 @@ impl PayloadHandler for ConfigPublishHandler {
                 self.config_change_notifier
                     .notify_change(tenant, group, data_id);
 
-                // Notify fuzzy watchers about config change
-                if let Err(e) = self
-                    .notify_fuzzy_watchers(data_id, group, tenant, src_ip)
-                    .await
+                // Notify fuzzy watchers about config change (non-blocking)
                 {
-                    warn!("Failed to notify fuzzy watchers: {}", e);
+                    let handler = self.clone();
+                    let did = data_id.to_string();
+                    let grp = group.to_string();
+                    let tnt = tenant.to_string();
+                    let sip = src_ip.to_string();
+                    tokio::spawn(async move {
+                        if let Err(e) = handler.notify_fuzzy_watchers(&did, &grp, &tnt, &sip).await
+                        {
+                            warn!("Failed to notify fuzzy watchers on config publish: {}", e);
+                        }
+                    });
                 }
 
                 // Broadcast config change to other cluster nodes
@@ -862,12 +869,21 @@ impl PayloadHandler for ConfigRemoveHandler {
                 self.config_change_notifier
                     .notify_change(tenant, group, data_id);
 
-                // Notify fuzzy watchers about config removal
-                if let Err(e) = self
-                    .notify_fuzzy_watchers(data_id, group, tenant, src_ip)
-                    .await
+                // Notify fuzzy watchers and subscribers about config removal (non-blocking)
                 {
-                    warn!("Failed to notify fuzzy watchers: {}", e);
+                    let handler = self.clone();
+                    let data_id = data_id.to_string();
+                    let group = group.to_string();
+                    let tenant = tenant.to_string();
+                    let src_ip = src_ip.to_string();
+                    tokio::spawn(async move {
+                        if let Err(e) = handler
+                            .notify_fuzzy_watchers(&data_id, &group, &tenant, &src_ip)
+                            .await
+                        {
+                            warn!("Failed to notify fuzzy watchers on config removal: {}", e);
+                        }
+                    });
                 }
 
                 // Broadcast config removal to other cluster nodes
@@ -1391,26 +1407,15 @@ impl ConfigChangeClusterSyncHandler {
                 source_ip
             );
 
-            let futs: Vec<_> = fuzzy_watchers
-                .iter()
-                .map(|connection_id| {
-                    self.fuzzy_watch_manager
-                        .mark_received(connection_id, &group_key);
-                    let cm = &self.connection_manager;
-                    let p = payload.clone();
-                    let cid = connection_id.clone();
-                    let gk = group_key.clone();
-                    async move {
-                        if !cm.push_message(&cid, p).await {
-                            warn!(
-                                "Failed to push cluster sync config notification to connection {}: {}",
-                                cid, gk
-                            );
-                        }
-                    }
-                })
-                .collect();
-            join_all(futs).await;
+            // Mark all watchers as received first (cheap in-memory ops)
+            for connection_id in &fuzzy_watchers {
+                self.fuzzy_watch_manager
+                    .mark_received(connection_id, &group_key);
+            }
+            // Batch push avoids N payload clones — last send moves instead of cloning
+            self.connection_manager
+                .push_message_to_many(&fuzzy_watchers, payload.clone())
+                .await;
         }
 
         // Notify regular subscribers via ConfigSubscriptionService
@@ -1430,23 +1435,13 @@ impl ConfigChangeClusterSyncHandler {
                 source_ip
             );
 
-            let futs: Vec<_> = subscribers
+            let connection_ids: Vec<String> = subscribers
                 .iter()
-                .map(|subscriber| {
-                    let cm = &self.connection_manager;
-                    let p = payload.clone();
-                    let cid = subscriber.connection_id.clone();
-                    async move {
-                        if !cm.push_message(&cid, p).await {
-                            warn!(
-                                "Failed to push cluster sync config notification to connection {}",
-                                cid
-                            );
-                        }
-                    }
-                })
+                .map(|s| s.connection_id.clone())
                 .collect();
-            join_all(futs).await;
+            self.connection_manager
+                .push_message_to_many(&connection_ids, payload)
+                .await;
         }
 
         Ok(())

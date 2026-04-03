@@ -482,6 +482,8 @@ pub fn start_grpc_servers(
     cm.set_push_timeout(std::time::Duration::from_millis(
         app_state.configuration.grpc_push_message_timeout_ms(),
     ));
+    cm.set_max_push_timeouts(app_state.configuration.grpc_max_push_timeouts());
+    cm.set_max_connections(app_state.configuration.grpc_max_connections());
     let connection_manager = Arc::new(cm);
     // Wire connection limit checker if control plugin is available
     if let Some(ref control_plugin) = app_state.control_plugin {
@@ -648,6 +650,7 @@ pub fn start_grpc_servers(
     let http2_timeout =
         Duration::from_secs(app_state.configuration.grpc_http2_keepalive_timeout_secs());
     let concurrency = app_state.configuration.grpc_concurrency_limit();
+    let max_concurrent_streams = app_state.configuration.grpc_max_concurrent_streams();
     let initial_connection_window = app_state
         .configuration
         .grpc_initial_connection_window_size();
@@ -681,6 +684,7 @@ pub fn start_grpc_servers(
                         .initial_stream_window_size(initial_stream_window)
                         .max_frame_size(max_frame_size)
                         .concurrency_limit_per_connection(concurrency)
+                        .max_concurrent_streams(max_concurrent_streams)
                         .layer(layer)
                         .add_service(RequestServer::new(grpc_request_service))
                         .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
@@ -696,6 +700,7 @@ pub fn start_grpc_servers(
                         .initial_stream_window_size(initial_stream_window)
                         .max_frame_size(max_frame_size)
                         .concurrency_limit_per_connection(concurrency)
+                        .max_concurrent_streams(max_concurrent_streams)
                         .layer(layer)
                         .add_service(RequestServer::new(grpc_request_service))
                         .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))

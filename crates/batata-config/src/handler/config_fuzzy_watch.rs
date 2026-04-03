@@ -201,6 +201,9 @@ impl std::error::Error for FuzzyWatchLimitError {}
 pub struct ConfigFuzzyWatchManager {
     /// Key: connection_id, Value: list of watch patterns
     watchers: Arc<DashMap<String, Vec<ConfigFuzzyWatchPattern>>>,
+    /// Namespace index: namespace → Set<connection_id> for O(1) namespace lookup.
+    /// Connections watching all namespaces ("*") are stored under the "*" key.
+    namespace_index: Arc<DashMap<String, HashSet<String>>>,
     /// Key: connection_id, Value: set of received group keys (for deduplication)
     received_keys: Arc<DashMap<String, HashSet<String>>>,
     /// Broadcast channel for config change events
@@ -228,6 +231,7 @@ impl ConfigFuzzyWatchManager {
         let (event_sender, _) = broadcast::channel(capacity);
         Self {
             watchers: Arc::new(DashMap::new()),
+            namespace_index: Arc::new(DashMap::new()),
             received_keys: Arc::new(DashMap::new()),
             event_sender,
             limits: FuzzyWatchLimits::default(),
@@ -239,6 +243,7 @@ impl ConfigFuzzyWatchManager {
         let (event_sender, _) = broadcast::channel(capacity);
         Self {
             watchers: Arc::new(DashMap::new()),
+            namespace_index: Arc::new(DashMap::new()),
             received_keys: Arc::new(DashMap::new()),
             event_sender,
             limits,
@@ -285,10 +290,16 @@ impl ConfigFuzzyWatchManager {
                 });
             }
 
+            // Maintain namespace index for fast lookup
+            let ns_key = pattern.namespace.clone();
             self.watchers
                 .entry(connection_id.to_string())
                 .or_default()
                 .push(pattern);
+            self.namespace_index
+                .entry(ns_key)
+                .or_default()
+                .insert(connection_id.to_string());
             Ok(true)
         } else {
             Ok(false)
@@ -297,7 +308,14 @@ impl ConfigFuzzyWatchManager {
 
     /// Unregister all watch patterns for a connection
     pub fn unregister_connection(&self, connection_id: &str) {
-        self.watchers.remove(connection_id);
+        // Remove from namespace index before removing patterns
+        if let Some((_, patterns)) = self.watchers.remove(connection_id) {
+            for pattern in &patterns {
+                if let Some(mut ns_set) = self.namespace_index.get_mut(&pattern.namespace) {
+                    ns_set.remove(connection_id);
+                }
+            }
+        }
         self.received_keys.remove(connection_id);
     }
 
@@ -332,22 +350,44 @@ impl ConfigFuzzyWatchManager {
             .unwrap_or(false)
     }
 
-    /// Get connections watching a specific config
+    /// Get connections watching a specific config.
+    ///
+    /// Uses the namespace index to avoid iterating ALL watchers. Only checks
+    /// connections registered for the specific namespace plus wildcard ("*") watchers.
     pub fn get_watchers_for_config(
         &self,
         namespace: &str,
         group: &str,
         data_id: &str,
     ) -> Vec<String> {
-        self.watchers
-            .iter()
-            .filter(|entry| {
-                entry
-                    .value()
-                    .iter()
-                    .any(|pattern| pattern.matches(namespace, group, data_id))
+        // Collect candidate connection IDs from namespace index
+        let mut candidates: HashSet<String> = HashSet::new();
+        if let Some(ns_set) = self.namespace_index.get(namespace) {
+            candidates.extend(ns_set.iter().cloned());
+        }
+        // Also include wildcard namespace watchers
+        if let Some(wildcard_set) = self.namespace_index.get("*") {
+            candidates.extend(wildcard_set.iter().cloned());
+        }
+
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        // Only check patterns for candidate connections
+        candidates
+            .into_iter()
+            .filter(|cid| {
+                self.watchers
+                    .get(cid.as_str())
+                    .map(|entry| {
+                        entry
+                            .value()
+                            .iter()
+                            .any(|pattern| pattern.matches(namespace, group, data_id))
+                    })
+                    .unwrap_or(false)
             })
-            .map(|entry| entry.key().clone())
             .collect()
     }
 

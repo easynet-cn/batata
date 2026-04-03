@@ -33,6 +33,8 @@ fn compute_checksum(data: &[u8]) -> u64 {
 
 /// Size of the checksum trailer appended to snapshot data (8 bytes for u64)
 const SNAPSHOT_CHECKSUM_SIZE: usize = std::mem::size_of::<u64>();
+/// Magic header for bincode-format snapshots (backward-compatible with legacy JSON)
+const SNAPSHOT_MAGIC: &[u8] = b"BSNA";
 
 /// Helper to create StorageError for state machine operations
 fn sm_error(
@@ -326,30 +328,86 @@ impl RocksStateMachine {
                 schema,
                 encrypted_data_key,
                 cas_md5,
-            } => self.apply_config_publish(
-                &data_id,
-                &group,
-                &tenant,
-                &content,
-                &md5,
-                config_type,
-                app_name,
-                tag,
-                desc,
-                src_user,
-                src_ip,
-                r#use,
-                effect,
-                schema,
-                encrypted_data_key,
-                cas_md5.as_deref(),
-            ),
+                history,
+            } => {
+                let resp = self.apply_config_publish(
+                    &data_id,
+                    &group,
+                    &tenant,
+                    &content,
+                    &md5,
+                    config_type.clone(),
+                    app_name.clone(),
+                    tag,
+                    desc,
+                    src_user.clone(),
+                    src_ip.clone(),
+                    r#use,
+                    effect,
+                    schema,
+                    encrypted_data_key.clone(),
+                    cas_md5.as_deref(),
+                );
+                // If config publish succeeded and history info is provided,
+                // insert history in the same Raft apply (atomic, no second write).
+                if resp.success {
+                    if let Some(hi) = history {
+                        let now = chrono::Utc::now().timestamp_millis();
+                        self.apply_config_history_insert(
+                            now,
+                            &data_id,
+                            &group,
+                            &tenant,
+                            &content,
+                            &md5,
+                            app_name,
+                            src_user,
+                            src_ip,
+                            &hi.op_type,
+                            hi.publish_type,
+                            None,
+                            hi.ext_info,
+                            encrypted_data_key,
+                            now,
+                            now,
+                        );
+                    }
+                }
+                resp
+            }
 
             RaftRequest::ConfigRemove {
                 data_id,
                 group,
                 tenant,
-            } => self.apply_config_remove(&data_id, &group, &tenant),
+                history,
+            } => {
+                let resp = self.apply_config_remove(&data_id, &group, &tenant);
+                if resp.success {
+                    if let Some(hi) = history {
+                        let now = chrono::Utc::now().timestamp_millis();
+                        self.apply_config_history_insert(
+                            now,
+                            &data_id,
+                            &group,
+                            &tenant,
+                            &hi.content,
+                            &hi.md5,
+                            Some(hi.app_name),
+                            Some(hi.src_user),
+                            Some(hi.src_ip),
+                            "D",
+                            Some("formal".to_string()),
+                            None,
+                            Some(hi.ext_info),
+                            Some(hi.encrypted_data_key),
+                            now,
+                            now,
+                        );
+                    }
+                }
+                resp
+            }
 
             RaftRequest::ConfigGrayPublish {
                 data_id,
@@ -610,49 +668,45 @@ impl RocksStateMachine {
         let key = Self::config_key(data_id, group, tenant);
         let now = chrono::Utc::now().timestamp_millis();
 
-        // CAS (Compare-And-Swap) check: if cas_md5 is provided, verify current config
-        // MD5 matches before overwriting. Returns conflict error on mismatch.
-        // This prevents concurrent writes from silently losing data.
+        // Single read: fetch existing config for both CAS check and created_time preservation
+        let existing_value = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
+            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            Ok(None) => None,
+            Err(e) => {
+                if cas_md5.is_some() {
+                    return RaftResponse::failure(format!("CAS check failed: {}", e));
+                }
+                None
+            }
+        };
+
+        // CAS (Compare-And-Swap) check
         if let Some(expected_md5) = cas_md5 {
-            match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-                Ok(Some(existing_bytes)) => {
-                    if let Ok(existing) =
-                        serde_json::from_slice::<serde_json::Value>(&existing_bytes)
-                    {
-                        let current_md5 =
-                            existing.get("md5").and_then(|v| v.as_str()).unwrap_or("");
-                        if current_md5 != expected_md5 {
-                            return RaftResponse::failure(format!(
-                                "CAS conflict: expected md5={}, actual md5={}",
-                                expected_md5, current_md5
-                            ));
-                        }
+            match &existing_value {
+                Some(existing) => {
+                    let current_md5 =
+                        existing.get("md5").and_then(|v| v.as_str()).unwrap_or("");
+                    if current_md5 != expected_md5 {
+                        return RaftResponse::failure(format!(
+                            "CAS conflict: expected md5={}, actual md5={}",
+                            expected_md5, current_md5
+                        ));
                     }
                 }
-                Ok(None) => {
-                    // Config doesn't exist yet — CAS requires it to exist
+                None => {
                     if !expected_md5.is_empty() {
                         return RaftResponse::failure(
                             "CAS conflict: config does not exist".to_string(),
                         );
                     }
                 }
-                Err(e) => {
-                    return RaftResponse::failure(format!("CAS check failed: {}", e));
-                }
             }
         }
 
         // Preserve created_time from existing config on update
-        let created_time = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
-            Ok(Some(existing_bytes)) => {
-                serde_json::from_slice::<serde_json::Value>(&existing_bytes)
-                    .ok()
-                    .and_then(|v| v["created_time"].as_i64())
-                    .unwrap_or(now)
-            }
-            _ => now,
-        };
+        let created_time = existing_value
+            .and_then(|v| v["created_time"].as_i64())
+            .unwrap_or(now);
 
         let value = serde_json::json!({
             "data_id": data_id,
@@ -1615,14 +1669,10 @@ impl RocksStateMachine {
     fn apply_lock_expire(&self, namespace: &str, name: &str) -> RaftResponse {
         let key = Self::lock_key(namespace, name);
 
-        // Mark lock as expired
-        let existing = match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
-            Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
-            _ => None,
-        };
-
-        if existing.is_none() {
-            return RaftResponse::success(); // Nothing to expire
+        // Check existence without deserialization (saves JSON parse overhead)
+        match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
+            Ok(Some(_)) => {} // Key exists, proceed to expire
+            _ => return RaftResponse::success(), // Nothing to expire
         }
 
         let value = serde_json::json!({
@@ -1726,8 +1776,14 @@ impl RaftSnapshotBuilder<TypeConfig> for RocksStateMachine {
             }
         }
 
-        let payload =
-            serde_json::to_vec(&snapshot_data).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        // Use bincode for compact binary serialization (3-5x smaller than JSON).
+        // Prefix with magic bytes "BSNA" (Batata SNApshot) for format detection
+        // during restore, ensuring backward compatibility with legacy JSON snapshots.
+        let bincode_data =
+            bincode::serialize(&snapshot_data).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let mut payload = Vec::with_capacity(SNAPSHOT_MAGIC.len() + bincode_data.len());
+        payload.extend_from_slice(SNAPSHOT_MAGIC);
+        payload.extend_from_slice(&bincode_data);
 
         // Append a 8-byte checksum trailer (SipHash) for integrity validation
         let checksum = compute_checksum(&payload);
@@ -1845,22 +1901,28 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
                 &data
             };
 
-            // Deserialize the snapshot data
+            // Deserialize snapshot: detect format by magic header
             let snapshot_data: std::collections::HashMap<String, Vec<(Vec<u8>, Vec<u8>)>> =
-                serde_json::from_slice(payload).map_err(|e| sm_error(e, ErrorVerb::Read))?;
+                if payload.starts_with(SNAPSHOT_MAGIC) {
+                    let bincode_payload = &payload[SNAPSHOT_MAGIC.len()..];
+                    bincode::deserialize(bincode_payload)
+                        .map_err(|e| sm_error(e, ErrorVerb::Read))?
+                } else {
+                    // Legacy JSON format (backward compatibility)
+                    info!("Restoring legacy JSON-format snapshot");
+                    serde_json::from_slice(payload)
+                        .map_err(|e| sm_error(e, ErrorVerb::Read))?
+                };
 
             // Atomically clear and restore each column family using a single WriteBatch
-            // per CF. This prevents data loss if the node crashes mid-restore — either
-            // the old data remains intact or the new data is fully written.
+            // per CF. Uses delete_range for O(1) clearing instead of per-key deletion.
             for (cf_name, cf_data) in snapshot_data {
                 if let Some(cf) = self.db.cf_handle(&cf_name) {
                     let mut batch = rocksdb::WriteBatch::default();
 
-                    // Delete existing data
-                    let iter = self.db.iterator_cf(cf, rocksdb::IteratorMode::Start);
-                    for (key, _) in iter.flatten() {
-                        batch.delete_cf(cf, &key);
-                    }
+                    // Clear existing data with range delete (much faster than per-key).
+                    // Keys are UTF-8 strings, so 0xFF as exclusive end covers all keys.
+                    batch.delete_range_cf(&cf, vec![0u8], vec![0xFFu8, 0xFF, 0xFF, 0xFF]);
 
                     // Restore snapshot data in the same batch
                     for (key, value) in cf_data {

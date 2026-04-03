@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 
 use dashmap::DashMap;
@@ -51,6 +52,9 @@ const STALE_CONNECTION_THRESHOLD_MS: u64 = 60_000;
 
 /// Default timeout for push_message operations (milliseconds).
 const DEFAULT_PUSH_TIMEOUT_MS: u64 = 5_000;
+/// Default max consecutive push timeouts before circuit breaker closes the connection.
+/// 0 = disabled (never close connections due to timeouts).
+const DEFAULT_MAX_PUSH_TIMEOUTS: u32 = 5;
 
 /// Connection limit checker trait for pluggable connection control.
 #[async_trait::async_trait]
@@ -69,6 +73,12 @@ pub struct ConnectionManager {
     connection_limit_checker: std::sync::Mutex<Option<Arc<dyn ConnectionLimitChecker>>>,
     /// Timeout for push_message operations
     push_timeout: std::time::Duration,
+    /// Per-connection consecutive timeout counter for circuit breaker
+    timeout_counters: Arc<DashMap<String, AtomicU32>>,
+    /// Max consecutive push timeouts before closing a connection (0 = disabled)
+    max_push_timeouts: u32,
+    /// Hard limit on total connections (0 = unlimited)
+    max_connections: usize,
 }
 
 impl Default for ConnectionManager {
@@ -84,6 +94,9 @@ impl ConnectionManager {
             listeners: Arc::new(RwLock::new(Vec::new())),
             connection_limit_checker: std::sync::Mutex::new(None),
             push_timeout: std::time::Duration::from_millis(DEFAULT_PUSH_TIMEOUT_MS),
+            timeout_counters: Arc::new(DashMap::new()),
+            max_push_timeouts: DEFAULT_MAX_PUSH_TIMEOUTS,
+            max_connections: 0,
         }
     }
 
@@ -93,7 +106,20 @@ impl ConnectionManager {
             listeners: Arc::new(RwLock::new(Vec::new())),
             connection_limit_checker: std::sync::Mutex::new(None),
             push_timeout: std::time::Duration::from_millis(DEFAULT_PUSH_TIMEOUT_MS),
+            timeout_counters: Arc::new(DashMap::new()),
+            max_push_timeouts: DEFAULT_MAX_PUSH_TIMEOUTS,
+            max_connections: 0,
         }
+    }
+
+    /// Set the max consecutive push timeouts before closing a connection (0 = disabled)
+    pub fn set_max_push_timeouts(&mut self, max: u32) {
+        self.max_push_timeouts = max;
+    }
+
+    /// Set the hard limit on total connections (0 = unlimited)
+    pub fn set_max_connections(&mut self, max: usize) {
+        self.max_connections = max;
     }
 
     /// Set the push message timeout
@@ -148,10 +174,21 @@ impl ConnectionManager {
             return true;
         }
 
+        // Hard limit on total connections
+        if self.max_connections > 0 && self.clients.len() >= self.max_connections {
+            tracing::warn!(
+                connection_id,
+                current = self.clients.len(),
+                max = self.max_connections,
+                "Connection rejected: hard connection limit reached"
+            );
+            return false;
+        }
+
         // Initialize last_active to current time to prevent premature stale ejection
         client.connection.last_active.touch();
 
-        // Check connection limit before registering
+        // Check plugin-based connection limit before registering
         let meta = client.connection.meta_info.clone();
         if let Some(checker) = self.get_limit_checker()
             && !checker
@@ -179,6 +216,7 @@ impl ConnectionManager {
     }
 
     pub async fn unregister(&self, connection_id: &str) {
+        self.timeout_counters.remove(connection_id);
         if let Some((_, client)) = self.clients.remove(connection_id) {
             // Release connection slot in the limiter
             if let Some(checker) = self.get_limit_checker() {
@@ -209,6 +247,12 @@ impl ConnectionManager {
             match tokio::time::timeout(self.push_timeout, client.tx.send(Ok(payload))).await {
                 Ok(Ok(_)) => {
                     tracing::debug!(connection_id, "Message pushed successfully");
+                    // Reset timeout counter on success
+                    if self.max_push_timeouts > 0 {
+                        if let Some(counter) = self.timeout_counters.get(connection_id) {
+                            counter.store(0, Ordering::Relaxed);
+                        }
+                    }
                     true
                 }
                 Ok(Err(e)) => {
@@ -217,6 +261,26 @@ impl ConnectionManager {
                 }
                 Err(_) => {
                     tracing::warn!(connection_id, "Push message timeout, client may be slow");
+                    // Circuit breaker: track consecutive timeouts
+                    if self.max_push_timeouts > 0 {
+                        let count = self
+                            .timeout_counters
+                            .entry(connection_id.to_string())
+                            .or_insert_with(|| AtomicU32::new(0))
+                            .fetch_add(1, Ordering::Relaxed)
+                            + 1;
+                        if count >= self.max_push_timeouts {
+                            tracing::warn!(
+                                connection_id,
+                                count,
+                                max = self.max_push_timeouts,
+                                "Circuit breaker: closing slow connection after consecutive timeouts"
+                            );
+                            // Drop the client ref before unregistering
+                            drop(client);
+                            self.unregister(connection_id).await;
+                        }
+                    }
                     false
                 }
             }

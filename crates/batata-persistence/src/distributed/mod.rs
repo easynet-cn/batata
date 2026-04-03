@@ -3,8 +3,10 @@
 
 use md5::Digest;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use moka::future::Cache;
 
 use batata_consistency::raft::node::RaftNode;
 use batata_consistency::raft::reader::RocksDbReader;
@@ -25,22 +27,60 @@ mod ai_resource;
 // Re-use conversion helpers from embedded backend
 use crate::embedded::EmbeddedPersistService;
 
+
 /// Distributed persistence using Raft consensus + RocksDB
 ///
 /// - Writes go through Raft consensus (RaftNode.write())
 /// - Reads use linearizable_read() then read from local RocksDB
+/// - Hot config reads are cached with configurable TTL (0 = disabled)
 pub struct DistributedPersistService {
     reader: RocksDbReader,
     raft_node: Arc<RaftNode>,
+    /// Optional read cache for config_find_one (key: "dataId@@group@@tenant")
+    config_cache: Option<Cache<String, Option<ConfigStorageData>>>,
 }
 
 impl DistributedPersistService {
-    /// Create from a RaftNode
-    ///
-    /// Note: The caller must ensure the RaftNode's state machine uses the same
-    /// RocksDB instance that the reader will query.
+    /// Create from a RaftNode (no cache)
     pub fn new(raft_node: Arc<RaftNode>, reader: RocksDbReader) -> Self {
-        Self { reader, raft_node }
+        Self {
+            reader,
+            raft_node,
+            config_cache: None,
+        }
+    }
+
+    /// Create with config read cache enabled
+    pub fn with_cache(
+        raft_node: Arc<RaftNode>,
+        reader: RocksDbReader,
+        ttl_secs: u64,
+        max_entries: u64,
+    ) -> Self {
+        let config_cache = if ttl_secs > 0 {
+            Some(
+                Cache::builder()
+                    .max_capacity(max_entries)
+                    .time_to_live(Duration::from_secs(ttl_secs))
+                    .build(),
+            )
+        } else {
+            None
+        };
+        Self {
+            reader,
+            raft_node,
+            config_cache,
+        }
+    }
+
+    /// Invalidate a config cache entry after a write
+    fn invalidate_config_cache(&self, data_id: &str, group: &str, tenant: &str) {
+        if let Some(ref cache) = self.config_cache {
+            let key = format!("{}@@{}@@{}", data_id, group, tenant);
+            let cache = cache.clone();
+            tokio::spawn(async move { cache.invalidate(&key).await });
+        }
     }
 
     /// Ensure read consistency.
@@ -90,6 +130,19 @@ impl ConfigPersistence for DistributedPersistService {
         group: &str,
         namespace_id: &str,
     ) -> anyhow::Result<Option<ConfigStorageData>> {
+        // Check cache first (if enabled)
+        if let Some(ref cache) = self.config_cache {
+            let cache_key = format!("{}@@{}@@{}", data_id, group, namespace_id);
+            if let Some(cached) = cache.get(&cache_key).await {
+                return Ok(cached);
+            }
+            // Cache miss — read from RocksDB
+            self.ensure_consistent_read().await?;
+            let json = self.reader.get_config(data_id, group, namespace_id)?;
+            let result = json.as_ref().map(EmbeddedPersistService::json_to_config);
+            cache.insert(cache_key, result.clone()).await;
+            return Ok(result);
+        }
         self.ensure_consistent_read().await?;
         let json = self.reader.get_config(data_id, group, namespace_id)?;
         Ok(json.as_ref().map(EmbeddedPersistService::json_to_config))
@@ -153,12 +206,24 @@ impl ConfigPersistence for DistributedPersistService {
         let is_update = existing.is_some();
         let op_type = if is_update { "U" } else { "I" };
 
+        // Build ext_info JSON consistent with SQL and embedded modes
+        let ext_info = serde_json::json!({
+            "config_tags": config_tags,
+            "desc": desc,
+            "use": r#use,
+            "effect": effect,
+            "type": r#type,
+            "schema": schema,
+        })
+        .to_string();
+
+        // Single Raft write: config publish + history insert atomically
         let request = RaftRequest::ConfigPublish {
             data_id: data_id.to_string(),
             group: group_id.to_string(),
             tenant: tenant_id.to_string(),
             content: content.to_string(),
-            md5: md5_val.clone(),
+            md5: md5_val,
             config_type: Some(r#type.to_string()),
             app_name: Some(app_name.to_string()),
             tag: if config_tags.is_empty() {
@@ -174,43 +239,15 @@ impl ConfigPersistence for DistributedPersistService {
             schema: Some(schema.to_string()),
             encrypted_data_key: Some(encrypted_data_key.to_string()),
             cas_md5: cas_md5.map(|s| s.to_string()),
+            history: Some(batata_consistency::raft::request::ConfigHistoryInfo {
+                op_type: op_type.to_string(),
+                publish_type: Some("formal".to_string()),
+                ext_info: Some(ext_info),
+            }),
         };
 
         self.raft_write(request).await?;
-
-        // Build ext_info JSON consistent with SQL and embedded modes
-        let ext_info = serde_json::json!({
-            "config_tags": config_tags,
-            "desc": desc,
-            "use": r#use,
-            "effect": effect,
-            "type": r#type,
-            "schema": schema,
-        })
-        .to_string();
-
-        // Insert history through Raft (reuse pre-computed MD5)
-        let now = chrono::Utc::now().timestamp_millis();
-        let history_request = RaftRequest::ConfigHistoryInsert {
-            id: now,
-            data_id: data_id.to_string(),
-            group: group_id.to_string(),
-            tenant: tenant_id.to_string(),
-            content: content.to_string(),
-            md5: md5_val,
-            app_name: Some(app_name.to_string()),
-            src_user: Some(src_user.to_string()),
-            src_ip: Some(src_ip.to_string()),
-            op_type: op_type.to_string(),
-            publish_type: Some("formal".to_string()),
-            gray_name: None,
-            ext_info: Some(ext_info),
-            encrypted_data_key: Some(encrypted_data_key.to_string()),
-            created_time: now,
-            last_modified_time: now,
-        };
-        // History insert is best-effort
-        let _ = self.raft_write(history_request).await;
+        self.invalidate_config_cache(data_id, group_id, tenant_id);
 
         Ok(true)
     }
@@ -227,52 +264,42 @@ impl ConfigPersistence for DistributedPersistService {
         // Get existing config for history before deleting
         let existing = self.reader.get_config(data_id, group, namespace_id)?;
 
+        // Build history info from existing config (if present)
+        let history = existing.as_ref().map(|ex| {
+            let ext_info = serde_json::json!({
+                "config_tags": ex["config_tags"].as_str().unwrap_or(""),
+                "desc": ex["desc"].as_str().unwrap_or(""),
+                "use": ex["use"].as_str().unwrap_or(""),
+                "effect": ex["effect"].as_str().unwrap_or(""),
+                "type": ex["config_type"].as_str().unwrap_or(""),
+                "schema": ex["schema"].as_str().unwrap_or(""),
+            })
+            .to_string();
+
+            batata_consistency::raft::request::ConfigDeleteHistoryInfo {
+                content: ex["content"].as_str().unwrap_or("").to_string(),
+                md5: ex["md5"].as_str().unwrap_or("").to_string(),
+                app_name: ex["app_name"].as_str().unwrap_or("").to_string(),
+                src_user: src_user.to_string(),
+                src_ip: client_ip.to_string(),
+                ext_info,
+                encrypted_data_key: ex["encrypted_data_key"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
+            }
+        });
+
+        // Single Raft write: config remove + history insert atomically
         let request = RaftRequest::ConfigRemove {
             data_id: data_id.to_string(),
             group: group.to_string(),
             tenant: namespace_id.to_string(),
+            history,
         };
 
         self.raft_write(request).await?;
-
-        // Record delete history (consistent with SQL and embedded modes)
-        if let Some(ref existing) = existing {
-            let ext_info = serde_json::json!({
-                "config_tags": existing["config_tags"].as_str().unwrap_or(""),
-                "desc": existing["desc"].as_str().unwrap_or(""),
-                "use": existing["use"].as_str().unwrap_or(""),
-                "effect": existing["effect"].as_str().unwrap_or(""),
-                "type": existing["config_type"].as_str().unwrap_or(""),
-                "schema": existing["schema"].as_str().unwrap_or(""),
-            })
-            .to_string();
-
-            let now = chrono::Utc::now().timestamp_millis();
-            let history_request = RaftRequest::ConfigHistoryInsert {
-                id: now,
-                data_id: data_id.to_string(),
-                group: group.to_string(),
-                tenant: namespace_id.to_string(),
-                content: existing["content"].as_str().unwrap_or("").to_string(),
-                md5: existing["md5"].as_str().unwrap_or("").to_string(),
-                app_name: Some(existing["app_name"].as_str().unwrap_or("").to_string()),
-                src_user: Some(src_user.to_string()),
-                src_ip: Some(client_ip.to_string()),
-                op_type: "D".to_string(),
-                publish_type: Some("formal".to_string()),
-                gray_name: None,
-                ext_info: Some(ext_info),
-                encrypted_data_key: Some(
-                    existing["encrypted_data_key"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
-                ),
-                created_time: now,
-                last_modified_time: now,
-            };
-            let _ = self.raft_write(history_request).await;
-        }
+        self.invalidate_config_cache(data_id, group, namespace_id);
 
         Ok(true)
     }

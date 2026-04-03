@@ -119,6 +119,8 @@ pub struct NamingService {
     /// Tracks which instances were registered by which gRPC connection,
     /// enabling automatic deregistration when a connection disconnects.
     connection_instances: Arc<DashMap<String, HashSet<(String, String)>>>,
+    /// Connections currently being deregistered (prevents concurrent register during cleanup)
+    closing_connections: Arc<DashMap<String, ()>>,
 }
 
 /// Build cluster config key format: service_key##clusterName
@@ -137,6 +139,7 @@ impl NamingService {
             fuzzy_watchers: Arc::new(DashMap::new()),
             publishers: Arc::new(DashMap::new()),
             connection_instances: Arc::new(DashMap::new()),
+            closing_connections: Arc::new(DashMap::new()),
         }
     }
 

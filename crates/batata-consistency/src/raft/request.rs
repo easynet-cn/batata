@@ -3,6 +3,26 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Config delete history metadata embedded in ConfigRemove for atomic delete+history.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigDeleteHistoryInfo {
+    pub content: String,
+    pub md5: String,
+    pub app_name: String,
+    pub src_user: String,
+    pub src_ip: String,
+    pub ext_info: String,
+    pub encrypted_data_key: String,
+}
+
+/// Config history metadata embedded in ConfigPublish for atomic publish+history.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigHistoryInfo {
+    pub op_type: String,
+    pub publish_type: Option<String>,
+    pub ext_info: Option<String>,
+}
+
 /// All operations that go through Raft consensus
 /// Each variant represents a state machine command
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -36,6 +56,10 @@ pub enum RaftRequest {
         /// Nacos SDK sends this via `casMd5` header.
         #[serde(default)]
         cas_md5: Option<String>,
+        /// Optional: insert config history in the same Raft entry (avoids second Raft write).
+        /// When present, both config publish and history insert are applied atomically.
+        #[serde(default)]
+        history: Option<ConfigHistoryInfo>,
     },
 
     /// Remove a configuration
@@ -43,6 +67,9 @@ pub enum RaftRequest {
         data_id: String,
         group: String,
         tenant: String,
+        /// Optional: insert delete history in the same Raft entry
+        #[serde(default)]
+        history: Option<ConfigDeleteHistoryInfo>,
     },
 
     // ==================== Namespace Operations ====================
@@ -348,6 +375,7 @@ mod tests {
             schema: None,
             encrypted_data_key: None,
             cas_md5: None,
+            history: None,
         };
 
         let serialized = serde_json::to_string(&req).unwrap();

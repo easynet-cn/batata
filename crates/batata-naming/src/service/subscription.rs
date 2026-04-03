@@ -86,6 +86,10 @@ impl NamingService {
         service_key: &str,
         instance_key: &str,
     ) {
+        // Reject if connection is being deregistered (prevents orphan instances)
+        if self.closing_connections.contains_key(connection_id) {
+            return;
+        }
         self.connection_instances
             .entry(connection_id.to_string())
             .or_default()
@@ -108,16 +112,22 @@ impl NamingService {
     /// Deregister all instances associated with a connection.
     /// Called when a gRPC connection disconnects to clean up orphan ephemeral instances.
     /// Returns the set of affected service keys (for subscriber notification).
+    ///
+    /// Uses `closing_connections` set to prevent concurrent `add_connection_instance`
+    /// from inserting new instances for a connection being cleaned up.
     pub fn deregister_all_by_connection(&self, connection_id: &str) -> Vec<String> {
-        // Remove connection tracking first (releases connection_instances lock)
+        // Mark as closing — prevents concurrent add_connection_instance for this connection
+        self.closing_connections
+            .insert(connection_id.to_string(), ());
+
+        // Remove connection tracking (releases connection_instances lock)
         let instances_to_remove: Vec<(String, String)> =
             match self.connection_instances.remove(connection_id) {
                 Some((_, instances)) => instances.into_iter().collect(),
                 None => Vec::new(),
             };
-        // --- connection_instances lock released ---
 
-        // Now process removals one by one (each get() is a brief shard lock)
+        // Process removals one by one (each get() is a brief shard lock)
         let mut affected_service_keys = HashSet::new();
         for (service_key, instance_key) in instances_to_remove {
             if let Some(service_instances) = self.services.get(&service_key)
@@ -127,8 +137,11 @@ impl NamingService {
             }
         }
 
-        // Also clean up publisher tracking
+        // Clean up publisher tracking
         self.publishers.remove(connection_id);
+
+        // Unmark closing
+        self.closing_connections.remove(connection_id);
 
         affected_service_keys.into_iter().collect()
     }

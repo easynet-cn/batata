@@ -296,8 +296,6 @@ impl ConfigPersistence for EmbeddedPersistService {
             "modified_time": now,
         });
 
-        self.put_json(CF_CONFIG, &key, &value)?;
-
         // Build ext_info JSON with config metadata (consistent with DB mode)
         let ext_info = serde_json::json!({
             "config_tags": config_tags,
@@ -322,7 +320,6 @@ impl ConfigPersistence for EmbeddedPersistService {
             (content.to_string(), md5_val.clone())
         };
 
-        // Insert history entry
         let history_id = Self::generate_history_id();
         let op_type = if is_update { "U" } else { "I" };
         let history_key =
@@ -345,7 +342,22 @@ impl ConfigPersistence for EmbeddedPersistService {
             "created_time": now,
             "modified_time": now,
         });
-        self.put_json(CF_CONFIG_HISTORY, &history_key, &history_value)?;
+
+        // Atomic config + history write using WriteBatch
+        let cf_config = self.db.cf_handle(CF_CONFIG).ok_or_else(|| {
+            anyhow::anyhow!("Column family {} not found", CF_CONFIG)
+        })?;
+        let cf_history = self.db.cf_handle(CF_CONFIG_HISTORY).ok_or_else(|| {
+            anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY)
+        })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf_config, key.as_bytes(), value.to_string().as_bytes());
+        batch.put_cf(
+            &cf_history,
+            history_key.as_bytes(),
+            history_value.to_string().as_bytes(),
+        );
+        self.db.write(batch)?;
 
         Ok(true)
     }
@@ -367,10 +379,7 @@ impl ConfigPersistence for EmbeddedPersistService {
             return Ok(false);
         };
 
-        // Delete the config
-        self.delete_key(CF_CONFIG, &key)?;
-
-        // Build ext_info from existing config metadata
+        // Atomic delete + history insert using WriteBatch
         let ext_info = serde_json::json!({
             "config_tags": existing["config_tags"].as_str().unwrap_or(""),
             "desc": existing["desc"].as_str().unwrap_or(""),
@@ -381,7 +390,6 @@ impl ConfigPersistence for EmbeddedPersistService {
         })
         .to_string();
 
-        // Insert delete history
         let history_id = Self::generate_history_id();
         let now = chrono::Utc::now().timestamp_millis();
         let history_key =
@@ -404,7 +412,21 @@ impl ConfigPersistence for EmbeddedPersistService {
             "created_time": now,
             "modified_time": now,
         });
-        self.put_json(CF_CONFIG_HISTORY, &history_key, &history_value)?;
+
+        let cf_config = self.db.cf_handle(CF_CONFIG).ok_or_else(|| {
+            anyhow::anyhow!("Column family {} not found", CF_CONFIG)
+        })?;
+        let cf_history = self.db.cf_handle(CF_CONFIG_HISTORY).ok_or_else(|| {
+            anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY)
+        })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.delete_cf(&cf_config, key.as_bytes());
+        batch.put_cf(
+            &cf_history,
+            history_key.as_bytes(),
+            history_value.to_string().as_bytes(),
+        );
+        self.db.write(batch)?;
 
         Ok(true)
     }

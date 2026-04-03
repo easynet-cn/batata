@@ -35,6 +35,9 @@ chrono = { workspace = true }
 md-5 = { workspace = true }
 const-hex = { workspace = true }
 
+# Caching
+moka = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
