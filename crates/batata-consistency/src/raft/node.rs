@@ -263,8 +263,25 @@ impl RaftNode {
                         .forward_write_to_leader(&leader_addr, request.clone())
                         .await
                     {
-                        Ok(resp) => {
-                            let idx = self.last_applied_index().unwrap_or(1);
+                        Ok((resp, leader_log_index)) => {
+                            // Wait for local state machine to catch up to the
+                            // leader's committed index before returning, ensuring
+                            // subsequent local reads see the written data.
+                            if leader_log_index > 0 {
+                                if let Err(e) = self
+                                    .wait_for_applied(
+                                        leader_log_index,
+                                        Duration::from_secs(5),
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Follower wait-for-applied timed out: {}",
+                                        e
+                                    );
+                                }
+                            }
+                            let idx = self.last_applied_index().unwrap_or(leader_log_index);
                             return Ok((resp, idx));
                         }
                         Err(forward_err) => {
@@ -300,12 +317,13 @@ impl RaftNode {
         }
     }
 
-    /// Forward a write request to the Raft leader via gRPC
+    /// Forward a write request to the Raft leader via gRPC.
+    /// Returns the response and the leader's committed log index.
     async fn forward_write_to_leader(
         &self,
         leader_addr: &str,
         request: RaftRequest,
-    ) -> Result<RaftResponse, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<(RaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
         use batata_api::raft::ClientWriteRequest;
         use batata_api::raft::raft_management_service_client::RaftManagementServiceClient;
 
@@ -319,15 +337,18 @@ impl RaftNode {
             .into_inner();
 
         if response.success {
-            Ok(RaftResponse {
-                success: true,
-                data: if response.data.is_empty() {
-                    None
-                } else {
-                    Some(response.data)
+            Ok((
+                RaftResponse {
+                    success: true,
+                    data: if response.data.is_empty() {
+                        None
+                    } else {
+                        Some(response.data)
+                    },
+                    message: None,
                 },
-                message: None,
-            })
+                response.log_index,
+            ))
         } else {
             Err(response.message.into())
         }
@@ -379,6 +400,33 @@ impl RaftNode {
     /// Get the last applied log index
     pub fn last_applied_index(&self) -> Option<u64> {
         self.metrics().last_applied.map(|l| l.index)
+    }
+
+    /// Wait until the local state machine has applied at least up to `target_index`.
+    ///
+    /// This is used by follower nodes after forwarding a write to the leader.
+    /// The leader returns the committed log index; the follower must wait for
+    /// its local state machine to catch up before serving reads.
+    pub async fn wait_for_applied(
+        &self,
+        target_index: u64,
+        timeout: Duration,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let start = std::time::Instant::now();
+        loop {
+            let applied = self.last_applied_index().unwrap_or(0);
+            if applied >= target_index {
+                return Ok(());
+            }
+            if start.elapsed() > timeout {
+                return Err(format!(
+                    "Timed out waiting for local apply: applied={}, target={}",
+                    applied, target_index
+                )
+                .into());
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     /// Get the commit index (using last_applied as proxy)

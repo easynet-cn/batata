@@ -195,8 +195,7 @@ impl ConsulRaftNode {
         if resp.success {
             let consul_resp: ConsulRaftResponse = serde_json::from_slice(&resp.data)
                 .unwrap_or_else(|_| ConsulRaftResponse::success());
-            // The leader returns the log_index in the leader_id field
-            let leader_log_index = resp.leader_id.unwrap_or(1);
+            let leader_log_index = resp.log_index;
 
             // Wait for our local state machine to apply up to the leader's log index.
             // This ensures read-after-write consistency on this follower.

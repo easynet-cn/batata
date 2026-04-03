@@ -137,7 +137,7 @@ EOF
 
     # Clean old data and logs
     log_info "Cleaning old data and logs..."
-    rm -rf data/node1 data/node2 data/node3 data/consul-rocksdb data/rocksdb data/cluster-pids
+    rm -rf data/node1 data/node2 data/node3 data/consul-rocksdb data/rocksdb data/batata_rocksdb data/cluster-pids
     rm -rf logs/node1 logs/node2 logs/node3
     mkdir -p data/node1 data/node2 data/node3 "${CLUSTER_PID_DIR}" logs/node1 logs/node2 logs/node3
 
@@ -162,7 +162,7 @@ EOF
         -d "$deploy_mode" \
         --batata.server.main.port=${NODE1_PORT} \
         --batata.console.port=${CONSOLE_PORT} \
-        --batata.persistence.embedded.data_dir=data/node1 \
+        --batata.persistence.embedded.data_dir=data/node1/batata_rocksdb \
         --batata.plugin.consul.data_dir=data/node1/consul_rocksdb \
         --batata.logs.path=logs/node1 \
         --batata.plugin.consul.port=${NODE1_CONSUL_PORT} \
@@ -176,7 +176,7 @@ EOF
     nohup $BINARY \
         -d server \
         --batata.server.main.port=${NODE2_PORT} \
-        --batata.persistence.embedded.data_dir=data/node2 \
+        --batata.persistence.embedded.data_dir=data/node2/batata_rocksdb \
         --batata.plugin.consul.data_dir=data/node2/consul_rocksdb \
         --batata.logs.path=logs/node2 \
         --batata.plugin.consul.port=${NODE2_CONSUL_PORT} \
@@ -190,7 +190,7 @@ EOF
     nohup $BINARY \
         -d server \
         --batata.server.main.port=${NODE3_PORT} \
-        --batata.persistence.embedded.data_dir=data/node3 \
+        --batata.persistence.embedded.data_dir=data/node3/batata_rocksdb \
         --batata.plugin.consul.data_dir=data/node3/consul_rocksdb \
         --batata.logs.path=logs/node3 \
         --batata.plugin.consul.port=${NODE3_CONSUL_PORT} \

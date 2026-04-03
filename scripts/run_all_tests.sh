@@ -338,21 +338,21 @@ EOF
         -m cluster \
         --batata.sql.init.platform=embedded \
         --batata.server.main.port=8848 --batata.console.port=8081 \
-        --batata.persistence.embedded.data_dir=data/test-node1 \
+        --batata.persistence.embedded.data_dir=data/test-node1/batata_rocksdb \
         --batata.logs.path=logs/test-node1)
 
     pid2=$(start_bg_server "cluster_node2" \
         -m cluster \
         --batata.sql.init.platform=embedded \
         --batata.server.main.port=8858 --batata.console.port=8082 \
-        --batata.persistence.embedded.data_dir=data/test-node2 \
+        --batata.persistence.embedded.data_dir=data/test-node2/batata_rocksdb \
         --batata.logs.path=logs/test-node2)
 
     pid3=$(start_bg_server "cluster_node3" \
         -m cluster \
         --batata.sql.init.platform=embedded \
         --batata.server.main.port=8868 --batata.console.port=8083 \
-        --batata.persistence.embedded.data_dir=data/test-node3 \
+        --batata.persistence.embedded.data_dir=data/test-node3/batata_rocksdb \
         --batata.logs.path=logs/test-node3)
 
     # Wait for all nodes

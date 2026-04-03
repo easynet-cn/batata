@@ -265,14 +265,15 @@ impl RaftManagementService for RaftManagementGrpcService {
 
         debug!("Received write request: {}", raft_request.op_type());
 
-        // Forward to raft
-        match raft_node.write(raft_request).await {
-            Ok(response) => Ok(Response::new(ClientWriteResponse {
+        // Forward to raft and return the log index so followers can wait for local apply
+        match raft_node.write_with_index(raft_request).await {
+            Ok((response, log_index)) => Ok(Response::new(ClientWriteResponse {
                 success: response.success,
                 data: response.data.unwrap_or_default(),
                 message: response.message.unwrap_or_default(),
                 leader_id: None,
                 leader_addr: None,
+                log_index,
             })),
             Err(e) => {
                 // Check if we need to redirect to leader
@@ -284,6 +285,7 @@ impl RaftManagementService for RaftManagementGrpcService {
                         message: format!("Not leader, redirect to leader {}", leader_id),
                         leader_id: Some(leader_id),
                         leader_addr,
+                        log_index: 0,
                     }))
                 } else {
                     Err(Status::unavailable(format!("Write failed: {}", e)))

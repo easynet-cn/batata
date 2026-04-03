@@ -315,9 +315,9 @@ impl ConsulRaftManagementService for ConsulRaftManagementGrpcService {
                     success: resp.success,
                     data: resp_data,
                     message: resp.message.unwrap_or_default(),
-                    // Reuse leader_id field to pass back the Raft log index
-                    leader_id: Some(log_index),
+                    leader_id: None,
                     leader_addr: None,
+                    log_index,
                 }))
             }
             Err(e) => Ok(Response::new(ClientWriteResponse {
@@ -326,6 +326,7 @@ impl ConsulRaftManagementService for ConsulRaftManagementGrpcService {
                 message: e.to_string(),
                 leader_id: None,
                 leader_addr: None,
+                log_index: 0,
             })),
         }
     }

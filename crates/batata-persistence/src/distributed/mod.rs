@@ -46,11 +46,14 @@ impl DistributedPersistService {
     /// Ensure read consistency.
     ///
     /// On the leader, uses OpenRaft's `ensure_linearizable()` for strict consistency.
-    /// On followers, falls back to reading from the local state machine (eventually
-    /// consistent), similar to Nacos's ReadIndex approach where followers can serve
-    /// reads from their local state machine after Raft replication.
+    /// On followers, `ensure_linearizable()` will fail. In that case, we are still
+    /// safe because `raft_write()` (via `write_with_index()`) already waits for the
+    /// local state machine to apply up to the leader's committed index before returning.
+    /// So by the time we read, the local state machine is up-to-date for our writes.
     async fn ensure_consistent_read(&self) -> anyhow::Result<()> {
-        // Ignore ForwardToLeader errors on follower nodes - read from local state machine
+        // On the leader this provides linearizable reads.
+        // On followers this may fail, which is acceptable because follower writes
+        // already wait for local apply in RaftNode::write_with_index().
         let _ = self.raft_node.linearizable_read().await;
         Ok(())
     }

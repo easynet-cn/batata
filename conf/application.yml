@@ -82,7 +82,7 @@ batata.db.pool.sqlx_logging: false
 batata.db.migration.enabled: false
 
 # RocksDB data directory (for embedded modes only)
-#batata.persistence.embedded.data_dir: data/rocksdb
+#batata.persistence.embedded.data_dir: data/batata_rocksdb
 
 # =============================================================================
 # Authentication

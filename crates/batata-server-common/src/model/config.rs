@@ -641,7 +641,7 @@ impl Configuration {
     pub fn embedded_data_dir(&self) -> String {
         self.config
             .get_string("batata.persistence.embedded.data_dir")
-            .unwrap_or_else(|_| "data/rocksdb".to_string())
+            .unwrap_or_else(|_| "data/batata_rocksdb".to_string())
     }
 
     // ========================================================================
