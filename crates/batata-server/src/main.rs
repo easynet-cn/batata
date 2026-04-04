@@ -319,6 +319,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &server_status,
         &graceful_shutdown,
         &app_state,
+        &grpc_servers,
         xds_handle,
         persistence_ctx.server_member_manager.as_ref(),
         persistence_ctx.database_connection,
@@ -806,6 +807,7 @@ async fn graceful_shutdown_sequence(
     server_status: &Arc<ServerStatusManager>,
     graceful_shutdown: &GracefulShutdown,
     app_state: &Arc<AppState>,
+    grpc_servers: &startup::GrpcServers,
     xds_handle: Option<XdsServerHandle>,
     server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
     database_connection: Option<sea_orm::DatabaseConnection>,
@@ -818,27 +820,31 @@ async fn graceful_shutdown_sequence(
         drain_timeout.as_secs()
     );
 
-    // 2. Brief pause for in-flight requests
+    // 2. Signal gRPC servers to stop accepting new connections
+    grpc_servers.shutdown();
+    info!("gRPC servers signaled to shut down");
+
+    // 3. Brief pause for in-flight requests
     let drain_sleep = drain_timeout.min(Duration::from_secs(5));
     tokio::time::sleep(drain_sleep).await;
 
-    // 3. DOWN
+    // 4. DOWN
     server_status.set_down();
     info!("Server status: DOWN");
 
-    // 4. Stop xDS
+    // 5. Stop xDS
     if let Some(handle) = xds_handle {
         info!("Stopping xDS service...");
         handle.shutdown().await;
         info!("xDS service stopped");
     }
 
-    // 5. Health check manager stopped on drop
+    // 6. Health check manager stopped on drop
     if app_state.health_check_manager.is_some() {
         info!("Health check manager will be stopped (background tasks cancelled on drop)");
     }
 
-    // 6. Stop cluster manager
+    // 7. Stop cluster manager
     if let Some(smm) = server_member_manager
         && !app_state.configuration.is_standalone()
     {
@@ -847,7 +853,7 @@ async fn graceful_shutdown_sequence(
         info!("Cluster manager stopped");
     }
 
-    // 7. Shutdown Raft node
+    // 8. Shutdown Raft node
     if let Some(ref raft_node) = app_state.raft_node {
         info!("Shutting down Raft node...");
         match tokio::time::timeout(Duration::from_secs(10), raft_node.shutdown()).await {
@@ -857,13 +863,14 @@ async fn graceful_shutdown_sequence(
         }
     }
 
-    // 8. Close database connection
+    // 9. Close database connection
     if let Some(db) = database_connection {
-        info!("Closing database connections...");
-        match tokio::time::timeout(Duration::from_secs(5), db.close()).await {
+        let db_timeout = app_state.configuration.shutdown_db_close_timeout_secs();
+        info!("Closing database connections (timeout: {}s)...", db_timeout);
+        match tokio::time::timeout(Duration::from_secs(db_timeout), db.close()).await {
             Ok(Ok(())) => info!("Database connections closed"),
             Ok(Err(e)) => error!("Error closing database connections: {}", e),
-            Err(_) => error!("Database close timed out after 5s"),
+            Err(_) => error!("Database close timed out after {}s", db_timeout),
         }
     }
 }

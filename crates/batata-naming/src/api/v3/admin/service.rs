@@ -189,13 +189,7 @@ async fn list_services(
             .into_iter()
             .filter(|name| {
                 !naming_service
-                    .get_instances(
-                        namespace_id,
-                        group_name,
-                        name,
-                        "",
-                        false,
-                    )
+                    .get_instances(namespace_id, group_name, name, "", false)
                     .is_empty()
             })
             .collect()
@@ -314,13 +308,8 @@ async fn list_services(
         let service_list: Vec<ServiceInfoResponse> = service_names
             .iter()
             .map(|name| {
-                let instances = naming_service.get_instances(
-                    namespace_id,
-                    group_name,
-                    name,
-                    "",
-                    false,
-                );
+                let instances =
+                    naming_service.get_instances(namespace_id, group_name, name, "", false);
                 let clusters: HashSet<_> =
                     instances.iter().map(|i| i.cluster_name.clone()).collect();
                 let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
@@ -378,13 +367,8 @@ async fn get_service(
         );
     }
 
-    let instances = naming_service.get_instances(
-        namespace_id,
-        group_name,
-        &params.service_name,
-        "",
-        false,
-    );
+    let instances =
+        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
     let mut clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
     let metadata_opt =
         naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
@@ -655,13 +639,8 @@ async fn delete_service(
         );
     }
 
-    let instances = naming_service.get_instances(
-        namespace_id,
-        group_name,
-        &params.service_name,
-        "",
-        false,
-    );
+    let instances =
+        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
     if !instances.is_empty() {
         return Result::<bool>::http_response(
             400,

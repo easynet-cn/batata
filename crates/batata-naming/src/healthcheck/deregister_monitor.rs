@@ -120,11 +120,11 @@ mod tests {
     use crate::service::NamingService;
     use std::time::Duration;
 
-    fn create_test_components(
-    ) -> (Arc<NamingService>, Arc<InstanceCheckRegistry>) {
+    fn create_test_components() -> (Arc<NamingService>, Arc<InstanceCheckRegistry>) {
         let naming_service = Arc::new(NamingService::new());
-        let registry =
-            Arc::new(InstanceCheckRegistry::with_naming_service(naming_service.clone()));
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            naming_service.clone(),
+        ));
         (naming_service, registry)
     }
 
@@ -209,8 +209,7 @@ mod tests {
         };
         naming_service.register_instance("public", "DEFAULT_GROUP", "test-svc", instance);
 
-        let mut config =
-            create_check_config("auto-deregister", Some(Duration::from_millis(1)));
+        let mut config = create_check_config("auto-deregister", Some(Duration::from_millis(1)));
         config.ip = "10.0.0.2".to_string();
         config.port = 9090;
         config.initial_status = CheckStatus::Critical;
@@ -250,8 +249,7 @@ mod tests {
         };
         naming_service.register_instance("public", "DEFAULT_GROUP", "test-svc", instance);
 
-        let mut config =
-            create_check_config("recent-critical", Some(Duration::from_secs(3600)));
+        let mut config = create_check_config("recent-critical", Some(Duration::from_secs(3600)));
         config.ip = "10.0.0.3".to_string();
         config.port = 7070;
         registry.register_check(config);

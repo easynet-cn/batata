@@ -9,8 +9,8 @@
 //! The namespace prefix enables Enterprise namespace isolation.
 //! CE clients use "default" namespace transparently.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -116,8 +116,7 @@ impl ConsulNamingStore {
             if entry.value().namespace != ns {
                 continue;
             }
-            if let Ok(reg) =
-                serde_json::from_slice::<AgentServiceRegistration>(&entry.value().data)
+            if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&entry.value().data)
             {
                 let tags = result
                     .entry(entry.value().service_name.clone())
@@ -197,10 +196,8 @@ impl PluginNamingStore for ConsulNamingStore {
     }
 
     fn register(&self, key: &str, data: Bytes) -> Result<(), PluginNamingStoreError> {
-        let (namespace, service_name, service_id) =
-            Self::parse_key(key).ok_or_else(|| {
-                PluginNamingStoreError::Storage(format!("Invalid key format: {key}"))
-            })?;
+        let (namespace, service_name, service_id) = Self::parse_key(key)
+            .ok_or_else(|| PluginNamingStoreError::Storage(format!("Invalid key format: {key}")))?;
 
         self.entries.insert(
             key.to_string(),

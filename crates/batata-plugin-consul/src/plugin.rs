@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-
 use rocksdb::DB;
 
 use batata_naming::InstanceCheckRegistry;
@@ -91,7 +90,9 @@ impl ConsulPlugin {
                 dc_config.datacenter.clone(),
             )
             .with_index_provider(index_provider.clone()),
-            namespace_service: crate::namespace::ConsulNamespaceService::new(index_provider.clone()),
+            namespace_service: crate::namespace::ConsulNamespaceService::new(
+                index_provider.clone(),
+            ),
             index_provider,
             acl: if acl_enabled {
                 AclService::new()
@@ -167,7 +168,9 @@ impl ConsulPlugin {
             ),
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
             operator: ConsulOperatorService::with_rocks(db),
-            namespace_service: crate::namespace::ConsulNamespaceService::new(index_provider.clone()),
+            namespace_service: crate::namespace::ConsulNamespaceService::new(
+                index_provider.clone(),
+            ),
             dc_config,
             index_provider,
             enabled: true,
@@ -228,13 +231,14 @@ impl ConsulPlugin {
             ),
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
             operator: ConsulOperatorService::with_rocks(db),
-            namespace_service: crate::namespace::ConsulNamespaceService::new(index_provider.clone()),
+            namespace_service: crate::namespace::ConsulNamespaceService::new(
+                index_provider.clone(),
+            ),
             dc_config,
             index_provider,
             enabled: true,
         }
     }
-
 }
 
 // Implement the unified ProtocolAdapterPlugin SPI

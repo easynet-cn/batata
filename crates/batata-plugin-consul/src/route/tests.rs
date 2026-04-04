@@ -26,7 +26,9 @@ async fn create_test_app() -> impl actix_web::dev::Service<
     Error = actix_web::Error,
 > {
     let naming_service = Arc::new(NamingService::new());
-    let registry = Arc::new(batata_naming::InstanceCheckRegistry::with_naming_service(naming_service));
+    let registry = Arc::new(batata_naming::InstanceCheckRegistry::with_naming_service(
+        naming_service,
+    ));
     let kv_service = ConsulKVService::new();
     let session_service = ConsulSessionService::new();
     let health_service = ConsulHealthService::new(registry.clone());

@@ -344,12 +344,14 @@ impl ConfigPersistence for EmbeddedPersistService {
         });
 
         // Atomic config + history write using WriteBatch
-        let cf_config = self.db.cf_handle(CF_CONFIG).ok_or_else(|| {
-            anyhow::anyhow!("Column family {} not found", CF_CONFIG)
-        })?;
-        let cf_history = self.db.cf_handle(CF_CONFIG_HISTORY).ok_or_else(|| {
-            anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY)
-        })?;
+        let cf_config = self
+            .db
+            .cf_handle(CF_CONFIG)
+            .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_CONFIG))?;
+        let cf_history = self
+            .db
+            .cf_handle(CF_CONFIG_HISTORY)
+            .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY))?;
         let mut batch = rocksdb::WriteBatch::default();
         batch.put_cf(&cf_config, key.as_bytes(), value.to_string().as_bytes());
         batch.put_cf(
@@ -413,12 +415,14 @@ impl ConfigPersistence for EmbeddedPersistService {
             "modified_time": now,
         });
 
-        let cf_config = self.db.cf_handle(CF_CONFIG).ok_or_else(|| {
-            anyhow::anyhow!("Column family {} not found", CF_CONFIG)
-        })?;
-        let cf_history = self.db.cf_handle(CF_CONFIG_HISTORY).ok_or_else(|| {
-            anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY)
-        })?;
+        let cf_config = self
+            .db
+            .cf_handle(CF_CONFIG)
+            .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_CONFIG))?;
+        let cf_history = self
+            .db
+            .cf_handle(CF_CONFIG_HISTORY)
+            .ok_or_else(|| anyhow::anyhow!("Column family {} not found", CF_CONFIG_HISTORY))?;
         let mut batch = rocksdb::WriteBatch::default();
         batch.delete_cf(&cf_config, key.as_bytes());
         batch.put_cf(

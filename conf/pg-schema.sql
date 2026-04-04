@@ -320,6 +320,7 @@ COMMIT;
 -- Indexes structure for table config_info
 -- ----------------------------
 CREATE UNIQUE INDEX "uk_configinfo_datagrouptenant" ON "config_info" ("data_id","group_id","tenant_id");
+CREATE INDEX "idx_configinfo_tenant_group_modified" ON "config_info" ("tenant_id","group_id","gmt_modified");
 
 -- ----------------------------
 -- Primary Key structure for table config_info

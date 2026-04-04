@@ -175,7 +175,7 @@ impl RaftNetwork<ConsulTypeConfig> for ConsulRaftNetworkConnection {
     async fn install_snapshot(
         &mut self,
         rpc: InstallSnapshotRequest<ConsulTypeConfig>,
-        option: RPCOption,
+        _option: RPCOption,
     ) -> Result<
         InstallSnapshotResponse<NodeId>,
         RPCError<NodeId, BasicNode, RaftError<NodeId, InstallSnapshotError>>,

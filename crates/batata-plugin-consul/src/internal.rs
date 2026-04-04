@@ -278,7 +278,8 @@ pub async fn ui_catalog_overview(
     let mut critical_checks: i64 = 0;
 
     for service_name in &service_names {
-        let entries = naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
+        let entries =
+            naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
         for entry_bytes in &entries {
             if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(entry_bytes) {
                 let ip = reg.effective_address();
@@ -687,7 +688,9 @@ pub async fn assign_service_virtual_ip(
     }
 
     let request = body.into_inner();
-    let found = !naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, &request.service_name).is_empty();
+    let found = !naming_store
+        .get_service_entries(crate::namespace::DEFAULT_NAMESPACE, &request.service_name)
+        .is_empty();
 
     HttpResponse::Ok()
         .insert_header((

@@ -370,7 +370,8 @@ pub async fn execute_query(
     let service_name = &query.service.service;
     let only_passing = query.service.only_passing;
 
-    let entries = naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
+    let entries =
+        naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
 
     // Convert to ServiceHealth format
     let mut nodes: Vec<ServiceHealth> = Vec::new();

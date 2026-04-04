@@ -65,12 +65,14 @@ use crate::{
 
 /// gRPC server configuration and state.
 pub struct GrpcServers {
-    /// Handle for the SDK gRPC server task (kept for potential graceful shutdown).
+    /// Handle for the SDK gRPC server task.
     _sdk_server: tokio::task::JoinHandle<()>,
-    /// Handle for the cluster gRPC server task (kept for potential graceful shutdown).
+    /// Handle for the cluster gRPC server task.
     _cluster_server: tokio::task::JoinHandle<()>,
     /// Handle for the Raft gRPC server task (only in distributed embedded mode).
     _raft_server: Option<tokio::task::JoinHandle<()>>,
+    /// Shutdown signal sender — dropping or sending signals graceful stop.
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
     /// The naming service used by handlers.
     naming_service: Arc<NamingService>,
     /// The connection manager for tracking client connections.
@@ -87,6 +89,11 @@ pub struct GrpcServers {
 }
 
 impl GrpcServers {
+    /// Signal all gRPC servers to stop accepting new connections and shut down gracefully.
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+
     /// Get naming service as trait object for HTTP consumers.
     pub fn naming_provider(&self) -> Arc<dyn batata_api::naming::NamingServiceProvider> {
         self.naming_service.clone()
@@ -471,6 +478,10 @@ pub fn start_grpc_servers(
             tracing::warn!("TLS configuration warning: {}", warning);
         }
     }
+
+    // Shutdown signal: send `true` to stop all gRPC servers gracefully
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
+
     // Setup gRPC interceptor layer
     let layer = ServiceBuilder::new()
         .load_shed()
@@ -669,6 +680,10 @@ pub fn start_grpc_servers(
         let grpc_request_service = grpc_request_service.clone();
         let grpc_bi_request_stream_service = grpc_bi_request_stream_service.clone();
         let layer = layer.clone();
+        let mut sdk_shutdown_rx = _shutdown_rx.clone();
+        let sdk_shutdown = async move {
+            let _ = sdk_shutdown_rx.wait_for(|&v| v).await;
+        };
         tokio::spawn(async move {
             let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
                 if sdk_use_tls {
@@ -688,7 +703,7 @@ pub fn start_grpc_servers(
                         .layer(layer)
                         .add_service(RequestServer::new(grpc_request_service))
                         .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
-                        .serve(grpc_sdk_addr)
+                        .serve_with_shutdown(grpc_sdk_addr, sdk_shutdown)
                         .await?;
                 } else {
                     tonic::transport::Server::builder()
@@ -704,7 +719,7 @@ pub fn start_grpc_servers(
                         .layer(layer)
                         .add_service(RequestServer::new(grpc_request_service))
                         .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
-                        .serve(grpc_sdk_addr)
+                        .serve_with_shutdown(grpc_sdk_addr, sdk_shutdown)
                         .await?;
                 }
                 Ok(())
@@ -724,41 +739,47 @@ pub fn start_grpc_servers(
         "Starting cluster gRPC server on {} (TLS: {})",
         grpc_cluster_addr, cluster_use_tls
     );
-    let cluster_server = tokio::spawn(async move {
-        let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
-            if cluster_use_tls {
-                info!("Cluster gRPC server starting with TLS enabled");
-                let server_tls_config = cluster_tls_config.create_server_tls_config().await?;
-                tonic::transport::Server::builder()
-                    .tls_config(server_tls_config)?
-                    .tcp_keepalive(Some(tcp_keepalive))
-                    .http2_keepalive_interval(Some(http2_interval))
-                    .http2_keepalive_timeout(Some(http2_timeout))
-                    .concurrency_limit_per_connection(concurrency)
-                    .layer(layer)
-                    .add_service(RequestServer::new(grpc_request_service))
-                    .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
-                    .serve(grpc_cluster_addr)
-                    .await?;
-            } else {
-                tonic::transport::Server::builder()
-                    .tcp_keepalive(Some(tcp_keepalive))
-                    .http2_keepalive_interval(Some(http2_interval))
-                    .http2_keepalive_timeout(Some(http2_timeout))
-                    .concurrency_limit_per_connection(concurrency)
-                    .layer(layer)
-                    .add_service(RequestServer::new(grpc_request_service))
-                    .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
-                    .serve(grpc_cluster_addr)
-                    .await?;
+    let cluster_server = {
+        let mut cluster_shutdown_rx = _shutdown_rx.clone();
+        let cluster_shutdown = async move {
+            let _ = cluster_shutdown_rx.wait_for(|&v| v).await;
+        };
+        tokio::spawn(async move {
+            let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = async {
+                if cluster_use_tls {
+                    info!("Cluster gRPC server starting with TLS enabled");
+                    let server_tls_config = cluster_tls_config.create_server_tls_config().await?;
+                    tonic::transport::Server::builder()
+                        .tls_config(server_tls_config)?
+                        .tcp_keepalive(Some(tcp_keepalive))
+                        .http2_keepalive_interval(Some(http2_interval))
+                        .http2_keepalive_timeout(Some(http2_timeout))
+                        .concurrency_limit_per_connection(concurrency)
+                        .layer(layer)
+                        .add_service(RequestServer::new(grpc_request_service))
+                        .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+                        .serve_with_shutdown(grpc_cluster_addr, cluster_shutdown)
+                        .await?;
+                } else {
+                    tonic::transport::Server::builder()
+                        .tcp_keepalive(Some(tcp_keepalive))
+                        .http2_keepalive_interval(Some(http2_interval))
+                        .http2_keepalive_timeout(Some(http2_timeout))
+                        .concurrency_limit_per_connection(concurrency)
+                        .layer(layer)
+                        .add_service(RequestServer::new(grpc_request_service))
+                        .add_service(BiRequestStreamServer::new(grpc_bi_request_stream_service))
+                        .serve_with_shutdown(grpc_cluster_addr, cluster_shutdown)
+                        .await?;
+                }
+                Ok(())
             }
-            Ok(())
-        }
-        .await;
-        if let Err(e) = result {
-            tracing::error!("Cluster gRPC server error: {}", e);
-        }
-    });
+            .await;
+            if let Err(e) = result {
+                tracing::error!("Cluster gRPC server error: {}", e);
+            }
+        })
+    };
 
     // Create Consul Raft gRPC service (starts empty, ConsulRaftNode set later)
     let consul_raft_grpc =
@@ -903,6 +924,7 @@ pub fn start_grpc_servers(
         _sdk_server: sdk_server,
         _cluster_server: cluster_server,
         _raft_server: raft_server_handle,
+        shutdown_tx,
         naming_service,
         connection_manager: connection_manager_for_http,
         distro_protocol,

@@ -24,6 +24,7 @@ use crate::{
 /// The nacos-maintainer-client sends: agentCard=<JSON>&agentName=xxx&namespaceId=xxx
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Fields deserialized from HTTP form, may not all be read in Rust
 struct AgentForm {
     #[serde(default, alias = "agentCard")]
     pub agent_card: Option<String>,

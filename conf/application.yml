@@ -390,6 +390,12 @@ batata.mesh.xds.default.listener.port: 15001
 # HTTP access log (per-request logging). Disable for better performance.
 #batata.server.http.access_log.enabled: true
 
+# --- Graceful Shutdown ---
+# Drain timeout: time to wait for in-flight requests before shutting down
+#batata.server.shutdown.drain_timeout: 30
+# Database close timeout during shutdown (seconds, default: 10)
+#batata.server.shutdown.db_close_timeout: 10
+
 # --- gRPC Server ---
 #batata.server.grpc.tcp_keepalive: 30              # seconds
 #batata.server.grpc.tcp_nodelay: true              # disable Nagle's algorithm for lower latency
@@ -426,7 +432,7 @@ batata.mesh.xds.default.listener.port: 15001
 
 # --- Config Read Cache ---
 # Cache hot config reads to reduce RocksDB pressure (distributed mode only).
-# TTL in seconds. 0 = disabled (default). Recommended: 2-5 for high-read workloads.
+# TTL in seconds. 0 = disabled (default). Recommended: 5-30 for high-read workloads.
 #batata.config.read_cache_ttl: 0
 #batata.config.read_cache_max_entries: 10000
 

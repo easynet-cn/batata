@@ -744,13 +744,9 @@ impl PayloadHandler for SubscribeServiceRequestHandler {
         }
 
         // Return current service info
-        let service_info = self.naming_service.get_service(
-            namespace,
-            group_name,
-            service_name,
-            clusters,
-            false,
-        );
+        let service_info =
+            self.naming_service
+                .get_service(namespace, group_name, service_name, clusters, false);
 
         info!(
             "SubscribeServiceResponse: service='{}', clusters='{}', hosts_count={}",

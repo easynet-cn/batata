@@ -26,6 +26,7 @@ use crate::{
 /// form-level `mcpName` parameter.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Fields deserialized from HTTP form, may not all be read in Rust
 struct McpForm {
     #[serde(default, alias = "namespaceId")]
     pub namespace_id: Option<String>,

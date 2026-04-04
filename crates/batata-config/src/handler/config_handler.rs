@@ -1101,7 +1101,6 @@ impl PayloadHandler for ConfigBatchListenHandler {
         let request = ConfigBatchListenRequest::from(payload);
         let request_id = request.request_id();
 
-        let persistence = self.app_state.persistence();
         let subscriber_manager = &self.app_state.config_subscriber_manager;
         let connection_id = &_connection.meta_info.connection_id;
         let client_ip = &_connection.meta_info.remote_ip;

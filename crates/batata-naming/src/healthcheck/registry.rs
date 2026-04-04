@@ -257,9 +257,12 @@ impl InstanceCheckRegistry {
     ///
     /// Creates a `CoreResultHandler` wrapping the given NamingServiceProvider,
     /// so health status changes are synced to the NamingService.
-    pub fn with_naming_service(naming_service: Arc<dyn batata_api::naming::NamingServiceProvider>) -> Self {
-        let handler: Arc<dyn HealthCheckResultHandler> =
-            Arc::new(super::result_handler::CoreResultHandler::new(naming_service));
+    pub fn with_naming_service(
+        naming_service: Arc<dyn batata_api::naming::NamingServiceProvider>,
+    ) -> Self {
+        let handler: Arc<dyn HealthCheckResultHandler> = Arc::new(
+            super::result_handler::CoreResultHandler::new(naming_service),
+        );
         Self::new(handler)
     }
 
@@ -295,8 +298,11 @@ impl InstanceCheckRegistry {
 
         // Register consul service ID if provided
         if let Some(ref consul_svc_id) = config.consul_service_id {
-            let svc_key =
-                build_check_service_key(&config.namespace, &config.group_name, &config.service_name);
+            let svc_key = build_check_service_key(
+                &config.namespace,
+                &config.group_name,
+                &config.service_name,
+            );
             let inst_key = build_instance_key(
                 &config.namespace,
                 &config.group_name,

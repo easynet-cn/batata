@@ -159,12 +159,6 @@ struct InstanceResponse {
     metadata: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InstanceListResponse {
-    hosts: Vec<Instance>,
-}
-
 /// POST /v3/admin/ns/instance
 #[post("")]
 async fn register_instance(
@@ -616,13 +610,8 @@ async fn update_metadata(
 
     let instance_keys = parse_instance_keys(&form.instances);
 
-    let instances = naming_service.get_instances(
-        namespace_id,
-        group_name,
-        &form.service_name,
-        "",
-        false,
-    );
+    let instances =
+        naming_service.get_instances(namespace_id, group_name, &form.service_name, "", false);
 
     let mut updated_ips = Vec::new();
     for instance in instances {
@@ -847,13 +836,8 @@ async fn delete_metadata_batch(
         );
     }
 
-    let instances = naming_service.get_instances(
-        namespace_id,
-        group_name,
-        &params.service_name,
-        "",
-        false,
-    );
+    let instances =
+        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
 
     let mut updated_ips = Vec::new();
     for instance in instances {

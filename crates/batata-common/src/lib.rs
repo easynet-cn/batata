@@ -372,8 +372,7 @@ mod tests {
 
     #[test]
     fn test_parse_config_key() {
-        let (data_id, group, tenant) =
-            parse_config_key("app.yaml+DEFAULT_GROUP+public").unwrap();
+        let (data_id, group, tenant) = parse_config_key("app.yaml+DEFAULT_GROUP+public").unwrap();
         assert_eq!(data_id, "app.yaml");
         assert_eq!(group, "DEFAULT_GROUP");
         assert_eq!(tenant, "public");

@@ -15,10 +15,10 @@ use batata_naming::healthcheck::registry::{
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
-    AgentService, AgentServiceRegistration, CheckRegistration, CheckStatusUpdate,
-    CheckUpdateParams, ConsulDatacenterConfig, ConsulError, HealthCheck, HealthQueryParams, Node,
-    ServiceHealth, ServiceQueryParams, CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP,
-    CONSUL_INTERNAL_NAMESPACE,
+    AgentService, AgentServiceRegistration, CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP,
+    CONSUL_INTERNAL_NAMESPACE, CheckRegistration, CheckStatusUpdate, CheckUpdateParams,
+    ConsulDatacenterConfig, ConsulError, HealthCheck, HealthQueryParams, Node, ServiceHealth,
+    ServiceQueryParams,
 };
 use crate::naming_store::ConsulNamingStore;
 
@@ -322,7 +322,8 @@ pub async fn get_service_health(
         };
 
         let service_id = reg.service_id();
-        let healthy = naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+        let healthy =
+            naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
 
         // Filter by tag if specified
         if let Some(ref tag) = query.tag {
@@ -523,7 +524,8 @@ pub async fn get_service_checks(
         };
 
         let service_id = reg.service_id();
-        let healthy = naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+        let healthy =
+            naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
 
         let mut checks = health_service.get_service_checks(&service_id).await;
         if checks.is_empty() {
@@ -874,7 +876,8 @@ pub async fn get_connect_health(
             }
 
             let service_id = reg.service_id();
-            let healthy = naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+            let healthy =
+                naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
 
             let agent_service = AgentService::from(&reg);
             let mut checks = health_service.get_service_checks(&service_id).await;
@@ -963,7 +966,8 @@ pub async fn get_ingress_health(
             }
 
             let service_id = reg.service_id();
-            let healthy = naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+            let healthy =
+                naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
 
             let agent_service = AgentService::from(&reg);
             let mut checks = health_service.get_service_checks(&service_id).await;
@@ -1154,7 +1158,9 @@ mod tests {
     /// Helper to create a ConsulHealthService for tests
     fn create_test_service() -> ConsulHealthService {
         let naming_service = Arc::new(NamingService::new());
-        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service.clone()));
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            naming_service.clone(),
+        ));
         ConsulHealthService::new(registry)
     }
 
@@ -1702,9 +1708,9 @@ mod tests {
 
     fn create_test_health_service_with_registry()
     -> (ConsulHealthService, Arc<InstanceCheckRegistry>) {
-        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
-            Arc::new(NamingService::new()),
-        ));
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(Arc::new(
+            NamingService::new(),
+        )));
         let service = ConsulHealthService::new(registry.clone());
         (service, registry)
     }

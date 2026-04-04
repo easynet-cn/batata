@@ -667,13 +667,8 @@ pub async fn batch_update_metadata(
     }
 
     // Get existing Batata-registered instances and update metadata
-    let instances = naming_service.get_instances(
-        namespace_id,
-        group_name,
-        &form.service_name,
-        "",
-        false,
-    );
+    let instances =
+        naming_service.get_instances(namespace_id, group_name, &form.service_name, "", false);
 
     let mut updated_count = 0;
     for instance in instances {
@@ -800,13 +795,8 @@ pub async fn batch_delete_metadata(
     }
 
     // Get existing Batata-registered instances and delete metadata keys
-    let instances = naming_service.get_instances(
-        namespace_id,
-        group_name,
-        &params.service_name,
-        "",
-        false,
-    );
+    let instances =
+        naming_service.get_instances(namespace_id, group_name, &params.service_name, "", false);
 
     let mut updated_count = 0;
     for instance in instances {
@@ -1102,13 +1092,7 @@ pub async fn get_instance_statuses(
             .build()
     );
 
-    let instances = naming_service.get_instances(
-        namespace_id,
-        group_name,
-        service_name,
-        "",
-        false,
-    );
+    let instances = naming_service.get_instances(namespace_id, group_name, service_name, "", false);
 
     let statuses: HashMap<String, bool> = instances
         .into_iter()

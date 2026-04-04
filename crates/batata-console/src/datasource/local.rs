@@ -537,23 +537,13 @@ impl ConsoleDataSource for LocalDataSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("NamingService not available"))?;
 
-        let (total_count, service_names) = naming.list_services(
-            namespace_id,
-            group_name,
-            page_no as i32,
-            page_size as i32,
-        );
+        let (total_count, service_names) =
+            naming.list_services(namespace_id, group_name, page_no as i32, page_size as i32);
 
         let service_list: Vec<serde_json::Value> = service_names
             .iter()
             .map(|name| {
-                let instances = naming.get_instances(
-                    namespace_id,
-                    group_name,
-                    name,
-                    "",
-                    false,
-                );
+                let instances = naming.get_instances(namespace_id, group_name, name, "", false);
                 let clusters: HashSet<_> =
                     instances.iter().map(|i| i.cluster_name.clone()).collect();
                 let healthy_count = instances.iter().filter(|i| i.healthy && i.enabled).count();
@@ -646,13 +636,7 @@ impl ConsoleDataSource for LocalDataSource {
             .collect();
 
         // Collect cluster names from service storage (clusters that have instances)
-        let instances = naming.get_instances(
-            namespace_id,
-            group_name,
-            service_name,
-            "",
-            false,
-        );
+        let instances = naming.get_instances(namespace_id, group_name, service_name, "", false);
         let mut all_cluster_names: HashSet<String> =
             instances.iter().map(|i| i.cluster_name.clone()).collect();
         for cfg in &cluster_configs {
@@ -805,13 +789,7 @@ impl ConsoleDataSource for LocalDataSource {
             return Err(anyhow::anyhow!("service {} not found", service_name));
         }
 
-        let instances = naming.get_instances(
-            namespace_id,
-            group_name,
-            service_name,
-            "",
-            false,
-        );
+        let instances = naming.get_instances(namespace_id, group_name, service_name, "", false);
         if !instances.is_empty() {
             return Err(anyhow::anyhow!(
                 "service {} has {} instances, cannot delete",
@@ -864,13 +842,7 @@ impl ConsoleDataSource for LocalDataSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("NamingService not available"))?;
 
-        Ok(naming.get_instances(
-            namespace_id,
-            group_name,
-            service_name,
-            cluster_name,
-            false,
-        ))
+        Ok(naming.get_instances(namespace_id, group_name, service_name, cluster_name, false))
     }
 
     async fn instance_update(

@@ -44,6 +44,7 @@ CREATE TABLE config_info (
 CREATE INDEX idx_config_tenant_id ON config_info(tenant_id);
 CREATE INDEX idx_config_app_name ON config_info(app_name);
 CREATE INDEX idx_config_gmt_modified ON config_info(gmt_modified);
+CREATE INDEX idx_config_tenant_group_modified ON config_info(tenant_id, group_id, gmt_modified);
 
 COMMENT ON TABLE config_info IS 'Configuration information table';
 COMMENT ON COLUMN config_info.id IS 'Primary key ID';

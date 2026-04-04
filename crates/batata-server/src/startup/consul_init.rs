@@ -79,12 +79,11 @@ pub async fn init_consul(
     // not NamingService — keeping Consul data fully independent.
     let consul_naming_store = Arc::new(batata_plugin_consul::ConsulNamingStore::new());
     let consul_index_provider = Arc::new(batata_plugin_consul::ConsulIndexProvider::new());
-    let consul_result_handler: Arc<dyn batata_plugin::HealthCheckResultHandler> = Arc::new(
-        batata_plugin_consul::ConsulResultHandler::new(
+    let consul_result_handler: Arc<dyn batata_plugin::HealthCheckResultHandler> =
+        Arc::new(batata_plugin_consul::ConsulResultHandler::new(
             consul_naming_store.clone(),
             consul_index_provider.clone(),
-        ),
-    );
+        ));
     let consul_registry = Arc::new(InstanceCheckRegistry::new(consul_result_handler));
 
     let services = if is_cluster {

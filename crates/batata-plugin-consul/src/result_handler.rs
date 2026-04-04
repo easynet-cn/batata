@@ -25,7 +25,10 @@ pub struct ConsulResultHandler {
 }
 
 impl ConsulResultHandler {
-    pub fn new(naming_store: Arc<ConsulNamingStore>, index_provider: Arc<ConsulIndexProvider>) -> Self {
+    pub fn new(
+        naming_store: Arc<ConsulNamingStore>,
+        index_provider: Arc<ConsulIndexProvider>,
+    ) -> Self {
         Self {
             naming_store,
             index_provider,
@@ -60,8 +63,7 @@ impl HealthCheckResultHandler for ConsulResultHandler {
         // Find and remove the service by IP:port
         let entries = PluginNamingStore::scan(&*self.naming_store, "");
         for (key, data) in &entries {
-            if let Ok(reg) =
-                serde_json::from_slice::<crate::model::AgentServiceRegistration>(data)
+            if let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(data)
             {
                 let reg_port = reg.port.unwrap_or(0) as i32;
                 let reg_addr = reg.address.as_deref().unwrap_or("");
@@ -78,8 +80,8 @@ impl HealthCheckResultHandler for ConsulResultHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
     use batata_plugin::PluginNamingStore;
+    use bytes::Bytes;
 
     #[test]
     fn test_consul_result_handler_health_changed() {
@@ -118,7 +120,9 @@ mod tests {
             "Name": "web", "ID": "web-1", "Port": 8080, "Address": "10.0.0.1"
         }))
         .unwrap();
-        store.register("default/web/web-1", Bytes::from(data)).unwrap();
+        store
+            .register("default/web/web-1", Bytes::from(data))
+            .unwrap();
         assert_eq!(store.len(), 1);
 
         handler.on_deregister("", "", "web", "10.0.0.1", 8080, "");

@@ -25,9 +25,9 @@ pub use healthcheck::{
     InstanceCheckConfig, InstanceCheckRegistry, InstanceCheckStatus, TcpHealthCheckProcessor,
     TcpHealthParams, UnhealthyInstanceChecker,
 };
+pub use manager::NamingManager;
 pub use model::{Instance, Service, ServiceInfo, ServiceQuery};
 pub use selector::{LabelOperator, LabelRequirement, SelectorBuilder, ServiceSelector};
-pub use manager::NamingManager;
 pub use service::{
     ClusterConfig, ClusterStatistics, FuzzyWatchPattern, NamingService, ProtectionInfo,
     ServiceMetadata,

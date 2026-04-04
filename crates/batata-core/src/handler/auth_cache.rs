@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use tonic::Status;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::model::Connection;
 

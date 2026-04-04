@@ -46,8 +46,15 @@ async fn ui_nodes(
     query: web::Query<UINodeQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::internal::ui_nodes(req, naming_store, acl_service, dc_config, query, index_provider)
-        .await
+    crate::internal::ui_nodes(
+        req,
+        naming_store,
+        acl_service,
+        dc_config,
+        query,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/ui/node/{node}")]
@@ -59,8 +66,15 @@ async fn ui_node_info(
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::internal::ui_node_info(req, naming_store, acl_service, dc_config, path, index_provider)
-        .await
+    crate::internal::ui_node_info(
+        req,
+        naming_store,
+        acl_service,
+        dc_config,
+        path,
+        index_provider,
+    )
+    .await
 }
 
 #[get("/ui/exported-services")]

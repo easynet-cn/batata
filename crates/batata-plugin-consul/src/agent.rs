@@ -16,13 +16,13 @@ use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentConfig, AgentHostInfo, AgentMaintenanceRequest, AgentMember, AgentMembersParams,
     AgentSelf, AgentService, AgentServiceChecksInfo, AgentServiceRegistration,
-    AgentServiceWithChecks, AgentStats, AgentVersion, CheckRegistration, ConsulDatacenterConfig,
+    AgentServiceWithChecks, AgentStats, AgentVersion, CONSUL_INTERNAL_CLUSTER,
+    CONSUL_INTERNAL_GROUP, CONSUL_INTERNAL_NAMESPACE, CheckRegistration, ConsulDatacenterConfig,
     ConsulError, CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo, HostMemory,
     MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
-    CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP, CONSUL_INTERNAL_NAMESPACE,
 };
-use batata_plugin::PluginNamingStore;
 use crate::naming_store::ConsulNamingStore;
+use batata_plugin::PluginNamingStore;
 
 /// Consul Agent service adapter
 ///
@@ -35,10 +35,7 @@ pub struct ConsulAgentService {
 }
 
 impl ConsulAgentService {
-    pub fn new(
-        naming_store: Arc<ConsulNamingStore>,
-        registry: Arc<InstanceCheckRegistry>,
-    ) -> Self {
+    pub fn new(naming_store: Arc<ConsulNamingStore>, registry: Arc<InstanceCheckRegistry>) -> Self {
         Self {
             naming_store,
             registry,
@@ -73,7 +70,11 @@ impl ConsulAgentService {
             ..Default::default()
         };
 
-        let store_key = ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, service_name, "consul");
+        let store_key = ConsulNamingStore::build_key(
+            crate::namespace::DEFAULT_NAMESPACE,
+            service_name,
+            "consul",
+        );
         match serde_json::to_vec(&reg) {
             Ok(data) => {
                 let _ = self
@@ -145,7 +146,8 @@ impl ConsulAgentService {
 
     /// Deregister Consul service
     pub async fn deregister_consul_service(&self) {
-        self.naming_store.remove_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
+        self.naming_store
+            .remove_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
         self.registry.remove_consul_service_id("consul");
         tracing::info!("Consul service deregistered");
     }
@@ -228,7 +230,11 @@ pub async fn register_service(
             if old_ip != instance_ip || old_port != instance_port {
                 tracing::info!(
                     "Re-registration detected for consul_service_id={}: old={}:{}, new={}:{}. Cleaning up old checks.",
-                    service_id, old_ip, old_port, instance_ip, instance_port
+                    service_id,
+                    old_ip,
+                    old_port,
+                    instance_ip,
+                    instance_port
                 );
                 agent
                     .registry
@@ -291,7 +297,11 @@ pub async fn register_service(
         }
     }
 
-    tracing::info!("Service registered: name={}, id={}", registration.name, service_id);
+    tracing::info!(
+        "Service registered: name={}, id={}",
+        registration.name,
+        service_id
+    );
 
     HttpResponse::Ok()
         .insert_header((
@@ -338,7 +348,9 @@ pub async fn deregister_service(
     }
 
     // Remove from Consul naming store
-    let deregistered = agent.naming_store.remove_by_service_id(&namespace, &service_id);
+    let deregistered = agent
+        .naming_store
+        .remove_by_service_id(&namespace, &service_id);
 
     if deregistered {
         // Clean up registry entries via O(1) lookup
@@ -442,11 +454,15 @@ pub async fn get_service(
     }
 
     // Find the service by ID from ConsulNamingStore
-    if let Some(data) = agent.naming_store.get_by_service_id(&namespace, &service_id) {
+    if let Some(data) = agent
+        .naming_store
+        .get_by_service_id(&namespace, &service_id)
+    {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             let agent_service = AgentService::from(&reg);
-            let healthy =
-                agent.naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+            let healthy = agent
+                .naming_store
+                .is_healthy(&reg.effective_address(), reg.effective_port() as i32);
             let checks = vec![create_service_health_check_from_reg(&reg, healthy)];
             let response = AgentServiceWithChecks {
                 service: agent_service,
@@ -542,10 +558,14 @@ pub async fn agent_health_service_by_id(
     }
 
     // Search for the service instance by ID from ConsulNamingStore
-    if let Some(data) = agent.naming_store.get_by_service_id(&namespace, &service_id) {
+    if let Some(data) = agent
+        .naming_store
+        .get_by_service_id(&namespace, &service_id)
+    {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            let healthy =
-                agent.naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+            let healthy = agent
+                .naming_store
+                .is_healthy(&reg.effective_address(), reg.effective_port() as i32);
             let agent_service = AgentService::from(&reg);
             let checks = health_service.get_service_checks(&service_id).await;
             let status = if checks.is_empty() {
@@ -609,7 +629,9 @@ pub async fn agent_health_service_by_name(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let entries = agent.naming_store.get_service_entries(&namespace, &service_name);
+    let entries = agent
+        .naming_store
+        .get_service_entries(&namespace, &service_name);
 
     if entries.is_empty() {
         return HttpResponse::NotFound().json(ConsulError::new(format!(
@@ -627,7 +649,9 @@ pub async fn agent_health_service_by_name(
             Err(_) => continue,
         };
         let svc_id = reg.service_id();
-        let healthy = agent.naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+        let healthy = agent
+            .naming_store
+            .is_healthy(&reg.effective_address(), reg.effective_port() as i32);
         let agent_service = AgentService::from(&reg);
         let checks = health_service.get_service_checks(&svc_id).await;
         let status = if checks.is_empty() {
@@ -1496,7 +1520,9 @@ pub async fn get_agent_metrics_real(
     ));
 
     // Service metrics from ConsulNamingStore (use default namespace for metrics)
-    let service_names = agent.naming_store.service_names(crate::namespace::DEFAULT_NAMESPACE);
+    let service_names = agent
+        .naming_store
+        .service_names(crate::namespace::DEFAULT_NAMESPACE);
     let total_services = service_names.len();
 
     gauges.push(
@@ -1515,13 +1541,18 @@ pub async fn get_agent_metrics_real(
     let mut unhealthy_instances = 0u64;
 
     for service_name in &service_names {
-        let entries = agent.naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
+        let entries = agent
+            .naming_store
+            .get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
         let instance_count = entries.len() as u64;
         total_instances += instance_count;
 
         for entry_bytes in &entries {
             if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(entry_bytes) {
-                if agent.naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32) {
+                if agent
+                    .naming_store
+                    .is_healthy(&reg.effective_address(), reg.effective_port() as i32)
+                {
                     healthy_instances += 1;
                 } else {
                     unhealthy_instances += 1;
@@ -1955,11 +1986,12 @@ mod tests {
         assert!(result.is_ok(), "Self-registration should succeed");
 
         // Verify service is in ConsulNamingStore
-        let data = agent.naming_store.get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
+        let data = agent
+            .naming_store
+            .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
         assert!(data.is_some(), "Consul service should be in naming store");
 
-        let reg: AgentServiceRegistration =
-            serde_json::from_slice(&data.unwrap()).unwrap();
+        let reg: AgentServiceRegistration = serde_json::from_slice(&data.unwrap()).unwrap();
         assert_eq!(reg.service_id(), "consul");
         assert_eq!(reg.effective_port(), 8500);
         assert_eq!(reg.name, "consul");
@@ -1991,13 +2023,21 @@ mod tests {
 
         // Register first
         agent.register_consul_service(8500, "dc1").await.unwrap();
-        assert!(agent.naming_store.get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul").is_some());
+        assert!(
+            agent
+                .naming_store
+                .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul")
+                .is_some()
+        );
 
         // Deregister
         agent.deregister_consul_service().await;
 
         assert!(
-            agent.naming_store.get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul").is_none(),
+            agent
+                .naming_store
+                .get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul")
+                .is_none(),
             "Consul service should be deregistered from naming store"
         );
     }

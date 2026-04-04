@@ -486,7 +486,10 @@ impl ConsulCatalogService {
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
         for service_name in self.naming_store.service_names(namespace) {
-            for entry_bytes in self.naming_store.get_service_entries(namespace, &service_name) {
+            for entry_bytes in self
+                .naming_store
+                .get_service_entries(namespace, &service_name)
+            {
                 let Ok(reg) =
                     serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
                 else {
@@ -525,10 +528,13 @@ impl ConsulCatalogService {
         let mut services: HashMap<String, AgentService> = HashMap::new();
 
         for service_name in self.naming_store.service_names(namespace) {
-            for entry_bytes in self.naming_store.get_service_entries(namespace, &service_name) {
-                let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(
-                    &entry_bytes,
-                ) else {
+            for entry_bytes in self
+                .naming_store
+                .get_service_entries(namespace, &service_name)
+            {
+                let Ok(reg) =
+                    serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
+                else {
                     continue;
                 };
                 let ip = reg.effective_address();
@@ -609,7 +615,11 @@ impl ConsulCatalogService {
                 Err(_) => return false,
             };
 
-            let key = crate::naming_store::ConsulNamingStore::build_key(namespace, &svc.service, &service_id);
+            let key = crate::naming_store::ConsulNamingStore::build_key(
+                namespace,
+                &svc.service,
+                &service_id,
+            );
             use batata_plugin::PluginNamingStore;
             self.naming_store.register(&key, data).is_ok()
         } else {
@@ -622,25 +632,28 @@ impl ConsulCatalogService {
     pub fn deregister(&self, deregistration: &CatalogDeregistration, namespace: &str) -> bool {
         if let Some(ref service_id) = deregistration.service_id {
             // Deregister by service_id
-            self.naming_store.remove_by_service_id(namespace, service_id)
+            self.naming_store
+                .remove_by_service_id(namespace, service_id)
         } else {
             // Node deregistration - remove all services on this node
             let node = &deregistration.node;
             let mut deregistered = false;
 
             for service_name in self.naming_store.service_names(namespace) {
-                for entry_bytes in self.naming_store.get_service_entries(namespace, &service_name) {
-                    let Ok(reg) =
-                        serde_json::from_slice::<crate::model::AgentServiceRegistration>(
-                            &entry_bytes,
-                        )
-                    else {
+                for entry_bytes in self
+                    .naming_store
+                    .get_service_entries(namespace, &service_name)
+                {
+                    let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(
+                        &entry_bytes,
+                    ) else {
                         continue;
                     };
                     let ip = reg.effective_address();
                     let instance_node = format!("node-{}", ip.replace('.', "-"));
                     if &instance_node == node || &ip == node {
-                        self.naming_store.remove_by_service_id(namespace, &reg.service_id());
+                        self.naming_store
+                            .remove_by_service_id(namespace, &reg.service_id());
                         deregistered = true;
                     }
                 }
@@ -789,7 +802,10 @@ impl ConsulCatalogService {
         let mut results = Vec::new();
 
         for service_name in self.naming_store.service_names(namespace) {
-            for entry_bytes in self.naming_store.get_service_entries(namespace, &service_name) {
+            for entry_bytes in self
+                .naming_store
+                .get_service_entries(namespace, &service_name)
+            {
                 let Ok(reg) =
                     serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
                 else {
@@ -1445,8 +1461,8 @@ pub async fn get_gateway_services(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::naming_store::ConsulNamingStore;
     use crate::model::AgentServiceRegistration;
+    use crate::naming_store::ConsulNamingStore;
     use batata_plugin::PluginNamingStore;
 
     fn make_store() -> Arc<ConsulNamingStore> {
@@ -1455,7 +1471,11 @@ mod tests {
 
     fn register_reg(store: &ConsulNamingStore, reg: &AgentServiceRegistration) {
         let service_id = reg.service_id();
-        let key = ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, &reg.name, &service_id);
+        let key = ConsulNamingStore::build_key(
+            crate::namespace::DEFAULT_NAMESPACE,
+            &reg.name,
+            &service_id,
+        );
         let data = bytes::Bytes::from(serde_json::to_vec(reg).unwrap());
         store.register(&key, data).unwrap();
     }

@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use dashmap::DashMap;
@@ -79,6 +79,8 @@ pub struct ConnectionManager {
     max_push_timeouts: u32,
     /// Hard limit on total connections (0 = unlimited)
     max_connections: usize,
+    /// Atomic counter for connection count, avoids O(shard_count) DashMap::len()
+    connection_count: Arc<AtomicUsize>,
 }
 
 impl Default for ConnectionManager {
@@ -97,10 +99,12 @@ impl ConnectionManager {
             timeout_counters: Arc::new(DashMap::new()),
             max_push_timeouts: DEFAULT_MAX_PUSH_TIMEOUTS,
             max_connections: 0,
+            connection_count: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     pub fn from_arc(clients: Arc<DashMap<String, GrpcClient>>) -> Self {
+        let count = clients.len();
         Self {
             clients,
             listeners: Arc::new(RwLock::new(Vec::new())),
@@ -109,6 +113,7 @@ impl ConnectionManager {
             timeout_counters: Arc::new(DashMap::new()),
             max_push_timeouts: DEFAULT_MAX_PUSH_TIMEOUTS,
             max_connections: 0,
+            connection_count: Arc::new(AtomicUsize::new(count)),
         }
     }
 
@@ -174,11 +179,12 @@ impl ConnectionManager {
             return true;
         }
 
-        // Hard limit on total connections
-        if self.max_connections > 0 && self.clients.len() >= self.max_connections {
+        // Hard limit on total connections (O(1) via atomic counter)
+        let current = self.connection_count.load(Ordering::Relaxed);
+        if self.max_connections > 0 && current >= self.max_connections {
             tracing::warn!(
                 connection_id,
-                current = self.clients.len(),
+                current,
                 max = self.max_connections,
                 "Connection rejected: hard connection limit reached"
             );
@@ -210,6 +216,7 @@ impl ConnectionManager {
             "Registered new gRPC client connection"
         );
         self.clients.insert(connection_id.to_string(), client);
+        self.connection_count.fetch_add(1, Ordering::Relaxed);
         self.fire_connected(connection_id, &meta).await;
 
         true
@@ -218,6 +225,7 @@ impl ConnectionManager {
     pub async fn unregister(&self, connection_id: &str) {
         self.timeout_counters.remove(connection_id);
         if let Some((_, client)) = self.clients.remove(connection_id) {
+            self.connection_count.fetch_sub(1, Ordering::Relaxed);
             // Release connection slot in the limiter
             if let Some(checker) = self.get_limit_checker() {
                 checker
@@ -229,9 +237,9 @@ impl ConnectionManager {
         }
     }
 
-    /// Get the current number of connected clients
+    /// Get the current number of connected clients (O(1) via atomic counter)
     pub fn connection_count(&self) -> usize {
-        self.clients.len()
+        self.connection_count.load(Ordering::Relaxed)
     }
 
     /// Push a message to a specific connection
@@ -575,7 +583,7 @@ impl ConnectionManager {
 #[async_trait::async_trait]
 impl crate::ClientConnectionManager for ConnectionManager {
     fn connection_count(&self) -> usize {
-        self.clients.len()
+        self.connection_count.load(Ordering::Relaxed)
     }
 
     fn has_connection(&self, connection_id: &str) -> bool {

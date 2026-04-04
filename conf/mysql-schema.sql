@@ -36,7 +36,8 @@ CREATE TABLE `config_info` (
                                `c_schema` text COMMENT '配置的模式',
                                `encrypted_data_key` varchar(1024) NOT NULL DEFAULT '' COMMENT '密钥',
                                PRIMARY KEY (`id`),
-                               UNIQUE KEY `uk_configinfo_datagrouptenant` (`data_id`,`group_id`,`tenant_id`)
+                               UNIQUE KEY `uk_configinfo_datagrouptenant` (`data_id`,`group_id`,`tenant_id`),
+                               KEY `idx_configinfo_tenant_group_modified` (`tenant_id`,`group_id`,`gmt_modified`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='config_info';
 
 /******************************************/

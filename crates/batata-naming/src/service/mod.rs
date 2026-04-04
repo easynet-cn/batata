@@ -152,7 +152,6 @@ impl Default for NamingService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use batata_api::naming::NamingServiceProvider;
     use std::collections::HashMap;
 
     fn create_test_instance(ip: &str, port: i32) -> Instance {
@@ -1391,5 +1390,4 @@ mod tests {
             "Deadlock detected: concurrent fuzzy_watch + register timed out"
         );
     }
-
 }

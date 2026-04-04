@@ -195,19 +195,28 @@ impl ConfigPersistence for ExternalDbPersistService {
             base_select = base_select.filter(config_info::Column::Type.is_in(&types));
         }
 
-        // Tag filtering via subquery
+        // Tag filtering: single subquery with GROUP BY + HAVING COUNT
+        // replaces N separate subqueries (one per tag) with one query
         if !tags.is_empty() {
-            for tag in &tags {
-                base_select = base_select.filter(
-                    config_info::Column::Id.in_subquery(
-                        config_tags_relation::Entity::find()
-                            .select_only()
-                            .column(config_tags_relation::Column::Id)
-                            .filter(config_tags_relation::Column::TagName.eq(tag.as_str()))
-                            .into_query(),
-                    ),
-                );
-            }
+            let tag_count = tags.len() as i64;
+            base_select = base_select.filter(
+                config_info::Column::Id.in_subquery(
+                    config_tags_relation::Entity::find()
+                        .select_only()
+                        .column(config_tags_relation::Column::Id)
+                        .filter(
+                            config_tags_relation::Column::TagName
+                                .is_in(tags.iter().map(|t| t.as_str())),
+                        )
+                        .group_by(config_tags_relation::Column::Id)
+                        .having(
+                            Expr::col(config_tags_relation::Column::TagName)
+                                .count()
+                                .eq(tag_count),
+                        )
+                        .into_query(),
+                ),
+            );
         }
 
         // Count query
@@ -675,36 +684,53 @@ impl ConfigPersistence for ExternalDbPersistService {
 
         let tx = self.db.begin().await?;
         let now = chrono::Local::now().naive_local();
-        let mut deleted = 0;
 
-        for &id in ids {
-            if let Some(entity) = config_info::Entity::find_by_id(id).one(&tx).await? {
-                // Record history
-                let his = his_config_info::ActiveModel {
-                    id: Set(entity.id as u64),
-                    nid: Set(0),
-                    data_id: Set(entity.data_id.clone()),
-                    group_id: Set(entity.group_id.clone().unwrap_or_default()),
-                    app_name: Set(entity.app_name.clone()),
-                    content: Set(entity.content.clone().unwrap_or_default()),
-                    md5: Set(entity.md5.clone()),
-                    gmt_create: Set(now),
-                    gmt_modified: Set(now),
-                    src_user: Set(Some(src_user.to_string())),
-                    src_ip: Set(Some(client_ip.to_string())),
-                    op_type: Set(Some("D".to_string())),
-                    tenant_id: Set(entity.tenant_id.clone()),
-                    encrypted_data_key: Set(entity.encrypted_data_key.clone().unwrap_or_default()),
-                    publish_type: Set(Some("formal".to_string())),
-                    gray_name: Set(None),
-                    ext_info: Set(None),
-                };
-                his_config_info::Entity::insert(his).exec(&tx).await?;
+        // Bulk fetch all entities in a single query instead of N individual queries
+        let entities: Vec<config_info::Model> = config_info::Entity::find()
+            .filter(config_info::Column::Id.is_in(ids.iter().copied()))
+            .all(&tx)
+            .await?;
 
-                config_info::Entity::delete_by_id(id).exec(&tx).await?;
-                deleted += 1;
-            }
+        if entities.is_empty() {
+            tx.commit().await?;
+            return Ok(0);
         }
+
+        // Bulk insert history records
+        let history_records: Vec<his_config_info::ActiveModel> = entities
+            .iter()
+            .map(|entity| his_config_info::ActiveModel {
+                id: Set(entity.id as u64),
+                nid: Set(0),
+                data_id: Set(entity.data_id.clone()),
+                group_id: Set(entity.group_id.clone().unwrap_or_default()),
+                app_name: Set(entity.app_name.clone()),
+                content: Set(entity.content.clone().unwrap_or_default()),
+                md5: Set(entity.md5.clone()),
+                gmt_create: Set(now),
+                gmt_modified: Set(now),
+                src_user: Set(Some(src_user.to_string())),
+                src_ip: Set(Some(client_ip.to_string())),
+                op_type: Set(Some("D".to_string())),
+                tenant_id: Set(entity.tenant_id.clone()),
+                encrypted_data_key: Set(entity.encrypted_data_key.clone().unwrap_or_default()),
+                publish_type: Set(Some("formal".to_string())),
+                gray_name: Set(None),
+                ext_info: Set(None),
+            })
+            .collect();
+
+        let deleted = entities.len();
+        his_config_info::Entity::insert_many(history_records)
+            .exec(&tx)
+            .await?;
+
+        // Bulk delete all configs in a single query
+        let found_ids: Vec<i64> = entities.iter().map(|e| e.id).collect();
+        config_info::Entity::delete_many()
+            .filter(config_info::Column::Id.is_in(found_ids))
+            .exec(&tx)
+            .await?;
 
         tx.commit().await?;
         Ok(deleted)

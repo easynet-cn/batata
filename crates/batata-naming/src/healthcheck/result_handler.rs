@@ -34,9 +34,8 @@ impl HealthCheckResultHandler for CoreResultHandler {
         cluster: &str,
         healthy: bool,
     ) {
-        self.naming_service.update_instance_health(
-            namespace, group, service, ip, port, cluster, healthy,
-        );
+        self.naming_service
+            .update_instance_health(namespace, group, service, ip, port, cluster, healthy);
     }
 
     fn on_deregister(
@@ -81,13 +80,29 @@ mod tests {
         let handler = CoreResultHandler::new(naming.clone());
 
         // Mark unhealthy
-        handler.on_health_changed("public", "DEFAULT_GROUP", "test-svc", "10.0.0.1", 8080, "DEFAULT", false);
+        handler.on_health_changed(
+            "public",
+            "DEFAULT_GROUP",
+            "test-svc",
+            "10.0.0.1",
+            8080,
+            "DEFAULT",
+            false,
+        );
 
         let instances = naming.get_instances("public", "DEFAULT_GROUP", "test-svc", "", false);
         assert!(!instances[0].healthy);
 
         // Mark healthy again
-        handler.on_health_changed("public", "DEFAULT_GROUP", "test-svc", "10.0.0.1", 8080, "DEFAULT", true);
+        handler.on_health_changed(
+            "public",
+            "DEFAULT_GROUP",
+            "test-svc",
+            "10.0.0.1",
+            8080,
+            "DEFAULT",
+            true,
+        );
 
         let instances = naming.get_instances("public", "DEFAULT_GROUP", "test-svc", "", false);
         assert!(instances[0].healthy);
@@ -104,11 +119,27 @@ mod tests {
             ..Default::default()
         };
         naming.register_instance("public", "DEFAULT_GROUP", "test-svc", instance);
-        assert_eq!(naming.get_instances("public", "DEFAULT_GROUP", "test-svc", "", false).len(), 1);
+        assert_eq!(
+            naming
+                .get_instances("public", "DEFAULT_GROUP", "test-svc", "", false)
+                .len(),
+            1
+        );
 
         let handler = CoreResultHandler::new(naming.clone());
-        handler.on_deregister("public", "DEFAULT_GROUP", "test-svc", "10.0.0.1", 8080, "DEFAULT");
+        handler.on_deregister(
+            "public",
+            "DEFAULT_GROUP",
+            "test-svc",
+            "10.0.0.1",
+            8080,
+            "DEFAULT",
+        );
 
-        assert!(naming.get_instances("public", "DEFAULT_GROUP", "test-svc", "", false).is_empty());
+        assert!(
+            naming
+                .get_instances("public", "DEFAULT_GROUP", "test-svc", "", false)
+                .is_empty()
+        );
     }
 }

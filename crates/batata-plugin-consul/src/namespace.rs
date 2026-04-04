@@ -76,10 +76,7 @@ impl ConsulNamespaceService {
                 acls: None,
                 meta: Some({
                     let mut m = std::collections::HashMap::new();
-                    m.insert(
-                        "external-source".to_string(),
-                        "batata".to_string(),
-                    );
+                    m.insert("external-source".to_string(), "batata".to_string());
                     m
                 }),
                 deleted_at: None,
@@ -123,10 +120,7 @@ impl ConsulNamespaceService {
     pub fn upsert(&self, ns: Namespace) -> Namespace {
         let index = self.index_provider.current_index(ConsulTable::Catalog);
         let existing = self.namespaces.get(&ns.name);
-        let create_index = existing
-            .as_ref()
-            .map(|e| e.create_index)
-            .unwrap_or(index);
+        let create_index = existing.as_ref().map(|e| e.create_index).unwrap_or(index);
         drop(existing);
 
         let stored = Namespace {
@@ -223,8 +217,9 @@ pub async fn create_namespace(
 
     let ns = body.into_inner();
     if ns.name.is_empty() {
-        return HttpResponse::BadRequest()
-            .json(ConsulError::new("Must specify a Name for Namespace creation"));
+        return HttpResponse::BadRequest().json(ConsulError::new(
+            "Must specify a Name for Namespace creation",
+        ));
     }
 
     let created = ns_service.upsert(ns);

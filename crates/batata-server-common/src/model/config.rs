@@ -762,6 +762,14 @@ impl Configuration {
             .unwrap_or(30) as u64
     }
 
+    /// Database connection close timeout in seconds during graceful shutdown.
+    /// If pending transactions or cleanup take longer, the shutdown proceeds anyway.
+    pub fn shutdown_db_close_timeout_secs(&self) -> u64 {
+        self.config
+            .get_int("batata.server.shutdown.db_close_timeout")
+            .unwrap_or(10) as u64
+    }
+
     // ========================================================================
     // Capacity & Health Configuration
     // ========================================================================
@@ -1544,7 +1552,8 @@ impl Configuration {
     }
 
     /// Config read cache TTL in seconds (default 0 = disabled).
-    /// When enabled, config_find_one results are cached to reduce RocksDB reads.
+    /// When enabled, caches config_find_one results to reduce RocksDB reads in distributed mode.
+    /// Recommended: 5-30 for high-read workloads.
     pub fn config_read_cache_ttl_secs(&self) -> u64 {
         self.config
             .get_int("batata.config.read_cache_ttl")
