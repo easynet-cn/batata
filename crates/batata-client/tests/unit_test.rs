@@ -416,7 +416,7 @@ fn test_config_basic_info_default() {
 fn test_page_default() {
     let page: Page<ConfigBasicInfo> = Page::default();
     assert_eq!(page.total_count, 0);
-    assert_eq!(page.page_number, 0);
+    assert_eq!(page.page_number, 1); // Pages start at 1 (Nacos convention)
     assert!(page.page_items.is_empty());
 }
 

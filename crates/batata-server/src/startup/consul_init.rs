@@ -51,9 +51,6 @@ impl ConsulInitConfig {
             .with_primary(configuration.consul_primary_datacenter())
             .with_consul_version(configuration.consul_version())
             .with_batata_version(configuration.batata_version())
-            .with_default_namespace(configuration.consul_default_namespace())
-            .with_default_group(configuration.consul_default_group())
-            .with_default_cluster(configuration.consul_default_cluster())
             .with_consul_port(configuration.consul_server_port()),
         }
     }
@@ -329,7 +326,7 @@ fn init_consul_standalone(
 /// Start background Consul monitors (TTL, deregister, session cleanup).
 fn start_consul_monitors(
     consul_registry: &Arc<InstanceCheckRegistry>,
-    grpc_servers: &GrpcServers,
+    _grpc_servers: &GrpcServers,
     services: &ConsulServices,
 ) {
     // TTL monitor

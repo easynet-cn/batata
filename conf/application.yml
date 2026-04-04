@@ -339,9 +339,6 @@ batata.plugin.consul.data_dir: data/consul_rocksdb
 batata.plugin.consul.register_self: true
 batata.plugin.consul.acl.enabled: false
 batata.plugin.consul.check_reap_interval: 30
-batata.plugin.consul.default_namespace: consul
-batata.plugin.consul.default_group: CONSUL_GROUP
-batata.plugin.consul.default_cluster: DEFAULT
 
 # Consul client HTTP timeouts
 #batata.plugin.consul.client.connect_timeout_secs: 5

@@ -21,7 +21,6 @@ fn make_test_instance() -> Instance {
         cluster_name: "DEFAULT".to_string(),
         service_name: "my-service".to_string(),
         metadata: HashMap::from([("env".to_string(), "prod".to_string())]),
-        register_source: batata_api::naming::RegisterSource::Batata,
     }
 }
 

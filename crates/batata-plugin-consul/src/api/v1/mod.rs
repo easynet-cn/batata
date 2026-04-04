@@ -10,6 +10,7 @@ pub mod health;
 pub mod internal;
 pub mod kv;
 pub mod lock;
+pub mod namespace;
 pub mod operator;
 pub mod peering;
 pub mod query;
@@ -41,6 +42,8 @@ pub fn routes() -> actix_web::Scope {
         .service(kv::txn_resource())
         .service(lock::routes())
         .service(lock::semaphore_routes())
+        .service(namespace::namespace_routes())
+        .service(namespace::namespaces_routes())
         .service(operator::routes())
         .service(peering::routes())
         .service(peering::list_resource())

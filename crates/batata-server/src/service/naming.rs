@@ -20,7 +20,6 @@ mod tests {
             cluster_name: "DEFAULT".to_string(),
             service_name: "test-service".to_string(),
             metadata: std::collections::HashMap::new(),
-            register_source: batata_api::naming::RegisterSource::default(),
         }
     }
 

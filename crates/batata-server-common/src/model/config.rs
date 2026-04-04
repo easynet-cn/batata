@@ -1229,20 +1229,6 @@ impl Configuration {
             .unwrap_or_else(|_| self.consul_datacenter())
     }
 
-    /// Get the default Nacos namespace for Consul API mapping (default: "consul")
-    pub fn consul_default_namespace(&self) -> String {
-        self.config
-            .get_string("batata.plugin.consul.default_namespace")
-            .unwrap_or_else(|_| "consul".to_string())
-    }
-
-    /// Get the default Nacos group for Consul API mapping (default: "CONSUL_GROUP")
-    pub fn consul_default_group(&self) -> String {
-        self.config
-            .get_string("batata.plugin.consul.default_group")
-            .unwrap_or_else(|_| "CONSUL_GROUP".to_string())
-    }
-
     /// Get the number of HTTP workers for Consul server.
     /// Defaults to min(4, cpu_cores/2) to avoid CPU contention with the main Nacos server.
     pub fn consul_http_workers(&self) -> usize {
@@ -1258,13 +1244,6 @@ impl Configuration {
         } else {
             v
         }
-    }
-
-    /// Get the default Nacos cluster for Consul API mapping (default: "DEFAULT")
-    pub fn consul_default_cluster(&self) -> String {
-        self.config
-            .get_string("batata.plugin.consul.default_cluster")
-            .unwrap_or_else(|_| "DEFAULT".to_string())
     }
 
     // ========================================================================

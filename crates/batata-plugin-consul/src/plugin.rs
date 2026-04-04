@@ -55,6 +55,7 @@ pub struct ConsulPlugin {
     pub coordinate: ConsulCoordinateService,
     pub snapshot: ConsulSnapshotService,
     pub operator: ConsulOperatorService,
+    pub namespace_service: crate::namespace::ConsulNamespaceService,
     pub dc_config: ConsulDatacenterConfig,
     pub index_provider: ConsulIndexProvider,
     enabled: bool,
@@ -82,24 +83,15 @@ impl ConsulPlugin {
 
         Self {
             naming_store: naming_store.clone(),
-            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            health: ConsulHealthService::new(registry).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
+            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()),
+            health: ConsulHealthService::new(registry),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_store.clone(),
                 dc_config.datacenter.clone(),
             )
-            .with_default_group(dc_config.default_group.clone())
-            .with_default_cluster(dc_config.default_cluster.clone())
             .with_index_provider(index_provider.clone()),
+            namespace_service: crate::namespace::ConsulNamespaceService::new(index_provider.clone()),
             index_provider,
             acl: if acl_enabled {
                 AclService::new()
@@ -143,23 +135,13 @@ impl ConsulPlugin {
 
         Self {
             naming_store: naming_store.clone(),
-            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            health: ConsulHealthService::new(registry).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
+            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()),
+            health: ConsulHealthService::new(registry),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_store.clone(),
                 dc_config.datacenter.clone(),
             )
-            .with_default_group(dc_config.default_group.clone())
-            .with_default_cluster(dc_config.default_cluster.clone())
             .with_index_provider(index_provider.clone()),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
@@ -174,7 +156,7 @@ impl ConsulPlugin {
             peering: Arc::new(ConsulPeeringService::with_rocks(
                 db.clone(),
                 dc_config.datacenter.clone(),
-                8500,
+                dc_config.consul_port,
             )),
             config_entry: ConsulConfigEntryService::with_rocks(db.clone()),
             connect: ConsulConnectService::new(),
@@ -185,6 +167,7 @@ impl ConsulPlugin {
             ),
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
             operator: ConsulOperatorService::with_rocks(db),
+            namespace_service: crate::namespace::ConsulNamespaceService::new(index_provider.clone()),
             dc_config,
             index_provider,
             enabled: true,
@@ -213,23 +196,13 @@ impl ConsulPlugin {
 
         Self {
             naming_store: naming_store.clone(),
-            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
-            health: ConsulHealthService::new(registry).with_defaults(
-                dc_config.default_namespace.clone(),
-                dc_config.default_group.clone(),
-                dc_config.default_cluster.clone(),
-            ),
+            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()),
+            health: ConsulHealthService::new(registry),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_store.clone(),
                 dc_config.datacenter.clone(),
             )
-            .with_default_group(dc_config.default_group.clone())
-            .with_default_cluster(dc_config.default_cluster.clone())
             .with_index_provider(index_provider.clone()),
             acl: if acl_enabled {
                 AclService::with_rocks(db.clone())
@@ -244,7 +217,7 @@ impl ConsulPlugin {
             peering: Arc::new(ConsulPeeringService::with_rocks(
                 db.clone(),
                 dc_config.datacenter.clone(),
-                8500,
+                dc_config.consul_port,
             )),
             config_entry: ConsulConfigEntryService::with_rocks(db.clone()),
             connect: ConsulConnectService::new(),
@@ -255,6 +228,7 @@ impl ConsulPlugin {
             ),
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
             operator: ConsulOperatorService::with_rocks(db),
+            namespace_service: crate::namespace::ConsulNamespaceService::new(index_provider.clone()),
             dc_config,
             index_provider,
             enabled: true,
@@ -315,6 +289,7 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
             .app_data(actix_web::web::Data::new(self.coordinate.clone()))
             .app_data(actix_web::web::Data::new(self.snapshot.clone()))
             .app_data(actix_web::web::Data::new(self.operator.clone()))
+            .app_data(actix_web::web::Data::new(self.namespace_service.clone()))
             .app_data(actix_web::web::Data::new(self.dc_config.clone()))
             .app_data(actix_web::web::Data::new(self.index_provider.clone()))
             .service(crate::route::routes());

@@ -67,6 +67,11 @@ async fn create_test_app() -> impl actix_web::dev::Service<
             ))
             .app_data(web::Data::new(crate::peering::ConsulPeeringService::new()))
             .app_data(web::Data::new(
+                crate::namespace::ConsulNamespaceService::new(
+                    crate::index_provider::ConsulIndexProvider::new(),
+                ),
+            ))
+            .app_data(web::Data::new(
                 crate::index_provider::ConsulIndexProvider::new(),
             ))
             .service(crate::api::v1::routes()),

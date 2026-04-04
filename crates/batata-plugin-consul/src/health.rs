@@ -17,7 +17,8 @@ use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentService, AgentServiceRegistration, CheckRegistration, CheckStatusUpdate,
     CheckUpdateParams, ConsulDatacenterConfig, ConsulError, HealthCheck, HealthQueryParams, Node,
-    ServiceHealth, ServiceQueryParams,
+    ServiceHealth, ServiceQueryParams, CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP,
+    CONSUL_INTERNAL_NAMESPACE,
 };
 use crate::naming_store::ConsulNamingStore;
 
@@ -40,9 +41,6 @@ pub struct ConsulHealthService {
     registry: Arc<InstanceCheckRegistry>,
     /// Node name for this agent
     node_name: String,
-    default_namespace: String,
-    default_group: String,
-    default_cluster: String,
 }
 
 impl ConsulHealthService {
@@ -50,23 +48,7 @@ impl ConsulHealthService {
         Self {
             registry,
             node_name: "batata-node".to_string(),
-            default_namespace: "consul".to_string(),
-            default_group: "CONSUL_GROUP".to_string(),
-            default_cluster: "DEFAULT".to_string(),
         }
-    }
-
-    pub fn with_defaults(mut self, namespace: String, group: String, cluster: String) -> Self {
-        if !namespace.is_empty() {
-            self.default_namespace = namespace;
-        }
-        if !group.is_empty() {
-            self.default_group = group;
-        }
-        if !cluster.is_empty() {
-            self.default_cluster = cluster;
-        }
-        self
     }
 
     /// Get registry reference
@@ -132,8 +114,8 @@ impl ConsulHealthService {
             check_id: check_id.clone(),
             name: registration.name.clone(),
             check_type,
-            namespace: self.default_namespace.clone(),
-            group_name: self.default_group.clone(),
+            namespace: CONSUL_INTERNAL_NAMESPACE.to_string(),
+            group_name: CONSUL_INTERNAL_GROUP.to_string(),
             service_name: registration
                 .service_name
                 .clone()
@@ -144,7 +126,7 @@ impl ConsulHealthService {
                 .clone()
                 .unwrap_or_else(|| "0.0.0.0".to_string()),
             port: registration.port.unwrap_or(0),
-            cluster_name: "DEFAULT".to_string(),
+            cluster_name: CONSUL_INTERNAL_CLUSTER.to_string(),
             http_url: registration.http.clone(),
             tcp_addr: registration.tcp.clone(),
             grpc_addr: registration.grpc.clone(),
@@ -315,6 +297,7 @@ pub async fn get_service_health(
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let passing_only = query.passing.unwrap_or(false);
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(
@@ -328,7 +311,7 @@ pub async fn get_service_health(
     }
 
     // Get service entries from ConsulNamingStore (Consul-native data)
-    let entries = naming_store.get_service_entries(&service_name);
+    let entries = naming_store.get_service_entries(&namespace, &service_name);
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
@@ -515,6 +498,7 @@ pub async fn get_service_checks(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
+    let namespace = crate::namespace::DEFAULT_NAMESPACE; // health checks don't have namespace context yet
 
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(
@@ -528,7 +512,7 @@ pub async fn get_service_checks(
     }
 
     // Get service entries from ConsulNamingStore
-    let entries = naming_store.get_service_entries(&service_name);
+    let entries = naming_store.get_service_entries(namespace, &service_name);
 
     let mut all_checks: Vec<HealthCheck> = Vec::new();
 
@@ -864,6 +848,7 @@ pub async fn get_connect_health(
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let passing_only = query.passing.unwrap_or(false);
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
@@ -871,12 +856,12 @@ pub async fn get_connect_health(
     }
 
     // Scan all services to find Connect-enabled instances for this target service
-    let all_service_names = naming_store.service_names();
+    let all_service_names = naming_store.service_names(&namespace);
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
     for svc_name in all_service_names {
-        let entries = naming_store.get_service_entries(&svc_name);
+        let entries = naming_store.get_service_entries(&namespace, &svc_name);
 
         for entry_bytes in entries {
             let reg: AgentServiceRegistration = match serde_json::from_slice(&entry_bytes) {
@@ -950,6 +935,7 @@ pub async fn get_ingress_health(
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let passing_only = query.passing.unwrap_or(false);
+    let namespace = dc_config.resolve_ns(&query.ns);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
     if !authz.allowed {
@@ -957,12 +943,12 @@ pub async fn get_ingress_health(
     }
 
     // Scan all services to find ingress gateway instances
-    let all_service_names = naming_store.service_names();
+    let all_service_names = naming_store.service_names(&namespace);
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
     for svc_name in all_service_names {
-        let entries = naming_store.get_service_entries(&svc_name);
+        let entries = naming_store.get_service_entries(&namespace, &svc_name);
 
         for entry_bytes in entries {
             let reg: AgentServiceRegistration = match serde_json::from_slice(&entry_bytes) {
@@ -1714,30 +1700,24 @@ mod tests {
         assert_eq!(check.status, "critical");
     }
 
-    fn create_test_health_service_with_defaults()
+    fn create_test_health_service_with_registry()
     -> (ConsulHealthService, Arc<InstanceCheckRegistry>) {
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
             Arc::new(NamingService::new()),
         ));
-        let service = ConsulHealthService::new(registry.clone()).with_defaults(
-            "public".to_string(),
-            "DEFAULT_GROUP".to_string(),
-            "DEFAULT".to_string(),
-        );
+        let service = ConsulHealthService::new(registry.clone());
         (service, registry)
     }
 
     #[test]
-    fn test_health_service_creation_with_defaults() {
-        let (service, _) = create_test_health_service_with_defaults();
-        assert_eq!(service.default_namespace, "public");
-        assert_eq!(service.default_group, "DEFAULT_GROUP");
-        assert_eq!(service.default_cluster, "DEFAULT");
+    fn test_health_service_creation() {
+        let (service, _) = create_test_health_service_with_registry();
+        assert_eq!(service.node_name, "batata-node");
     }
 
     #[test]
     fn test_health_service_registry_access() {
-        let (_service, registry) = create_test_health_service_with_defaults();
+        let (_service, registry) = create_test_health_service_with_registry();
         // Registry should be accessible and empty
         let checks = registry.get_all_checks();
         assert!(checks.is_empty(), "Registry should start empty");
@@ -1789,7 +1769,7 @@ mod tests {
 
     #[test]
     fn test_register_and_query_ttl_check() {
-        let (_service, registry) = create_test_health_service_with_defaults();
+        let (_service, registry) = create_test_health_service_with_registry();
 
         let config = InstanceCheckConfig {
             check_id: "svc:web-1".to_string(),
@@ -1838,7 +1818,7 @@ mod tests {
 
     #[test]
     fn test_pass_warn_fail_cycle() {
-        let (_service, registry) = create_test_health_service_with_defaults();
+        let (_service, registry) = create_test_health_service_with_registry();
 
         let config = InstanceCheckConfig {
             check_id: "cycle-check".to_string(),

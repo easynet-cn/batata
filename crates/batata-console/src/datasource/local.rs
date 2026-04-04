@@ -537,24 +537,22 @@ impl ConsoleDataSource for LocalDataSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("NamingService not available"))?;
 
-        let (total_count, service_names) = naming.list_services_by_source(
+        let (total_count, service_names) = naming.list_services(
             namespace_id,
             group_name,
             page_no as i32,
             page_size as i32,
-            Some(batata_api::naming::RegisterSource::Batata),
         );
 
         let service_list: Vec<serde_json::Value> = service_names
             .iter()
             .map(|name| {
-                let instances = naming.get_instances_by_source(
+                let instances = naming.get_instances(
                     namespace_id,
                     group_name,
                     name,
                     "",
                     false,
-                    Some(batata_api::naming::RegisterSource::Batata),
                 );
                 let clusters: HashSet<_> =
                     instances.iter().map(|i| i.cluster_name.clone()).collect();
@@ -648,13 +646,12 @@ impl ConsoleDataSource for LocalDataSource {
             .collect();
 
         // Collect cluster names from service storage (clusters that have instances)
-        let instances = naming.get_instances_by_source(
+        let instances = naming.get_instances(
             namespace_id,
             group_name,
             service_name,
             "",
             false,
-            Some(batata_api::naming::RegisterSource::Batata),
         );
         let mut all_cluster_names: HashSet<String> =
             instances.iter().map(|i| i.cluster_name.clone()).collect();
@@ -808,13 +805,12 @@ impl ConsoleDataSource for LocalDataSource {
             return Err(anyhow::anyhow!("service {} not found", service_name));
         }
 
-        let instances = naming.get_instances_by_source(
+        let instances = naming.get_instances(
             namespace_id,
             group_name,
             service_name,
             "",
             false,
-            Some(batata_api::naming::RegisterSource::Batata),
         );
         if !instances.is_empty() {
             return Err(anyhow::anyhow!(
@@ -868,13 +864,12 @@ impl ConsoleDataSource for LocalDataSource {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("NamingService not available"))?;
 
-        Ok(naming.get_instances_by_source(
+        Ok(naming.get_instances(
             namespace_id,
             group_name,
             service_name,
             cluster_name,
             false,
-            Some(batata_api::naming::RegisterSource::Batata),
         ))
     }
 

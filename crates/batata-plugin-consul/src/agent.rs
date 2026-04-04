@@ -19,6 +19,7 @@ use crate::model::{
     AgentServiceWithChecks, AgentStats, AgentVersion, CheckRegistration, ConsulDatacenterConfig,
     ConsulError, CounterMetric, GaugeMetric, HealthCheck, HostCPU, HostDisk, HostInfo, HostMemory,
     MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
+    CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP, CONSUL_INTERNAL_NAMESPACE,
 };
 use batata_plugin::PluginNamingStore;
 use crate::naming_store::ConsulNamingStore;
@@ -31,9 +32,6 @@ use crate::naming_store::ConsulNamingStore;
 pub struct ConsulAgentService {
     naming_store: Arc<ConsulNamingStore>,
     registry: Arc<InstanceCheckRegistry>,
-    default_namespace: String,
-    default_group: String,
-    default_cluster: String,
 }
 
 impl ConsulAgentService {
@@ -44,28 +42,12 @@ impl ConsulAgentService {
         Self {
             naming_store,
             registry,
-            default_namespace: "consul".to_string(),
-            default_group: "CONSUL_GROUP".to_string(),
-            default_cluster: "DEFAULT".to_string(),
         }
     }
 
     /// Get the consul naming store
     pub fn naming_store(&self) -> &Arc<ConsulNamingStore> {
         &self.naming_store
-    }
-
-    pub fn with_defaults(mut self, namespace: String, group: String, cluster: String) -> Self {
-        if !namespace.is_empty() {
-            self.default_namespace = namespace;
-        }
-        if !group.is_empty() {
-            self.default_group = group;
-        }
-        if !cluster.is_empty() {
-            self.default_cluster = cluster;
-        }
-        self
     }
 
     /// Register Consul itself as a service
@@ -91,7 +73,7 @@ impl ConsulAgentService {
             ..Default::default()
         };
 
-        let store_key = ConsulNamingStore::build_key(service_name, "consul");
+        let store_key = ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, service_name, "consul");
         match serde_json::to_vec(&reg) {
             Ok(data) => {
                 let _ = self
@@ -106,16 +88,16 @@ impl ConsulAgentService {
         // Register consul_service_id for O(1) lookup during deregistration
         let service_key = format!(
             "{}#{}#{}",
-            self.default_namespace, self.default_group, service_name
+            CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, service_name
         );
         let instance_key = format!(
             "{}#{}#{}#{}#{}#{}",
-            self.default_namespace,
-            self.default_group,
+            CONSUL_INTERNAL_NAMESPACE,
+            CONSUL_INTERNAL_GROUP,
             service_name,
             ip,
             port,
-            self.default_cluster
+            CONSUL_INTERNAL_CLUSTER
         );
         self.registry
             .register_consul_service_id("consul", &service_key, &instance_key);
@@ -127,12 +109,12 @@ impl ConsulAgentService {
                 check_id: "serfHealth".to_string(),
                 name: "Serf Health Status".to_string(),
                 check_type: CheckType::Ttl,
-                namespace: self.default_namespace.clone(),
-                group_name: self.default_group.clone(),
+                namespace: CONSUL_INTERNAL_NAMESPACE.to_string(),
+                group_name: CONSUL_INTERNAL_GROUP.to_string(),
                 service_name: service_name.to_string(),
                 ip: ip.clone(),
                 port: port as i32,
-                cluster_name: self.default_cluster.clone(),
+                cluster_name: CONSUL_INTERNAL_CLUSTER.to_string(),
                 http_url: None,
                 tcp_addr: None,
                 grpc_addr: None,
@@ -154,16 +136,16 @@ impl ConsulAgentService {
             "Consul service registered: {}:{} in namespace={} group={} cluster={}",
             ip,
             port,
-            self.default_namespace,
-            self.default_group,
-            self.default_cluster,
+            CONSUL_INTERNAL_NAMESPACE,
+            CONSUL_INTERNAL_GROUP,
+            CONSUL_INTERNAL_CLUSTER,
         );
         Ok(())
     }
 
     /// Deregister Consul service
     pub async fn deregister_consul_service(&self) {
-        self.naming_store.remove_by_service_id("consul");
+        self.naming_store.remove_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
         self.registry.remove_consul_service_id("consul");
         tracing::info!("Consul service deregistered");
     }
@@ -183,7 +165,6 @@ pub async fn register_service(
     body: web::Json<AgentServiceRegistration>,
 ) -> HttpResponse {
     let registration = body.into_inner();
-    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service write
     let authz = acl_service.authorize_request(
@@ -258,7 +239,8 @@ pub async fn register_service(
     }
 
     // Store in Consul naming store (native format — no conversion overhead)
-    let store_key = ConsulNamingStore::build_key(&registration.name, &service_id);
+    let namespace = dc_config.resolve_ns(&query.ns);
+    let store_key = ConsulNamingStore::build_key(&namespace, &registration.name, &service_id);
     if let Err(e) = serde_json::to_vec(&registration)
         .map_err(|e| e.to_string())
         .and_then(|data| {
@@ -278,16 +260,16 @@ pub async fn register_service(
     // Register the consul_service_id → instance mapping for O(1) lookup
     let instance_key = format!(
         "{}#{}#{}#{}#{}#{}",
-        namespace,
-        dc_config.default_group,
+        CONSUL_INTERNAL_NAMESPACE,
+        CONSUL_INTERNAL_GROUP,
         registration.name,
         instance_ip,
         instance_port,
-        dc_config.default_cluster
+        CONSUL_INTERNAL_CLUSTER
     );
     let service_key = format!(
         "{}#{}#{}",
-        namespace, dc_config.default_group, registration.name
+        CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, registration.name
     );
     agent
         .registry
@@ -356,7 +338,7 @@ pub async fn deregister_service(
     }
 
     // Remove from Consul naming store
-    let deregistered = agent.naming_store.remove_by_service_id(&service_id);
+    let deregistered = agent.naming_store.remove_by_service_id(&namespace, &service_id);
 
     if deregistered {
         // Clean up registry entries via O(1) lookup
@@ -413,7 +395,7 @@ pub async fn list_services(
     }
 
     // Get all service entries from ConsulNamingStore
-    let all_entries = agent.naming_store.scan("");
+    let all_entries = agent.naming_store.scan_ns(&namespace);
     let mut services: std::collections::HashMap<String, AgentService> =
         std::collections::HashMap::new();
 
@@ -460,7 +442,7 @@ pub async fn get_service(
     }
 
     // Find the service by ID from ConsulNamingStore
-    if let Some(data) = agent.naming_store.get_by_service_id(&service_id) {
+    if let Some(data) = agent.naming_store.get_by_service_id(&namespace, &service_id) {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             let agent_service = AgentService::from(&reg);
             let healthy =
@@ -560,7 +542,7 @@ pub async fn agent_health_service_by_id(
     }
 
     // Search for the service instance by ID from ConsulNamingStore
-    if let Some(data) = agent.naming_store.get_by_service_id(&service_id) {
+    if let Some(data) = agent.naming_store.get_by_service_id(&namespace, &service_id) {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             let healthy =
                 agent.naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
@@ -627,7 +609,7 @@ pub async fn agent_health_service_by_name(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let entries = agent.naming_store.get_service_entries(&service_name);
+    let entries = agent.naming_store.get_service_entries(&namespace, &service_name);
 
     if entries.is_empty() {
         return HttpResponse::NotFound().json(ConsulError::new(format!(
@@ -1513,8 +1495,8 @@ pub async fn get_agent_metrics_real(
         sys.available_memory() as f64,
     ));
 
-    // Service metrics from ConsulNamingStore
-    let service_names = agent.naming_store.service_names();
+    // Service metrics from ConsulNamingStore (use default namespace for metrics)
+    let service_names = agent.naming_store.service_names(crate::namespace::DEFAULT_NAMESPACE);
     let total_services = service_names.len();
 
     gauges.push(
@@ -1523,8 +1505,8 @@ pub async fn get_agent_metrics_real(
     );
     gauges.push(
         GaugeMetric::new("batata.naming.service_count", total_services as f64)
-            .with_label("namespace", &dc_config.default_namespace)
-            .with_label("group", &dc_config.default_group),
+            .with_label("namespace", CONSUL_INTERNAL_NAMESPACE)
+            .with_label("group", CONSUL_INTERNAL_GROUP),
     );
 
     // Count total instances across all services
@@ -1533,7 +1515,7 @@ pub async fn get_agent_metrics_real(
     let mut unhealthy_instances = 0u64;
 
     for service_name in &service_names {
-        let entries = agent.naming_store.get_service_entries(service_name);
+        let entries = agent.naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
         let instance_count = entries.len() as u64;
         total_instances += instance_count;
 
@@ -1554,7 +1536,7 @@ pub async fn get_agent_metrics_real(
                 instance_count as f64,
             )
             .with_label("service", service_name)
-            .with_label("namespace", &dc_config.default_namespace),
+            .with_label("namespace", CONSUL_INTERNAL_NAMESPACE),
         );
     }
 
@@ -1722,13 +1704,13 @@ fn collect_metrics_snapshot(
     naming_store: &ConsulNamingStore,
     _dc_config: &ConsulDatacenterConfig,
 ) -> MetricsResponse {
-    let service_names = naming_store.service_names();
+    let service_names = naming_store.service_names(crate::namespace::DEFAULT_NAMESPACE);
     let service_count = service_names.len();
 
     let total_instances = naming_store.len();
     // Count healthy instances by scanning all entries
     let mut healthy_instances: usize = 0;
-    for (_key, data) in naming_store.scan("") {
+    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             if naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32) {
                 healthy_instances += 1;
@@ -1959,11 +1941,7 @@ mod tests {
         let naming_service = Arc::new(NamingService::new());
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service));
         let naming_store = Arc::new(ConsulNamingStore::new());
-        let agent = ConsulAgentService::new(naming_store.clone(), registry.clone()).with_defaults(
-            "public".to_string(),
-            "DEFAULT_GROUP".to_string(),
-            "DEFAULT".to_string(),
-        );
+        let agent = ConsulAgentService::new(naming_store.clone(), registry.clone());
         (agent, naming_store, registry)
     }
 
@@ -1977,7 +1955,7 @@ mod tests {
         assert!(result.is_ok(), "Self-registration should succeed");
 
         // Verify service is in ConsulNamingStore
-        let data = agent.naming_store.get_by_service_id("consul");
+        let data = agent.naming_store.get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
         assert!(data.is_some(), "Consul service should be in naming store");
 
         let reg: AgentServiceRegistration =
@@ -2013,29 +1991,22 @@ mod tests {
 
         // Register first
         agent.register_consul_service(8500, "dc1").await.unwrap();
-        assert!(agent.naming_store.get_by_service_id("consul").is_some());
+        assert!(agent.naming_store.get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul").is_some());
 
         // Deregister
         agent.deregister_consul_service().await;
 
         assert!(
-            agent.naming_store.get_by_service_id("consul").is_none(),
+            agent.naming_store.get_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul").is_none(),
             "Consul service should be deregistered from naming store"
         );
     }
 
     #[test]
-    fn test_agent_default_cluster_config() {
-        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(Arc::new(NamingService::new())));
-        let naming_store = Arc::new(ConsulNamingStore::new());
-        let agent = ConsulAgentService::new(naming_store, registry).with_defaults(
-            "custom-ns".to_string(),
-            "CUSTOM_GROUP".to_string(),
-            "CUSTOM_CLUSTER".to_string(),
-        );
-
-        assert_eq!(agent.default_namespace, "custom-ns");
-        assert_eq!(agent.default_group, "CUSTOM_GROUP");
-        assert_eq!(agent.default_cluster, "CUSTOM_CLUSTER");
+    fn test_agent_uses_fixed_constants() {
+        // Verify the fixed constants have the expected values used as registry key prefixes.
+        assert_eq!(CONSUL_INTERNAL_NAMESPACE, "consul");
+        assert_eq!(CONSUL_INTERNAL_GROUP, "CONSUL_GROUP");
+        assert_eq!(CONSUL_INTERNAL_CLUSTER, "DEFAULT");
     }
 }

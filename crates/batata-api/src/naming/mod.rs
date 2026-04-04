@@ -7,6 +7,3 @@ pub mod traits;
 
 pub use model::*;
 pub use traits::NamingServiceProvider;
-
-// Re-export key types for convenience
-pub use model::RegisterSource;

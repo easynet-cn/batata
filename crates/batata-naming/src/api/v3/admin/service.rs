@@ -161,13 +161,12 @@ async fn list_services(
             .build()
     );
 
-    // Get Batata-registered services, then filter by service name pattern if provided
-    let (_, raw_names) = naming_service.list_services_by_source(
+    // Get all services, then filter by service name pattern if provided
+    let (_, raw_names) = naming_service.list_services(
         namespace_id,
         group_name,
         1,        // get all from page 1
         i32::MAX, // large page to get all
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     // Apply service name filter (blur/contains match) if serviceNameParam is provided
@@ -190,13 +189,12 @@ async fn list_services(
             .into_iter()
             .filter(|name| {
                 !naming_service
-                    .get_instances_by_source(
+                    .get_instances(
                         namespace_id,
                         group_name,
                         name,
                         "",
                         false,
-                        Some(batata_api::naming::RegisterSource::Batata),
                     )
                     .is_empty()
             })
@@ -229,13 +227,12 @@ async fn list_services(
             .iter()
             .map(|name| {
                 let metadata = naming_service.get_service_metadata(namespace_id, group_name, name);
-                let instances = naming_service.get_instances_by_source(
+                let instances = naming_service.get_instances(
                     namespace_id,
                     group_name,
                     name,
                     "",
                     false,
-                    Some(batata_api::naming::RegisterSource::Batata),
                 );
 
                 // Build cluster map from real cluster configs
@@ -317,13 +314,12 @@ async fn list_services(
         let service_list: Vec<ServiceInfoResponse> = service_names
             .iter()
             .map(|name| {
-                let instances = naming_service.get_instances_by_source(
+                let instances = naming_service.get_instances(
                     namespace_id,
                     group_name,
                     name,
                     "",
                     false,
-                    Some(batata_api::naming::RegisterSource::Batata),
                 );
                 let clusters: HashSet<_> =
                     instances.iter().map(|i| i.cluster_name.clone()).collect();
@@ -382,13 +378,12 @@ async fn get_service(
         );
     }
 
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
     let mut clusters: HashSet<_> = instances.iter().map(|i| i.cluster_name.clone()).collect();
     let metadata_opt =
@@ -660,13 +655,12 @@ async fn delete_service(
         );
     }
 
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
     if !instances.is_empty() {
         return Result::<bool>::http_response(

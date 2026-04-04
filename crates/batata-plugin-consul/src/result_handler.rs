@@ -93,7 +93,7 @@ mod tests {
         }))
         .unwrap();
         store
-            .register("web/web-1", Bytes::from(data))
+            .register("default/web/web-1", Bytes::from(data))
             .unwrap();
 
         // Initially healthy
@@ -118,7 +118,7 @@ mod tests {
             "Name": "web", "ID": "web-1", "Port": 8080, "Address": "10.0.0.1"
         }))
         .unwrap();
-        store.register("web/web-1", Bytes::from(data)).unwrap();
+        store.register("default/web/web-1", Bytes::from(data)).unwrap();
         assert_eq!(store.len(), 1);
 
         handler.on_deregister("", "", "web", "10.0.0.1", 8080, "");

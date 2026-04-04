@@ -99,13 +99,12 @@ pub async fn list_catalog_instances(
             .build()
     );
 
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         clusters,
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     // Paginate

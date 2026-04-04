@@ -7,8 +7,7 @@
 use std::collections::HashMap;
 
 use super::model::{
-    ClusterConfig, ClusterStatistics, Instance, ProtectionInfo, RegisterSource, Service,
-    ServiceMetadata,
+    ClusterConfig, ClusterStatistics, Instance, ProtectionInfo, Service, ServiceMetadata,
 };
 
 /// Naming service provider trait for service discovery operations
@@ -44,27 +43,6 @@ pub trait NamingServiceProvider: Send + Sync {
         healthy_only: bool,
     ) -> Vec<Instance>;
 
-    /// Get instances filtered by registration source.
-    /// - `Some(Batata)`: only Batata/Nacos-registered instances
-    /// - `Some(Consul)`: only Consul-registered instances
-    /// - `None`: all instances (no filtering)
-    fn get_instances_by_source(
-        &self,
-        namespace: &str,
-        group_name: &str,
-        service_name: &str,
-        cluster: &str,
-        healthy_only: bool,
-        source: Option<RegisterSource>,
-    ) -> Vec<Instance> {
-        let mut instances =
-            self.get_instances(namespace, group_name, service_name, cluster, healthy_only);
-        if let Some(src) = source {
-            instances.retain(|i| i.register_source == src);
-        }
-        instances
-    }
-
     fn get_service(
         &self,
         namespace: &str,
@@ -73,27 +51,6 @@ pub trait NamingServiceProvider: Send + Sync {
         cluster: &str,
         healthy_only: bool,
     ) -> Service;
-
-    /// Get service info filtered by registration source.
-    /// - `Some(Batata)`: only Batata/Nacos-registered instances in the service
-    /// - `Some(Consul)`: only Consul-registered instances in the service
-    /// - `None`: all instances (no filtering)
-    fn get_service_by_source(
-        &self,
-        namespace: &str,
-        group_name: &str,
-        service_name: &str,
-        cluster: &str,
-        healthy_only: bool,
-        source: Option<RegisterSource>,
-    ) -> Service {
-        let mut service =
-            self.get_service(namespace, group_name, service_name, cluster, healthy_only);
-        if let Some(src) = source {
-            service.hosts.retain(|i| i.register_source == src);
-        }
-        service
-    }
 
     fn get_service_with_protection_info(
         &self,
@@ -111,46 +68,6 @@ pub trait NamingServiceProvider: Send + Sync {
         page_no: i32,
         page_size: i32,
     ) -> (i32, Vec<String>);
-
-    /// List services filtered by registration source.
-    ///
-    /// Filters by `ServiceMetadata.register_source`. Services without metadata
-    /// are treated as Batata-registered (default source).
-    /// Pagination is applied after filtering.
-    fn list_services_by_source(
-        &self,
-        namespace: &str,
-        group_name: &str,
-        page_no: i32,
-        page_size: i32,
-        source: Option<RegisterSource>,
-    ) -> (i32, Vec<String>) {
-        let (_, all_names) = self.list_services(namespace, group_name, 1, i32::MAX);
-
-        let filtered: Vec<String> = match source {
-            Some(src) => all_names
-                .into_iter()
-                .filter(|name| {
-                    let meta_source = self
-                        .get_service_metadata(namespace, group_name, name)
-                        .map(|m| m.register_source)
-                        .unwrap_or_default(); // Default = Batata
-                    meta_source == src
-                })
-                .collect(),
-            None => all_names,
-        };
-
-        let total = filtered.len() as i32;
-        let start = ((page_no.max(1) - 1) * page_size) as usize;
-        let end = (start + page_size as usize).min(filtered.len());
-        let page = if start < filtered.len() {
-            filtered[start..end].to_vec()
-        } else {
-            vec![]
-        };
-        (total, page)
-    }
 
     fn service_exists(&self, namespace: &str, group_name: &str, service_name: &str) -> bool;
 

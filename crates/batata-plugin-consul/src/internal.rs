@@ -17,7 +17,6 @@ use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError};
 use crate::naming_store::ConsulNamingStore;
-use batata_plugin::PluginNamingStore;
 
 // ============================================================================
 // UI Models
@@ -159,7 +158,7 @@ pub async fn ui_nodes(
     let dc = dc_config.resolve_dc(&query.dc);
     let mut node_map: HashMap<String, UINode> = HashMap::new();
 
-    for (_key, data) in naming_store.scan("") {
+    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             let ip = reg.effective_address();
             let node_name = format!("node-{}", ip.replace('.', "-"));
@@ -202,7 +201,7 @@ pub async fn ui_node_info(
 
     let node_name = path.into_inner();
 
-    for (_key, data) in naming_store.scan("") {
+    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             let ip = reg.effective_address();
             let instance_node = format!("node-{}", ip.replace('.', "-"));
@@ -269,10 +268,9 @@ pub async fn ui_catalog_overview(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let service_names = naming_store.service_names();
+    let service_names = naming_store.service_names(crate::namespace::DEFAULT_NAMESPACE);
     let service_count = service_names.len();
 
-    let mut total_instances: i64 = 0;
     let mut node_set: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut total_checks: i64 = 0;
     let mut passing_checks: i64 = 0;
@@ -280,10 +278,9 @@ pub async fn ui_catalog_overview(
     let mut critical_checks: i64 = 0;
 
     for service_name in &service_names {
-        let entries = naming_store.get_service_entries(service_name);
+        let entries = naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, service_name);
         for entry_bytes in &entries {
             if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(entry_bytes) {
-                total_instances += 1;
                 let ip = reg.effective_address();
                 let node_name = format!("node-{}", ip.replace('.', "-"));
                 node_set.insert(node_name);
@@ -441,7 +438,7 @@ pub async fn ui_service_topology(
     }
 
     // Also check proxy config for upstream dependencies
-    for (_key, data) in naming_store.scan("") {
+    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             if reg.kind.as_deref() == Some("connect-proxy") {
                 if let Some(ref proxy) = reg.proxy {
@@ -528,7 +525,7 @@ fn collect_mesh_gateways(
 ) -> Vec<serde_json::Value> {
     let mut gateways = Vec::new();
 
-    for (_key, data) in naming_store.scan("") {
+    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             if reg.kind.as_deref() == Some("mesh-gateway") {
                 let ip = reg.effective_address();
@@ -610,7 +607,7 @@ pub async fn federation_state_mesh_gateways(
 
     let mut gateways_by_dc: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
 
-    for (_key, data) in naming_store.scan("") {
+    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
         if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
             if reg.kind.as_deref() == Some("mesh-gateway") {
                 let dc = dc_config.datacenter.clone();
@@ -690,7 +687,7 @@ pub async fn assign_service_virtual_ip(
     }
 
     let request = body.into_inner();
-    let found = !naming_store.get_service_entries(&request.service_name).is_empty();
+    let found = !naming_store.get_service_entries(crate::namespace::DEFAULT_NAMESPACE, &request.service_name).is_empty();
 
     HttpResponse::Ok()
         .insert_header((

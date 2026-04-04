@@ -420,8 +420,6 @@ pub struct ConsulCatalogService {
     naming_store: Arc<crate::naming_store::ConsulNamingStore>,
     node_name: String,
     datacenter: String,
-    default_group: String,
-    default_cluster: String,
     index_provider: ConsulIndexProvider,
 }
 
@@ -438,24 +436,8 @@ impl ConsulCatalogService {
             naming_store,
             node_name: "batata-node".to_string(),
             datacenter,
-            default_group: "CONSUL_GROUP".to_string(),
-            default_cluster: "DEFAULT".to_string(),
             index_provider: ConsulIndexProvider::default(),
         }
-    }
-
-    pub fn with_default_group(mut self, group: String) -> Self {
-        if !group.is_empty() {
-            self.default_group = group;
-        }
-        self
-    }
-
-    pub fn with_default_cluster(mut self, cluster: String) -> Self {
-        if !cluster.is_empty() {
-            self.default_cluster = cluster;
-        }
-        self
     }
 
     pub fn with_index_provider(mut self, index_provider: ConsulIndexProvider) -> Self {
@@ -464,20 +446,20 @@ impl ConsulCatalogService {
     }
 
     /// Get all unique service names with their tags
-    pub fn get_services(&self, _namespace: &str) -> HashMap<String, Vec<String>> {
-        self.naming_store.service_names_with_tags()
+    pub fn get_services(&self, namespace: &str) -> HashMap<String, Vec<String>> {
+        self.naming_store.service_names_with_tags(namespace)
     }
 
     /// Get all instances for a service
     pub fn get_service_instances(
         &self,
-        _namespace: &str,
+        namespace: &str,
         service_name: &str,
         tag_filter: Option<&str>,
     ) -> Vec<CatalogService> {
         let index = self.index_provider.current_index(ConsulTable::Catalog);
         self.naming_store
-            .get_service_entries(service_name)
+            .get_service_entries(namespace, service_name)
             .into_iter()
             .filter_map(|entry_bytes| {
                 serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes).ok()
@@ -499,12 +481,12 @@ impl ConsulCatalogService {
     }
 
     /// Get all nodes (for simplicity, we return one node per unique IP)
-    pub fn get_nodes(&self, _namespace: &str) -> Vec<CatalogNode> {
+    pub fn get_nodes(&self, namespace: &str) -> Vec<CatalogNode> {
         let index = self.index_provider.current_index(ConsulTable::Catalog);
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
-        for service_name in self.naming_store.service_names() {
-            for entry_bytes in self.naming_store.get_service_entries(&service_name) {
+        for service_name in self.naming_store.service_names(namespace) {
+            for entry_bytes in self.naming_store.get_service_entries(namespace, &service_name) {
                 let Ok(reg) =
                     serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
                 else {
@@ -533,7 +515,7 @@ impl ConsulCatalogService {
     }
 
     /// Get node details with services
-    pub fn get_node(&self, _namespace: &str, node_name: &str) -> Option<NodeServices> {
+    pub fn get_node(&self, namespace: &str, node_name: &str) -> Option<NodeServices> {
         let hostname = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "batata-node".to_string());
@@ -542,8 +524,8 @@ impl ConsulCatalogService {
         let mut node: Option<CatalogNode> = None;
         let mut services: HashMap<String, AgentService> = HashMap::new();
 
-        for service_name in self.naming_store.service_names() {
-            for entry_bytes in self.naming_store.get_service_entries(&service_name) {
+        for service_name in self.naming_store.service_names(namespace) {
+            for entry_bytes in self.naming_store.get_service_entries(namespace, &service_name) {
                 let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(
                     &entry_bytes,
                 ) else {
@@ -595,7 +577,7 @@ impl ConsulCatalogService {
     }
 
     /// Register a service via catalog
-    pub fn register(&self, registration: &CatalogRegistration, _namespace: &str) -> bool {
+    pub fn register(&self, registration: &CatalogRegistration, namespace: &str) -> bool {
         if let Some(ref svc) = registration.service {
             let service_id = svc.id.clone().unwrap_or_else(|| svc.service.clone());
             let address = svc
@@ -627,7 +609,7 @@ impl ConsulCatalogService {
                 Err(_) => return false,
             };
 
-            let key = crate::naming_store::ConsulNamingStore::build_key(&svc.service, &service_id);
+            let key = crate::naming_store::ConsulNamingStore::build_key(namespace, &svc.service, &service_id);
             use batata_plugin::PluginNamingStore;
             self.naming_store.register(&key, data).is_ok()
         } else {
@@ -637,17 +619,17 @@ impl ConsulCatalogService {
     }
 
     /// Deregister a service via catalog
-    pub fn deregister(&self, deregistration: &CatalogDeregistration, _namespace: &str) -> bool {
+    pub fn deregister(&self, deregistration: &CatalogDeregistration, namespace: &str) -> bool {
         if let Some(ref service_id) = deregistration.service_id {
             // Deregister by service_id
-            self.naming_store.remove_by_service_id(service_id)
+            self.naming_store.remove_by_service_id(namespace, service_id)
         } else {
             // Node deregistration - remove all services on this node
             let node = &deregistration.node;
             let mut deregistered = false;
 
-            for service_name in self.naming_store.service_names() {
-                for entry_bytes in self.naming_store.get_service_entries(&service_name) {
+            for service_name in self.naming_store.service_names(namespace) {
+                for entry_bytes in self.naming_store.get_service_entries(namespace, &service_name) {
                     let Ok(reg) =
                         serde_json::from_slice::<crate::model::AgentServiceRegistration>(
                             &entry_bytes,
@@ -658,7 +640,7 @@ impl ConsulCatalogService {
                     let ip = reg.effective_address();
                     let instance_node = format!("node-{}", ip.replace('.', "-"));
                     if &instance_node == node || &ip == node {
-                        self.naming_store.remove_by_service_id(&reg.service_id());
+                        self.naming_store.remove_by_service_id(namespace, &reg.service_id());
                         deregistered = true;
                     }
                 }
@@ -670,13 +652,13 @@ impl ConsulCatalogService {
 
     /// Get service summary for UI
     /// Returns a list of service summaries with health check information
-    pub fn get_service_summary(&self, _namespace: &str) -> Vec<ServiceListingSummary> {
+    pub fn get_service_summary(&self, namespace: &str) -> Vec<ServiceListingSummary> {
         let mut summaries: Vec<ServiceListingSummary> = Vec::new();
 
-        for service_name in self.naming_store.service_names() {
+        for service_name in self.naming_store.service_names(namespace) {
             let regs: Vec<crate::model::AgentServiceRegistration> = self
                 .naming_store
-                .get_service_entries(&service_name)
+                .get_service_entries(namespace, &service_name)
                 .into_iter()
                 .filter_map(|b| serde_json::from_slice(&b).ok())
                 .collect();
@@ -800,14 +782,14 @@ impl ConsulCatalogService {
     /// Returns connect-proxy instances targeting this service, or native-connect instances.
     pub fn get_connect_service_instances(
         &self,
-        _namespace: &str,
+        namespace: &str,
         target_service: &str,
     ) -> Vec<CatalogService> {
         let index = self.index_provider.current_index(ConsulTable::Catalog);
         let mut results = Vec::new();
 
-        for service_name in self.naming_store.service_names() {
-            for entry_bytes in self.naming_store.get_service_entries(&service_name) {
+        for service_name in self.naming_store.service_names(namespace) {
+            for entry_bytes in self.naming_store.get_service_entries(namespace, &service_name) {
                 let Ok(reg) =
                     serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
                 else {
@@ -1473,7 +1455,7 @@ mod tests {
 
     fn register_reg(store: &ConsulNamingStore, reg: &AgentServiceRegistration) {
         let service_id = reg.service_id();
-        let key = ConsulNamingStore::build_key(&reg.name, &service_id);
+        let key = ConsulNamingStore::build_key(crate::namespace::DEFAULT_NAMESPACE, &reg.name, &service_id);
         let data = bytes::Bytes::from(serde_json::to_vec(reg).unwrap());
         store.register(&key, data).unwrap();
     }
@@ -1591,7 +1573,7 @@ mod tests {
         register_reg(&store, &simple_reg("web", "web-2", "192.168.1.101", 8080));
 
         // Get nodes
-        let nodes = catalog.get_nodes("public");
+        let nodes = catalog.get_nodes("default");
         assert_eq!(nodes.len(), 2);
 
         // Verify node names (generated as "node-{ip with dots replaced by dashes}") and addresses
@@ -1660,7 +1642,7 @@ mod tests {
         store.update_health("192.168.1.101", 3306, false);
 
         // Get service summary
-        let summaries = catalog.get_service_summary("consul");
+        let summaries = catalog.get_service_summary("default");
         assert_eq!(summaries.len(), 2);
 
         // Find the web service summary

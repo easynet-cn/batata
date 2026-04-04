@@ -3,8 +3,11 @@
 //! Stores Consul services in their native format (AgentService with tags,
 //! weights, connect config, etc.) without converting to Nacos Instance.
 //!
-//! Key format: "{service_name}/{service_id}"
+//! Key format: "{namespace}/{service_name}/{service_id}"
 //! Data format: JSON-serialized AgentService
+//!
+//! The namespace prefix enables Enterprise namespace isolation.
+//! CE clients use "default" namespace transparently.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -15,22 +18,24 @@ use dashmap::DashMap;
 use batata_plugin::{PluginNamingStore, PluginNamingStoreError};
 
 use crate::model::AgentServiceRegistration;
+use crate::namespace::DEFAULT_NAMESPACE;
 
 /// Stored service entry with Consul-native data
 #[derive(Debug, Clone)]
 struct StoredEntry {
     data: Bytes,
+    namespace: String,
     service_name: String,
     service_id: String,
 }
 
 /// Consul naming store — holds service registrations in Consul-native format
 ///
-/// Services are stored as serialized JSON bytes, keyed by "{service_name}/{service_id}".
+/// Services are stored as serialized JSON bytes, keyed by "{namespace}/{service_name}/{service_id}".
 /// This avoids the Nacos metadata JSON packing/unpacking overhead.
 #[derive(Clone)]
 pub struct ConsulNamingStore {
-    /// Key: "{service_name}/{service_id}", Value: serialized AgentService
+    /// Key: "{namespace}/{service_name}/{service_id}", Value: serialized AgentService
     entries: Arc<DashMap<String, StoredEntry>>,
     /// Instance health status: "ip:port" → healthy (aggregated from checks)
     health_status: Arc<DashMap<String, bool>>,
@@ -67,14 +72,17 @@ impl ConsulNamingStore {
         self.bump_revision();
     }
 
-    /// Build a key from service name and service ID
-    pub fn build_key(service_name: &str, service_id: &str) -> String {
-        format!("{service_name}/{service_id}")
+    /// Build a key from namespace, service name and service ID.
+    /// Uses "default" namespace if ns is empty.
+    pub fn build_key(ns: &str, service_name: &str, service_id: &str) -> String {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
+        format!("{ns}/{service_name}/{service_id}")
     }
 
-    /// Get all entries for a service name
-    pub fn get_service_entries(&self, service_name: &str) -> Vec<Bytes> {
-        let prefix = format!("{service_name}/");
+    /// Get all entries for a service name within a namespace
+    pub fn get_service_entries(&self, ns: &str, service_name: &str) -> Vec<Bytes> {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
+        let prefix = format!("{ns}/{service_name}/");
         self.entries
             .iter()
             .filter(|e| e.key().starts_with(&prefix))
@@ -82,23 +90,32 @@ impl ConsulNamingStore {
             .collect()
     }
 
-    /// Get all unique service names
-    pub fn service_names(&self) -> Vec<String> {
+    /// Get all unique service names within a namespace
+    pub fn service_names(&self, ns: &str) -> Vec<String> {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
         let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for entry in self.entries.iter() {
-            names.insert(entry.value().service_name.clone());
+            if entry.value().namespace == ns {
+                names.insert(entry.value().service_name.clone());
+            }
         }
         let mut result: Vec<String> = names.into_iter().collect();
         result.sort();
         result
     }
 
-    /// Get service names with their tags (for catalog list)
-    pub fn service_names_with_tags(&self) -> std::collections::HashMap<String, Vec<String>> {
+    /// Get service names with their tags within a namespace
+    pub fn service_names_with_tags(
+        &self,
+        ns: &str,
+    ) -> std::collections::HashMap<String, Vec<String>> {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
         let mut result: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         for entry in self.entries.iter() {
-            // Deserialize to extract tags
+            if entry.value().namespace != ns {
+                continue;
+            }
             if let Ok(reg) =
                 serde_json::from_slice::<AgentServiceRegistration>(&entry.value().data)
             {
@@ -117,20 +134,22 @@ impl ConsulNamingStore {
         result
     }
 
-    /// Get an entry by service_id (scans all entries)
-    pub fn get_by_service_id(&self, service_id: &str) -> Option<Bytes> {
+    /// Get an entry by service_id within a namespace (scans entries in that namespace)
+    pub fn get_by_service_id(&self, ns: &str, service_id: &str) -> Option<Bytes> {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
         self.entries
             .iter()
-            .find(|e| e.value().service_id == service_id)
+            .find(|e| e.value().namespace == ns && e.value().service_id == service_id)
             .map(|e| e.value().data.clone())
     }
 
-    /// Remove by service_id (scans and removes)
-    pub fn remove_by_service_id(&self, service_id: &str) -> bool {
+    /// Remove by service_id within a namespace
+    pub fn remove_by_service_id(&self, ns: &str, service_id: &str) -> bool {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
         let key = self
             .entries
             .iter()
-            .find(|e| e.value().service_id == service_id)
+            .find(|e| e.value().namespace == ns && e.value().service_id == service_id)
             .map(|e| e.key().clone());
         if let Some(key) = key {
             self.entries.remove(&key);
@@ -141,8 +160,27 @@ impl ConsulNamingStore {
         }
     }
 
+    /// Scan all entries in a namespace (for internal/metrics)
+    pub fn scan_ns(&self, ns: &str) -> Vec<(String, Bytes)> {
+        let ns = if ns.is_empty() { DEFAULT_NAMESPACE } else { ns };
+        self.entries
+            .iter()
+            .filter(|e| e.value().namespace == ns)
+            .map(|e| (e.key().clone(), e.value().data.clone()))
+            .collect()
+    }
+
     fn bump_revision(&self) {
         self.revision.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Parse key into (namespace, service_name, service_id)
+    fn parse_key(key: &str) -> Option<(String, String, String)> {
+        let mut parts = key.splitn(3, '/');
+        let ns = parts.next()?.to_string();
+        let svc = parts.next()?.to_string();
+        let id = parts.next()?.to_string();
+        Some((ns, svc, id))
     }
 }
 
@@ -159,17 +197,18 @@ impl PluginNamingStore for ConsulNamingStore {
     }
 
     fn register(&self, key: &str, data: Bytes) -> Result<(), PluginNamingStoreError> {
-        // Extract service_name and service_id from key
-        let (service_name, service_id) = key.split_once('/').ok_or_else(|| {
-            PluginNamingStoreError::Storage(format!("Invalid key format: {key}"))
-        })?;
+        let (namespace, service_name, service_id) =
+            Self::parse_key(key).ok_or_else(|| {
+                PluginNamingStoreError::Storage(format!("Invalid key format: {key}"))
+            })?;
 
         self.entries.insert(
             key.to_string(),
             StoredEntry {
                 data,
-                service_name: service_name.to_string(),
-                service_id: service_id.to_string(),
+                namespace,
+                service_name,
+                service_id,
             },
         );
         self.bump_revision();
@@ -203,7 +242,6 @@ impl PluginNamingStore for ConsulNamingStore {
     }
 
     async fn snapshot(&self) -> Bytes {
-        // Serialize as Vec<(String, Vec<u8>)> since Bytes doesn't impl Serialize
         let all: Vec<(String, Vec<u8>)> = self
             .entries
             .iter()
@@ -218,19 +256,17 @@ impl PluginNamingStore for ConsulNamingStore {
 
         self.entries.clear();
         for (key, value) in entries {
-            let (service_name, service_id) = if let Some((sn, si)) = key.split_once('/') {
-                (sn.to_string(), si.to_string())
-            } else {
-                (String::new(), key.clone())
-            };
-            self.entries.insert(
-                key,
-                StoredEntry {
-                    data: Bytes::from(value),
-                    service_name,
-                    service_id,
-                },
-            );
+            if let Some((ns, svc, id)) = Self::parse_key(&key) {
+                self.entries.insert(
+                    key,
+                    StoredEntry {
+                        data: Bytes::from(value),
+                        namespace: ns,
+                        service_name: svc,
+                        service_id: id,
+                    },
+                );
+            }
         }
         self.bump_revision();
         Ok(())
@@ -260,7 +296,7 @@ mod tests {
     #[test]
     fn test_register_and_get() {
         let store = ConsulNamingStore::new();
-        let key = ConsulNamingStore::build_key("web-api", "web-api-1");
+        let key = ConsulNamingStore::build_key("default", "web-api", "web-api-1");
         let data = sample_registration("web-api", "web-api-1");
 
         store.register(&key, data.clone()).unwrap();
@@ -275,7 +311,7 @@ mod tests {
     #[test]
     fn test_deregister() {
         let store = ConsulNamingStore::new();
-        let key = ConsulNamingStore::build_key("web-api", "web-api-1");
+        let key = ConsulNamingStore::build_key("default", "web-api", "web-api-1");
         store
             .register(&key, sample_registration("web-api", "web-api-1"))
             .unwrap();
@@ -290,27 +326,27 @@ mod tests {
         let store = ConsulNamingStore::new();
         store
             .register(
-                &ConsulNamingStore::build_key("web-api", "web-api-1"),
+                &ConsulNamingStore::build_key("default", "web-api", "web-api-1"),
                 sample_registration("web-api", "web-api-1"),
             )
             .unwrap();
         store
             .register(
-                &ConsulNamingStore::build_key("web-api", "web-api-2"),
+                &ConsulNamingStore::build_key("default", "web-api", "web-api-2"),
                 sample_registration("web-api", "web-api-2"),
             )
             .unwrap();
         store
             .register(
-                &ConsulNamingStore::build_key("db", "db-1"),
+                &ConsulNamingStore::build_key("default", "db", "db-1"),
                 sample_registration("db", "db-1"),
             )
             .unwrap();
 
-        let web_entries = store.scan("web-api/");
+        let web_entries = store.get_service_entries("default", "web-api");
         assert_eq!(web_entries.len(), 2);
 
-        let db_entries = store.scan("db/");
+        let db_entries = store.get_service_entries("default", "db");
         assert_eq!(db_entries.len(), 1);
     }
 
@@ -319,25 +355,57 @@ mod tests {
         let store = ConsulNamingStore::new();
         store
             .register(
-                &ConsulNamingStore::build_key("web-api", "web-api-1"),
+                &ConsulNamingStore::build_key("default", "web-api", "web-api-1"),
                 sample_registration("web-api", "web-api-1"),
             )
             .unwrap();
         store
             .register(
-                &ConsulNamingStore::build_key("web-api", "web-api-2"),
-                sample_registration("web-api", "web-api-2"),
-            )
-            .unwrap();
-        store
-            .register(
-                &ConsulNamingStore::build_key("db", "db-1"),
+                &ConsulNamingStore::build_key("default", "db", "db-1"),
                 sample_registration("db", "db-1"),
             )
             .unwrap();
 
-        let names = store.service_names();
+        let names = store.service_names("default");
         assert_eq!(names, vec!["db", "web-api"]);
+    }
+
+    #[test]
+    fn test_namespace_isolation() {
+        let store = ConsulNamingStore::new();
+        store
+            .register(
+                &ConsulNamingStore::build_key("default", "web", "web-1"),
+                sample_registration("web", "web-1"),
+            )
+            .unwrap();
+        store
+            .register(
+                &ConsulNamingStore::build_key("staging", "web", "web-2"),
+                sample_registration("web", "web-2"),
+            )
+            .unwrap();
+
+        // Each namespace sees only its own services
+        let default_entries = store.get_service_entries("default", "web");
+        assert_eq!(default_entries.len(), 1);
+
+        let staging_entries = store.get_service_entries("staging", "web");
+        assert_eq!(staging_entries.len(), 1);
+
+        // service_names is namespace-scoped
+        assert_eq!(store.service_names("default"), vec!["web"]);
+        assert_eq!(store.service_names("staging"), vec!["web"]);
+
+        // get_by_service_id is namespace-scoped
+        assert!(store.get_by_service_id("default", "web-1").is_some());
+        assert!(store.get_by_service_id("default", "web-2").is_none());
+        assert!(store.get_by_service_id("staging", "web-2").is_some());
+        assert!(store.get_by_service_id("staging", "web-1").is_none());
+
+        // remove is namespace-scoped
+        assert!(store.remove_by_service_id("default", "web-1"));
+        assert_eq!(store.len(), 1); // staging's web-2 still exists
     }
 
     #[test]
@@ -346,16 +414,16 @@ mod tests {
         let data = sample_registration("web-api", "web-api-1");
         store
             .register(
-                &ConsulNamingStore::build_key("web-api", "web-api-1"),
+                &ConsulNamingStore::build_key("default", "web-api", "web-api-1"),
                 data.clone(),
             )
             .unwrap();
 
-        let result = store.get_by_service_id("web-api-1");
+        let result = store.get_by_service_id("default", "web-api-1");
         assert!(result.is_some());
         assert_eq!(result.unwrap(), data);
 
-        assert!(store.get_by_service_id("nonexistent").is_none());
+        assert!(store.get_by_service_id("default", "nonexistent").is_none());
     }
 
     #[test]
@@ -363,14 +431,14 @@ mod tests {
         let store = ConsulNamingStore::new();
         store
             .register(
-                &ConsulNamingStore::build_key("web-api", "web-api-1"),
+                &ConsulNamingStore::build_key("default", "web-api", "web-api-1"),
                 sample_registration("web-api", "web-api-1"),
             )
             .unwrap();
 
-        assert!(store.remove_by_service_id("web-api-1"));
+        assert!(store.remove_by_service_id("default", "web-api-1"));
         assert_eq!(store.len(), 0);
-        assert!(!store.remove_by_service_id("nonexistent"));
+        assert!(!store.remove_by_service_id("default", "nonexistent"));
     }
 
     #[tokio::test]
@@ -378,13 +446,13 @@ mod tests {
         let store = ConsulNamingStore::new();
         store
             .register(
-                &ConsulNamingStore::build_key("web-api", "web-api-1"),
+                &ConsulNamingStore::build_key("default", "web-api", "web-api-1"),
                 sample_registration("web-api", "web-api-1"),
             )
             .unwrap();
         store
             .register(
-                &ConsulNamingStore::build_key("db", "db-1"),
+                &ConsulNamingStore::build_key("default", "db", "db-1"),
                 sample_registration("db", "db-1"),
             )
             .unwrap();
@@ -395,8 +463,8 @@ mod tests {
         store2.restore(&snapshot).await.unwrap();
 
         assert_eq!(store2.len(), 2);
-        assert!(store2.get_by_service_id("web-api-1").is_some());
-        assert!(store2.get_by_service_id("db-1").is_some());
+        assert!(store2.get_by_service_id("default", "web-api-1").is_some());
+        assert!(store2.get_by_service_id("default", "db-1").is_some());
     }
 
     #[test]
@@ -404,15 +472,21 @@ mod tests {
         let store = ConsulNamingStore::new();
         store
             .register(
-                &ConsulNamingStore::build_key("web-api", "web-api-1"),
+                &ConsulNamingStore::build_key("default", "web-api", "web-api-1"),
                 sample_registration("web-api", "web-api-1"),
             )
             .unwrap();
 
-        let names_tags = store.service_names_with_tags();
+        let names_tags = store.service_names_with_tags("default");
         assert_eq!(names_tags.len(), 1);
         let tags = names_tags.get("web-api").unwrap();
         assert!(tags.contains(&"web".to_string()));
         assert!(tags.contains(&"v1".to_string()));
+    }
+
+    #[test]
+    fn test_empty_namespace_defaults_to_default() {
+        let key = ConsulNamingStore::build_key("", "web", "web-1");
+        assert!(key.starts_with("default/"));
     }
 }

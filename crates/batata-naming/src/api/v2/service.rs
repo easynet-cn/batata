@@ -192,13 +192,12 @@ pub async fn delete_service(
     }
 
     // Check if service has Batata-registered instances
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     if !instances.is_empty() {
@@ -393,13 +392,12 @@ pub async fn get_service(
         naming_service.get_service_metadata(namespace_id, group_name, &params.service_name);
 
     // Get instances to calculate counts
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     // Collect cluster names from instances
@@ -516,12 +514,11 @@ pub async fn get_service_list(
     let page_size = params.page_size.min(500);
 
     // Get service list (only Batata-registered services)
-    let (total_count, service_names) = naming_service.list_services_by_source(
+    let (total_count, service_names) = naming_service.list_services(
         namespace_id,
         group_name,
         params.page_no as i32,
         page_size as i32,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let response = ServiceListResponse {

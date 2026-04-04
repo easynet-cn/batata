@@ -17,7 +17,6 @@ fn create_test_instance(ip: &str, port: i32, cluster: &str) -> Instance {
         cluster_name: cluster.to_string(),
         service_name: String::new(),
         metadata: HashMap::new(),
-        register_source: batata_api::naming::RegisterSource::default(),
     }
 }
 

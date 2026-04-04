@@ -181,7 +181,6 @@ async fn register_or_beat(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
-        register_source: batata_api::naming::RegisterSource::Batata,
     };
 
     naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
@@ -276,13 +275,12 @@ async fn list_instances(
             .build()
     );
 
-    let service = naming_service.get_service_by_source(
+    let service = naming_service.get_service(
         namespace_id,
         group_name,
         &params.service_name,
         clusters,
         healthy_only,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let hosts: Vec<InstanceResponse> = service

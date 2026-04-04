@@ -5,6 +5,14 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// Fixed internal namespace for Consul health check registry keys.
+/// This is NOT a Consul concept — it's only used as a key prefix in InstanceCheckRegistry.
+pub const CONSUL_INTERNAL_NAMESPACE: &str = "consul";
+/// Fixed internal group for Consul health check registry keys.
+pub const CONSUL_INTERNAL_GROUP: &str = "CONSUL_GROUP";
+/// Fixed internal cluster for Consul health check registry keys.
+pub const CONSUL_INTERNAL_CLUSTER: &str = "DEFAULT";
+
 /// Shared datacenter configuration for Consul API handlers.
 /// Registered as `web::Data<ConsulDatacenterConfig>` so all handlers
 /// can resolve the local datacenter name instead of hardcoding "dc1".
@@ -18,12 +26,6 @@ pub struct ConsulDatacenterConfig {
     pub consul_version: String,
     /// The Batata version (e.g., "0.1.0")
     pub batata_version: String,
-    /// Default Nacos namespace for Consul API mapping (e.g., "consul")
-    pub default_namespace: String,
-    /// Default Nacos group for Consul API mapping (e.g., "CONSUL_GROUP")
-    pub default_group: String,
-    /// Default Nacos cluster for Consul API mapping (e.g., "DEFAULT")
-    pub default_cluster: String,
     /// The Consul compatibility HTTP port (default 8500)
     pub consul_port: u16,
 }
@@ -35,9 +37,6 @@ impl ConsulDatacenterConfig {
             datacenter,
             consul_version: "1.22.5".to_string(),
             batata_version: env!("CARGO_PKG_VERSION").to_string(),
-            default_namespace: "consul".to_string(),
-            default_group: "CONSUL_GROUP".to_string(),
-            default_cluster: "DEFAULT".to_string(),
             consul_port: 8500,
         }
     }
@@ -62,27 +61,6 @@ impl ConsulDatacenterConfig {
         self
     }
 
-    pub fn with_default_namespace(mut self, ns: String) -> Self {
-        if !ns.is_empty() {
-            self.default_namespace = ns;
-        }
-        self
-    }
-
-    pub fn with_default_group(mut self, group: String) -> Self {
-        if !group.is_empty() {
-            self.default_group = group;
-        }
-        self
-    }
-
-    pub fn with_default_cluster(mut self, cluster: String) -> Self {
-        if !cluster.is_empty() {
-            self.default_cluster = cluster;
-        }
-        self
-    }
-
     /// Resolve datacenter from query parameter, falling back to local datacenter
     pub fn resolve_dc(&self, dc: &Option<String>) -> String {
         dc.as_deref()
@@ -91,11 +69,12 @@ impl ConsulDatacenterConfig {
             .to_string()
     }
 
-    /// Resolve namespace from query parameter, falling back to default namespace
+    /// Resolve namespace from query parameter, falling back to the default namespace.
+    /// CE clients use "default" namespace; Enterprise clients may pass a custom namespace.
     pub fn resolve_ns(&self, ns: &Option<String>) -> String {
         ns.as_deref()
             .filter(|s| !s.is_empty())
-            .unwrap_or(&self.default_namespace)
+            .unwrap_or(crate::namespace::DEFAULT_NAMESPACE)
             .to_string()
     }
 

@@ -31,8 +31,6 @@ impl NamingService {
 
         let instance_key = build_instance_key(&instance);
 
-        let register_source = instance.register_source.clone();
-
         // Get or create service entry
         let instances = self.services.entry(service_key.clone()).or_default();
         instances.insert(instance_key, Arc::new(instance));
@@ -40,10 +38,7 @@ impl NamingService {
         // Auto-create ServiceMetadata if it doesn't exist yet
         self.service_metadata
             .entry(service_key.clone())
-            .or_insert_with(|| ServiceMetadata {
-                register_source,
-                ..Default::default()
-            });
+            .or_insert_with(ServiceMetadata::default);
 
         // Increment service revision for change detection
         self.increment_service_revision(&service_key);

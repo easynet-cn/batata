@@ -238,7 +238,6 @@ async fn register_instance(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
-        register_source: batata_api::naming::RegisterSource::Batata,
     };
 
     let result =
@@ -415,7 +414,6 @@ async fn update_instance(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
-        register_source: batata_api::naming::RegisterSource::Batata,
     };
 
     naming_service.register_instance(namespace_id, group_name, &form.service_name, instance);
@@ -479,13 +477,12 @@ async fn get_instance(
             .build()
     );
 
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         cluster_name,
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let instance_key =
@@ -556,13 +553,12 @@ async fn list_instances(
             .build()
     );
 
-    let mut instances = naming_service.get_instances_by_source(
+    let mut instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         cluster,
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     if healthy_only {
@@ -620,13 +616,12 @@ async fn update_metadata(
 
     let instance_keys = parse_instance_keys(&form.instances);
 
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &form.service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let mut updated_ips = Vec::new();
@@ -690,13 +685,12 @@ async fn partial_update_instance(
             .build()
     );
 
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &form.service_name,
         cluster_name,
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let instance_key = crate::service::build_instance_key_parts(&form.ip, form.port, cluster_name);
@@ -853,13 +847,12 @@ async fn delete_metadata_batch(
         );
     }
 
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let mut updated_ips = Vec::new();

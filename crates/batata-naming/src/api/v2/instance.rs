@@ -148,7 +148,6 @@ pub async fn register_instance(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
-        register_source: batata_api::naming::RegisterSource::Batata,
     };
 
     // Record heartbeat for health check tracking
@@ -361,7 +360,6 @@ pub async fn update_instance(
         cluster_name: cluster_name.to_string(),
         service_name: form.service_name.clone(),
         metadata,
-        register_source: batata_api::naming::RegisterSource::Batata,
     };
 
     // Update by re-registering (which updates if exists)
@@ -434,13 +432,12 @@ pub async fn get_instance(
     );
 
     // Get all Batata-registered instances and find the specific one
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         cluster_name,
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let instance_key =
@@ -527,13 +524,12 @@ pub async fn get_instance_list(
     );
 
     // Get service with all info (filtered to Batata-registered instances only)
-    let service = naming_service.get_service_by_source(
+    let service = naming_service.get_service(
         namespace_id,
         group_name,
         &params.service_name,
         clusters,
         healthy_only,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     // Transform instances to response format
@@ -671,13 +667,12 @@ pub async fn batch_update_metadata(
     }
 
     // Get existing Batata-registered instances and update metadata
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &form.service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let mut updated_count = 0;
@@ -805,13 +800,12 @@ pub async fn batch_delete_metadata(
     }
 
     // Get existing Batata-registered instances and delete metadata keys
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &params.service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let mut updated_count = 0;
@@ -879,13 +873,12 @@ pub async fn patch_instance(
     );
 
     // Get existing Batata-registered instance to merge
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         &form.service_name,
         cluster_name,
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let instance_key = crate::service::build_instance_key_parts(&form.ip, form.port, cluster_name);
@@ -1109,13 +1102,12 @@ pub async fn get_instance_statuses(
             .build()
     );
 
-    let instances = naming_service.get_instances_by_source(
+    let instances = naming_service.get_instances(
         namespace_id,
         group_name,
         service_name,
         "",
         false,
-        Some(batata_api::naming::RegisterSource::Batata),
     );
 
     let statuses: HashMap<String, bool> = instances

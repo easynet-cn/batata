@@ -31,24 +31,11 @@ where
 pub const INSTANCE_TYPE_EPHEMERAL: &str = "ephemeral";
 pub const INSTANCE_TYPE_PERSISTENT: &str = "persistent";
 
-/// Registration source for service instances.
-/// Used to isolate instances registered via different protocols.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum RegisterSource {
-    /// Registered via Batata (Nacos-compatible) SDK or HTTP V2 API
-    #[default]
-    Batata,
-    /// Registered via Consul compatibility API
-    Consul,
-}
-
 // Preserved metadata keys (Nacos stores heartbeat timeouts as metadata, not top-level fields)
 pub const PRESERVED_HEART_BEAT_INTERVAL: &str = "preserved.heart.beat.interval";
 pub const PRESERVED_HEART_BEAT_TIMEOUT: &str = "preserved.heart.beat.timeout";
 pub const PRESERVED_IP_DELETE_TIMEOUT: &str = "preserved.ip.delete.timeout";
 pub const PRESERVED_INSTANCE_ID_GENERATOR: &str = "preserved.instance.id.generator";
-pub const PRESERVED_REGISTER_SOURCE: &str = "preserved.register.source";
 
 // Request type constants
 pub const REGISTER_INSTANCE: &str = "registerInstance";
@@ -70,8 +57,6 @@ pub struct Instance {
     pub cluster_name: String,
     pub service_name: String,
     pub metadata: HashMap<String, String>,
-    /// Registration source — used to isolate instances from different protocols
-    pub register_source: RegisterSource,
 }
 
 /// Clamp weight to valid range [0.0, 10000.0], defaulting to 1.0 for negative values
@@ -872,7 +857,6 @@ impl InstanceRegisterForm {
             cluster_name,
             service_name: self.service_name.clone(),
             metadata,
-            register_source: RegisterSource::default(),
         }
     }
 }
@@ -944,9 +928,6 @@ pub struct ServiceMetadata {
     pub ephemeral: bool,
     /// Revision counter for change detection / cache invalidation
     pub revision: u64,
-    /// Registration source (Batata or Consul)
-    #[serde(default)]
-    pub register_source: RegisterSource,
 }
 
 /// Protection threshold information
