@@ -219,6 +219,125 @@ pub trait ProtocolAdapterPlugin: Send + Sync {
     }
 }
 
+/// Health check result handler — called when a check status changes.
+///
+/// The health check engine (InstanceCheckRegistry) is protocol-agnostic.
+/// It executes probes and tracks status, but doesn't know how to apply
+/// the result to a specific service registry. This trait bridges that gap.
+///
+/// - **CoreResultHandler** (built-in): updates `Instance.healthy` in NamingService
+/// - **ConsulResultHandler** (plugin): updates check status in ConsulNamingStore,
+///   increments blocking query index, triggers auto-deregister
+pub trait HealthCheckResultHandler: Send + Sync {
+    /// Called when the aggregated health of an instance changes.
+    ///
+    /// `healthy`: true if all checks are passing/warning, false if any is critical.
+    fn on_health_changed(
+        &self,
+        namespace: &str,
+        group: &str,
+        service: &str,
+        ip: &str,
+        port: i32,
+        cluster: &str,
+        healthy: bool,
+    );
+
+    /// Called when an instance should be deregistered (critical too long).
+    ///
+    /// Default: no-op. Override for auto-deregister behavior.
+    fn on_deregister(
+        &self,
+        namespace: &str,
+        group: &str,
+        service: &str,
+        ip: &str,
+        port: i32,
+        cluster: &str,
+    ) {
+        let _ = (namespace, group, service, ip, port, cluster);
+    }
+}
+
+/// Plugin naming store for protocol-specific service registration.
+///
+/// Each protocol adapter plugin can register its own naming store to manage
+/// service data independently from the core Nacos naming service.
+///
+/// Key design:
+/// - **Core (Nacos)** data lives in `NamingService` — the batata core.
+/// - **Plugin** data lives in plugin-owned stores — completely isolated.
+/// - No data conversion between core and plugins.
+/// - Each plugin defines its own key format and data model.
+///
+/// # Key Format
+///
+/// Plugins define their own key hierarchy. Examples:
+/// - Consul: `"dc1/web-api/instance-1"`
+/// - Eureka: `"app-name/instance-id"`
+///
+/// # Data Format
+///
+/// Data is stored as `bytes::Bytes` — plugins serialize/deserialize
+/// their own types. The store doesn't interpret the content.
+#[async_trait::async_trait]
+pub trait PluginNamingStore: Send + Sync {
+    /// Unique plugin identifier (e.g., "consul", "eureka")
+    fn plugin_id(&self) -> &str;
+
+    /// Register a service entry
+    fn register(&self, key: &str, data: bytes::Bytes) -> Result<(), PluginNamingStoreError>;
+
+    /// Deregister a service entry
+    fn deregister(&self, key: &str) -> Result<(), PluginNamingStoreError>;
+
+    /// Get a single entry by key
+    fn get(&self, key: &str) -> Option<bytes::Bytes>;
+
+    /// Scan entries by key prefix
+    fn scan(&self, prefix: &str) -> Vec<(String, bytes::Bytes)>;
+
+    /// Get all keys
+    fn keys(&self) -> Vec<String>;
+
+    /// Total entry count
+    fn len(&self) -> usize;
+
+    /// Whether the store is empty
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    // ================================================================
+    // Cluster Sync — for Raft snapshot and Distro verification
+    // ================================================================
+
+    /// Create a snapshot of all data (for Raft snapshot / new node join)
+    async fn snapshot(&self) -> bytes::Bytes;
+
+    /// Restore from a snapshot
+    async fn restore(&self, data: &[u8]) -> Result<(), PluginNamingStoreError>;
+
+    /// Current revision number (monotonically increasing on writes)
+    fn revision(&self) -> u64;
+}
+
+/// Errors from plugin naming store operations
+#[derive(Debug, thiserror::Error)]
+pub enum PluginNamingStoreError {
+    #[error("Key already exists: {0}")]
+    AlreadyExists(String),
+
+    #[error("Key not found: {0}")]
+    NotFound(String),
+
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+
+    #[error("Storage error: {0}")]
+    Storage(String),
+}
+
 /// Plugin manager for registering and invoking plugins
 pub struct PluginManager {
     auth_plugins: Vec<Arc<dyn AuthPlugin>>,

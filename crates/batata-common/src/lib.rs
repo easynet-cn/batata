@@ -72,29 +72,30 @@ pub fn parse_service_key(key: &str) -> Option<(&str, &str, &str)> {
     Some((ns, group, service))
 }
 
-/// Build a config key: "tenant+group+dataId"
+/// Build a config group key: "dataId+group+tenant"
 ///
-/// This is the canonical key format used for config cache, listener,
-/// and change notification. Tenant (namespace) comes first.
+/// This is the canonical Nacos key format used for config persistence,
+/// listener change detection, and batch MD5 comparison.
+/// Matches Nacos Java `GroupKey.getKeyTenant(dataId, group, tenant)`.
 #[inline]
-pub fn build_config_key(tenant: &str, group: &str, data_id: &str) -> String {
-    let mut key = String::with_capacity(tenant.len() + group.len() + data_id.len() + 2);
-    key.push_str(tenant);
+pub fn build_config_key(data_id: &str, group: &str, tenant: &str) -> String {
+    let mut key = String::with_capacity(data_id.len() + group.len() + tenant.len() + 2);
+    key.push_str(data_id);
     key.push('+');
     key.push_str(group);
     key.push('+');
-    key.push_str(data_id);
+    key.push_str(tenant);
     key
 }
 
-/// Parse a config key into (tenant, group, data_id) components.
+/// Parse a config group key into (data_id, group, tenant) components.
 #[inline]
 pub fn parse_config_key(key: &str) -> Option<(&str, &str, &str)> {
     let mut parts = key.splitn(3, '+');
-    let tenant = parts.next()?;
-    let group = parts.next()?;
     let data_id = parts.next()?;
-    Some((tenant, group, data_id))
+    let group = parts.next()?;
+    let tenant = parts.next()?;
+    Some((data_id, group, tenant))
 }
 
 // ============================================================================
@@ -364,18 +365,18 @@ mod tests {
     #[test]
     fn test_build_config_key() {
         assert_eq!(
-            build_config_key("public", "DEFAULT_GROUP", "app.yaml"),
-            "public+DEFAULT_GROUP+app.yaml"
+            build_config_key("app.yaml", "DEFAULT_GROUP", "public"),
+            "app.yaml+DEFAULT_GROUP+public"
         );
     }
 
     #[test]
     fn test_parse_config_key() {
-        let (tenant, group, data_id) =
-            parse_config_key("public+DEFAULT_GROUP+app.yaml").unwrap();
-        assert_eq!(tenant, "public");
-        assert_eq!(group, "DEFAULT_GROUP");
+        let (data_id, group, tenant) =
+            parse_config_key("app.yaml+DEFAULT_GROUP+public").unwrap();
         assert_eq!(data_id, "app.yaml");
+        assert_eq!(group, "DEFAULT_GROUP");
+        assert_eq!(tenant, "public");
     }
 
     #[test]

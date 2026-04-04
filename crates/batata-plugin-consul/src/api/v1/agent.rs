@@ -7,8 +7,6 @@
 use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, Scope, get, put, web};
-
-use batata_api::naming::NamingServiceProvider;
 use batata_common::ClusterManager;
 
 use crate::acl::AclService;
@@ -124,12 +122,12 @@ async fn get_agent_metrics(
 #[get("/metrics/stream")]
 async fn agent_metrics_stream(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<crate::naming_store::ConsulNamingStore>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    crate::agent::agent_metrics_stream(req, naming_service, acl_service, dc_config, index_provider)
+    crate::agent::agent_metrics_stream(req, naming_store, acl_service, dc_config, index_provider)
         .await
 }
 
@@ -451,7 +449,7 @@ async fn get_agent_metrics_real(
 #[get("/metrics/stream")]
 async fn agent_metrics_stream_real(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<crate::naming_store::ConsulNamingStore>,
     member_manager: web::Data<Arc<dyn ClusterManager>>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -459,7 +457,7 @@ async fn agent_metrics_stream_real(
 ) -> HttpResponse {
     crate::agent::agent_metrics_stream_real(
         req,
-        naming_service,
+        naming_store,
         member_manager,
         acl_service,
         dc_config,

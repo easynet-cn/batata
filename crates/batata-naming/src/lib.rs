@@ -11,6 +11,7 @@
 pub mod api;
 pub mod handler;
 pub mod healthcheck;
+pub mod manager;
 pub mod model;
 pub mod persistence;
 pub mod selector;
@@ -26,6 +27,7 @@ pub use healthcheck::{
 };
 pub use model::{Instance, Service, ServiceInfo, ServiceQuery};
 pub use selector::{LabelOperator, LabelRequirement, SelectorBuilder, ServiceSelector};
+pub use manager::NamingManager;
 pub use service::{
     ClusterConfig, ClusterStatistics, FuzzyWatchPattern, NamingService, ProtectionInfo,
     ServiceMetadata,

@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use rocksdb::DB;
 
-use batata_api::naming::NamingServiceProvider;
 use batata_naming::InstanceCheckRegistry;
 use batata_plugin::ProtocolAdapterPlugin;
 
@@ -38,6 +37,7 @@ use crate::snapshot::ConsulSnapshotService;
 /// Supports three storage modes: in-memory, RocksDB standalone, and Raft-replicated.
 #[derive(Clone)]
 pub struct ConsulPlugin {
+    pub naming_store: Arc<crate::naming_store::ConsulNamingStore>,
     pub agent: ConsulAgentService,
     pub health: ConsulHealthService,
     pub kv: ConsulKVService,
@@ -62,8 +62,10 @@ pub struct ConsulPlugin {
 
 impl ConsulPlugin {
     /// Creates Consul plugin with in-memory storage.
+    ///
+    /// If `naming_store` is provided, uses it. Otherwise creates a new one.
     pub fn new(
-        naming_service: Arc<dyn NamingServiceProvider>,
+        naming_store: Option<Arc<crate::naming_store::ConsulNamingStore>>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         dc_config: ConsulDatacenterConfig,
@@ -75,9 +77,12 @@ impl ConsulPlugin {
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+        let naming_store =
+            naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
 
         Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
+            naming_store: naming_store.clone(),
+            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),
@@ -89,7 +94,7 @@ impl ConsulPlugin {
             ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
-                naming_service,
+                naming_store.clone(),
                 dc_config.datacenter.clone(),
             )
             .with_default_group(dc_config.default_group.clone())
@@ -120,7 +125,7 @@ impl ConsulPlugin {
 
     /// Creates Consul plugin with RocksDB persistence.
     pub fn with_persistence(
-        naming_service: Arc<dyn NamingServiceProvider>,
+        naming_store: Option<Arc<crate::naming_store::ConsulNamingStore>>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
@@ -133,9 +138,12 @@ impl ConsulPlugin {
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+        let naming_store =
+            naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
 
         Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
+            naming_store: naming_store.clone(),
+            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),
@@ -147,7 +155,7 @@ impl ConsulPlugin {
             ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
-                naming_service,
+                naming_store.clone(),
                 dc_config.datacenter.clone(),
             )
             .with_default_group(dc_config.default_group.clone())
@@ -185,7 +193,7 @@ impl ConsulPlugin {
 
     /// Creates Consul plugin with Raft-replicated RocksDB storage (cluster mode).
     pub fn with_consul_raft(
-        naming_service: Arc<dyn NamingServiceProvider>,
+        naming_store: Option<Arc<crate::naming_store::ConsulNamingStore>>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
@@ -200,9 +208,12 @@ impl ConsulPlugin {
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+        let naming_store =
+            naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
 
         Self {
-            agent: ConsulAgentService::new(naming_service.clone(), registry.clone()).with_defaults(
+            naming_store: naming_store.clone(),
+            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()).with_defaults(
                 dc_config.default_namespace.clone(),
                 dc_config.default_group.clone(),
                 dc_config.default_cluster.clone(),
@@ -214,7 +225,7 @@ impl ConsulPlugin {
             ),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
-                naming_service,
+                naming_store.clone(),
                 dc_config.datacenter.clone(),
             )
             .with_default_group(dc_config.default_group.clone())
@@ -286,7 +297,8 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
     }
 
     fn configure(&self, cfg: &mut actix_web::web::ServiceConfig) {
-        cfg.app_data(actix_web::web::Data::new(self.agent.clone()))
+        cfg.app_data(actix_web::web::Data::from(self.naming_store.clone()))
+            .app_data(actix_web::web::Data::new(self.agent.clone()))
             .app_data(actix_web::web::Data::new(self.health.clone()))
             .app_data(actix_web::web::Data::new(self.kv.clone()))
             .app_data(actix_web::web::Data::new(self.catalog.clone()))
@@ -334,8 +346,8 @@ mod tests {
 
     fn create_test_plugin() -> ConsulPlugin {
         let naming = Arc::new(batata_naming::service::NamingService::new());
-        let registry = Arc::new(InstanceCheckRegistry::new(naming.clone()));
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming));
         let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
-        ConsulPlugin::new(naming, registry, false, dc_config)
+        ConsulPlugin::new(None, registry, false, dc_config)
     }
 }

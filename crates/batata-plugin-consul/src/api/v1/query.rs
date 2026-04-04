@@ -3,11 +3,7 @@
 //!
 //! These use `#[get("/{uuid}")]` style macros under a "/query" scope.
 
-use std::sync::Arc;
-
 use actix_web::{HttpRequest, HttpResponse, Scope, delete, get, post, put, web};
-
-use batata_api::naming::NamingServiceProvider;
 
 use crate::acl::AclService;
 use crate::index_provider::ConsulIndexProvider;
@@ -81,7 +77,7 @@ async fn execute_query(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query_service: web::Data<ConsulQueryService>,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<crate::naming_store::ConsulNamingStore>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     crate::query::execute_query(
@@ -91,7 +87,7 @@ async fn execute_query(
         acl_service,
         dc_config,
         query_service,
-        naming_service,
+        naming_store,
         index_provider,
     )
     .await

@@ -14,6 +14,7 @@ pub mod processor;
 pub mod reactor;
 pub mod registry;
 pub mod registry_task;
+pub mod result_handler;
 pub mod task;
 pub mod ttl_monitor;
 pub mod ttl_processor;
@@ -66,7 +67,9 @@ impl HealthCheckManager {
             unhealthy_checker.heartbeat_map.clone(),
         );
         let reactor = HealthCheckReactor::new(naming_service.clone(), config);
-        let registry = Arc::new(InstanceCheckRegistry::new(naming_service));
+        let core_handler: Arc<dyn batata_plugin::HealthCheckResultHandler> =
+            Arc::new(result_handler::CoreResultHandler::new(naming_service));
+        let registry = Arc::new(InstanceCheckRegistry::new(core_handler));
 
         Self {
             reactor,

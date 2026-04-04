@@ -25,6 +25,6 @@ tokio = { workspace = true, features = ["full", "test-util"] }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-md-5 = "0.10"
-const-hex = "1"
+md-5 = { workspace = true }
+const-hex = { workspace = true }
 batata-api = { workspace = true }

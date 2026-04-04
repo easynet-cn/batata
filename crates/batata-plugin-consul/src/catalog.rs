@@ -7,9 +7,6 @@ use std::sync::Arc;
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde::{Deserialize, Serialize};
 
-use batata_api::naming::NamingServiceProvider;
-use batata_api::naming::model::Instance as NacosInstance;
-
 use crate::acl::{AclService, ResourceType};
 use crate::config_entry::ConsulConfigEntryService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -85,72 +82,48 @@ pub struct CatalogService {
 }
 
 impl CatalogService {
-    /// Create from a Nacos Instance
-    pub fn from_instance(
-        instance: &NacosInstance,
-        node_name: &str,
+    /// Create from an AgentServiceRegistration
+    pub fn from_registration(
+        reg: &crate::model::AgentServiceRegistration,
+        _node_name: &str,
         datacenter: &str,
         index: u64,
     ) -> Self {
-        let tags = instance
-            .metadata
-            .get("consul_tags")
-            .and_then(|s| serde_json::from_str(s).ok());
+        let ip = reg.effective_address();
 
-        let enable_tag_override = instance
-            .metadata
-            .get("enable_tag_override")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(false);
+        // Derive node name from IP if no metadata override available
+        let instance_node = format!("node-{}", ip.replace('.', "-"));
 
-        // Filter out Consul-specific metadata
-        let service_meta: HashMap<String, String> = instance
-            .metadata
-            .iter()
-            .filter(|(k, _)| !k.starts_with("consul_") && k.as_str() != "enable_tag_override")
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        // Filter out internal metadata keys for service_meta
+        let service_meta: Option<HashMap<String, String>> = reg.meta.as_ref().map(|m| {
+            m.iter()
+                .filter(|(k, _)| !k.starts_with("consul_") && k.as_str() != "enable_tag_override")
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
+        });
+        let service_meta = service_meta.filter(|m| !m.is_empty());
 
-        // Extract service kind from Consul metadata
-        let service_kind = instance.metadata.get("consul_kind").cloned();
-
-        // Prefer per-instance datacenter from metadata, fall back to service-level default
-        let instance_dc = instance
-            .metadata
-            .get("consul_datacenter")
-            .map(|s| s.as_str())
-            .unwrap_or(datacenter);
-
-        // Prefer per-instance node name from metadata
-        let instance_node = instance
-            .metadata
-            .get("consul_node")
-            .map(|s| s.as_str())
-            .unwrap_or(node_name);
+        let weight = reg.weight().max(1.0) as i32;
 
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            node: instance_node.to_string(),
-            address: instance.ip.clone(),
-            datacenter: instance_dc.to_string(),
+            node: instance_node,
+            address: ip.clone(),
+            datacenter: datacenter.to_string(),
             tagged_addresses: None,
             node_meta: None,
-            service_kind,
-            service_id: instance.instance_id.clone(),
-            service_name: instance.service_name.clone(),
-            service_tags: tags,
-            service_address: instance.ip.clone(),
-            service_weights: Weights {
-                passing: instance.weight as i32,
+            service_kind: reg.kind.clone(),
+            service_id: reg.service_id(),
+            service_name: reg.name.clone(),
+            service_tags: reg.tags.clone(),
+            service_address: ip,
+            service_weights: reg.weights.clone().unwrap_or(Weights {
+                passing: weight,
                 warning: 1,
-            },
-            service_meta: if service_meta.is_empty() {
-                None
-            } else {
-                Some(service_meta)
-            },
-            service_port: instance.port as u16,
-            service_enable_tag_override: enable_tag_override,
+            }),
+            service_meta,
+            service_port: reg.effective_port(),
+            service_enable_tag_override: reg.enable_tag_override.unwrap_or(false),
             create_index: index,
             modify_index: index,
         }
@@ -441,10 +414,10 @@ pub struct CatalogQueryParams {
 // ============================================================================
 
 /// Consul Catalog service
-/// Provides catalog operations using NamingServiceProvider as backend
+/// Provides catalog operations using ConsulNamingStore as backend
 #[derive(Clone)]
 pub struct ConsulCatalogService {
-    naming_service: Arc<dyn NamingServiceProvider>,
+    naming_store: Arc<crate::naming_store::ConsulNamingStore>,
     node_name: String,
     datacenter: String,
     default_group: String,
@@ -453,16 +426,16 @@ pub struct ConsulCatalogService {
 }
 
 impl ConsulCatalogService {
-    pub fn new(naming_service: Arc<dyn NamingServiceProvider>) -> Self {
-        Self::with_datacenter(naming_service, "dc1".to_string())
+    pub fn new(naming_store: Arc<crate::naming_store::ConsulNamingStore>) -> Self {
+        Self::with_datacenter(naming_store, "dc1".to_string())
     }
 
     pub fn with_datacenter(
-        naming_service: Arc<dyn NamingServiceProvider>,
+        naming_store: Arc<crate::naming_store::ConsulNamingStore>,
         datacenter: String,
     ) -> Self {
         Self {
-            naming_service,
+            naming_store,
             node_name: "batata-node".to_string(),
             datacenter,
             default_group: "CONSUL_GROUP".to_string(),
@@ -491,124 +464,66 @@ impl ConsulCatalogService {
     }
 
     /// Get all unique service names with their tags
-    pub fn get_services(&self, namespace: &str) -> HashMap<String, Vec<String>> {
-        let (_, service_names) = self.naming_service.list_services_by_source(
-            namespace,
-            &self.default_group,
-            1,
-            i32::MAX,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-
-        let mut services: HashMap<String, Vec<String>> = HashMap::new();
-
-        for service_name in service_names {
-            let instances = self.naming_service.get_instances_by_source(
-                namespace,
-                &self.default_group,
-                &service_name,
-                "",
-                false,
-                Some(batata_api::naming::RegisterSource::Consul),
-            );
-
-            // Collect all unique tags for this service
-            let mut all_tags: Vec<String> = Vec::new();
-            for instance in instances {
-                if let Some(tags_json) = instance.metadata.get("consul_tags")
-                    && let Ok(tags) = serde_json::from_str::<Vec<String>>(tags_json)
-                {
-                    for tag in tags {
-                        if !all_tags.contains(&tag) {
-                            all_tags.push(tag);
-                        }
-                    }
-                }
-            }
-
-            services.insert(service_name, all_tags);
-        }
-
-        services
+    pub fn get_services(&self, _namespace: &str) -> HashMap<String, Vec<String>> {
+        self.naming_store.service_names_with_tags()
     }
 
     /// Get all instances for a service
     pub fn get_service_instances(
         &self,
-        namespace: &str,
+        _namespace: &str,
         service_name: &str,
         tag_filter: Option<&str>,
     ) -> Vec<CatalogService> {
-        let instances = self.naming_service.get_instances_by_source(
-            namespace,
-            &self.default_group,
-            service_name,
-            "",
-            false,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-
-        instances
-            .iter()
-            .filter(|inst| {
+        let index = self.index_provider.current_index(ConsulTable::Catalog);
+        self.naming_store
+            .get_service_entries(service_name)
+            .into_iter()
+            .filter_map(|entry_bytes| {
+                serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes).ok()
+            })
+            .filter(|reg| {
                 if let Some(tag) = tag_filter {
-                    inst.metadata
-                        .get("consul_tags")
-                        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                    reg.tags
+                        .as_ref()
                         .map(|tags| tags.contains(&tag.to_string()))
                         .unwrap_or(false)
                 } else {
                     true
                 }
             })
-            .map(|inst| {
-                CatalogService::from_instance(
-                    inst,
-                    &self.node_name,
-                    &self.datacenter,
-                    self.index_provider.current_index(ConsulTable::Catalog),
-                )
+            .map(|reg| {
+                CatalogService::from_registration(&reg, &self.node_name, &self.datacenter, index)
             })
             .collect()
     }
 
     /// Get all nodes (for simplicity, we return one node per unique IP)
-    pub fn get_nodes(&self, namespace: &str) -> Vec<CatalogNode> {
-        let (_, service_names) = self.naming_service.list_services_by_source(
-            namespace,
-            &self.default_group,
-            1,
-            i32::MAX,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-
+    pub fn get_nodes(&self, _namespace: &str) -> Vec<CatalogNode> {
+        let index = self.index_provider.current_index(ConsulTable::Catalog);
         let mut nodes: HashMap<String, CatalogNode> = HashMap::new();
 
-        for service_name in service_names {
-            let instances = self.naming_service.get_instances_by_source(
-                namespace,
-                &self.default_group,
-                &service_name,
-                "",
-                false,
-                Some(batata_api::naming::RegisterSource::Consul),
-            );
-
-            for instance in instances {
-                if instance.ip.is_empty() {
+        for service_name in self.naming_store.service_names() {
+            for entry_bytes in self.naming_store.get_service_entries(&service_name) {
+                let Ok(reg) =
+                    serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
+                else {
+                    continue;
+                };
+                let ip = reg.effective_address();
+                if ip.is_empty() {
                     continue;
                 }
-                let node_key = instance.ip.clone();
-                if let std::collections::hash_map::Entry::Vacant(e) = nodes.entry(node_key) {
+                if let std::collections::hash_map::Entry::Vacant(e) = nodes.entry(ip.clone()) {
                     e.insert(CatalogNode {
                         id: uuid::Uuid::new_v4().to_string(),
-                        node: format!("node-{}", instance.ip.replace('.', "-")),
-                        address: instance.ip.clone(),
+                        node: format!("node-{}", ip.replace('.', "-")),
+                        address: ip,
                         datacenter: self.datacenter.clone(),
                         tagged_addresses: None,
                         meta: None,
-                        create_index: self.index_provider.current_index(ConsulTable::Catalog),
-                        modify_index: self.index_provider.current_index(ConsulTable::Catalog),
+                        create_index: index,
+                        modify_index: index,
                     });
                 }
             }
@@ -618,56 +533,45 @@ impl ConsulCatalogService {
     }
 
     /// Get node details with services
-    pub fn get_node(&self, namespace: &str, node_name: &str) -> Option<NodeServices> {
+    pub fn get_node(&self, _namespace: &str, node_name: &str) -> Option<NodeServices> {
         let hostname = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "batata-node".to_string());
 
-        let (_, service_names) = self.naming_service.list_services_by_source(
-            namespace,
-            &self.default_group,
-            1,
-            i32::MAX,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-
+        let index = self.index_provider.current_index(ConsulTable::Catalog);
         let mut node: Option<CatalogNode> = None;
         let mut services: HashMap<String, AgentService> = HashMap::new();
 
-        for service_name in service_names {
-            let instances = self.naming_service.get_instances_by_source(
-                namespace,
-                &self.default_group,
-                &service_name,
-                "",
-                false,
-                Some(batata_api::naming::RegisterSource::Consul),
-            );
-
-            for instance in instances {
-                let instance_node = format!("node-{}", instance.ip.replace('.', "-"));
+        for service_name in self.naming_store.service_names() {
+            for entry_bytes in self.naming_store.get_service_entries(&service_name) {
+                let Ok(reg) = serde_json::from_slice::<crate::model::AgentServiceRegistration>(
+                    &entry_bytes,
+                ) else {
+                    continue;
+                };
+                let ip = reg.effective_address();
+                let instance_node = format!("node-{}", ip.replace('.', "-"));
 
                 // Match by node name formats: hostname, node-{ip}, raw IP, or "batata-node"
                 if instance_node == node_name
-                    || instance.ip == node_name
+                    || ip == node_name
                     || hostname == node_name
                     || node_name == "batata-node"
                 {
-                    // Found a service on this node
                     if node.is_none() {
                         node = Some(CatalogNode {
                             id: uuid::Uuid::new_v4().to_string(),
                             node: node_name.to_string(),
-                            address: instance.ip.clone(),
+                            address: ip,
                             datacenter: self.datacenter.clone(),
                             tagged_addresses: None,
                             meta: None,
-                            create_index: self.index_provider.current_index(ConsulTable::Catalog),
-                            modify_index: self.index_provider.current_index(ConsulTable::Catalog),
+                            create_index: index,
+                            modify_index: index,
                         });
                     }
 
-                    let agent_service = AgentService::from(&instance);
+                    let agent_service = AgentService::from(&reg);
                     services.insert(agent_service.id.clone(), agent_service);
                 }
             }
@@ -682,8 +586,8 @@ impl ConsulCatalogService {
                 datacenter: self.datacenter.clone(),
                 tagged_addresses: None,
                 meta: None,
-                create_index: self.index_provider.current_index(ConsulTable::Catalog),
-                modify_index: self.index_provider.current_index(ConsulTable::Catalog),
+                create_index: index,
+                modify_index: index,
             });
         }
 
@@ -691,66 +595,41 @@ impl ConsulCatalogService {
     }
 
     /// Register a service via catalog
-    pub fn register(&self, registration: &CatalogRegistration, namespace: &str) -> bool {
-        if let Some(ref service) = registration.service {
-            let service_id = service
-                .id
-                .clone()
-                .unwrap_or_else(|| service.service.clone());
-
-            let address = service
+    pub fn register(&self, registration: &CatalogRegistration, _namespace: &str) -> bool {
+        if let Some(ref svc) = registration.service {
+            let service_id = svc.id.clone().unwrap_or_else(|| svc.service.clone());
+            let address = svc
                 .address
                 .clone()
                 .unwrap_or_else(|| registration.address.clone());
 
-            let port = service.port.unwrap_or(0);
-
-            let weight = service
-                .weights
-                .as_ref()
-                .map(|w| w.passing as f64)
-                .unwrap_or(1.0);
-
-            let mut metadata: HashMap<String, String> = service.meta.clone().unwrap_or_default();
-
-            // Store tags in metadata
-            if let Some(ref tags) = service.tags {
-                metadata.insert(
-                    "consul_tags".to_string(),
-                    serde_json::to_string(tags).unwrap_or_default(),
-                );
-            }
-
-            // Store datacenter in metadata for per-instance DC tracking
-            let dc = registration
-                .datacenter
-                .as_deref()
-                .unwrap_or(&self.datacenter);
-            metadata.insert("consul_datacenter".to_string(), dc.to_string());
-
-            // Store node name in metadata
-            metadata.insert("consul_node".to_string(), registration.node.clone());
-
-            let instance = NacosInstance {
-                instance_id: service_id,
-                ip: address,
-                port: port as i32,
-                weight,
-                healthy: true,
-                enabled: true,
-                ephemeral: true,
-                cluster_name: self.default_cluster.clone(),
-                service_name: service.service.clone(),
-                metadata,
-                register_source: batata_api::naming::RegisterSource::Consul,
+            // Build AgentServiceRegistration from CatalogServiceRegistration
+            let reg = crate::model::AgentServiceRegistration {
+                name: svc.service.clone(),
+                id: Some(service_id.clone()),
+                tags: svc.tags.clone(),
+                address: Some(address),
+                port: svc.port,
+                meta: svc.meta.clone(),
+                weights: svc.weights.clone(),
+                check: None,
+                checks: None,
+                kind: None,
+                proxy: None,
+                connect: None,
+                enable_tag_override: None,
+                tagged_addresses: None,
+                namespace: None,
             };
 
-            self.naming_service.register_instance(
-                namespace,
-                &self.default_group,
-                &service.service,
-                instance,
-            )
+            let data = match serde_json::to_vec(&reg) {
+                Ok(v) => bytes::Bytes::from(v),
+                Err(_) => return false,
+            };
+
+            let key = crate::naming_store::ConsulNamingStore::build_key(&svc.service, &service_id);
+            use batata_plugin::PluginNamingStore;
+            self.naming_store.register(&key, data).is_ok()
         } else {
             // Just node registration, we don't track nodes separately
             true
@@ -758,71 +637,28 @@ impl ConsulCatalogService {
     }
 
     /// Deregister a service via catalog
-    pub fn deregister(&self, deregistration: &CatalogDeregistration, namespace: &str) -> bool {
+    pub fn deregister(&self, deregistration: &CatalogDeregistration, _namespace: &str) -> bool {
         if let Some(ref service_id) = deregistration.service_id {
-            // Find and deregister the service
-            let (_, service_names) = self.naming_service.list_services_by_source(
-                namespace,
-                &self.default_group,
-                1,
-                i32::MAX,
-                Some(batata_api::naming::RegisterSource::Consul),
-            );
-
-            for service_name in service_names {
-                let instances = self.naming_service.get_instances_by_source(
-                    namespace,
-                    &self.default_group,
-                    &service_name,
-                    "",
-                    false,
-                    Some(batata_api::naming::RegisterSource::Consul),
-                );
-
-                for instance in instances {
-                    if &instance.instance_id == service_id {
-                        return self.naming_service.deregister_instance(
-                            namespace,
-                            &self.default_group,
-                            &service_name,
-                            &instance,
-                        );
-                    }
-                }
-            }
-            false
+            // Deregister by service_id
+            self.naming_store.remove_by_service_id(service_id)
         } else {
             // Node deregistration - remove all services on this node
             let node = &deregistration.node;
-            let (_, service_names) = self.naming_service.list_services_by_source(
-                namespace,
-                &self.default_group,
-                1,
-                i32::MAX,
-                Some(batata_api::naming::RegisterSource::Consul),
-            );
-
             let mut deregistered = false;
 
-            for service_name in service_names {
-                let instances = self.naming_service.get_instances_by_source(
-                    namespace,
-                    &self.default_group,
-                    &service_name,
-                    "",
-                    false,
-                    Some(batata_api::naming::RegisterSource::Consul),
-                );
-
-                for instance in instances {
-                    let instance_node = format!("node-{}", instance.ip.replace('.', "-"));
-                    if &instance_node == node || &instance.ip == node {
-                        self.naming_service.deregister_instance(
-                            namespace,
-                            &self.default_group,
-                            &service_name,
-                            &instance,
-                        );
+            for service_name in self.naming_store.service_names() {
+                for entry_bytes in self.naming_store.get_service_entries(&service_name) {
+                    let Ok(reg) =
+                        serde_json::from_slice::<crate::model::AgentServiceRegistration>(
+                            &entry_bytes,
+                        )
+                    else {
+                        continue;
+                    };
+                    let ip = reg.effective_address();
+                    let instance_node = format!("node-{}", ip.replace('.', "-"));
+                    if &instance_node == node || &ip == node {
+                        self.naming_store.remove_by_service_id(&reg.service_id());
                         deregistered = true;
                     }
                 }
@@ -834,101 +670,90 @@ impl ConsulCatalogService {
 
     /// Get service summary for UI
     /// Returns a list of service summaries with health check information
-    pub fn get_service_summary(&self, namespace: &str) -> Vec<ServiceListingSummary> {
-        let (_, service_names) = self.naming_service.list_services_by_source(
-            namespace,
-            &self.default_group,
-            1,
-            i32::MAX,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-
+    pub fn get_service_summary(&self, _namespace: &str) -> Vec<ServiceListingSummary> {
         let mut summaries: Vec<ServiceListingSummary> = Vec::new();
 
-        for service_name in service_names {
-            let instances = self.naming_service.get_instances_by_source(
-                namespace,
-                &self.default_group,
-                &service_name,
-                "",
-                false,
-                Some(batata_api::naming::RegisterSource::Consul),
-            );
+        for service_name in self.naming_store.service_names() {
+            let regs: Vec<crate::model::AgentServiceRegistration> = self
+                .naming_store
+                .get_service_entries(&service_name)
+                .into_iter()
+                .filter_map(|b| serde_json::from_slice(&b).ok())
+                .collect();
 
-            if instances.is_empty() {
+            if regs.is_empty() {
                 continue;
             }
 
-            // Collect all unique tags for this service
             let mut all_tags: Vec<String> = Vec::new();
             let mut all_nodes: Vec<String> = Vec::new();
             let mut external_sources: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
-
             let mut checks_passing = 0;
             let checks_warning = 0;
             let mut checks_critical = 0;
 
-            for instance in &instances {
+            for reg in &regs {
                 // Collect tags
-                if let Some(tags_json) = instance.metadata.get("consul_tags")
-                    && let Ok(tags) = serde_json::from_str::<Vec<String>>(tags_json)
-                {
+                if let Some(ref tags) = reg.tags {
                     for tag in tags {
-                        if !all_tags.contains(&tag) {
-                            all_tags.push(tag);
+                        if !all_tags.contains(tag) {
+                            all_tags.push(tag.clone());
                         }
                     }
                 }
 
                 // Collect nodes (unique)
-                let node_name = format!("node-{}", instance.ip.replace('.', "-"));
+                let ip = reg.effective_address();
+                let node_name = format!("node-{}", ip.replace('.', "-"));
                 if !all_nodes.contains(&node_name) {
                     all_nodes.push(node_name);
                 }
 
-                // Collect external sources from metadata
-                if let Some(external_source) = instance.metadata.get("external_source") {
-                    external_sources.insert(external_source.clone());
+                // Collect external sources from meta
+                if let Some(ext) = reg
+                    .meta
+                    .as_ref()
+                    .and_then(|m| m.get("external_source"))
+                    .cloned()
+                {
+                    external_sources.insert(ext);
                 }
 
-                // Count health checks based on instance status
-                if instance.healthy {
+                // Count health checks based on store health status
+                if self
+                    .naming_store
+                    .is_healthy(&ip, reg.effective_port() as i32)
+                {
                     checks_passing += 1;
                 } else {
                     checks_critical += 1;
                 }
             }
 
-            // Detect service kind from metadata
-            let kind = Self::detect_service_kind(&instances);
-            let has_proxy = instances.iter().any(|i| {
-                i.metadata
-                    .get("consul_kind")
-                    .is_some_and(|k| k == "connect-proxy")
+            // Detect service kind from registrations
+            let kind = Self::detect_service_kind(&regs);
+            let has_proxy = regs
+                .iter()
+                .any(|r| r.kind.as_deref() == Some("connect-proxy"));
+            let has_connect = regs.iter().any(|r| {
+                r.connect
+                    .as_ref()
+                    .and_then(|v| v.get("Native").and_then(|n| n.as_bool()))
+                    .unwrap_or(false)
             });
-            let has_connect = instances.iter().any(|i| {
-                i.metadata.get("consul_connect").is_some_and(|c| {
-                    serde_json::from_str::<serde_json::Value>(c)
-                        .ok()
-                        .and_then(|v| v.get("Native").and_then(|n| n.as_bool()))
-                        .unwrap_or(false)
-                })
-            });
-            let transparent_proxy = instances.iter().any(|i| {
-                i.metadata.get("consul_proxy").is_some_and(|p| {
-                    serde_json::from_str::<serde_json::Value>(p)
-                        .ok()
-                        .and_then(|v| {
-                            v.get("Mode")
-                                .and_then(|m| m.as_str())
-                                .map(|m| m == "transparent")
-                        })
-                        .unwrap_or(false)
-                })
+            let transparent_proxy = regs.iter().any(|r| {
+                r.proxy
+                    .as_ref()
+                    .and_then(|v| {
+                        v.get("Mode")
+                            .and_then(|m| m.as_str())
+                            .map(|m| m == "transparent")
+                    })
+                    .unwrap_or(false)
             });
 
-            let summary = ServiceListingSummary {
+            summaries.push(ServiceListingSummary {
                 service_summary: ServiceSummary {
                     kind,
                     name: service_name.clone(),
@@ -936,7 +761,7 @@ impl ConsulCatalogService {
                     tags: all_tags,
                     nodes: all_nodes,
                     external_sources: external_sources.into_iter().collect(),
-                    instance_count: instances.len() as i32,
+                    instance_count: regs.len() as i32,
                     checks_passing,
                     checks_warning,
                     checks_critical,
@@ -945,9 +770,7 @@ impl ConsulCatalogService {
                 },
                 connected_with_proxy: has_proxy,
                 connected_with_gateway: has_connect,
-            };
-
-            summaries.push(summary);
+            });
         }
 
         // Sort by name for consistent output
@@ -956,10 +779,10 @@ impl ConsulCatalogService {
         summaries
     }
 
-    /// Detect service kind from the first instance's metadata
-    fn detect_service_kind(instances: &[NacosInstance]) -> Option<ServiceKind> {
-        for inst in instances {
-            if let Some(kind_str) = inst.metadata.get("consul_kind") {
+    /// Detect service kind from the first registration's kind field
+    fn detect_service_kind(regs: &[crate::model::AgentServiceRegistration]) -> Option<ServiceKind> {
+        for reg in regs {
+            if let Some(ref kind_str) = reg.kind {
                 return match kind_str.as_str() {
                     "connect-proxy" => Some(ServiceKind::ConnectProxy),
                     "mesh-gateway" => Some(ServiceKind::MeshGateway),
@@ -977,37 +800,25 @@ impl ConsulCatalogService {
     /// Returns connect-proxy instances targeting this service, or native-connect instances.
     pub fn get_connect_service_instances(
         &self,
-        namespace: &str,
+        _namespace: &str,
         target_service: &str,
     ) -> Vec<CatalogService> {
-        let (_, service_names) = self.naming_service.list_services_by_source(
-            namespace,
-            &self.default_group,
-            1,
-            i32::MAX,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-
+        let index = self.index_provider.current_index(ConsulTable::Catalog);
         let mut results = Vec::new();
 
-        for service_name in service_names {
-            let instances = self.naming_service.get_instances_by_source(
-                namespace,
-                &self.default_group,
-                &service_name,
-                "",
-                false,
-                Some(batata_api::naming::RegisterSource::Consul),
-            );
-
-            for instance in &instances {
-                let is_connect = Self::is_connect_instance_for(instance, target_service);
-                if is_connect {
-                    results.push(CatalogService::from_instance(
-                        instance,
+        for service_name in self.naming_store.service_names() {
+            for entry_bytes in self.naming_store.get_service_entries(&service_name) {
+                let Ok(reg) =
+                    serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes)
+                else {
+                    continue;
+                };
+                if Self::is_connect_registration_for(&reg, target_service) {
+                    results.push(CatalogService::from_registration(
+                        &reg,
                         &self.node_name,
                         &self.datacenter,
-                        self.index_provider.current_index(ConsulTable::Catalog),
+                        index,
                     ));
                 }
             }
@@ -1016,35 +827,39 @@ impl ConsulCatalogService {
         results
     }
 
-    /// Check if an instance is a Connect-enabled instance for the given target service.
+    /// Check if a registration is a Connect-enabled instance for the given target service.
     /// A service is Connect-enabled if:
     /// 1. It's a connect-proxy with DestinationServiceName matching the target
     /// 2. It has Connect.Native=true and the service name matches
-    fn is_connect_instance_for(instance: &NacosInstance, target_service: &str) -> bool {
+    fn is_connect_registration_for(
+        reg: &crate::model::AgentServiceRegistration,
+        target_service: &str,
+    ) -> bool {
         // Check if it's a connect-proxy targeting this service
-        if let Some(kind) = instance.metadata.get("consul_kind")
-            && kind == "connect-proxy"
-            && let Some(proxy_json) = instance.metadata.get("consul_proxy")
-            && let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json)
-            && let Some(dest) = proxy
-                .get("DestinationServiceName")
-                .or_else(|| proxy.get("destination_service_name"))
-                .and_then(|v| v.as_str())
-        {
-            return dest == target_service;
+        if reg.kind.as_deref() == Some("connect-proxy") {
+            if let Some(proxy_val) = &reg.proxy {
+                if let Some(dest) = proxy_val
+                    .get("DestinationServiceName")
+                    .or_else(|| proxy_val.get("destination_service_name"))
+                    .and_then(|v| v.as_str())
+                {
+                    return dest == target_service;
+                }
+            }
         }
 
         // Check if it's a native Connect service with matching name
-        if instance.service_name == target_service
-            && let Some(connect_json) = instance.metadata.get("consul_connect")
-            && let Ok(connect) = serde_json::from_str::<serde_json::Value>(connect_json)
-            && connect
-                .get("Native")
-                .or_else(|| connect.get("native"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        {
-            return true;
+        if reg.name == target_service {
+            if let Some(connect_val) = &reg.connect {
+                if connect_val
+                    .get("Native")
+                    .or_else(|| connect_val.get("native"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return true;
+                }
+            }
         }
 
         false
@@ -1648,44 +1463,75 @@ pub async fn get_gateway_services(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use batata_naming::service::NamingService;
+    use crate::naming_store::ConsulNamingStore;
+    use crate::model::AgentServiceRegistration;
+    use batata_plugin::PluginNamingStore;
 
-    fn create_test_instance(name: &str, ip: &str, port: i32) -> NacosInstance {
-        NacosInstance {
-            instance_id: format!("{}#{}#DEFAULT#{}", ip, port, name),
-            ip: ip.to_string(),
-            port,
-            weight: 1.0,
-            healthy: true,
-            enabled: true,
-            ephemeral: true,
-            cluster_name: "DEFAULT".to_string(),
-            service_name: name.to_string(),
-            metadata: HashMap::new(),
-            register_source: batata_api::naming::RegisterSource::Consul,
+    fn make_store() -> Arc<ConsulNamingStore> {
+        Arc::new(ConsulNamingStore::new())
+    }
+
+    fn register_reg(store: &ConsulNamingStore, reg: &AgentServiceRegistration) {
+        let service_id = reg.service_id();
+        let key = ConsulNamingStore::build_key(&reg.name, &service_id);
+        let data = bytes::Bytes::from(serde_json::to_vec(reg).unwrap());
+        store.register(&key, data).unwrap();
+    }
+
+    fn simple_reg(name: &str, id: &str, ip: &str, port: u16) -> AgentServiceRegistration {
+        AgentServiceRegistration {
+            name: name.to_string(),
+            id: Some(id.to_string()),
+            tags: None,
+            address: Some(ip.to_string()),
+            port: Some(port),
+            meta: None,
+            weights: None,
+            check: None,
+            checks: None,
+            kind: None,
+            proxy: None,
+            connect: None,
+            enable_tag_override: None,
+            tagged_addresses: None,
+            namespace: None,
         }
     }
 
     #[test]
-    fn test_catalog_service_from_instance() {
-        let mut instance = create_test_instance("web", "192.168.1.100", 8080);
-        instance
-            .metadata
-            .insert("consul_tags".to_string(), r#"["http", "api"]"#.to_string());
+    fn test_catalog_service_from_registration() {
+        let reg = AgentServiceRegistration {
+            name: "web".to_string(),
+            id: Some("web-1".to_string()),
+            tags: Some(vec!["http".to_string(), "api".to_string()]),
+            address: Some("192.168.1.100".to_string()),
+            port: Some(8080),
+            meta: None,
+            weights: None,
+            check: None,
+            checks: None,
+            kind: None,
+            proxy: None,
+            connect: None,
+            enable_tag_override: None,
+            tagged_addresses: None,
+            namespace: None,
+        };
 
-        let catalog_service = CatalogService::from_instance(&instance, "node1", "dc1", 1);
+        let catalog_service = CatalogService::from_registration(&reg, "node1", "dc1", 1);
 
         assert_eq!(catalog_service.service_name, "web");
         assert_eq!(catalog_service.service_port, 8080);
         assert_eq!(catalog_service.service_address, "192.168.1.100");
+        assert_eq!(catalog_service.service_id, "web-1");
         assert!(catalog_service.service_tags.is_some());
         assert_eq!(catalog_service.service_tags.unwrap().len(), 2);
     }
 
     #[test]
     fn test_catalog_service_operations() {
-        let naming_service = Arc::new(NamingService::new());
-        let catalog = ConsulCatalogService::new(naming_service.clone());
+        let store = make_store();
+        let catalog = ConsulCatalogService::new(store);
 
         // Register a service via catalog
         let registration = CatalogRegistration {
@@ -1737,54 +1583,12 @@ mod tests {
 
     #[test]
     fn test_catalog_nodes() {
-        let naming_service = Arc::new(NamingService::new());
-        let catalog = ConsulCatalogService::new(naming_service.clone());
+        let store = make_store();
+        let catalog = ConsulCatalogService::new(store.clone());
 
         // Register services on different IPs
-        let reg1 = CatalogRegistration {
-            id: None,
-            node: "node1".to_string(),
-            address: "192.168.1.100".to_string(),
-            datacenter: None,
-            tagged_addresses: None,
-            node_meta: None,
-            service: Some(CatalogServiceRegistration {
-                id: Some("web-1".to_string()),
-                service: "web".to_string(),
-                tags: None,
-                address: Some("192.168.1.100".to_string()),
-                meta: None,
-                port: Some(8080),
-                weights: None,
-            }),
-            check: None,
-            checks: None,
-            skip_node_update: None,
-        };
-
-        let reg2 = CatalogRegistration {
-            id: None,
-            node: "node2".to_string(),
-            address: "192.168.1.101".to_string(),
-            datacenter: None,
-            tagged_addresses: None,
-            node_meta: None,
-            service: Some(CatalogServiceRegistration {
-                id: Some("web-2".to_string()),
-                service: "web".to_string(),
-                tags: None,
-                address: Some("192.168.1.101".to_string()),
-                meta: None,
-                port: Some(8080),
-                weights: None,
-            }),
-            check: None,
-            checks: None,
-            skip_node_update: None,
-        };
-
-        catalog.register(&reg1, "public");
-        catalog.register(&reg2, "public");
+        register_reg(&store, &simple_reg("web", "web-1", "192.168.1.100", 8080));
+        register_reg(&store, &simple_reg("web", "web-2", "192.168.1.101", 8080));
 
         // Get nodes
         let nodes = catalog.get_nodes("public");
@@ -1810,44 +1614,50 @@ mod tests {
 
     #[test]
     fn test_service_summary() {
-        let naming_service = Arc::new(NamingService::new());
-        let catalog = ConsulCatalogService::new(naming_service.clone());
+        let store = make_store();
+        let catalog = ConsulCatalogService::new(store.clone());
 
-        // Register a healthy service
-        let mut metadata = HashMap::new();
-        metadata.insert("consul_tags".to_string(), r#"["http", "api"]"#.to_string());
-        let instance1 = NacosInstance {
-            instance_id: "web-1".to_string(),
-            ip: "192.168.1.100".to_string(),
-            port: 8080,
-            weight: 1.0,
-            healthy: true,
-            enabled: true,
-            ephemeral: true,
-            cluster_name: "DEFAULT".to_string(),
-            service_name: "web".to_string(),
-            metadata: metadata.clone(),
-            register_source: batata_api::naming::RegisterSource::Consul,
+        // Register a healthy web service (default: healthy in store)
+        let web_reg = AgentServiceRegistration {
+            name: "web".to_string(),
+            id: Some("web-1".to_string()),
+            tags: Some(vec!["http".to_string(), "api".to_string()]),
+            address: Some("192.168.1.100".to_string()),
+            port: Some(8080),
+            meta: None,
+            weights: None,
+            check: None,
+            checks: None,
+            kind: None,
+            proxy: None,
+            connect: None,
+            enable_tag_override: None,
+            tagged_addresses: None,
+            namespace: None,
         };
+        register_reg(&store, &web_reg);
 
-        // Register an unhealthy service
-        metadata.insert("consul_tags".to_string(), r#"["db"]"#.to_string());
-        let instance2 = NacosInstance {
-            instance_id: "db-1".to_string(),
-            ip: "192.168.1.101".to_string(),
-            port: 3306,
-            weight: 1.0,
-            healthy: false, // unhealthy
-            enabled: true,
-            ephemeral: true,
-            cluster_name: "DEFAULT".to_string(),
-            service_name: "db".to_string(),
-            metadata,
-            register_source: batata_api::naming::RegisterSource::Consul,
+        // Register a db service and mark it unhealthy
+        let db_reg = AgentServiceRegistration {
+            name: "db".to_string(),
+            id: Some("db-1".to_string()),
+            tags: Some(vec!["db".to_string()]),
+            address: Some("192.168.1.101".to_string()),
+            port: Some(3306),
+            meta: None,
+            weights: None,
+            check: None,
+            checks: None,
+            kind: None,
+            proxy: None,
+            connect: None,
+            enable_tag_override: None,
+            tagged_addresses: None,
+            namespace: None,
         };
-
-        naming_service.register_instance("consul", "CONSUL_GROUP", "web", instance1);
-        naming_service.register_instance("consul", "CONSUL_GROUP", "db", instance2);
+        register_reg(&store, &db_reg);
+        // Mark db instance as unhealthy
+        store.update_health("192.168.1.101", 3306, false);
 
         // Get service summary
         let summaries = catalog.get_service_summary("consul");

@@ -74,7 +74,7 @@ async fn check_config_changes(
 
     let mut changed_configs = HashMap::new();
     for (data_id, group, client_md5, _) in configs {
-        let group_key = format!("{}+{}+{}", data_id, group, namespace_id);
+        let group_key = batata_common::build_config_key(data_id, group, namespace_id);
         match server_md5s.get(&group_key) {
             Some(server_md5) if server_md5 != client_md5 => {
                 changed_configs.insert(group_key, server_md5.clone());

@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dashmap::DashMap;
 use tracing::{debug, info, warn};
 
-use crate::service::NamingService;
+use batata_plugin::HealthCheckResultHandler;
 
 /// Tri-state health status (Consul-compatible, Nacos maps to bool)
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -232,21 +232,35 @@ pub struct InstanceCheckRegistry {
     // Consul O(1) lookup: consul_svc_id → (service_key, instance_key)
     consul_service_index: DashMap<String, (String, String)>,
 
-    // NamingService reference for health sync
-    naming_service: Arc<NamingService>,
+    // Result handler — called when health status changes.
+    // CoreResultHandler updates NamingService, ConsulResultHandler updates ConsulNamingStore.
+    result_handler: Arc<dyn HealthCheckResultHandler>,
 }
 
 impl InstanceCheckRegistry {
-    /// Create a new registry
-    pub fn new(naming_service: Arc<NamingService>) -> Self {
+    /// Create a new registry with the given result handler.
+    ///
+    /// - For batata core: use `CoreResultHandler` (updates NamingService)
+    /// - For Consul plugin: use a Consul-specific handler
+    pub fn new(result_handler: Arc<dyn HealthCheckResultHandler>) -> Self {
         Self {
             configs: DashMap::new(),
             statuses: DashMap::new(),
             instance_checks: DashMap::new(),
             service_instances: DashMap::new(),
             consul_service_index: DashMap::new(),
-            naming_service,
+            result_handler,
         }
+    }
+
+    /// Convenience constructor for the core (Nacos) naming service.
+    ///
+    /// Creates a `CoreResultHandler` wrapping the given NamingServiceProvider,
+    /// so health status changes are synced to the NamingService.
+    pub fn with_naming_service(naming_service: Arc<dyn batata_api::naming::NamingServiceProvider>) -> Self {
+        let handler: Arc<dyn HealthCheckResultHandler> =
+            Arc::new(super::result_handler::CoreResultHandler::new(naming_service));
+        Self::new(handler)
     }
 
     /// Register a new health check. Returns the check key.
@@ -654,9 +668,9 @@ impl InstanceCheckRegistry {
             .unwrap_or_default()
     }
 
-    /// Get the naming service reference
-    pub fn naming_service(&self) -> &Arc<NamingService> {
-        &self.naming_service
+    /// Get the result handler reference
+    pub fn result_handler(&self) -> &Arc<dyn HealthCheckResultHandler> {
+        &self.result_handler
     }
 
     // --- Internal methods ---
@@ -674,8 +688,8 @@ impl InstanceCheckRegistry {
 
         let healthy = self.aggregate_instance_health(&instance_key);
 
-        // Sync to NamingService
-        let updated = self.naming_service.update_instance_health(
+        // Sync via result handler
+        self.result_handler.on_health_changed(
             &config.namespace,
             &config.group_name,
             &config.service_name,
@@ -685,7 +699,7 @@ impl InstanceCheckRegistry {
             healthy,
         );
 
-        if updated {
+        {
             debug!(
                 "Synced instance health: {}:{}@{}/{}/{} healthy={}",
                 config.ip,
@@ -732,8 +746,8 @@ fn current_timestamp_ms() -> i64 {
 mod tests {
     use super::*;
 
-    fn test_naming_service() -> Arc<NamingService> {
-        Arc::new(NamingService::new())
+    fn test_naming_service() -> Arc<crate::service::NamingService> {
+        Arc::new(crate::service::NamingService::new())
     }
 
     fn make_config(
@@ -771,7 +785,7 @@ mod tests {
     #[test]
     fn test_register_and_deregister_check() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         let config = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
         let key = registry.register_check(config);
@@ -785,7 +799,7 @@ mod tests {
     #[test]
     fn test_instance_with_two_checks_one_critical() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         // Register two checks for the same instance
         let config1 = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
@@ -808,7 +822,7 @@ mod tests {
     #[test]
     fn test_instance_with_two_checks_passing_and_warning() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         // Register two checks for the same instance
         let config1 = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
@@ -832,7 +846,7 @@ mod tests {
     #[test]
     fn test_update_check_result_immediate() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         let config = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
         registry.register_check(config);
@@ -849,7 +863,7 @@ mod tests {
     #[test]
     fn test_update_check_result_with_threshold() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         let mut config = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
         config.failures_before_critical = 3; // Need 4 failures (> 3)
@@ -876,7 +890,7 @@ mod tests {
     #[test]
     fn test_ttl_update() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         let config = make_config("check-1", CheckType::Ttl, CheckStatus::Critical);
         registry.register_check(config);
@@ -893,7 +907,7 @@ mod tests {
     #[test]
     fn test_consul_service_index() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         registry.register_consul_service_id(
             "my-svc-1",
@@ -914,7 +928,7 @@ mod tests {
     #[test]
     fn test_deregister_all_instance_checks() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         let config1 = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
         let config2 = make_config("check-2", CheckType::Http, CheckStatus::Passing);
@@ -937,7 +951,7 @@ mod tests {
     #[test]
     fn test_get_all_checks() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         let config1 = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
         let mut config2 = make_config("check-2", CheckType::Http, CheckStatus::Critical);
@@ -952,7 +966,7 @@ mod tests {
     #[test]
     fn test_get_checks_by_status() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         let config1 = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
         let config2 = make_config("check-2", CheckType::Http, CheckStatus::Critical);
@@ -983,7 +997,7 @@ mod tests {
     #[test]
     fn test_consul_service_id_in_config() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         let mut config = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
         config.consul_service_id = Some("my-consul-svc".to_string());
@@ -1001,7 +1015,7 @@ mod tests {
     #[test]
     fn test_no_checks_default_healthy() {
         let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::new(ns);
+        let registry = InstanceCheckRegistry::with_naming_service(ns);
 
         // An instance with no checks should be considered healthy
         assert!(registry.aggregate_instance_health("nonexistent#instance"));
@@ -1045,7 +1059,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_concurrent_register_and_get_all_checks() {
         let ns = test_naming_service();
-        let registry = Arc::new(InstanceCheckRegistry::new(ns));
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(ns));
         let barrier = Arc::new(tokio::sync::Barrier::new(4));
 
         let mut handles = Vec::new();
@@ -1098,7 +1112,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_concurrent_update_status_and_get_by_status() {
         let ns = test_naming_service();
-        let registry = Arc::new(InstanceCheckRegistry::new(ns));
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(ns));
 
         // Pre-register checks
         for i in 0..20 {
@@ -1164,7 +1178,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_concurrent_register_deregister_and_consul_queries() {
         let ns = test_naming_service();
-        let registry = Arc::new(InstanceCheckRegistry::new(ns));
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(ns));
 
         // Pre-register checks
         for i in 0..20 {

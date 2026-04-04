@@ -206,7 +206,7 @@ pub trait ConfigPersistence: Send + Sync {
         let mut result = HashMap::with_capacity(keys.len());
         for (data_id, group, namespace_id) in keys {
             if let Ok(Some(config)) = self.config_find_one(data_id, group, namespace_id).await {
-                let group_key = format!("{}+{}+{}", data_id, group, namespace_id);
+                let group_key = batata_common::build_config_key(data_id, group, namespace_id);
                 result.insert(group_key, config.md5);
             }
         }

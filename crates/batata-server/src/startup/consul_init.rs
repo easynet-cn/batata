@@ -76,11 +76,19 @@ pub async fn init_consul(
     }
 
     let is_cluster = !configuration.is_standalone() && !is_console_remote;
-    let naming_provider: Arc<dyn batata_api::naming::NamingServiceProvider> =
-        grpc_servers.naming_provider();
-    let consul_registry = Arc::new(InstanceCheckRegistry::new(
-        grpc_servers.naming_service().clone(),
-    ));
+
+    // Create Consul naming store and result handler BEFORE the registry.
+    // This ensures the registry syncs health status to ConsulNamingStore,
+    // not NamingService — keeping Consul data fully independent.
+    let consul_naming_store = Arc::new(batata_plugin_consul::ConsulNamingStore::new());
+    let consul_index_provider = Arc::new(batata_plugin_consul::ConsulIndexProvider::new());
+    let consul_result_handler: Arc<dyn batata_plugin::HealthCheckResultHandler> = Arc::new(
+        batata_plugin_consul::ConsulResultHandler::new(
+            consul_naming_store.clone(),
+            consul_index_provider.clone(),
+        ),
+    );
+    let consul_registry = Arc::new(InstanceCheckRegistry::new(consul_result_handler));
 
     let services = if is_cluster {
         init_consul_cluster(
@@ -88,7 +96,7 @@ pub async fn init_consul(
             configuration,
             grpc_servers,
             raft_node,
-            &naming_provider,
+            &consul_naming_store,
             &consul_registry,
         )
         .await
@@ -96,13 +104,13 @@ pub async fn init_consul(
         init_consul_standalone(
             consul_config,
             configuration,
-            &naming_provider,
+            &consul_naming_store,
             &consul_registry,
         )
     } else {
         info!("Console remote mode: Consul services using in-memory storage");
         ConsulPlugin::new(
-            naming_provider.clone(),
+            Some(consul_naming_store.clone()),
             consul_registry.clone(),
             consul_config.consul_acl_enabled,
             consul_config.consul_dc_config.clone(),
@@ -135,7 +143,7 @@ async fn init_consul_cluster(
     configuration: &Configuration,
     grpc_servers: &GrpcServers,
     raft_node: Option<&Arc<batata_consistency::RaftNode>>,
-    naming_provider: &Arc<dyn batata_api::naming::NamingServiceProvider>,
+    consul_naming_store: &Arc<batata_plugin_consul::ConsulNamingStore>,
     consul_registry: &Arc<InstanceCheckRegistry>,
 ) -> ConsulServices {
     let consul_node_id = raft_node.map(|r| r.node_id()).unwrap_or(1);
@@ -167,7 +175,7 @@ async fn init_consul_cluster(
             }
 
             ConsulPlugin::with_consul_raft(
-                naming_provider.clone(),
+                Some(consul_naming_store.clone()),
                 consul_registry.clone(),
                 consul_config.consul_acl_enabled,
                 consul_db,
@@ -184,7 +192,7 @@ async fn init_consul_cluster(
             init_consul_standalone(
                 consul_config,
                 configuration,
-                naming_provider,
+                consul_naming_store,
                 consul_registry,
             )
         }
@@ -291,7 +299,7 @@ fn spawn_consul_raft_init(
 fn init_consul_standalone(
     consul_config: &ConsulInitConfig,
     configuration: &Configuration,
-    naming_provider: &Arc<dyn batata_api::naming::NamingServiceProvider>,
+    consul_naming_store: &Arc<batata_plugin_consul::ConsulNamingStore>,
     consul_registry: &Arc<InstanceCheckRegistry>,
 ) -> ConsulServices {
     let consul_rocks_db = open_consul_rocks_db(
@@ -301,7 +309,7 @@ fn init_consul_standalone(
     if let Some(db) = consul_rocks_db {
         info!("Consul services using RocksDB persistence");
         ConsulPlugin::with_persistence(
-            naming_provider.clone(),
+            Some(consul_naming_store.clone()),
             consul_registry.clone(),
             consul_config.consul_acl_enabled,
             db,
@@ -310,7 +318,7 @@ fn init_consul_standalone(
     } else {
         info!("Consul services using in-memory storage (no persistence)");
         ConsulPlugin::new(
-            naming_provider.clone(),
+            Some(consul_naming_store.clone()),
             consul_registry.clone(),
             consul_config.consul_acl_enabled,
             consul_config.consul_dc_config.clone(),
@@ -333,11 +341,7 @@ fn start_consul_monitors(
 
     // Deregister monitor
     info!("Starting Consul deregister monitor...");
-    let deregister_monitor = DeregisterMonitor::new(
-        consul_registry.clone(),
-        grpc_servers.naming_service().clone(),
-        30,
-    );
+    let deregister_monitor = DeregisterMonitor::new(consul_registry.clone(), 30);
     tokio::spawn(async move {
         deregister_monitor.start().await;
     });

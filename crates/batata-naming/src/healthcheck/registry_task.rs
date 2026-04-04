@@ -298,7 +298,7 @@ mod tests {
 
     fn create_registry() -> Arc<InstanceCheckRegistry> {
         let naming_service = Arc::new(NamingService::new());
-        Arc::new(InstanceCheckRegistry::new(naming_service))
+        Arc::new(InstanceCheckRegistry::with_naming_service(naming_service))
     }
 
     fn create_tcp_check_config(check_id: &str) -> InstanceCheckConfig {

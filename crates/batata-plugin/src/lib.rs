@@ -35,6 +35,12 @@ pub use batata_common::Plugin;
 /// Protocol adapter plugin trait (re-exported from spi)
 pub use spi::ProtocolAdapterPlugin;
 
+/// Plugin naming store trait and error type (re-exported from spi)
+pub use spi::{PluginNamingStore, PluginNamingStoreError};
+
+/// Health check result handler trait (re-exported from spi)
+pub use spi::HealthCheckResultHandler;
+
 /// Plugin registry for managing multiple plugins
 pub struct PluginRegistry {
     plugins: Vec<Box<dyn Plugin>>,

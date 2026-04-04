@@ -169,10 +169,17 @@ metrics-exporter-prometheus = "0.18"
 # Input validation
 validator = { version = "0.20", features = ["derive"] }
 
+# Serialization (non-serde)
+bincode = "1"
+
+# TLS/Certificate generation
+rcgen = { version = "0.13", features = ["pem"] }
+
 # Dev dependencies
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
 proptest = "1.11"
 tempfile = "3"
+wiremock = "0.6.5"
 
 # Build dependencies
 tonic-prost-build = "0.14.5"

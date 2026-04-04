@@ -292,8 +292,8 @@ impl ConnectionManager {
 
     /// Push a message to multiple connections with bounded concurrency.
     ///
-    /// Uses a semaphore to limit concurrent push operations to 256, preventing
-    /// overwhelming the server when a config change affects many subscribers.
+    /// Uses chunked concurrent pushes to limit concurrent operations to 256,
+    /// preventing overwhelming the server when a config change affects many subscribers.
     /// Returns the number of successful sends.
     pub async fn push_message_to_many(
         &self,
@@ -304,7 +304,13 @@ impl ConnectionManager {
             return 0;
         }
 
-        // For small fan-out, use sequential sending to avoid semaphore overhead
+        // Single recipient: no clone needed
+        if connection_ids.len() == 1 {
+            return usize::from(self.push_message(&connection_ids[0], payload).await);
+        }
+
+        // For small fan-out, use sequential sending to avoid task overhead.
+        // Last recipient gets the owned payload to avoid one clone.
         if connection_ids.len() <= 8 {
             let mut success_count = 0;
             let (last, rest) = connection_ids.split_last().unwrap();
@@ -320,9 +326,11 @@ impl ConnectionManager {
         }
 
         // For large fan-out, use bounded concurrent pushes via chunking.
-        // Process chunks of 256 connections concurrently.
         let mut success_count = 0;
-        for chunk in connection_ids.chunks(256) {
+        let chunks: Vec<_> = connection_ids.chunks(256).collect();
+        let (last_chunk, rest_chunks) = chunks.split_last().unwrap();
+
+        for chunk in rest_chunks {
             let futs: Vec<_> = chunk
                 .iter()
                 .map(|id| self.push_message(id, payload.clone()))
@@ -333,6 +341,22 @@ impl ConnectionManager {
                 }
             }
         }
+
+        // Last chunk: last connection gets owned payload
+        if !last_chunk.is_empty() {
+            let (last_id, rest_ids) = last_chunk.split_last().unwrap();
+            let mut futs: Vec<_> = rest_ids
+                .iter()
+                .map(|id| self.push_message(id, payload.clone()))
+                .collect();
+            futs.push(self.push_message(last_id, payload));
+            for result in futures::future::join_all(futs).await {
+                if result {
+                    success_count += 1;
+                }
+            }
+        }
+
         success_count
     }
 

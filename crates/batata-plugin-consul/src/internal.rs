@@ -4,12 +4,9 @@
 //! and internal operations (federation, VIP, ACL authorize).
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde::{Deserialize, Serialize};
-
-use batata_api::naming::NamingServiceProvider;
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
@@ -18,7 +15,9 @@ use crate::connect::ConsulConnectService;
 use crate::connect_ca::ConsulConnectCAService;
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::{ConsulDatacenterConfig, ConsulError};
+use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError};
+use crate::naming_store::ConsulNamingStore;
+use batata_plugin::PluginNamingStore;
 
 // ============================================================================
 // UI Models
@@ -33,32 +32,24 @@ pub struct UINode {
     pub node: String,
     pub address: String,
     pub datacenter: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, String>>,
     pub create_index: u64,
     pub modify_index: u64,
 }
 
-/// Catalog overview summary
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct CatalogSummary {
-    pub nodes: CatalogCountSummary,
-    pub services: CatalogCountSummary,
-    pub checks: CatalogCountSummary,
+/// Query parameters for UI node list
+#[derive(Debug, Deserialize)]
+pub struct UINodeQueryParams {
+    pub dc: Option<String>,
 }
 
-/// Count summary with health status breakdown
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct CatalogCountSummary {
-    pub total: i64,
-    pub passing: i64,
-    pub warning: i64,
-    pub critical: i64,
+/// Query parameters for UI exported services
+#[derive(Debug, Deserialize)]
+pub struct UIExportedServicesQueryParams {
+    pub dc: Option<String>,
 }
 
-/// Service topology response
+/// Service topology for UI
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceTopology {
@@ -70,7 +61,7 @@ pub struct ServiceTopology {
     pub filtered_by_acls: bool,
 }
 
-/// Service topology node summary
+/// Service topology summary entry
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceTopologySummary {
@@ -80,7 +71,7 @@ pub struct ServiceTopologySummary {
     pub intention: ServiceTopologyIntention,
 }
 
-/// Intention status in topology
+/// Service topology intention
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ServiceTopologyIntention {
@@ -89,64 +80,56 @@ pub struct ServiceTopologyIntention {
     pub external_source: String,
 }
 
-// ============================================================================
-// Federation Models
-// ============================================================================
-
-/// Federation state for a datacenter
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct FederationState {
-    pub datacenter: String,
-    pub mesh_gateways: Vec<serde_json::Value>,
-    pub primary_datacenter: String,
-    pub primary_modifyindex: u64,
-}
-
-// ============================================================================
-// VIP Models
-// ============================================================================
-
-/// Request to assign service virtual IPs
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct AssignServiceVIPsRequest {
-    pub service_name: String,
-    #[serde(default)]
-    pub manual_vips: Vec<String>,
-}
-
-/// Response for VIP assignment
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "PascalCase")]
-pub struct AssignServiceVIPsResponse {
-    pub service_name: String,
-    pub found: bool,
-}
-
-// ============================================================================
-// Query Parameters
-// ============================================================================
-
-/// Query parameters for UI node endpoints
-#[derive(Debug, Deserialize)]
-pub struct UINodeQueryParams {
-    pub dc: Option<String>,
-    pub filter: Option<String>,
-}
-
-/// Query parameters for UI service topology
+/// Query parameters for service topology
 #[derive(Debug, Deserialize)]
 pub struct UIServiceTopologyQueryParams {
     pub dc: Option<String>,
     pub kind: Option<String>,
 }
 
-/// Query parameters for UI exported services
+/// Catalog summary for UI
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct CatalogSummary {
+    pub nodes: CatalogCountSummary,
+    pub services: CatalogCountSummary,
+    pub checks: CatalogCountSummary,
+}
+
+/// Category count in catalog summary
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct CatalogCountSummary {
+    pub total: i64,
+    pub passing: i64,
+    pub warning: i64,
+    pub critical: i64,
+}
+
+/// Federation state
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct FederationState {
+    pub datacenter: String,
+    pub mesh_gateways: Vec<serde_json::Value>,
+    pub primary_datacenter: String,
+    #[serde(rename = "PrimaryModifyIndex")]
+    pub primary_modifyindex: u64,
+}
+
+/// Assign service VIPs request
 #[derive(Debug, Deserialize)]
-pub struct UIExportedServicesQueryParams {
-    pub dc: Option<String>,
-    pub partition: Option<String>,
+#[serde(rename_all = "PascalCase")]
+pub struct AssignServiceVIPsRequest {
+    pub service_name: String,
+}
+
+/// Assign service VIPs response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct AssignServiceVIPsResponse {
+    pub service_name: String,
+    pub found: bool,
 }
 
 /// Query parameters for UI catalog overview
@@ -162,7 +145,7 @@ pub struct UICatalogOverviewQueryParams {
 /// GET /v1/internal/ui/nodes - List nodes for UI
 pub async fn ui_nodes(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<UINodeQueryParams>,
@@ -174,41 +157,17 @@ pub async fn ui_nodes(
     }
 
     let dc = dc_config.resolve_dc(&query.dc);
-
-    // Collect unique nodes from all service instances
-    let (_, service_names) = naming_service.list_services_by_source(
-        &dc_config.default_namespace,
-        &dc_config.default_group,
-        1,
-        i32::MAX,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
     let mut node_map: HashMap<String, UINode> = HashMap::new();
 
-    for service_name in &service_names {
-        let instances = naming_service.get_instances_by_source(
-            &dc_config.default_namespace,
-            &dc_config.default_group,
-            service_name,
-            "",
-            false,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-        for instance in &instances {
-            let node_name = instance
-                .metadata
-                .get("consul_node")
-                .cloned()
-                .unwrap_or_else(|| instance.ip.clone());
+    for (_key, data) in naming_store.scan("") {
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
+            let ip = reg.effective_address();
+            let node_name = format!("node-{}", ip.replace('.', "-"));
             node_map.entry(node_name.clone()).or_insert_with(|| UINode {
                 id: uuid::Uuid::new_v4().to_string(),
                 node: node_name,
-                address: instance.ip.clone(),
-                datacenter: instance
-                    .metadata
-                    .get("consul_datacenter")
-                    .cloned()
-                    .unwrap_or_else(|| dc.clone()),
+                address: ip,
+                datacenter: dc.clone(),
                 meta: None,
                 create_index: index_provider.current_index(ConsulTable::Catalog),
                 modify_index: index_provider.current_index(ConsulTable::Catalog),
@@ -230,7 +189,7 @@ pub async fn ui_nodes(
 /// GET /v1/internal/ui/node/{node} - Get node info for UI
 pub async fn ui_node_info(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
@@ -242,39 +201,17 @@ pub async fn ui_node_info(
     }
 
     let node_name = path.into_inner();
-    let (_, service_names) = naming_service.list_services_by_source(
-        &dc_config.default_namespace,
-        &dc_config.default_group,
-        1,
-        i32::MAX,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
 
-    for service_name in &service_names {
-        let instances = naming_service.get_instances_by_source(
-            &dc_config.default_namespace,
-            &dc_config.default_group,
-            service_name,
-            "",
-            false,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-        for instance in &instances {
-            let instance_node = instance
-                .metadata
-                .get("consul_node")
-                .cloned()
-                .unwrap_or_else(|| instance.ip.clone());
-            if instance_node == node_name {
+    for (_key, data) in naming_store.scan("") {
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
+            let ip = reg.effective_address();
+            let instance_node = format!("node-{}", ip.replace('.', "-"));
+            if instance_node == node_name || ip == node_name {
                 let node = UINode {
                     id: uuid::Uuid::new_v4().to_string(),
                     node: node_name,
-                    address: instance.ip.clone(),
-                    datacenter: instance
-                        .metadata
-                        .get("consul_datacenter")
-                        .cloned()
-                        .unwrap_or_else(|| dc_config.datacenter.clone()),
+                    address: ip,
+                    datacenter: dc_config.datacenter.clone(),
                     meta: None,
                     create_index: index_provider.current_index(ConsulTable::Catalog),
                     modify_index: index_provider.current_index(ConsulTable::Catalog),
@@ -320,10 +257,10 @@ pub async fn ui_exported_services(
 /// GET /v1/internal/ui/catalog-overview - Get catalog overview for UI
 pub async fn ui_catalog_overview(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
+    _dc_config: web::Data<ConsulDatacenterConfig>,
     _query: web::Query<UICatalogOverviewQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -332,15 +269,9 @@ pub async fn ui_catalog_overview(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let (service_count, service_names) = naming_service.list_services_by_source(
-        &dc_config.default_namespace,
-        &dc_config.default_group,
-        1,
-        i32::MAX,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
+    let service_names = naming_store.service_names();
+    let service_count = service_names.len();
 
-    // Count total instances and collect unique nodes
     let mut total_instances: i64 = 0;
     let mut node_set: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut total_checks: i64 = 0;
@@ -349,34 +280,24 @@ pub async fn ui_catalog_overview(
     let mut critical_checks: i64 = 0;
 
     for service_name in &service_names {
-        let instances = naming_service.get_instances_by_source(
-            &dc_config.default_namespace,
-            &dc_config.default_group,
-            service_name,
-            "",
-            false,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-        for instance in &instances {
-            total_instances += 1;
-            let node_name = instance
-                .metadata
-                .get("consul_node")
-                .cloned()
-                .unwrap_or_else(|| instance.ip.clone());
-            node_set.insert(node_name);
+        let entries = naming_store.get_service_entries(service_name);
+        for entry_bytes in &entries {
+            if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(entry_bytes) {
+                total_instances += 1;
+                let ip = reg.effective_address();
+                let node_name = format!("node-{}", ip.replace('.', "-"));
+                node_set.insert(node_name);
 
-            // Get checks for this instance
-            let checks = health_service
-                .get_service_checks(&instance.instance_id)
-                .await;
-            for check in &checks {
-                total_checks += 1;
-                match check.status.as_str() {
-                    "passing" => passing_checks += 1,
-                    "warning" => warning_checks += 1,
-                    "critical" => critical_checks += 1,
-                    _ => {}
+                let service_id = reg.service_id();
+                let checks = health_service.get_service_checks(&service_id).await;
+                for check in &checks {
+                    total_checks += 1;
+                    match check.status.as_str() {
+                        "passing" => passing_checks += 1,
+                        "warning" => warning_checks += 1,
+                        "critical" => critical_checks += 1,
+                        _ => {}
+                    }
                 }
             }
         }
@@ -403,7 +324,6 @@ pub async fn ui_catalog_overview(
         },
     };
 
-    let _ = total_instances; // used for node counting
     HttpResponse::Ok()
         .insert_header((
             "X-Consul-Index",
@@ -474,7 +394,7 @@ pub async fn ui_service_topology(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     ca_service: web::Data<ConsulConnectCAService>,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     path: web::Path<String>,
     query: web::Query<UIServiceTopologyQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
@@ -487,7 +407,6 @@ pub async fn ui_service_topology(
     let service_name = path.into_inner();
     let dc = dc_config.resolve_dc(&query.dc);
 
-    // Build upstream and downstream relationships from intentions and proxy config
     let mut upstreams = Vec::new();
     let mut downstreams = Vec::new();
 
@@ -522,61 +441,42 @@ pub async fn ui_service_topology(
     }
 
     // Also check proxy config for upstream dependencies
-    let namespace = &dc_config.default_namespace;
-    let (_, all_services) = naming_service.list_services_by_source(
-        namespace,
-        &dc_config.default_group,
-        1,
-        i32::MAX,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
-
-    for svc in &all_services {
-        let instances = naming_service.get_instances_by_source(
-            namespace,
-            &dc_config.default_group,
-            svc,
-            "",
-            false,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-        for instance in &instances {
-            if let Some(kind) = instance.metadata.get("consul_kind")
-                && kind == "connect-proxy"
-                && let Some(proxy_json) = instance.metadata.get("consul_proxy")
-                && let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json)
-            {
-                // If this proxy's destination is our service, check its upstreams
-                let dest = proxy
-                    .get("DestinationServiceName")
-                    .or_else(|| proxy.get("destination_service_name"))
-                    .and_then(|v| v.as_str());
-                if dest == Some(&service_name)
-                    && let Some(upstream_arr) = proxy
-                        .get("Upstreams")
-                        .or_else(|| proxy.get("upstreams"))
-                        .and_then(|v| v.as_array())
-                {
-                    for upstream in upstream_arr {
-                        let upstream_name = upstream
-                            .get("DestinationName")
-                            .or_else(|| upstream.get("destination_name"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        if !upstream_name.is_empty()
-                            && !upstreams.iter().any(|u| u.name == upstream_name)
+    for (_key, data) in naming_store.scan("") {
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
+            if reg.kind.as_deref() == Some("connect-proxy") {
+                if let Some(ref proxy) = reg.proxy {
+                    let dest = proxy
+                        .get("DestinationServiceName")
+                        .or_else(|| proxy.get("destination_service_name"))
+                        .and_then(|v| v.as_str());
+                    if dest == Some(&service_name) {
+                        if let Some(upstream_arr) = proxy
+                            .get("Upstreams")
+                            .or_else(|| proxy.get("upstreams"))
+                            .and_then(|v| v.as_array())
                         {
-                            upstreams.push(ServiceTopologySummary {
-                                name: upstream_name,
-                                datacenter: dc.clone(),
-                                namespace: "default".to_string(),
-                                intention: ServiceTopologyIntention {
-                                    allowed: true,
-                                    has_permissions: false,
-                                    external_source: String::new(),
-                                },
-                            });
+                            for upstream in upstream_arr {
+                                let upstream_name = upstream
+                                    .get("DestinationName")
+                                    .or_else(|| upstream.get("destination_name"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if !upstream_name.is_empty()
+                                    && !upstreams.iter().any(|u| u.name == upstream_name)
+                                {
+                                    upstreams.push(ServiceTopologySummary {
+                                        name: upstream_name,
+                                        datacenter: dc.clone(),
+                                        namespace: "default".to_string(),
+                                        intention: ServiceTopologyIntention {
+                                            allowed: true,
+                                            has_permissions: false,
+                                            external_source: String::new(),
+                                        },
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -623,55 +523,32 @@ pub async fn ui_metrics_proxy(
 
 /// Collect mesh-gateway service instances as JSON values for federation state
 fn collect_mesh_gateways(
-    naming_service: &Arc<dyn NamingServiceProvider>,
+    naming_store: &ConsulNamingStore,
     datacenter: &str,
-    default_namespace: &str,
-    default_group: &str,
 ) -> Vec<serde_json::Value> {
-    let (_, service_names) = naming_service.list_services_by_source(
-        default_namespace,
-        default_group,
-        1,
-        i32::MAX,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
     let mut gateways = Vec::new();
 
-    for svc in service_names {
-        let instances = naming_service.get_instances_by_source(
-            default_namespace,
-            default_group,
-            &svc,
-            "",
-            false,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-        for instance in instances {
-            if instance
-                .metadata
-                .get("consul_kind")
-                .is_some_and(|k| k == "mesh-gateway")
-            {
+    for (_key, data) in naming_store.scan("") {
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
+            if reg.kind.as_deref() == Some("mesh-gateway") {
+                let ip = reg.effective_address();
+                let port = reg.effective_port();
+                let svc_id = reg.service_id();
+                let node_name = format!("node-{}", ip.replace('.', "-"));
                 gateways.push(serde_json::json!({
-                    "WAN": {
-                        "Address": instance.ip,
-                        "Port": instance.port
-                    },
-                    "LAN": {
-                        "Address": instance.ip,
-                        "Port": instance.port
-                    },
+                    "WAN": { "Address": ip, "Port": port },
+                    "LAN": { "Address": ip, "Port": port },
                     "Service": {
-                        "ID": instance.instance_id,
-                        "Service": svc,
-                        "Address": instance.ip,
-                        "Port": instance.port,
+                        "ID": svc_id,
+                        "Service": reg.name,
+                        "Address": ip,
+                        "Port": port,
                         "Meta": {},
                         "Datacenter": datacenter
                     },
                     "Node": {
-                        "Node": instance.metadata.get("consul_node").cloned().unwrap_or_else(|| instance.ip.clone()),
-                        "Address": instance.ip,
+                        "Node": node_name,
+                        "Address": ip,
                         "Datacenter": datacenter
                     }
                 }));
@@ -691,7 +568,7 @@ pub async fn federation_state_list(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
@@ -699,13 +576,7 @@ pub async fn federation_state_list(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    // Collect mesh-gateway instances for the local datacenter
-    let mesh_gateways = collect_mesh_gateways(
-        &naming_service,
-        &dc_config.datacenter,
-        &dc_config.default_namespace,
-        &dc_config.default_group,
-    );
+    let mesh_gateways = collect_mesh_gateways(&naming_store, &dc_config.datacenter);
 
     let state = FederationState {
         datacenter: dc_config.datacenter.clone(),
@@ -729,7 +600,7 @@ pub async fn federation_state_mesh_gateways(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Operator, "", false);
@@ -737,37 +608,16 @@ pub async fn federation_state_mesh_gateways(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    // Find mesh-gateway instances and group by datacenter
-    let (_, service_names) = naming_service.list_services_by_source(
-        &dc_config.default_namespace,
-        &dc_config.default_group,
-        1,
-        i32::MAX,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
-
     let mut gateways_by_dc: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
 
-    for svc in service_names {
-        let instances = naming_service.get_instances_by_source(
-            &dc_config.default_namespace,
-            &dc_config.default_group,
-            &svc,
-            "",
-            false,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
-        for instance in instances {
-            if instance
-                .metadata
-                .get("consul_kind")
-                .is_some_and(|k| k == "mesh-gateway")
-            {
+    for (_key, data) in naming_store.scan("") {
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
+            if reg.kind.as_deref() == Some("mesh-gateway") {
                 let dc = dc_config.datacenter.clone();
                 let entry = serde_json::json!({
-                    "Address": instance.ip,
-                    "Port": instance.port,
-                    "Service": svc,
+                    "Address": reg.effective_address(),
+                    "Port": reg.effective_port(),
+                    "Service": reg.name,
                 });
                 gateways_by_dc.entry(dc).or_default().push(entry);
             }
@@ -789,7 +639,7 @@ pub async fn federation_state_get(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     path: web::Path<String>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -800,12 +650,7 @@ pub async fn federation_state_get(
 
     let dc = path.into_inner();
     let mesh_gateways = if dc == dc_config.datacenter {
-        collect_mesh_gateways(
-            &naming_service,
-            &dc,
-            &dc_config.default_namespace,
-            &dc_config.default_group,
-        )
+        collect_mesh_gateways(&naming_store, &dc)
     } else {
         Vec::new()
     };
@@ -835,8 +680,7 @@ pub async fn federation_state_get(
 pub async fn assign_service_virtual_ip(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     body: web::Json<AssignServiceVIPsRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
@@ -846,17 +690,7 @@ pub async fn assign_service_virtual_ip(
     }
 
     let request = body.into_inner();
-
-    // Check if the service exists in the naming service
-    let instances = naming_service.get_instances_by_source(
-        &dc_config.default_namespace,
-        &dc_config.default_group,
-        &request.service_name,
-        "",
-        false,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
-    let found = !instances.is_empty();
+    let found = !naming_store.get_service_entries(&request.service_name).is_empty();
 
     HttpResponse::Ok()
         .insert_header((
@@ -945,7 +779,6 @@ mod tests {
 
     #[test]
     fn test_ui_node_from_member_data() {
-        // Verify UINode can be constructed from member-like data
         let node = UINode {
             id: uuid::Uuid::new_v4().to_string(),
             node: "member-node-1".to_string(),
@@ -964,7 +797,6 @@ mod tests {
         assert_eq!(json["Datacenter"], "dc1");
         assert_eq!(json["CreateIndex"], 5);
         assert_eq!(json["ModifyIndex"], 10);
-        // Meta should be present
         let meta = json["Meta"].as_object().unwrap();
         assert_eq!(meta["role"], "server");
         assert_eq!(meta["version"], "1.0.0");

@@ -19,6 +19,7 @@ actix-web = { workspace = true }
 
 # Concurrency
 dashmap = { workspace = true }
+bytes = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -69,10 +70,10 @@ hostname = { workspace = true }
 reqwest = { workspace = true }
 
 # X.509 certificate generation
-rcgen = { version = "0.13", features = ["pem"] }
+rcgen = { workspace = true }
 
 # Temp directory for tests
-tempfile = "3"
+tempfile = { workspace = true }
 
 [dev-dependencies]
 actix-http = { workspace = true }

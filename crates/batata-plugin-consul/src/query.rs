@@ -16,16 +16,15 @@ use rocksdb::DB;
 use tracing::{error, info, warn};
 
 use crate::constants::CF_CONSUL_QUERIES;
-use batata_api::naming::NamingServiceProvider;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
-    AgentService, ConsulDatacenterConfig, ConsulError, HealthCheck, Node, PreparedQuery,
-    PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
+    AgentService, AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, HealthCheck, Node,
+    PreparedQuery, PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
     PreparedQueryExecuteResult, PreparedQueryExplainResult, PreparedQueryParams, ServiceHealth,
-    Weights,
 };
+use crate::naming_store::ConsulNamingStore;
 
 /// Global prepared query storage
 static QUERIES: LazyLock<DashMap<String, PreparedQuery>> = LazyLock::new(DashMap::new);
@@ -350,7 +349,7 @@ pub async fn execute_query(
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query_service: web::Data<ConsulQueryService>,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let id = path.into_inner();
@@ -367,125 +366,80 @@ pub async fn execute_query(
         None => return HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     };
 
-    // Execute the query by fetching service instances
+    // Execute the query by fetching service instances from ConsulNamingStore
     let service_name = &query.service.service;
-    let namespace = &dc_config.default_namespace;
     let only_passing = query.service.only_passing;
 
-    let instances = naming_service.get_instances_by_source(
-        namespace,
-        &dc_config.default_group,
-        service_name,
-        "",
-        only_passing,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
+    let entries = naming_store.get_service_entries(service_name);
 
     // Convert to ServiceHealth format
-    let nodes: Vec<ServiceHealth> = instances
-        .iter()
-        .map(|instance| {
-            let tags: Option<Vec<String>> = instance
-                .metadata
-                .get("consul_tags")
-                .and_then(|s| serde_json::from_str(s).ok());
+    let mut nodes: Vec<ServiceHealth> = Vec::new();
 
-            let node_id = uuid::Uuid::new_v4().to_string();
-            let node_name = hostname::get()
-                .map(|h| h.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "batata-node".to_string());
-            let ip = instance.ip.clone();
-            let port = instance.port as u16;
+    for entry_bytes in &entries {
+        let reg: AgentServiceRegistration = match serde_json::from_slice(entry_bytes) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
 
-            // Build node tagged addresses
-            let mut node_tagged_addresses = std::collections::HashMap::new();
-            node_tagged_addresses.insert("lan".to_string(), ip.clone());
-            node_tagged_addresses.insert("lan_ipv4".to_string(), ip.clone());
-            node_tagged_addresses.insert("wan".to_string(), ip.clone());
-            node_tagged_addresses.insert("wan_ipv4".to_string(), ip.clone());
+        let service_id = reg.service_id();
+        let ip = reg.effective_address();
+        let port = reg.effective_port();
+        let healthy = naming_store.is_healthy(&ip, port as i32);
 
-            let mut node_meta = std::collections::HashMap::new();
-            node_meta.insert("consul-network-segment".to_string(), "".to_string());
-            node_meta.insert("consul-version".to_string(), dc_config.full_version());
+        if only_passing && !healthy {
+            continue;
+        }
 
-            // Build service tagged addresses
-            let service_tagged_addresses = instance
-                .metadata
-                .get("consul_tagged_addresses")
-                .and_then(|s| serde_json::from_str(s).ok())
-                .unwrap_or_else(|| {
-                    // Default tagged addresses if not provided
-                    serde_json::json!({
-                        "lan_ipv4": {
-                            "Address": ip,
-                            "Port": port
-                        },
-                        "wan_ipv4": {
-                            "Address": ip,
-                            "Port": port
-                        }
-                    })
-                });
+        let node_id = uuid::Uuid::new_v4().to_string();
+        let node_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "batata-node".to_string());
 
-            ServiceHealth {
-                node: Node {
-                    id: node_id,
-                    node: node_name.clone(),
-                    address: ip.clone(),
-                    datacenter: dc.clone(),
-                    tagged_addresses: Some(node_tagged_addresses),
-                    meta: Some(node_meta),
-                },
-                service: AgentService {
-                    id: instance.instance_id.clone(),
-                    service: instance.service_name.clone(),
-                    tags: tags.clone(),
-                    port,
-                    address: ip.clone(),
-                    meta: Some(instance.metadata.clone()),
-                    enable_tag_override: false,
-                    weights: Weights {
-                        passing: instance.weight as i32,
-                        warning: 1,
-                    },
-                    datacenter: Some(dc.clone()),
-                    namespace: Some(namespace.to_string()),
-                    kind: instance.metadata.get("consul_kind").cloned(),
-                    proxy: instance
-                        .metadata
-                        .get("consul_proxy")
-                        .and_then(|s| serde_json::from_str(s).ok()),
-                    connect: instance
-                        .metadata
-                        .get("consul_connect")
-                        .and_then(|s| serde_json::from_str(s).ok()),
-                    tagged_addresses: Some(service_tagged_addresses),
-                },
-                checks: vec![HealthCheck {
-                    node: node_name,
-                    check_id: format!("service:{}", instance.instance_id),
-                    name: "Service health check".to_string(),
-                    status: if instance.healthy {
-                        "passing"
-                    } else {
-                        "critical"
-                    }
-                    .to_string(),
-                    notes: String::new(),
-                    output: String::new(),
-                    service_id: instance.instance_id.clone(),
-                    service_name: instance.service_name.clone(),
-                    service_tags: tags,
-                    check_type: "ttl".to_string(),
-                    interval: None,
-                    timeout: None,
-                    create_index: None,
-                    modify_index: None,
-                    definition: None,
-                }],
-            }
-        })
-        .collect();
+        let mut node_tagged_addresses = std::collections::HashMap::new();
+        node_tagged_addresses.insert("lan".to_string(), ip.clone());
+        node_tagged_addresses.insert("lan_ipv4".to_string(), ip.clone());
+        node_tagged_addresses.insert("wan".to_string(), ip.clone());
+        node_tagged_addresses.insert("wan_ipv4".to_string(), ip.clone());
+
+        let mut node_meta = std::collections::HashMap::new();
+        node_meta.insert("consul-network-segment".to_string(), "".to_string());
+        node_meta.insert("consul-version".to_string(), dc_config.full_version());
+
+        let agent_service = AgentService::from(&reg);
+        let status = if healthy { "passing" } else { "critical" };
+
+        nodes.push(ServiceHealth {
+            node: Node {
+                id: node_id,
+                node: node_name.clone(),
+                address: ip.clone(),
+                datacenter: dc.clone(),
+                tagged_addresses: Some(node_tagged_addresses),
+                meta: Some(node_meta),
+            },
+            service: AgentService {
+                datacenter: Some(dc.clone()),
+                ..agent_service
+            },
+            checks: vec![HealthCheck {
+                node: node_name,
+                check_id: format!("service:{}", service_id),
+                name: "Service health check".to_string(),
+                status: status.to_string(),
+                notes: String::new(),
+                output: String::new(),
+                service_id: service_id.clone(),
+                service_name: reg.name.clone(),
+                service_tags: reg.tags.clone(),
+                check_type: "ttl".to_string(),
+                interval: None,
+                timeout: None,
+                create_index: None,
+                modify_index: None,
+                definition: None,
+            }],
+        });
+    }
 
     // Handle failover: if no healthy nodes found and failover is configured,
     // attempt to find instances from the failover datacenters.

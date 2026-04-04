@@ -1049,155 +1049,37 @@ pub struct CheckUpdateParams {
 // Conversion implementations
 // ============================================================================
 
-use batata_api::naming::model::Instance as NacosInstance;
-
-impl From<&AgentServiceRegistration> for NacosInstance {
+impl From<&AgentServiceRegistration> for AgentService {
     fn from(reg: &AgentServiceRegistration) -> Self {
-        let mut metadata = reg.meta.clone().unwrap_or_default();
+        let weight = reg.weight().max(1.0) as i32;
 
-        // Store Consul-specific fields in metadata
-        if let Some(ref tags) = reg.tags {
-            metadata.insert(
-                "consul_tags".to_string(),
-                serde_json::to_string(tags).unwrap_or_default(),
-            );
-        }
-        if let Some(enable_tag_override) = reg.enable_tag_override {
-            metadata.insert(
-                "enable_tag_override".to_string(),
-                enable_tag_override.to_string(),
-            );
-        }
-        if let Some(ref kind) = reg.kind {
-            metadata.insert("consul_kind".to_string(), kind.clone());
-        }
-        if let Some(ref proxy) = reg.proxy {
-            metadata.insert(
-                "consul_proxy".to_string(),
-                serde_json::to_string(proxy).unwrap_or_default(),
-            );
-        }
-        if let Some(ref connect) = reg.connect {
-            metadata.insert(
-                "consul_connect".to_string(),
-                serde_json::to_string(connect).unwrap_or_default(),
-            );
-        }
-        if let Some(ref tagged_addresses) = reg.tagged_addresses {
-            metadata.insert(
-                "consul_tagged_addresses".to_string(),
-                serde_json::to_string(tagged_addresses).unwrap_or_default(),
-            );
-        }
-        // Store warning weight in metadata
-        if let Some(ref weights) = reg.weights {
-            metadata.insert(
-                "consul_warning_weight".to_string(),
-                weights.warning.to_string(),
-            );
-        }
-
-        // Store consul_service_id in metadata for O(1) lookup during deregistration
-        let service_id = reg.service_id();
-        metadata.insert("consul_service_id".to_string(), service_id.clone());
-
-        NacosInstance {
-            instance_id: service_id,
-            ip: reg.effective_address(),
-            port: reg.effective_port() as i32,
-            weight: reg.weight(),
-            healthy: true,
-            enabled: true,
-            // Consul instances are persistent — server-side health checks manage them,
-            // not gRPC heartbeat (Consul clients don't speak gRPC)
-            ephemeral: false,
-            cluster_name: "DEFAULT".to_string(), // Overridden by agent handler with config value
-            service_name: reg.name.clone(),
-            metadata,
-            register_source: batata_api::naming::RegisterSource::Consul,
-        }
-    }
-}
-
-impl From<&NacosInstance> for AgentService {
-    fn from(instance: &NacosInstance) -> Self {
-        // Extract tags from metadata
-        let tags = instance
-            .metadata
-            .get("consul_tags")
-            .and_then(|s| serde_json::from_str(s).ok());
-
-        // Extract enable_tag_override from metadata
-        let enable_tag_override = instance
-            .metadata
-            .get("enable_tag_override")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(false);
-
-        // Extract Kind, Proxy, Connect, TaggedAddresses from metadata
-        let kind = instance.metadata.get("consul_kind").cloned();
-        let proxy = instance
-            .metadata
-            .get("consul_proxy")
-            .and_then(|s| serde_json::from_str(s).ok());
-        let connect = instance
-            .metadata
-            .get("consul_connect")
-            .and_then(|s| serde_json::from_str(s).ok());
-        let tagged_addresses = instance
-            .metadata
-            .get("consul_tagged_addresses")
-            .and_then(|s| serde_json::from_str(s).ok())
-            .or_else(|| {
-                // Default tagged addresses if not provided
-                let ip = instance.ip.clone();
-                let port = instance.port as u16;
-                Some(serde_json::json!({
-                    "lan_ipv4": {
-                        "Address": ip,
-                        "Port": port
-                    },
-                    "wan_ipv4": {
-                        "Address": ip,
-                        "Port": port
-                    }
-                }))
-            });
-
-        // Filter out Consul-specific metadata keys
-        let meta: HashMap<String, String> = instance
-            .metadata
-            .iter()
-            .filter(|(k, _)| !k.starts_with("consul_") && k.as_str() != "enable_tag_override")
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-
-        // Round-trip weight correctly: store as i32 with proper rounding
-        let weight = instance.weight.round() as i32;
-        let weight = if weight < 1 { 1 } else { weight };
+        // Filter out internal metadata keys
+        let meta = reg.meta.as_ref().map(|m| {
+            m.iter()
+                .filter(|(k, _)| !k.starts_with("consul_") && k.as_str() != "enable_tag_override")
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<HashMap<String, String>>()
+        });
+        let meta = meta.filter(|m| !m.is_empty());
 
         AgentService {
-            id: instance.instance_id.clone(),
-            service: instance.service_name.clone(),
-            tags,
-            port: instance.port as u16,
-            address: instance.ip.clone(),
-            meta: if meta.is_empty() { None } else { Some(meta) },
-            enable_tag_override,
-            weights: Weights {
+            id: reg.service_id(),
+            service: reg.name.clone(),
+            tags: reg.tags.clone(),
+            port: reg.effective_port(),
+            address: reg.effective_address(),
+            meta,
+            enable_tag_override: reg.enable_tag_override.unwrap_or(false),
+            weights: reg.weights.clone().unwrap_or(Weights {
                 passing: weight,
-                warning: instance
-                    .metadata
-                    .get("consul_warning_weight")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(1),
-            },
+                warning: 1,
+            }),
             datacenter: None,
-            kind,
-            proxy,
-            connect,
-            tagged_addresses,
-            namespace: None,
+            kind: reg.kind.clone(),
+            proxy: reg.proxy.clone(),
+            connect: reg.connect.clone(),
+            tagged_addresses: reg.tagged_addresses.clone(),
+            namespace: reg.namespace.clone(),
         }
     }
 }
@@ -1895,39 +1777,6 @@ mod tests {
         assert_eq!(reg.effective_address(), "127.0.0.1");
         assert_eq!(reg.effective_port(), 0);
         assert_eq!(reg.weight(), 1.0);
-    }
-
-    #[test]
-    fn test_nacos_instance_conversion() {
-        let reg = AgentServiceRegistration {
-            id: Some("web-1".to_string()),
-            name: "web".to_string(),
-            tags: Some(vec!["http".to_string(), "api".to_string()]),
-            address: Some("192.168.1.100".to_string()),
-            port: Some(8080),
-            meta: Some([("env".to_string(), "prod".to_string())].into()),
-            enable_tag_override: Some(true),
-            weights: Some(Weights {
-                passing: 5,
-                warning: 1,
-            }),
-            kind: None,
-            proxy: None,
-            connect: None,
-            tagged_addresses: None,
-            check: None,
-            checks: None,
-            namespace: None,
-        };
-
-        let nacos: NacosInstance = (&reg).into();
-        assert_eq!(nacos.instance_id, "web-1");
-        assert_eq!(nacos.service_name, "web");
-        assert_eq!(nacos.ip, "192.168.1.100");
-        assert_eq!(nacos.port, 8080);
-        assert_eq!(nacos.weight, 5.0);
-        assert!(nacos.metadata.contains_key("consul_tags"));
-        assert!(nacos.metadata.contains_key("env"));
     }
 
     #[test]

@@ -21,4 +21,4 @@ base64 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
-wiremock = "0.6.5"
+wiremock = { workspace = true }

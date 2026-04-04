@@ -7,8 +7,6 @@ use std::time::Duration;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 
-use batata_api::naming::NamingServiceProvider;
-use batata_api::naming::model::Instance as NacosInstance;
 use batata_naming::healthcheck::registry::{
     CheckOrigin, CheckStatus, CheckType as RegistryCheckType, InstanceCheckConfig,
     InstanceCheckRegistry,
@@ -17,9 +15,11 @@ use batata_naming::healthcheck::registry::{
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
-    AgentService, CheckRegistration, CheckStatusUpdate, CheckUpdateParams, ConsulDatacenterConfig,
-    ConsulError, HealthCheck, HealthQueryParams, Node, ServiceHealth, ServiceQueryParams,
+    AgentService, AgentServiceRegistration, CheckRegistration, CheckStatusUpdate,
+    CheckUpdateParams, ConsulDatacenterConfig, ConsulError, HealthCheck, HealthQueryParams, Node,
+    ServiceHealth, ServiceQueryParams,
 };
+use crate::naming_store::ConsulNamingStore;
 
 /// Handle blocking query wait if `index` query parameter is set.
 /// Returns once index advances past the target or timeout elapses.
@@ -209,30 +209,32 @@ impl ConsulHealthService {
     }
 
     /// Create a default health check for a service instance
-    pub fn create_instance_check(&self, instance: &NacosInstance) -> HealthCheck {
-        let status = if instance.healthy {
-            "passing"
+    /// Create a default health check from a Consul-native service registration.
+    ///
+    /// Used as a fallback when no explicit checks are registered for a service instance.
+    pub fn create_default_check(
+        &self,
+        reg: &AgentServiceRegistration,
+        healthy: bool,
+    ) -> HealthCheck {
+        let service_id = reg.service_id();
+        let status = if healthy { "passing" } else { "critical" };
+        let output = if healthy {
+            "Instance is healthy"
         } else {
-            "critical"
+            "Instance is unhealthy"
         };
 
         HealthCheck {
             node: self.node_name.clone(),
-            check_id: format!("service:{}", instance.instance_id),
-            name: format!("Service '{}' check", instance.service_name),
+            check_id: format!("service:{}", service_id),
+            name: format!("Service '{}' check", reg.name),
             status: status.to_string(),
             notes: String::new(),
-            output: if instance.healthy {
-                "Instance is healthy".to_string()
-            } else {
-                "Instance is unhealthy".to_string()
-            },
-            service_id: instance.instance_id.clone(),
-            service_name: instance.service_name.clone(),
-            service_tags: instance
-                .metadata
-                .get("consul_tags")
-                .and_then(|s| serde_json::from_str(s).ok()),
+            output: output.to_string(),
+            service_id,
+            service_name: reg.name.clone(),
+            service_tags: reg.tags.clone(),
             check_type: "ttl".to_string(),
             interval: None,
             timeout: None,
@@ -303,7 +305,7 @@ impl ConsulHealthService {
 #[allow(clippy::too_many_arguments)]
 pub async fn get_service_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -312,7 +314,6 @@ pub async fn get_service_health(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = dc_config.resolve_ns(&query.ns);
     let passing_only = query.passing.unwrap_or(false);
 
     // Check ACL authorization for service read
@@ -326,48 +327,42 @@ pub async fn get_service_health(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Get instances from naming service
-    let instances = naming_service.get_instances_by_source(
-        &namespace,
-        &dc_config.default_group,
-        &service_name,
-        "",
-        passing_only,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
-
-    // Filter by tag if specified
-    let instances: Vec<_> = if let Some(ref tag) = query.tag {
-        instances
-            .into_iter()
-            .filter(|inst| {
-                inst.metadata
-                    .get("consul_tags")
-                    .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
-                    .map(|tags| tags.contains(tag))
-                    .unwrap_or(false)
-            })
-            .collect()
-    } else {
-        instances
-    };
+    // Get service entries from ConsulNamingStore (Consul-native data)
+    let entries = naming_store.get_service_entries(&service_name);
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
-    for instance in instances {
-        let agent_service = AgentService::from(&instance);
+    for entry_bytes in entries {
+        let reg: AgentServiceRegistration = match serde_json::from_slice(&entry_bytes) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let service_id = reg.service_id();
+        let healthy = naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+
+        // Filter by tag if specified
+        if let Some(ref tag) = query.tag {
+            let has_tag = reg
+                .tags
+                .as_ref()
+                .map(|tags| tags.contains(tag))
+                .unwrap_or(false);
+            if !has_tag {
+                continue;
+            }
+        }
+
+        let agent_service = AgentService::from(&reg);
 
         // Get checks for this instance - first try stored checks, then create default
-        let mut checks = health_service
-            .get_service_checks(&instance.instance_id)
-            .await;
+        let mut checks = health_service.get_service_checks(&service_id).await;
         if checks.is_empty() {
-            // Create a default check based on instance health
-            checks.push(health_service.create_instance_check(&instance));
+            checks.push(health_service.create_default_check(&reg, healthy));
         }
 
         // Also include maintenance checks if they exist
-        let maintenance_check_id = format!("_service_maintenance:{}", instance.instance_id);
+        let maintenance_check_id = format!("_service_maintenance:{}", service_id);
         if let Some(maint_check) = health_service.get_check(&maintenance_check_id).await {
             checks.push(maint_check);
         }
@@ -385,8 +380,7 @@ pub async fn get_service_health(
             continue;
         }
 
-        let ip = instance.ip.clone();
-        let _port = instance.port as u16;
+        let ip = reg.effective_address();
 
         // Build node tagged addresses
         let mut node_tagged_addresses = std::collections::HashMap::new();
@@ -512,16 +506,15 @@ fn resolve_service_health_field(entry: &ServiceHealth, selector: &str) -> Option
 #[allow(clippy::too_many_arguments)]
 pub async fn get_service_checks(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
-    dc_config: web::Data<ConsulDatacenterConfig>,
+    _dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
     query: web::Query<HealthQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = dc_config.resolve_ns(&query.ns);
 
     // Check ACL authorization for service read
     let authz = acl_service.authorize_request(
@@ -534,24 +527,23 @@ pub async fn get_service_checks(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Get instances to find all checks
-    let instances = naming_service.get_instances_by_source(
-        &namespace,
-        &dc_config.default_group,
-        &service_name,
-        "",
-        false,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
+    // Get service entries from ConsulNamingStore
+    let entries = naming_store.get_service_entries(&service_name);
 
     let mut all_checks: Vec<HealthCheck> = Vec::new();
 
-    for instance in instances {
-        let mut checks = health_service
-            .get_service_checks(&instance.instance_id)
-            .await;
+    for entry_bytes in entries {
+        let reg: AgentServiceRegistration = match serde_json::from_slice(&entry_bytes) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        let service_id = reg.service_id();
+        let healthy = naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+
+        let mut checks = health_service.get_service_checks(&service_id).await;
         if checks.is_empty() {
-            checks.push(health_service.create_instance_check(&instance));
+            checks.push(health_service.create_default_check(&reg, healthy));
         }
 
         // Update service info
@@ -862,7 +854,7 @@ pub async fn list_agent_checks(
 #[allow(clippy::too_many_arguments)]
 pub async fn get_connect_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -871,7 +863,6 @@ pub async fn get_connect_health(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = dc_config.resolve_ns(&query.ns);
     let passing_only = query.passing.unwrap_or(false);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
@@ -879,38 +870,31 @@ pub async fn get_connect_health(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Get all services and find Connect-enabled instances for this target service
-    let (_, all_service_names) = naming_service.list_services_by_source(
-        &namespace,
-        &dc_config.default_group,
-        1,
-        i32::MAX,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
+    // Scan all services to find Connect-enabled instances for this target service
+    let all_service_names = naming_store.service_names();
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
     for svc_name in all_service_names {
-        let instances = naming_service.get_instances_by_source(
-            &namespace,
-            &dc_config.default_group,
-            &svc_name,
-            "",
-            passing_only,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
+        let entries = naming_store.get_service_entries(&svc_name);
 
-        for instance in instances {
-            if !is_connect_instance_for(&instance, &service_name) {
+        for entry_bytes in entries {
+            let reg: AgentServiceRegistration = match serde_json::from_slice(&entry_bytes) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+
+            if !is_connect_reg_for(&reg, &service_name) {
                 continue;
             }
 
-            let agent_service = AgentService::from(&instance);
-            let mut checks = health_service
-                .get_service_checks(&instance.instance_id)
-                .await;
+            let service_id = reg.service_id();
+            let healthy = naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+
+            let agent_service = AgentService::from(&reg);
+            let mut checks = health_service.get_service_checks(&service_id).await;
             if checks.is_empty() {
-                checks.push(health_service.create_instance_check(&instance));
+                checks.push(health_service.create_default_check(&reg, healthy));
             }
 
             for check in &mut checks {
@@ -921,7 +905,7 @@ pub async fn get_connect_health(
                 continue;
             }
 
-            let ip = instance.ip.clone();
+            let ip = reg.effective_address();
             let mut node_tagged_addresses = std::collections::HashMap::new();
             node_tagged_addresses.insert("lan".to_string(), ip.clone());
             node_tagged_addresses.insert("wan".to_string(), ip.clone());
@@ -956,7 +940,7 @@ pub async fn get_connect_health(
 #[allow(clippy::too_many_arguments)]
 pub async fn get_ingress_health(
     req: HttpRequest,
-    naming_service: web::Data<Arc<dyn NamingServiceProvider>>,
+    naming_store: web::Data<ConsulNamingStore>,
     health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
@@ -965,7 +949,6 @@ pub async fn get_ingress_health(
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let service_name = path.into_inner();
-    let namespace = dc_config.resolve_ns(&query.ns);
     let passing_only = query.passing.unwrap_or(false);
 
     let authz = acl_service.authorize_request(&req, ResourceType::Service, &service_name, false);
@@ -973,50 +956,40 @@ pub async fn get_ingress_health(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Find ingress gateway instances
-    let (_, all_service_names) = naming_service.list_services_by_source(
-        &namespace,
-        &dc_config.default_group,
-        1,
-        i32::MAX,
-        Some(batata_api::naming::RegisterSource::Consul),
-    );
+    // Scan all services to find ingress gateway instances
+    let all_service_names = naming_store.service_names();
 
     let mut results: Vec<ServiceHealth> = Vec::new();
 
     for svc_name in all_service_names {
-        let instances = naming_service.get_instances_by_source(
-            &namespace,
-            &dc_config.default_group,
-            &svc_name,
-            "",
-            passing_only,
-            Some(batata_api::naming::RegisterSource::Consul),
-        );
+        let entries = naming_store.get_service_entries(&svc_name);
 
-        for instance in instances {
+        for entry_bytes in entries {
+            let reg: AgentServiceRegistration = match serde_json::from_slice(&entry_bytes) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+
             // Only include ingress-gateway instances
-            let is_ingress = instance
-                .metadata
-                .get("consul_kind")
-                .is_some_and(|k| k == "ingress-gateway");
+            let is_ingress = reg.kind.as_deref() == Some("ingress-gateway");
             if !is_ingress {
                 continue;
             }
 
-            let agent_service = AgentService::from(&instance);
-            let mut checks = health_service
-                .get_service_checks(&instance.instance_id)
-                .await;
+            let service_id = reg.service_id();
+            let healthy = naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
+
+            let agent_service = AgentService::from(&reg);
+            let mut checks = health_service.get_service_checks(&service_id).await;
             if checks.is_empty() {
-                checks.push(health_service.create_instance_check(&instance));
+                checks.push(health_service.create_default_check(&reg, healthy));
             }
 
             if passing_only && checks.iter().any(|c| c.status == "critical") {
                 continue;
             }
 
-            let ip = instance.ip.clone();
+            let ip = reg.effective_address();
             let mut node_tagged_addresses = std::collections::HashMap::new();
             node_tagged_addresses.insert("lan".to_string(), ip.clone());
             node_tagged_addresses.insert("wan".to_string(), ip.clone());
@@ -1046,32 +1019,33 @@ pub async fn get_ingress_health(
         .json(results)
 }
 
-/// Check if a Nacos instance is a Connect-enabled instance for the given target service.
-fn is_connect_instance_for(instance: &NacosInstance, target_service: &str) -> bool {
+/// Check if an AgentServiceRegistration is a Connect-enabled instance for the given target service.
+fn is_connect_reg_for(reg: &AgentServiceRegistration, target_service: &str) -> bool {
     // Check if it's a connect-proxy targeting this service
-    if let Some(kind) = instance.metadata.get("consul_kind")
-        && kind == "connect-proxy"
-        && let Some(proxy_json) = instance.metadata.get("consul_proxy")
-        && let Ok(proxy) = serde_json::from_str::<serde_json::Value>(proxy_json)
-        && let Some(dest) = proxy
-            .get("DestinationServiceName")
-            .or_else(|| proxy.get("destination_service_name"))
-            .and_then(|v| v.as_str())
-    {
-        return dest == target_service;
+    if reg.kind.as_deref() == Some("connect-proxy") {
+        if let Some(ref proxy) = reg.proxy {
+            let dest = proxy
+                .get("DestinationServiceName")
+                .or_else(|| proxy.get("destination_service_name"))
+                .and_then(|v| v.as_str());
+            if dest == Some(target_service) {
+                return true;
+            }
+        }
     }
 
     // Check if it's a native Connect service with matching name
-    if instance.service_name == target_service
-        && let Some(connect_json) = instance.metadata.get("consul_connect")
-        && let Ok(connect) = serde_json::from_str::<serde_json::Value>(connect_json)
-        && connect
-            .get("Native")
-            .or_else(|| connect.get("native"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    {
-        return true;
+    if reg.name == target_service {
+        if let Some(ref connect) = reg.connect {
+            let is_native = connect
+                .get("Native")
+                .or_else(|| connect.get("native"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if is_native {
+                return true;
+            }
+        }
     }
 
     false
@@ -1188,12 +1162,13 @@ fn apply_health_check_filter(checks: Vec<HealthCheck>, filter: &str) -> Vec<Heal
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::AgentServiceRegistration;
     use batata_naming::service::NamingService;
 
     /// Helper to create a ConsulHealthService for tests
     fn create_test_service() -> ConsulHealthService {
         let naming_service = Arc::new(NamingService::new());
-        let registry = Arc::new(InstanceCheckRegistry::new(naming_service.clone()));
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service.clone()));
         ConsulHealthService::new(registry)
     }
 
@@ -1605,16 +1580,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_instance_check_healthy() {
+    async fn test_create_default_check_healthy() {
         let service = create_test_service();
 
-        let mut instance = NacosInstance::new("10.0.0.1".to_string(), 8080);
-        instance.instance_id = "web-001".to_string();
-        instance.service_name = "web".to_string();
-        instance.healthy = true;
-        instance.enabled = true;
+        let reg = AgentServiceRegistration {
+            id: Some("web-001".to_string()),
+            name: "web".to_string(),
+            address: Some("10.0.0.1".to_string()),
+            port: Some(8080),
+            ..Default::default()
+        };
 
-        let check = service.create_instance_check(&instance);
+        let check = service.create_default_check(&reg, true);
         assert_eq!(check.status, "passing");
         assert_eq!(check.check_id, "service:web-001");
         assert!(check.name.contains("web"));
@@ -1624,33 +1601,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_instance_check_unhealthy() {
+    async fn test_create_default_check_unhealthy() {
         let service = create_test_service();
 
-        let mut instance = NacosInstance::new("10.0.0.2".to_string(), 8080);
-        instance.instance_id = "web-002".to_string();
-        instance.service_name = "web".to_string();
-        instance.healthy = false;
-        instance.enabled = true;
+        let reg = AgentServiceRegistration {
+            id: Some("web-002".to_string()),
+            name: "web".to_string(),
+            address: Some("10.0.0.2".to_string()),
+            port: Some(8080),
+            ..Default::default()
+        };
 
-        let check = service.create_instance_check(&instance);
+        let check = service.create_default_check(&reg, false);
         assert_eq!(check.status, "critical");
         assert_eq!(check.output, "Instance is unhealthy");
     }
 
     #[tokio::test]
-    async fn test_create_instance_check_with_consul_tags() {
+    async fn test_create_default_check_with_tags() {
         let service = create_test_service();
 
-        let mut instance = NacosInstance::new("10.0.0.3".to_string(), 8080);
-        instance.instance_id = "tagged-001".to_string();
-        instance.service_name = "tagged-svc".to_string();
-        instance.healthy = true;
-        instance
-            .metadata
-            .insert("consul_tags".to_string(), r#"["v1","primary"]"#.to_string());
+        let reg = AgentServiceRegistration {
+            id: Some("tagged-001".to_string()),
+            name: "tagged-svc".to_string(),
+            address: Some("10.0.0.3".to_string()),
+            port: Some(8080),
+            tags: Some(vec!["v1".to_string(), "primary".to_string()]),
+            ..Default::default()
+        };
 
-        let check = service.create_instance_check(&instance);
+        let check = service.create_default_check(&reg, true);
         assert_eq!(
             check.service_tags,
             Some(vec!["v1".to_string(), "primary".to_string()])
@@ -1658,15 +1638,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_instance_check_without_tags() {
+    async fn test_create_default_check_without_tags() {
         let service = create_test_service();
 
-        let mut instance = NacosInstance::new("10.0.0.4".to_string(), 8080);
-        instance.instance_id = "notag-001".to_string();
-        instance.service_name = "notag-svc".to_string();
-        instance.healthy = true;
+        let reg = AgentServiceRegistration {
+            id: Some("notag-001".to_string()),
+            name: "notag-svc".to_string(),
+            address: Some("10.0.0.4".to_string()),
+            port: Some(8080),
+            ..Default::default()
+        };
 
-        let check = service.create_instance_check(&instance);
+        let check = service.create_default_check(&reg, true);
         assert!(check.service_tags.is_none());
     }
 
@@ -1733,8 +1716,8 @@ mod tests {
 
     fn create_test_health_service_with_defaults()
     -> (ConsulHealthService, Arc<InstanceCheckRegistry>) {
-        let registry = Arc::new(InstanceCheckRegistry::new(
-            Arc::new(NamingService::new()) as Arc<NamingService>
+        let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
+            Arc::new(NamingService::new()),
         ));
         let service = ConsulHealthService::new(registry.clone()).with_defaults(
             "public".to_string(),

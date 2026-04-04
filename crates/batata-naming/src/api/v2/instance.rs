@@ -646,13 +646,15 @@ pub async fn batch_update_metadata(
     }
 
     // Parse instance list (format: "ip:port,ip:port,...")
-    let instance_keys: Vec<(&str, &str)> = form
+    // Parse "ip:port,ip:port,..." into a HashSet for O(1) lookup.
+    // Parse port as i32 once to avoid repeated to_string() in the loop.
+    let instance_keys: std::collections::HashSet<(&str, i32)> = form
         .instances
         .split(',')
         .filter_map(|s| {
             let parts: Vec<&str> = s.trim().split(':').collect();
             if parts.len() == 2 {
-                Some((parts[0], parts[1]))
+                parts[1].parse::<i32>().ok().map(|port| (parts[0], port))
             } else {
                 None
             }
@@ -680,9 +682,7 @@ pub async fn batch_update_metadata(
 
     let mut updated_count = 0;
     for instance in instances {
-        let matches = instance_keys
-            .iter()
-            .any(|(ip, port)| instance.ip == *ip && instance.port.to_string() == *port);
+        let matches = instance_keys.contains(&(instance.ip.as_str(), instance.port));
 
         if matches {
             // Merge metadata and re-register
@@ -782,13 +782,13 @@ pub async fn batch_delete_metadata(
     }
 
     // Parse instance list
-    let instance_keys: Vec<(&str, &str)> = params
+    let instance_keys: std::collections::HashSet<(&str, i32)> = params
         .instances
         .split(',')
         .filter_map(|s| {
             let parts: Vec<&str> = s.trim().split(':').collect();
             if parts.len() == 2 {
-                Some((parts[0], parts[1]))
+                parts[1].parse::<i32>().ok().map(|port| (parts[0], port))
             } else {
                 None
             }
@@ -816,9 +816,7 @@ pub async fn batch_delete_metadata(
 
     let mut updated_count = 0;
     for instance in instances {
-        let matches = instance_keys
-            .iter()
-            .any(|(ip, port)| instance.ip == *ip && instance.port.to_string() == *port);
+        let matches = instance_keys.contains(&(instance.ip.as_str(), instance.port));
 
         if matches {
             let mut updated_instance = instance.clone();
