@@ -92,6 +92,10 @@ impl NamingServiceProvider for NamingService {
         self.get_all_service_keys()
     }
 
+    fn get_service_revision(&self, service_key: &str) -> i64 {
+        self.get_service_revision(service_key)
+    }
+
     fn batch_register_instances(
         &self,
         namespace: &str,

@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use dashmap::DashMap;
 use tracing::{debug, info, warn};
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 /// Tri-state health status (Consul-compatible, Nacos maps to bool)
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,12 +233,12 @@ pub struct InstanceCheckRegistry {
     consul_service_index: DashMap<String, (String, String)>,
 
     // NamingService reference for health sync
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
 }
 
 impl InstanceCheckRegistry {
     /// Create a new registry
-    pub fn new(naming_service: Arc<NamingService>) -> Self {
+    pub fn new(naming_service: Arc<dyn NamingServiceProvider>) -> Self {
         Self {
             configs: DashMap::new(),
             statuses: DashMap::new(),
@@ -655,7 +655,7 @@ impl InstanceCheckRegistry {
     }
 
     /// Get the naming service reference
-    pub fn naming_service(&self) -> &Arc<NamingService> {
+    pub fn naming_service(&self) -> &Arc<dyn NamingServiceProvider> {
         &self.naming_service
     }
 
@@ -731,8 +731,9 @@ fn current_timestamp_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::NamingService;
 
-    fn test_naming_service() -> Arc<NamingService> {
+    fn test_naming_service() -> Arc<dyn NamingServiceProvider> {
         Arc::new(NamingService::new())
     }
 

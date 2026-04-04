@@ -27,7 +27,6 @@ mod ai_resource;
 // Re-use conversion helpers from embedded backend
 use crate::embedded::EmbeddedPersistService;
 
-
 /// Distributed persistence using Raft consensus + RocksDB
 ///
 /// - Writes go through Raft consensus (RaftNode.write())
@@ -283,10 +282,7 @@ impl ConfigPersistence for DistributedPersistService {
                 src_user: src_user.to_string(),
                 src_ip: client_ip.to_string(),
                 ext_info,
-                encrypted_data_key: ex["encrypted_data_key"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string(),
+                encrypted_data_key: ex["encrypted_data_key"].as_str().unwrap_or("").to_string(),
             }
         });
 

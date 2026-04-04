@@ -10,7 +10,8 @@ use super::processor::{
 use super::registry::InstanceCheckRegistry;
 use super::registry_task::RegistryCheckTask;
 use super::task::HealthCheckTask;
-use crate::service::{ClusterConfig, NamingService};
+use crate::service::ClusterConfig;
+use batata_api::naming::NamingServiceProvider;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -40,7 +41,7 @@ pub enum ReactorMessage {
 /// - Scheduling registry-driven checks for unified health system
 pub struct HealthCheckReactor {
     /// Naming service for accessing instances
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
 
     /// Health check configuration
     config: Arc<HealthCheckConfig>,
@@ -60,7 +61,10 @@ pub struct HealthCheckReactor {
 
 impl HealthCheckReactor {
     /// Create a new health check reactor
-    pub fn new(naming_service: Arc<NamingService>, config: Arc<HealthCheckConfig>) -> Self {
+    pub fn new(
+        naming_service: Arc<dyn NamingServiceProvider>,
+        config: Arc<HealthCheckConfig>,
+    ) -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
 
         let reactor = Self {
@@ -185,7 +189,7 @@ impl HealthCheckReactor {
     /// Schedule a task loop (matches Nacos scheduleCheck)
     async fn schedule_task_loop(
         task: HealthCheckTask,
-        _naming_service: Arc<NamingService>,
+        _naming_service: Arc<dyn NamingServiceProvider>,
         _config: Arc<HealthCheckConfig>,
         tasks: Arc<DashMap<String, HealthCheckTask>>,
         task_handles: Arc<DashMap<String, JoinHandle<()>>>,
@@ -361,6 +365,7 @@ impl Drop for HealthCheckReactor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::NamingService;
 
     #[tokio::test]
     async fn test_reactor_creation() {

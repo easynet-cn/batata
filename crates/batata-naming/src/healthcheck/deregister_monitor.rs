@@ -9,12 +9,12 @@ use tracing::{info, warn};
 
 use super::registry::{CheckStatus, InstanceCheckRegistry};
 use crate::model::Instance;
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 /// Background monitor that auto-deregisters instances in prolonged Critical state
 pub struct DeregisterMonitor {
     registry: Arc<InstanceCheckRegistry>,
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
     interval_secs: u64,
 }
 
@@ -22,7 +22,7 @@ impl DeregisterMonitor {
     /// Create a new deregister monitor
     pub fn new(
         registry: Arc<InstanceCheckRegistry>,
-        naming_service: Arc<NamingService>,
+        naming_service: Arc<dyn NamingServiceProvider>,
         interval_secs: u64,
     ) -> Self {
         Self {
@@ -124,9 +124,10 @@ fn current_timestamp_ms() -> i64 {
 mod tests {
     use super::super::registry::*;
     use super::*;
+    use crate::service::NamingService;
     use std::time::Duration;
 
-    fn create_test_components() -> (Arc<NamingService>, Arc<InstanceCheckRegistry>) {
+    fn create_test_components() -> (Arc<dyn NamingServiceProvider>, Arc<InstanceCheckRegistry>) {
         let naming_service = Arc::new(NamingService::new());
         let registry = Arc::new(InstanceCheckRegistry::new(naming_service.clone()));
         (naming_service, registry)

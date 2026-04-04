@@ -8,7 +8,7 @@
 //! which allows full functionality without modifying the Instance model.
 
 use super::config::HealthCheckConfig;
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -36,7 +36,7 @@ pub struct HeartbeatEntry {
 /// This checker monitors ephemeral instances and marks them as unhealthy
 /// if they haven't sent a heartbeat within the configured timeout.
 pub struct UnhealthyInstanceChecker {
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
     config: Arc<HealthCheckConfig>,
     pub(crate) heartbeat_map: Arc<DashMap<InstanceKey, HeartbeatEntry>>,
     running: Arc<std::sync::atomic::AtomicBool>,
@@ -44,7 +44,10 @@ pub struct UnhealthyInstanceChecker {
 
 impl UnhealthyInstanceChecker {
     /// Create a new unhealthy instance checker
-    pub fn new(naming_service: Arc<NamingService>, config: Arc<HealthCheckConfig>) -> Self {
+    pub fn new(
+        naming_service: Arc<dyn NamingServiceProvider>,
+        config: Arc<HealthCheckConfig>,
+    ) -> Self {
         Self {
             naming_service,
             config,
@@ -178,9 +181,7 @@ impl UnhealthyInstanceChecker {
                                 &entry.namespace,
                                 &entry.group_name,
                                 &entry.service_name,
-                                &instance.ip,
-                                instance.port,
-                                &entry.cluster_name,
+                                instance.clone(),
                             ) {
                                 debug!(
                                     "Successfully marked {}:{} as unhealthy",
@@ -227,7 +228,7 @@ impl UnhealthyInstanceChecker {
 /// This checker monitors ephemeral instances and deletes them
 /// if they haven't sent a heartbeat within the delete timeout.
 pub struct ExpiredInstanceChecker {
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
     config: Arc<HealthCheckConfig>,
     heartbeat_map: Arc<DashMap<InstanceKey, HeartbeatEntry>>,
     expire_enabled: bool,
@@ -237,7 +238,7 @@ pub struct ExpiredInstanceChecker {
 impl ExpiredInstanceChecker {
     /// Create a new expired instance checker
     pub fn new(
-        naming_service: Arc<NamingService>,
+        naming_service: Arc<dyn NamingServiceProvider>,
         config: Arc<HealthCheckConfig>,
         expire_enabled: bool,
         heartbeat_map: Arc<DashMap<InstanceKey, HeartbeatEntry>>,
@@ -349,6 +350,7 @@ impl ExpiredInstanceChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::NamingService;
 
     use std::sync::atomic::Ordering;
 

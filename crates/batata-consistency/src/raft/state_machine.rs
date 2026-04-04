@@ -684,8 +684,7 @@ impl RocksStateMachine {
         if let Some(expected_md5) = cas_md5 {
             match &existing_value {
                 Some(existing) => {
-                    let current_md5 =
-                        existing.get("md5").and_then(|v| v.as_str()).unwrap_or("");
+                    let current_md5 = existing.get("md5").and_then(|v| v.as_str()).unwrap_or("");
                     if current_md5 != expected_md5 {
                         return RaftResponse::failure(format!(
                             "CAS conflict: expected md5={}, actual md5={}",
@@ -1671,7 +1670,7 @@ impl RocksStateMachine {
 
         // Check existence without deserialization (saves JSON parse overhead)
         match self.db.get_cf(self.cf_locks(), key.as_bytes()) {
-            Ok(Some(_)) => {} // Key exists, proceed to expire
+            Ok(Some(_)) => {}                    // Key exists, proceed to expire
             _ => return RaftResponse::success(), // Nothing to expire
         }
 
@@ -1910,8 +1909,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
                 } else {
                     // Legacy JSON format (backward compatibility)
                     info!("Restoring legacy JSON-format snapshot");
-                    serde_json::from_slice(payload)
-                        .map_err(|e| sm_error(e, ErrorVerb::Read))?
+                    serde_json::from_slice(payload).map_err(|e| sm_error(e, ErrorVerb::Read))?
                 };
 
             // Atomically clear and restore each column family using a single WriteBatch

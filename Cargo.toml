@@ -21,6 +21,11 @@ members = [
     "crates/batata-copilot",
     "crates/batata-consul-client",
     "crates/batata-migration",
+    "crates/batata-foundation",
+    "crates/batata-naming-nacos",
+    "crates/batata-naming-consul",
+    "crates/batata-config-nacos",
+    "crates/batata-config-consul",
     "crates/batata-server",
     "crates/batata-integration-tests",
 ]
@@ -54,6 +59,11 @@ batata-ai = { path = "crates/batata-ai" }
 batata-copilot = { path = "crates/batata-copilot" }
 batata-consul-client = { path = "crates/batata-consul-client" }
 batata-migration = { path = "crates/batata-migration" }
+batata-foundation = { path = "crates/batata-foundation" }
+batata-naming-nacos = { path = "crates/batata-naming-nacos" }
+batata-naming-consul = { path = "crates/batata-naming-consul" }
+batata-config-nacos = { path = "crates/batata-config-nacos" }
+batata-config-consul = { path = "crates/batata-config-consul" }
 batata-server = { path = "crates/batata-server" }
 
 # Async runtime

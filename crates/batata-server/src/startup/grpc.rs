@@ -72,7 +72,7 @@ pub struct GrpcServers {
     /// Handle for the Raft gRPC server task (only in distributed embedded mode).
     _raft_server: Option<tokio::task::JoinHandle<()>>,
     /// The naming service used by handlers.
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn batata_api::naming::NamingServiceProvider>,
     /// The connection manager for tracking client connections.
     connection_manager: Arc<ConnectionManager>,
     /// The distro protocol for cluster data synchronization.
@@ -87,13 +87,13 @@ pub struct GrpcServers {
 }
 
 impl GrpcServers {
-    /// Get naming service as trait object for HTTP consumers.
+    /// Get naming service as trait object.
     pub fn naming_provider(&self) -> Arc<dyn batata_api::naming::NamingServiceProvider> {
         self.naming_service.clone()
     }
 
-    /// Get concrete naming service (for internal components that need it).
-    pub fn naming_service(&self) -> &Arc<NamingService> {
+    /// Get naming service reference.
+    pub fn naming_service(&self) -> &Arc<dyn batata_api::naming::NamingServiceProvider> {
         &self.naming_service
     }
 
@@ -209,12 +209,11 @@ fn register_config_handlers(
 /// Registers all naming handlers.
 fn register_naming_handlers(
     registry: &mut HandlerRegistry,
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn batata_api::naming::NamingServiceProvider>,
     naming_fuzzy_watch_manager: Arc<NamingFuzzyWatchManager>,
     connection_manager: Arc<ConnectionManager>,
     distro_protocol: Option<Arc<DistroProtocol>>,
 ) {
-    let naming_service: Arc<dyn batata_api::naming::NamingServiceProvider> = naming_service;
     registry.register_handler(Arc::new(InstanceRequestHandler {
         naming_service: naming_service.clone(),
         naming_fuzzy_watch_manager: naming_fuzzy_watch_manager.clone(),
@@ -375,7 +374,7 @@ fn register_ai_handlers(registry: &mut HandlerRegistry, ai_services: &AIServices
 /// Creates and initializes the Distro protocol with the naming service handler.
 fn create_distro_protocol(
     local_address: &str,
-    naming_service: Arc<batata_naming::NamingService>,
+    naming_service: Arc<dyn batata_api::naming::NamingServiceProvider>,
     members: Arc<DashMap<String, Member>>,
     cluster_client_manager: Arc<ClusterClientManager>,
     distro_config: DistroConfig,
@@ -443,7 +442,10 @@ impl GrpcAuthRoleProvider for PersistenceRoleProvider {
 #[allow(clippy::too_many_arguments)]
 pub fn start_grpc_servers(
     app_state: Arc<AppState>,
-    naming_service: Option<Arc<NamingService>>,
+    naming_service: Option<Arc<dyn batata_api::naming::NamingServiceProvider>>,
+    connection_cleanup_handler: Option<
+        Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>,
+    >,
     ai_services: &AIServices,
     sdk_server_port: u16,
     cluster_server_port: u16,
@@ -582,7 +584,8 @@ pub fn start_grpc_servers(
         config_change_notifier.clone(),
     );
 
-    let naming_service = naming_service.unwrap_or_else(|| Arc::new(NamingService::new()));
+    let naming_service: Arc<dyn batata_api::naming::NamingServiceProvider> =
+        naming_service.unwrap_or_else(|| Arc::new(NamingService::new()));
 
     // Create and initialize distro protocol using the SAME naming service and real cluster members
     let distro_config = DistroConfig::from_configuration(&core_config);
@@ -608,7 +611,7 @@ pub fn start_grpc_servers(
 
     register_naming_handlers(
         &mut handler_registry,
-        naming_service.clone(),
+        naming_service.clone() as Arc<dyn batata_api::naming::NamingServiceProvider>,
         naming_fuzzy_watch_manager,
         connection_manager.clone(),
         distro_for_naming,
@@ -639,7 +642,7 @@ pub fn start_grpc_servers(
         handler_registry_arc,
         connection_manager,
         config_subscriber_manager,
-        Some(naming_service.clone() as Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>),
+        connection_cleanup_handler,
     );
 
     // Capture gRPC performance tuning parameters from configuration

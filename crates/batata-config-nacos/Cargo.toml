@@ -1,0 +1,22 @@
+[package]
+name = "batata-config-nacos"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Nacos-compatible configuration management — dataId/group model with gray release"
+
+[dependencies]
+batata-foundation.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+dashmap.workspace = true
+chrono.workspace = true
+md-5.workspace = true
+const-hex.workspace = true

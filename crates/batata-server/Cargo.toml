@@ -34,6 +34,7 @@ batata-consistency = { workspace = true }
 batata-core = { workspace = true }
 batata-config = { workspace = true }
 batata-naming = { workspace = true }
+batata-naming-nacos = { workspace = true }
 batata-console = { workspace = true }
 batata-server-common = { workspace = true }
 batata-plugin = { workspace = true }

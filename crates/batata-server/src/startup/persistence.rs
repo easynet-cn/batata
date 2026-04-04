@@ -190,14 +190,13 @@ async fn init_embedded_cluster(
     let reader = batata_consistency::RocksDbReader::new(rdb.clone());
     let cache_ttl = configuration.config_read_cache_ttl_secs();
     let cache_max = configuration.config_read_cache_max_entries();
-    let persist: Arc<dyn PersistenceService> = Arc::new(
-        batata_persistence::DistributedPersistService::with_cache(
+    let persist: Arc<dyn PersistenceService> =
+        Arc::new(batata_persistence::DistributedPersistService::with_cache(
             raft_node.clone(),
             reader,
             cache_ttl,
             cache_max,
-        ),
-    );
+        ));
 
     // Initialize single-node cluster in standalone mode
     if configuration.is_standalone() {

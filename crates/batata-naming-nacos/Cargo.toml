@@ -1,0 +1,22 @@
+[package]
+name = "batata-naming-nacos"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Nacos-compatible naming service — service discovery with namespace/group/cluster hierarchy"
+
+[dependencies]
+batata-foundation.workspace = true
+batata-api.workspace = true
+batata-core.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+dashmap.workspace = true
+chrono.workspace = true

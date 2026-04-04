@@ -156,6 +156,13 @@ pub trait NamingServiceProvider: Send + Sync {
 
     fn get_all_service_keys(&self) -> Vec<String>;
 
+    /// Get the revision counter for a service (for Distro verify).
+    /// Returns 0 if the service has no metadata or revision tracking.
+    fn get_service_revision(&self, service_key: &str) -> i64 {
+        let _ = service_key;
+        0
+    }
+
     fn batch_register_instances(
         &self,
         namespace: &str,

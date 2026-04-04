@@ -9,7 +9,7 @@ use batata_core::service::distro::{DistroData, DistroDataHandler, DistroDataType
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::service::NamingService;
+use batata_api::naming::NamingServiceProvider;
 
 // Re-export DistroProtocol for convenience
 pub use batata_core::service::distro::DistroProtocol;
@@ -44,11 +44,11 @@ pub struct DistroInstance {
 /// Default implementation for naming instance data
 pub struct NamingInstanceDistroHandler {
     local_address: String,
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
 }
 
 impl NamingInstanceDistroHandler {
-    pub fn new(local_address: String, naming_service: Arc<NamingService>) -> Self {
+    pub fn new(local_address: String, naming_service: Arc<dyn NamingServiceProvider>) -> Self {
         Self {
             local_address,
             naming_service,

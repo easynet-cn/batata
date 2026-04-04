@@ -99,15 +99,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_subscriber_manager: Arc<dyn batata_common::ConfigSubscriptionService> =
         Arc::new(batata_core::ConfigSubscriberManager::new());
 
-    let naming_service_concrete: Option<Arc<batata_naming::NamingService>> = if !is_console_remote {
-        Some(Arc::new(batata_naming::NamingService::new()))
-    } else {
-        None
-    };
+    let naming_service_impl: Option<Arc<batata_naming_nacos::service::NacosNamingServiceImpl>> =
+        if !is_console_remote {
+            Some(Arc::new(
+                batata_naming_nacos::service::NacosNamingServiceImpl::new(),
+            ))
+        } else {
+            None
+        };
     let naming_service: Option<Arc<dyn batata_api::naming::NamingServiceProvider>> =
-        naming_service_concrete
+        naming_service_impl
             .clone()
             .map(|ns| ns as Arc<dyn batata_api::naming::NamingServiceProvider>);
+    let connection_cleanup_handler: Option<
+        Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>,
+    > = naming_service_impl
+        .clone()
+        .map(|ns| ns as Arc<dyn batata_core::handler::rpc::ConnectionCleanupHandler>);
 
     let console_datasource = batata_console::create_datasource(
         &configuration,
@@ -121,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let oauth_service = init_oauth_service(&configuration)?;
 
     let health_check_manager: Option<Arc<HealthCheckManager>> =
-        if let Some(ref ns) = naming_service_concrete {
+        if let Some(ref ns) = naming_service_impl {
             let health_check_config = Arc::new(HealthCheckConfig {
                 heartbeat_interval_secs: configuration.naming_heartbeat_check_interval_secs(),
                 ttl_monitor_interval_secs: configuration.naming_ttl_monitor_interval_secs(),
@@ -236,7 +244,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ====================================================================
     let grpc_servers = startup::start_grpc_servers(
         app_state.clone(),
-        naming_service_concrete.clone(),
+        naming_service.clone(),
+        connection_cleanup_handler,
         &ai_services,
         app_state.configuration.sdk_server_port(),
         app_state.configuration.cluster_server_port(),

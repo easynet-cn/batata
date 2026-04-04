@@ -9,7 +9,8 @@
 use super::config::HealthCheckConfig;
 use super::processor::{HealthCheckProcessor, HealthCheckResult, HealthCheckType};
 use crate::model::Instance;
-use crate::service::{ClusterConfig, NamingService};
+use crate::service::ClusterConfig;
+use batata_api::naming::NamingServiceProvider;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
@@ -42,7 +43,7 @@ pub struct HealthCheckTask {
     config: Arc<HealthCheckConfig>,
 
     /// Naming service for updating health status
-    naming_service: Arc<NamingService>,
+    naming_service: Arc<dyn NamingServiceProvider>,
 
     /// Task ID (unique identifier)
     task_id: String,
@@ -96,7 +97,7 @@ impl HealthCheckTask {
         service_name: String,
         cluster_config: ClusterConfig,
         config: Arc<HealthCheckConfig>,
-        naming_service: Arc<NamingService>,
+        naming_service: Arc<dyn NamingServiceProvider>,
     ) -> Self {
         let task_id = format!(
             "{}:{}:{}",
@@ -317,9 +318,7 @@ impl HealthCheckTask {
             &self.namespace,
             &self.group_name,
             &self.service_name,
-            &self.instance.ip,
-            self.instance.port,
-            &self.instance.cluster_name,
+            self.instance.clone(),
         ) {
             debug!(
                 "Updated instance {}:{} health status to {} in naming service",
@@ -357,6 +356,7 @@ impl HealthCheckTask {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::NamingService;
 
     #[test]
     fn test_task_id_format() {

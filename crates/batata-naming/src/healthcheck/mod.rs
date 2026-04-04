@@ -53,7 +53,7 @@ pub struct HealthCheckManager {
 impl HealthCheckManager {
     /// Create a new health check manager
     pub fn new(
-        naming_service: Arc<crate::service::NamingService>,
+        naming_service: Arc<dyn batata_api::naming::NamingServiceProvider>,
         config: Arc<HealthCheckConfig>,
         expire_enabled: bool,
     ) -> Self {
