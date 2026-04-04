@@ -51,7 +51,6 @@ use crate::{
         },
         lock::LockService,
         lock_handler::LockOperationHandler,
-        naming::NamingService,
         naming_fuzzy_watch::NamingFuzzyWatchManager,
         naming_handler::{
             BatchInstanceRequestHandler, InstanceRequestHandler,
@@ -585,7 +584,9 @@ pub fn start_grpc_servers(
     );
 
     let naming_service: Arc<dyn batata_api::naming::NamingServiceProvider> =
-        naming_service.unwrap_or_else(|| Arc::new(NamingService::new()));
+        naming_service.unwrap_or_else(|| {
+            Arc::new(batata_naming_nacos::service::NacosNamingServiceImpl::new())
+        });
 
     // Create and initialize distro protocol using the SAME naming service and real cluster members
     let distro_config = DistroConfig::from_configuration(&core_config);

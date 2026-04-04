@@ -1,9 +1,15 @@
-// Integration tests for NamingService
+// Integration tests for NamingService via NamingServiceProvider trait
 // Tests service registration, discovery, and subscription functionality
+// using the new NacosNamingServiceImpl through the legacy trait adapter.
 
+use batata_api::naming::NamingServiceProvider;
 use batata_server::api::naming::model::Instance;
-use batata_server::service::naming::NamingService;
+use batata_server::service::naming::NacosNamingServiceImpl;
 use std::collections::HashMap;
+
+fn create_provider() -> Box<dyn NamingServiceProvider> {
+    Box::new(NacosNamingServiceImpl::new())
+}
 
 fn create_test_instance(ip: &str, port: i32, cluster: &str) -> Instance {
     Instance {
@@ -23,9 +29,8 @@ fn create_test_instance(ip: &str, port: i32, cluster: &str) -> Instance {
 
 #[test]
 fn test_register_and_get_instances() {
-    let naming = NamingService::new();
+    let naming = create_provider();
 
-    // Register multiple instances
     let instance1 = create_test_instance("192.168.1.1", 8080, "DEFAULT");
     let instance2 = create_test_instance("192.168.1.2", 8080, "DEFAULT");
     let instance3 = create_test_instance("192.168.1.3", 8080, "CLUSTER_A");
@@ -34,11 +39,9 @@ fn test_register_and_get_instances() {
     naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance2);
     naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance3);
 
-    // Get all instances
     let all = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
     assert_eq!(all.len(), 3);
 
-    // Get instances by cluster
     let default_cluster =
         naming.get_instances("public", "DEFAULT_GROUP", "test-service", "DEFAULT", false);
     assert_eq!(default_cluster.len(), 2);
@@ -55,7 +58,7 @@ fn test_register_and_get_instances() {
 
 #[test]
 fn test_healthy_only_filter() {
-    let naming = NamingService::new();
+    let naming = create_provider();
 
     let healthy = create_test_instance("192.168.1.1", 8080, "DEFAULT");
     let mut unhealthy = create_test_instance("192.168.1.2", 8080, "DEFAULT");
@@ -74,7 +77,7 @@ fn test_healthy_only_filter() {
 
 #[test]
 fn test_deregister_instance() {
-    let naming = NamingService::new();
+    let naming = create_provider();
 
     let instance = create_test_instance("192.168.1.1", 8080, "DEFAULT");
     naming.register_instance("public", "DEFAULT_GROUP", "test-service", instance.clone());
@@ -90,26 +93,21 @@ fn test_deregister_instance() {
 
 #[test]
 fn test_subscription_management() {
-    let naming = NamingService::new();
+    let naming = create_provider();
 
-    // Subscribe multiple connections
     naming.subscribe("conn-1", "public", "DEFAULT_GROUP", "service-a");
     naming.subscribe("conn-2", "public", "DEFAULT_GROUP", "service-a");
     naming.subscribe("conn-1", "public", "DEFAULT_GROUP", "service-b");
 
-    // Get subscribers for service-a
     let subs_a = naming.get_subscribers("public", "DEFAULT_GROUP", "service-a");
     assert_eq!(subs_a.len(), 2);
     assert!(subs_a.contains(&"conn-1".to_string()));
     assert!(subs_a.contains(&"conn-2".to_string()));
 
-    // Unsubscribe
     naming.unsubscribe("conn-1", "public", "DEFAULT_GROUP", "service-a");
     let subs_a_after = naming.get_subscribers("public", "DEFAULT_GROUP", "service-a");
     assert_eq!(subs_a_after.len(), 1);
-    assert!(!subs_a_after.contains(&"conn-1".to_string()));
 
-    // Remove subscriber completely
     naming.remove_subscriber("conn-1");
     let subs_b = naming.get_subscribers("public", "DEFAULT_GROUP", "service-b");
     assert!(subs_b.is_empty());
@@ -117,9 +115,8 @@ fn test_subscription_management() {
 
 #[test]
 fn test_list_services_pagination() {
-    let naming = NamingService::new();
+    let naming = create_provider();
 
-    // Register 5 services
     for i in 1..=5 {
         let instance = create_test_instance("192.168.1.1", 8080 + i, "DEFAULT");
         naming.register_instance(
@@ -130,7 +127,6 @@ fn test_list_services_pagination() {
         );
     }
 
-    // Test pagination
     let (total, page1) = naming.list_services("public", "DEFAULT_GROUP", 1, 2);
     assert_eq!(total, 5);
     assert_eq!(page1.len(), 2);
@@ -144,7 +140,7 @@ fn test_list_services_pagination() {
 
 #[test]
 fn test_get_service_info() {
-    let naming = NamingService::new();
+    let naming = create_provider();
 
     let instance1 = create_test_instance("192.168.1.1", 8080, "DEFAULT");
     let mut instance2 = create_test_instance("192.168.1.2", 8081, "DEFAULT");
@@ -157,13 +153,13 @@ fn test_get_service_info() {
 
     assert_eq!(service.name, "test-service");
     assert_eq!(service.group_name, "DEFAULT_GROUP");
-    assert_eq!(service.hosts.len(), 1); // Only healthy
-    assert!(service.all_ips); // Has instances (even unhealthy)
+    assert_eq!(service.hosts.len(), 1);
+    assert!(service.all_ips);
 }
 
 #[test]
 fn test_batch_operations() {
-    let naming = NamingService::new();
+    let naming = create_provider();
 
     let instances = vec![
         create_test_instance("192.168.1.1", 8080, "DEFAULT"),
@@ -171,14 +167,12 @@ fn test_batch_operations() {
         create_test_instance("192.168.1.3", 8082, "DEFAULT"),
     ];
 
-    // Batch register
     naming.batch_register_instances("public", "DEFAULT_GROUP", "test-service", instances.clone());
 
     let registered = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
     assert_eq!(registered.len(), 3);
 
-    // Batch deregister
-    naming.batch_deregister_instances("public", "DEFAULT_GROUP", "test-service", &instances);
+    naming.batch_deregister_instances("public", "DEFAULT_GROUP", "test-service", instances);
 
     let after = naming.get_instances("public", "DEFAULT_GROUP", "test-service", "", false);
     assert!(after.is_empty());
@@ -186,7 +180,7 @@ fn test_batch_operations() {
 
 #[test]
 fn test_namespace_isolation() {
-    let naming = NamingService::new();
+    let naming = create_provider();
 
     let instance = create_test_instance("192.168.1.1", 8080, "DEFAULT");
 

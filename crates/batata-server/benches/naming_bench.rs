@@ -1,10 +1,16 @@
 // Benchmarks for NamingService performance
 // Measures registration, lookup, and subscription operations
 
+use batata_api::naming::NamingServiceProvider;
 use batata_server::api::naming::model::Instance;
-use batata_server::service::naming::NamingService;
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use batata_server::service::naming::NacosNamingServiceImpl;
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
+use std::hint::black_box;
+
+fn create_naming() -> Box<dyn NamingServiceProvider> {
+    Box::new(NacosNamingServiceImpl::new())
+}
 
 fn create_test_instance(ip: &str, port: i32) -> Instance {
     Instance {
@@ -23,7 +29,7 @@ fn create_test_instance(ip: &str, port: i32) -> Instance {
 }
 
 fn bench_register_instance(c: &mut Criterion) {
-    let naming = NamingService::new();
+    let naming = create_naming();
 
     c.bench_function("register_instance", |b| {
         let mut port = 8000;
@@ -41,9 +47,8 @@ fn bench_register_instance(c: &mut Criterion) {
 }
 
 fn bench_get_instances(c: &mut Criterion) {
-    let naming = NamingService::new();
+    let naming = create_naming();
 
-    // Pre-populate with instances
     for i in 0..1000 {
         let instance = create_test_instance("192.168.1.1", 8000 + i);
         naming.register_instance("public", "DEFAULT_GROUP", "bench-service", instance);
@@ -63,12 +68,11 @@ fn bench_get_instances(c: &mut Criterion) {
 }
 
 fn bench_get_instances_healthy_only(c: &mut Criterion) {
-    let naming = NamingService::new();
+    let naming = create_naming();
 
-    // Pre-populate with mixed healthy/unhealthy instances
     for i in 0..1000 {
         let mut instance = create_test_instance("192.168.1.1", 8000 + i);
-        instance.healthy = i % 2 == 0; // Half healthy
+        instance.healthy = i % 2 == 0;
         naming.register_instance("public", "DEFAULT_GROUP", "bench-service", instance);
     }
 
@@ -86,9 +90,8 @@ fn bench_get_instances_healthy_only(c: &mut Criterion) {
 }
 
 fn bench_get_instances_by_cluster(c: &mut Criterion) {
-    let naming = NamingService::new();
+    let naming = create_naming();
 
-    // Pre-populate with instances in different clusters
     for i in 0..1000 {
         let cluster = if i % 3 == 0 {
             "CLUSTER_A"
@@ -116,7 +119,7 @@ fn bench_get_instances_by_cluster(c: &mut Criterion) {
 }
 
 fn bench_subscribe(c: &mut Criterion) {
-    let naming = NamingService::new();
+    let naming = create_naming();
 
     c.bench_function("subscribe", |b| {
         let mut conn_id = 0;
@@ -133,9 +136,8 @@ fn bench_subscribe(c: &mut Criterion) {
 }
 
 fn bench_get_subscribers(c: &mut Criterion) {
-    let naming = NamingService::new();
+    let naming = create_naming();
 
-    // Pre-populate with subscribers
     for i in 0..1000 {
         naming.subscribe(
             &format!("conn-{}", i),
@@ -157,9 +159,8 @@ fn bench_get_subscribers(c: &mut Criterion) {
 }
 
 fn bench_list_services(c: &mut Criterion) {
-    let naming = NamingService::new();
+    let naming = create_naming();
 
-    // Pre-populate with many services
     for i in 0..100 {
         let instance = create_test_instance("192.168.1.1", 8000 + i);
         naming.register_instance(
@@ -186,7 +187,7 @@ fn bench_deregister_instance(c: &mut Criterion) {
     c.bench_function("deregister_instance", |b| {
         b.iter_batched(
             || {
-                let naming = NamingService::new();
+                let naming = create_naming();
                 let instance = create_test_instance("192.168.1.1", 8080);
                 naming.register_instance(
                     "public",
@@ -213,9 +214,8 @@ fn bench_instance_count_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("instance_count_scaling");
 
     for size in [100, 500, 1000, 5000].iter() {
-        let naming = NamingService::new();
+        let naming = create_naming();
 
-        // Pre-populate
         for i in 0..*size {
             let instance = create_test_instance("192.168.1.1", 8000 + i);
             naming.register_instance("public", "DEFAULT_GROUP", "bench-service", instance);

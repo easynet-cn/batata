@@ -5,9 +5,7 @@
 //! - Connection management
 //! - Health checking
 //! - Task scheduling
-//! - Abstraction layer for multi-registry support
 
-pub mod abstraction;
 pub mod handler;
 pub mod model;
 pub mod service;
