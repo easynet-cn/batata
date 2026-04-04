@@ -41,6 +41,85 @@ pub fn default_page_size_small() -> u64 {
     20
 }
 
+// ============================================================================
+// Key Builders — centralized to prevent format inconsistencies
+// ============================================================================
+
+/// Build a naming service key: "namespace@@group@@service"
+///
+/// This is the canonical key format used across naming service, health check,
+/// distro protocol, persistence layer, and Raft state machine.
+#[inline]
+pub fn build_service_key(namespace: &str, group: &str, service: &str) -> String {
+    let mut key = String::with_capacity(namespace.len() + group.len() + service.len() + 4);
+    key.push_str(namespace);
+    key.push_str("@@");
+    key.push_str(group);
+    key.push_str("@@");
+    key.push_str(service);
+    key
+}
+
+/// Parse a service key into (namespace, group, service) components.
+///
+/// Returns `None` if the key doesn't contain exactly 2 `@@` separators.
+#[inline]
+pub fn parse_service_key(key: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = key.splitn(3, "@@");
+    let ns = parts.next()?;
+    let group = parts.next()?;
+    let service = parts.next()?;
+    Some((ns, group, service))
+}
+
+/// Build a config key: "tenant+group+dataId"
+///
+/// This is the canonical key format used for config cache, listener,
+/// and change notification. Tenant (namespace) comes first.
+#[inline]
+pub fn build_config_key(tenant: &str, group: &str, data_id: &str) -> String {
+    let mut key = String::with_capacity(tenant.len() + group.len() + data_id.len() + 2);
+    key.push_str(tenant);
+    key.push('+');
+    key.push_str(group);
+    key.push('+');
+    key.push_str(data_id);
+    key
+}
+
+/// Parse a config key into (tenant, group, data_id) components.
+#[inline]
+pub fn parse_config_key(key: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = key.splitn(3, '+');
+    let tenant = parts.next()?;
+    let group = parts.next()?;
+    let data_id = parts.next()?;
+    Some((tenant, group, data_id))
+}
+
+// ============================================================================
+// Pagination Utilities
+// ============================================================================
+
+/// Calculate pagination offsets from page number and page size.
+///
+/// Returns `(start_index, end_index)` for slicing a sorted collection.
+/// `page_no` is 1-based; values < 1 are treated as 1.
+///
+/// # Example
+/// ```
+/// use batata_common::paginate;
+/// let (start, end) = paginate(2, 10, 25); // page 2, 10 per page, 25 total
+/// assert_eq!(start, 10);
+/// assert_eq!(end, 20);
+/// ```
+#[inline]
+pub fn paginate(page_no: u64, page_size: u64, total: usize) -> (usize, usize) {
+    let start = ((page_no.max(1) - 1) * page_size) as usize;
+    let end = (start + page_size as usize).min(total);
+    (start, end)
+}
+
 /// Query parameter names
 pub const TENANT: &str = "tenant";
 pub const NAMESPACE_ID: &str = "namespaceId";
@@ -262,6 +341,57 @@ mod tests {
         assert_eq!(default_page_no(), 1);
         assert_eq!(default_page_size(), 100);
         assert_eq!(default_page_size_small(), 20);
+    }
+
+    #[test]
+    fn test_build_service_key() {
+        assert_eq!(
+            build_service_key("public", "DEFAULT_GROUP", "my-service"),
+            "public@@DEFAULT_GROUP@@my-service"
+        );
+    }
+
+    #[test]
+    fn test_parse_service_key() {
+        let (ns, group, svc) = parse_service_key("public@@DEFAULT_GROUP@@my-service").unwrap();
+        assert_eq!(ns, "public");
+        assert_eq!(group, "DEFAULT_GROUP");
+        assert_eq!(svc, "my-service");
+        assert!(parse_service_key("invalid").is_none());
+        assert!(parse_service_key("a@@b").is_none());
+    }
+
+    #[test]
+    fn test_build_config_key() {
+        assert_eq!(
+            build_config_key("public", "DEFAULT_GROUP", "app.yaml"),
+            "public+DEFAULT_GROUP+app.yaml"
+        );
+    }
+
+    #[test]
+    fn test_parse_config_key() {
+        let (tenant, group, data_id) =
+            parse_config_key("public+DEFAULT_GROUP+app.yaml").unwrap();
+        assert_eq!(tenant, "public");
+        assert_eq!(group, "DEFAULT_GROUP");
+        assert_eq!(data_id, "app.yaml");
+    }
+
+    #[test]
+    fn test_paginate() {
+        // Page 1 of 25 items, 10 per page
+        assert_eq!(paginate(1, 10, 25), (0, 10));
+        // Page 2
+        assert_eq!(paginate(2, 10, 25), (10, 20));
+        // Page 3 (partial)
+        assert_eq!(paginate(3, 10, 25), (20, 25));
+        // Page beyond range
+        assert_eq!(paginate(4, 10, 25), (30, 25)); // start > total, end capped
+        // Page 0 treated as 1
+        assert_eq!(paginate(0, 10, 25), (0, 10));
+        // Empty collection
+        assert_eq!(paginate(1, 10, 0), (0, 0));
     }
 
     #[test]

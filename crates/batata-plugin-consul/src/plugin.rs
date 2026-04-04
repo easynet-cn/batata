@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use actix_web::web;
+
 use rocksdb::DB;
 
 use batata_api::naming::NamingServiceProvider;
@@ -250,39 +250,25 @@ impl ConsulPlugin {
         }
     }
 
-    /// Configure actix-web ServiceConfig with all Consul app_data and routes.
-    ///
-    /// This registers all service instances as `web::Data` and mounts the
-    /// Consul v1 API routes. Call this from your App or HttpServer setup.
-    pub fn configure(&self, cfg: &mut web::ServiceConfig) {
-        cfg.app_data(web::Data::new(self.agent.clone()))
-            .app_data(web::Data::new(self.health.clone()))
-            .app_data(web::Data::new(self.kv.clone()))
-            .app_data(web::Data::new(self.catalog.clone()))
-            .app_data(web::Data::new(self.acl.clone()))
-            .app_data(web::Data::new(self.session.clone()))
-            .app_data(web::Data::new(self.event.clone()))
-            .app_data(web::Data::new(self.query.clone()))
-            .app_data(web::Data::new(self.lock.clone()))
-            .app_data(web::Data::new(self.semaphore.clone()))
-            .app_data(web::Data::from(self.peering.clone()))
-            .app_data(web::Data::new(self.config_entry.clone()))
-            .app_data(web::Data::new(self.connect.clone()))
-            .app_data(web::Data::new(self.connect_ca.clone()))
-            .app_data(web::Data::new(self.coordinate.clone()))
-            .app_data(web::Data::new(self.snapshot.clone()))
-            .app_data(web::Data::new(self.operator.clone()))
-            .app_data(web::Data::new(self.dc_config.clone()))
-            .app_data(web::Data::new(self.index_provider.clone()))
-            .service(crate::route::routes());
-    }
 }
 
-// Implement batata_common::Plugin for lifecycle management
+// Implement the unified ProtocolAdapterPlugin SPI
 #[async_trait::async_trait]
-impl batata_common::Plugin for ConsulPlugin {
+impl ProtocolAdapterPlugin for ConsulPlugin {
     fn name(&self) -> &str {
         "consul-compatibility"
+    }
+
+    fn protocol(&self) -> &str {
+        "consul"
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn default_port(&self) -> u16 {
+        self.dc_config.consul_port
     }
 
     async fn init(&self) -> anyhow::Result<()> {
@@ -298,20 +284,28 @@ impl batata_common::Plugin for ConsulPlugin {
         tracing::info!("Consul compatibility plugin shutting down");
         Ok(())
     }
-}
 
-// Implement ProtocolAdapterPlugin for plugin system integration
-impl ProtocolAdapterPlugin for ConsulPlugin {
-    fn name(&self) -> &str {
-        "consul-compatibility"
-    }
-
-    fn protocol(&self) -> &str {
-        "consul"
-    }
-
-    fn is_enabled(&self) -> bool {
-        self.enabled
+    fn configure(&self, cfg: &mut actix_web::web::ServiceConfig) {
+        cfg.app_data(actix_web::web::Data::new(self.agent.clone()))
+            .app_data(actix_web::web::Data::new(self.health.clone()))
+            .app_data(actix_web::web::Data::new(self.kv.clone()))
+            .app_data(actix_web::web::Data::new(self.catalog.clone()))
+            .app_data(actix_web::web::Data::new(self.acl.clone()))
+            .app_data(actix_web::web::Data::new(self.session.clone()))
+            .app_data(actix_web::web::Data::new(self.event.clone()))
+            .app_data(actix_web::web::Data::new(self.query.clone()))
+            .app_data(actix_web::web::Data::new(self.lock.clone()))
+            .app_data(actix_web::web::Data::new(self.semaphore.clone()))
+            .app_data(actix_web::web::Data::from(self.peering.clone()))
+            .app_data(actix_web::web::Data::new(self.config_entry.clone()))
+            .app_data(actix_web::web::Data::new(self.connect.clone()))
+            .app_data(actix_web::web::Data::new(self.connect_ca.clone()))
+            .app_data(actix_web::web::Data::new(self.coordinate.clone()))
+            .app_data(actix_web::web::Data::new(self.snapshot.clone()))
+            .app_data(actix_web::web::Data::new(self.operator.clone()))
+            .app_data(actix_web::web::Data::new(self.dc_config.clone()))
+            .app_data(actix_web::web::Data::new(self.index_provider.clone()))
+            .service(crate::route::routes());
     }
 }
 
@@ -331,12 +325,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_consul_plugin_lifecycle() {
-        use batata_common::Plugin;
-
         let plugin = create_test_plugin();
-        assert_eq!(Plugin::name(&plugin), "consul-compatibility");
+        assert_eq!(ProtocolAdapterPlugin::name(&plugin), "consul-compatibility");
         assert!(plugin.init().await.is_ok());
         assert!(plugin.shutdown().await.is_ok());
+        assert_eq!(plugin.default_port(), 8500);
     }
 
     fn create_test_plugin() -> ConsulPlugin {

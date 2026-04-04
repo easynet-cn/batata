@@ -114,23 +114,108 @@ pub struct TpsCheckResult {
     pub limit: u64,
 }
 
-/// Protocol adapter plugin for compatibility layers (e.g., Consul, Eureka).
+/// Protocol adapter plugin for compatibility layers (e.g., Consul, Eureka, Apollo).
 ///
-/// Protocol adapters translate external protocols into Batata-native operations.
-/// They provide HTTP routes and service configuration for their respective protocols.
+/// Protocol adapters translate external protocols into Batata-native (Nacos) operations.
+/// Batata's core is a Nacos-compatible service discovery and configuration platform.
+/// Protocol adapter plugins enable clients of other systems to interact with Batata
+/// using their native protocols.
+///
+/// # Lifecycle
+///
+/// 1. Plugin is constructed by a factory function with its dependencies
+/// 2. `init()` is called during server startup
+/// 3. `configure()` is called to register HTTP routes and services
+/// 4. `start_background_tasks()` is called to spawn monitors and sync tasks
+/// 5. Plugin serves requests until shutdown
+/// 6. `shutdown()` is called during graceful server shutdown
+///
+/// # Example
+///
+/// ```rust,ignore
+/// impl ProtocolAdapterPlugin for ConsulPlugin {
+///     fn name(&self) -> &str { "consul-compatibility" }
+///     fn protocol(&self) -> &str { "consul" }
+///     fn is_enabled(&self) -> bool { true }
+///     fn default_port(&self) -> u16 { 8500 }
+///
+///     fn configure(&self, cfg: &mut actix_web::web::ServiceConfig) {
+///         cfg.app_data(web::Data::new(self.agent.clone()))
+///            .service(routes());
+///     }
+/// }
+/// ```
+#[async_trait::async_trait]
 pub trait ProtocolAdapterPlugin: Send + Sync {
+    // ========================================================================
+    // Metadata
+    // ========================================================================
+
     /// Plugin name (e.g., "consul-compatibility")
     fn name(&self) -> &str;
 
-    /// Protocol identifier (e.g., "consul", "eureka")
+    /// Protocol identifier (e.g., "consul", "eureka", "apollo")
     fn protocol(&self) -> &str;
 
     /// Whether this adapter is enabled
     fn is_enabled(&self) -> bool;
 
-    /// Plugin priority (lower = higher priority)
+    /// Plugin priority (lower = higher priority, for ordering)
     fn priority(&self) -> i32 {
         0
+    }
+
+    /// Default HTTP port for this protocol's server (e.g., 8500 for Consul)
+    fn default_port(&self) -> u16;
+
+    // ========================================================================
+    // Lifecycle
+    // ========================================================================
+
+    /// Initialize the plugin after construction.
+    ///
+    /// Called once during server startup. Use this for logging, validation,
+    /// or any one-time setup that doesn't require HTTP routes.
+    async fn init(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Shut down the plugin gracefully.
+    ///
+    /// Called during server shutdown. Use this to flush buffers,
+    /// close connections, and release resources.
+    async fn shutdown(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    // ========================================================================
+    // HTTP Route Registration
+    // ========================================================================
+
+    /// Register HTTP routes and services with the actix-web app.
+    ///
+    /// This is the primary integration point. The plugin should:
+    /// 1. Register its service instances as `web::Data` (for handler injection)
+    /// 2. Mount its HTTP routes (e.g., `/v1/agent/*` for Consul)
+    ///
+    /// Called once during HTTP server construction.
+    fn configure(&self, cfg: &mut actix_web::web::ServiceConfig);
+
+    // ========================================================================
+    // Background Tasks
+    // ========================================================================
+
+    /// Start background tasks (monitors, sync jobs, cleanup tasks).
+    ///
+    /// Called after the HTTP server is running. Plugins should spawn their
+    /// own tokio tasks for periodic work like:
+    /// - TTL health check monitoring
+    /// - Instance deregistration cleanup
+    /// - Session expiration
+    ///
+    /// The default implementation does nothing (no background tasks).
+    async fn start_background_tasks(&self) -> anyhow::Result<()> {
+        Ok(())
     }
 }
 
@@ -221,8 +306,44 @@ impl PluginManager {
     }
 
     pub fn register_protocol_adapter(&mut self, plugin: Arc<dyn ProtocolAdapterPlugin>) {
+        tracing::info!(
+            "Registered protocol adapter: {} (protocol={}, port={})",
+            plugin.name(),
+            plugin.protocol(),
+            plugin.default_port()
+        );
         self.protocol_adapters.push(plugin);
         self.protocol_adapters.sort_by_key(|p| p.priority());
+    }
+
+    /// Initialize all registered protocol adapters
+    pub async fn init_protocol_adapters(&self) -> anyhow::Result<()> {
+        for plugin in &self.protocol_adapters {
+            if plugin.is_enabled() {
+                plugin.init().await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Start background tasks for all registered protocol adapters
+    pub async fn start_protocol_adapter_tasks(&self) -> anyhow::Result<()> {
+        for plugin in &self.protocol_adapters {
+            if plugin.is_enabled() {
+                plugin.start_background_tasks().await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Shut down all registered protocol adapters
+    pub async fn shutdown_protocol_adapters(&self) -> anyhow::Result<()> {
+        for plugin in self.protocol_adapters.iter().rev() {
+            if plugin.is_enabled() {
+                plugin.shutdown().await?;
+            }
+        }
+        Ok(())
     }
 
     pub fn auth_plugins(&self) -> &[Arc<dyn AuthPlugin>] {
@@ -457,6 +578,8 @@ mod tests {
         struct TestAdapter {
             enabled: bool,
         }
+
+        #[async_trait::async_trait]
         impl ProtocolAdapterPlugin for TestAdapter {
             fn name(&self) -> &str {
                 "test-consul"
@@ -467,6 +590,12 @@ mod tests {
             fn is_enabled(&self) -> bool {
                 self.enabled
             }
+            fn default_port(&self) -> u16 {
+                8500
+            }
+            fn configure(&self, _cfg: &mut actix_web::web::ServiceConfig) {
+                // No routes in test
+            }
         }
 
         let mut manager = PluginManager::new();
@@ -475,6 +604,7 @@ mod tests {
         assert_eq!(manager.protocol_adapters().len(), 1);
         assert_eq!(manager.protocol_adapters()[0].name(), "test-consul");
         assert_eq!(manager.protocol_adapters()[0].protocol(), "consul");
+        assert_eq!(manager.protocol_adapters()[0].default_port(), 8500);
 
         let adapter = manager.get_protocol_adapter("consul");
         assert!(adapter.is_some());

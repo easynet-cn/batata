@@ -62,14 +62,10 @@ impl ConfigCacheService {
     }
 
     /// Build cache key from components (Nacos groupKey format, pre-allocated)
+    /// Build config cache key. Delegates to `batata_common::build_config_key`.
+    #[inline]
     pub fn build_key(tenant: &str, group: &str, data_id: &str) -> String {
-        let mut key = String::with_capacity(tenant.len() + group.len() + data_id.len() + 2);
-        key.push_str(tenant);
-        key.push('+');
-        key.push_str(group);
-        key.push('+');
-        key.push_str(data_id);
-        key
+        batata_common::build_config_key(tenant, group, data_id)
     }
 
     /// Dump (update) a config entry in the cache.

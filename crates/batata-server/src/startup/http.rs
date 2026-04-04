@@ -8,6 +8,8 @@ use actix_web::{
     middleware::{Compress, Condition, DefaultHeaders, Logger},
     web,
 };
+#[cfg(feature = "consul")]
+use batata_plugin::ProtocolAdapterPlugin;
 
 use batata_core::service::distro::DistroProtocol;
 use batata_core::service::remote::ConnectionManager;

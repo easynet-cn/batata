@@ -24,26 +24,8 @@ use crate::model::Instance;
 // Re-export model types from batata-api
 pub use batata_api::naming::{ClusterConfig, ClusterStatistics, ProtectionInfo, ServiceMetadata};
 
-/// Build service key format: namespace@@groupName@@serviceName
-pub fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {
-    let mut key =
-        String::with_capacity(namespace.len() + group_name.len() + service_name.len() + 4);
-    key.push_str(namespace);
-    key.push_str("@@");
-    key.push_str(group_name);
-    key.push_str("@@");
-    key.push_str(service_name);
-    key
-}
-
-/// Parse a service key into (namespace, group, service) parts without allocating a Vec
-fn parse_service_key(key: &str) -> Option<(&str, &str, &str)> {
-    let mut parts = key.splitn(3, "@@");
-    let ns = parts.next()?;
-    let group = parts.next()?;
-    let service = parts.next()?;
-    Some((ns, group, service))
-}
+// Re-export centralized key builders from batata-common
+pub use batata_common::{build_service_key, parse_service_key};
 
 /// Build instance key format: ip#port#clusterName (pre-allocated)
 fn build_instance_key(instance: &Instance) -> String {

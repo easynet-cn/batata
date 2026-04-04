@@ -26,9 +26,10 @@ impl ConfigChangeNotifier {
         }
     }
 
-    /// Build a config key from its components
+    /// Build config change notification key. Delegates to `batata_common::build_config_key`.
+    #[inline]
     pub fn build_key(tenant: &str, group: &str, data_id: &str) -> String {
-        format!("{}+{}+{}", tenant, group, data_id)
+        batata_common::build_config_key(tenant, group, data_id)
     }
 
     /// Get or create a Notify handle for a config key

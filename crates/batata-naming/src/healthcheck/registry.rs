@@ -210,7 +210,7 @@ pub fn build_instance_key(
 }
 
 /// Build a service key from location coordinates
-pub fn build_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {
+pub fn build_check_service_key(namespace: &str, group_name: &str, service_name: &str) -> String {
     format!("{}#{}#{}", namespace, group_name, service_name)
 }
 
@@ -261,7 +261,7 @@ impl InstanceCheckRegistry {
             &config.cluster_name,
         );
         let service_key =
-            build_service_key(&config.namespace, &config.group_name, &config.service_name);
+            build_check_service_key(&config.namespace, &config.group_name, &config.service_name);
 
         // Initialize status
         let status = InstanceCheckStatus::new(config.initial_status.clone());
@@ -282,7 +282,7 @@ impl InstanceCheckRegistry {
         // Register consul service ID if provided
         if let Some(ref consul_svc_id) = config.consul_service_id {
             let svc_key =
-                build_service_key(&config.namespace, &config.group_name, &config.service_name);
+                build_check_service_key(&config.namespace, &config.group_name, &config.service_name);
             let inst_key = build_instance_key(
                 &config.namespace,
                 &config.group_name,
@@ -322,7 +322,7 @@ impl InstanceCheckRegistry {
                     drop(checks);
                     self.instance_checks.remove(&instance_key);
                     // Also clean up service_instances index
-                    let service_key = build_service_key(
+                    let service_key = build_check_service_key(
                         &config.namespace,
                         &config.group_name,
                         &config.service_name,

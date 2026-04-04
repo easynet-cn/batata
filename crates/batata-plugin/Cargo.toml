@@ -10,6 +10,9 @@ description = "Plugin SPI definitions for Batata"
 [dependencies]
 batata-common = { workspace = true }
 
+# Web framework
+actix-web = { workspace = true }
+
 # Async
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
