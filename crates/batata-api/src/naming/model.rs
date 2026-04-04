@@ -36,6 +36,9 @@ pub const PRESERVED_HEART_BEAT_INTERVAL: &str = "preserved.heart.beat.interval";
 pub const PRESERVED_HEART_BEAT_TIMEOUT: &str = "preserved.heart.beat.timeout";
 pub const PRESERVED_IP_DELETE_TIMEOUT: &str = "preserved.ip.delete.timeout";
 pub const PRESERVED_INSTANCE_ID_GENERATOR: &str = "preserved.instance.id.generator";
+/// Preserved metadata key: registration source (e.g., "Dubbo", "SpringCloud").
+/// Set by client SDK to identify the registration framework. Server does not enforce this.
+pub const PRESERVED_REGISTER_SOURCE: &str = "preserved.register.source";
 
 // Request type constants
 pub const REGISTER_INSTANCE: &str = "registerInstance";
@@ -146,6 +149,13 @@ pub struct Service {
     pub checksum: String,
     pub all_ips: bool,
     pub reach_protection_threshold: bool,
+    /// Service-level metadata (set via service create/update API)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub metadata: HashMap<String, String>,
+    /// Protection threshold (0.0 to 1.0). When healthy ratio drops below this,
+    /// all instances (including unhealthy) are returned to prevent cascading failure.
+    #[serde(default, alias = "protectThreshold")]
+    pub protect_threshold: f32,
 }
 
 impl Service {

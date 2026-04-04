@@ -11,13 +11,11 @@
 //! let config = ClientConfig::new("127.0.0.1:8848")
 //!     .with_auth("nacos", "nacos");
 //!
-//! let client = BatataClient::new(config).await?;
+//! let mut client = BatataClient::new(config).await?;
 //!
 //! // Config operations via gRPC
-//! let content = client.config_service().get_config("app.yaml", "DEFAULT_GROUP", "").await?;
-//!
-//! // Admin operations via HTTP
-//! let namespaces = client.api_client().namespace_list().await?;
+//! let config_svc = client.config_service().await?;
+//! let content = config_svc.get_config("app.yaml", "DEFAULT_GROUP", "").await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -104,7 +102,11 @@ impl BatataClient {
                 .as_ref()
                 .expect("grpc_naming just initialized"),
         );
-        Ok(BatataNamingService::new(grpc))
+        if self.config.naming_push_empty_protection {
+            Ok(BatataNamingService::with_empty_protection(grpc, true))
+        } else {
+            Ok(BatataNamingService::new(grpc))
+        }
     }
 
     /// Create a new HTTP API client for admin/maintainer operations.

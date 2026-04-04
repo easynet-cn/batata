@@ -121,12 +121,12 @@ impl NamingService {
     ) -> Service {
         let service_key = build_service_key(namespace, group_name, service_name);
 
-        // Get protection threshold from service metadata (brief lock)
-        let protect_threshold = self
+        // Get protection threshold and metadata from service metadata (brief lock)
+        let (protect_threshold, service_meta_map) = self
             .service_metadata
             .get(&service_key)
-            .map(|m| m.protect_threshold)
-            .unwrap_or(0.0);
+            .map(|m| (m.protect_threshold, m.metadata.clone()))
+            .unwrap_or_default();
 
         // Snapshot Arc pointers to minimize outer DashMap shard lock hold time.
         let (snapshot, has_any_instances) = match self.services.get(&service_key) {
@@ -197,6 +197,8 @@ impl NamingService {
             checksum: String::new(),
             all_ips: has_any_instances,
             reach_protection_threshold: protection_triggered,
+            metadata: service_meta_map.clone(),
+            protect_threshold,
         }
     }
 
@@ -213,12 +215,12 @@ impl NamingService {
     ) -> (Service, super::ProtectionInfo) {
         let service_key = build_service_key(namespace, group_name, service_name);
 
-        // Get protection threshold from service metadata (brief lock)
-        let protect_threshold = self
+        // Get protection threshold and metadata from service metadata (brief lock)
+        let (protect_threshold, service_meta_map) = self
             .service_metadata
             .get(&service_key)
-            .map(|m| m.protect_threshold)
-            .unwrap_or(0.0);
+            .map(|m| (m.protect_threshold, m.metadata.clone()))
+            .unwrap_or_default();
 
         // Snapshot Arc pointers (brief outer shard lock)
         let snapshot: Vec<Arc<Instance>> = self
@@ -284,6 +286,8 @@ impl NamingService {
             checksum: String::new(),
             all_ips: has_any,
             reach_protection_threshold: protection_triggered,
+            metadata: service_meta_map.clone(),
+            protect_threshold,
         };
 
         let protection_info = super::ProtectionInfo {

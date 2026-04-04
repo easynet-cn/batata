@@ -10,7 +10,10 @@
 //!
 //! let config = ClientConfig::new("127.0.0.1:8848")
 //!     .with_auth("nacos", "nacos")
-//!     .with_context_path("/nacos");
+//!     .context_path("/nacos")
+//!     .namespace("dev")
+//!     .max_retries(5)
+//!     .naming_push_empty_protection(true);
 //! ```
 
 use std::collections::HashMap;
@@ -97,6 +100,34 @@ pub struct ClientConfig {
     /// Max consecutive failures before marking a server unhealthy. Default: 3.
     pub server_max_failures: u32,
 
+    // ===== Retry & Resilience =====
+    /// Maximum number of retry attempts for failed operations. Default: 3.
+    pub max_retries: u32,
+
+    /// Initial delay before first retry. Default: 500ms.
+    pub retry_initial_delay: Duration,
+
+    /// Redo delay for replaying registrations/subscriptions after reconnect. Default: 3s.
+    pub redo_delay: Duration,
+
+    // ===== Config Service =====
+    /// Config long polling timeout. Default: 30s. Minimum: 10s.
+    /// Controls how long the client waits for config change notifications.
+    pub config_long_poll_timeout: Duration,
+
+    /// Config request retry interval on failure. Default: 2s.
+    pub config_retry_interval: Duration,
+
+    // ===== Naming Service =====
+    /// Whether to load cached service info from disk at startup. Default: false.
+    pub naming_load_cache_at_start: bool,
+
+    /// Directory for caching service information. Default: empty (uses system temp).
+    pub naming_cache_dir: String,
+
+    /// Reject empty service instance pushes (protect against accidental deregistration). Default: false.
+    pub naming_push_empty_protection: bool,
+
     // ===== TLS =====
     /// Enable TLS for gRPC connections. Default: false.
     pub tls_enabled: bool,
@@ -129,6 +160,14 @@ impl ClientConfig {
             address_server_url: None,
             server_list_refresh_interval: Duration::from_secs(30),
             server_max_failures: 3,
+            max_retries: 3,
+            retry_initial_delay: Duration::from_millis(500),
+            redo_delay: Duration::from_secs(3),
+            config_long_poll_timeout: Duration::from_secs(30),
+            config_retry_interval: Duration::from_secs(2),
+            naming_load_cache_at_start: false,
+            naming_cache_dir: String::new(),
+            naming_push_empty_protection: false,
             tls_enabled: false,
             tls_ca_path: None,
         }
@@ -136,14 +175,10 @@ impl ClientConfig {
 
     /// Create with multiple server addresses for failover.
     pub fn with_server_addrs(addrs: Vec<String>) -> Self {
-        let mut config = Self::new(
-            addrs
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("127.0.0.1:8848"),
-        );
-        config.server_addrs = addrs;
-        config
+        Self {
+            server_addrs: addrs,
+            ..Self::default()
+        }
     }
 
     // ===== Builder methods =====
@@ -231,6 +266,54 @@ impl ClientConfig {
     /// Set max failures before marking server unhealthy. Default: 3.
     pub fn server_max_failures(mut self, max: u32) -> Self {
         self.server_max_failures = max;
+        self
+    }
+
+    /// Set maximum retry attempts. Default: 3.
+    pub fn max_retries(mut self, max: u32) -> Self {
+        self.max_retries = max;
+        self
+    }
+
+    /// Set initial retry delay. Default: 500ms.
+    pub fn retry_initial_delay(mut self, delay: Duration) -> Self {
+        self.retry_initial_delay = delay;
+        self
+    }
+
+    /// Set redo delay for reconnection replay. Default: 3s.
+    pub fn redo_delay(mut self, delay: Duration) -> Self {
+        self.redo_delay = delay;
+        self
+    }
+
+    /// Set config long polling timeout. Default: 30s. Minimum: 10s.
+    pub fn config_long_poll_timeout(mut self, timeout: Duration) -> Self {
+        self.config_long_poll_timeout = timeout.max(Duration::from_secs(10));
+        self
+    }
+
+    /// Set config retry interval on failure. Default: 2s.
+    pub fn config_retry_interval(mut self, interval: Duration) -> Self {
+        self.config_retry_interval = interval;
+        self
+    }
+
+    /// Enable loading cached service info from disk at startup.
+    pub fn naming_load_cache_at_start(mut self, enable: bool) -> Self {
+        self.naming_load_cache_at_start = enable;
+        self
+    }
+
+    /// Set naming cache directory. Default: system temp.
+    pub fn naming_cache_dir(mut self, dir: &str) -> Self {
+        self.naming_cache_dir = dir.to_string();
+        self
+    }
+
+    /// Enable empty push protection for naming service. Default: false.
+    pub fn naming_push_empty_protection(mut self, enable: bool) -> Self {
+        self.naming_push_empty_protection = enable;
         self
     }
 
