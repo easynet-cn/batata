@@ -139,11 +139,16 @@ impl ConsulPlugin {
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+        let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
 
         ConsulPluginInner {
             naming_store: naming_store.clone(),
-            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()),
-            health: ConsulHealthService::new(registry.clone()),
+            agent: ConsulAgentService::new(
+                naming_store.clone(),
+                registry.clone(),
+                check_index.clone(),
+            ),
+            health: ConsulHealthService::new(registry.clone(), check_index),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_store.clone(),
@@ -192,11 +197,16 @@ impl ConsulPlugin {
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
+        let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
 
         ConsulPluginInner {
             naming_store: naming_store.clone(),
-            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()),
-            health: ConsulHealthService::new(registry.clone()),
+            agent: ConsulAgentService::new(
+                naming_store.clone(),
+                registry.clone(),
+                check_index.clone(),
+            ),
+            health: ConsulHealthService::new(registry.clone(), check_index),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_store.clone(),
@@ -389,15 +399,11 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         );
 
         // Extract cluster context
-        let is_cluster = ctx
-            .get::<bool>("is_cluster")
-            .map(|v| *v)
-            .unwrap_or(false);
+        let is_cluster = ctx.get::<bool>("is_cluster").map(|v| *v).unwrap_or(false);
         let raft_node = ctx.get::<batata_consistency::RaftNode>("raft_node");
 
         // Create Consul naming store and result handler
-        let consul_naming_store =
-            Arc::new(crate::naming_store::ConsulNamingStore::new());
+        let consul_naming_store = Arc::new(crate::naming_store::ConsulNamingStore::new());
         let consul_index_provider = Arc::new(ConsulIndexProvider::new());
         let consul_result_handler: Arc<dyn batata_plugin::HealthCheckResultHandler> =
             Arc::new(crate::result_handler::ConsulResultHandler::new(
@@ -407,22 +413,16 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         let consul_registry = Arc::new(InstanceCheckRegistry::new(consul_result_handler));
 
         let inner = if is_cluster {
-            self.init_cluster(
-                raft_node,
-                consul_naming_store,
-                consul_registry,
-            )
-            .await
+            self.init_cluster(raft_node, consul_naming_store, consul_registry)
+                .await
         } else {
-            tracing::info!(
-                "Consul services using in-memory storage (standalone/console mode)"
-            );
+            tracing::info!("Consul services using in-memory storage (standalone/console mode)");
             self.build_inner_standalone(consul_naming_store, consul_registry)
         };
 
-        self.inner.set(inner).map_err(|_| {
-            anyhow::anyhow!("ConsulPlugin::init() called more than once")
-        })?;
+        self.inner
+            .set(inner)
+            .map_err(|_| anyhow::anyhow!("ConsulPlugin::init() called more than once"))?;
 
         tracing::info!("Consul compatibility plugin initialized successfully");
         Ok(())
@@ -585,14 +585,8 @@ mod tests {
     #[test]
     fn test_consul_plugin_from_config() {
         let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
-        let plugin = ConsulPlugin::from_config(
-            true,
-            false,
-            dc_config,
-            false,
-            "127.0.0.1".to_string(),
-            8500,
-        );
+        let plugin =
+            ConsulPlugin::from_config(true, false, dc_config, false, "127.0.0.1".to_string(), 8500);
         assert!(plugin.is_enabled());
         assert_eq!(plugin.protocol(), "consul");
         assert_eq!(plugin.default_port(), 8500);
@@ -603,14 +597,8 @@ mod tests {
     #[tokio::test]
     async fn test_consul_plugin_from_config_init() {
         let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
-        let plugin = ConsulPlugin::from_config(
-            true,
-            false,
-            dc_config,
-            false,
-            "127.0.0.1".to_string(),
-            8500,
-        );
+        let plugin =
+            ConsulPlugin::from_config(true, false, dc_config, false, "127.0.0.1".to_string(), 8500);
 
         // Initialize with empty context (standalone mode)
         let ctx = batata_plugin::PluginContext::new();

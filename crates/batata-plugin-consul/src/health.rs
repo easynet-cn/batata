@@ -8,11 +8,26 @@ use std::time::Duration;
 use actix_web::{HttpRequest, HttpResponse, web};
 
 use batata_naming::healthcheck::registry::{
-    CheckOrigin, CheckStatus, CheckType as RegistryCheckType, InstanceCheckConfig,
-    InstanceCheckRegistry,
+    CheckStatus, CheckType as RegistryCheckType, InstanceCheckConfig, InstanceCheckRegistry,
 };
 
+/// Convert Consul status string to CheckStatus
+fn check_status_from_consul(s: &str) -> CheckStatus {
+    match s.to_lowercase().as_str() {
+        "passing" => CheckStatus::Passing,
+        "warning" => CheckStatus::Warning,
+        "critical" => CheckStatus::Critical,
+        _ => CheckStatus::Critical,
+    }
+}
+
+/// Convert Consul check type string to RegistryCheckType
+fn check_type_from_consul(s: &str) -> RegistryCheckType {
+    RegistryCheckType::from_str_value(s)
+}
+
 use crate::acl::{AclService, ResourceType};
+use crate::check_index::ConsulCheckIndex;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentService, AgentServiceRegistration, CONSUL_INTERNAL_CLUSTER, CONSUL_INTERNAL_GROUP,
@@ -39,14 +54,16 @@ async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, w
 #[derive(Clone)]
 pub struct ConsulHealthService {
     registry: Arc<InstanceCheckRegistry>,
+    check_index: Arc<ConsulCheckIndex>,
     /// Node name for this agent
     node_name: String,
 }
 
 impl ConsulHealthService {
-    pub fn new(registry: Arc<InstanceCheckRegistry>) -> Self {
+    pub fn new(registry: Arc<InstanceCheckRegistry>, check_index: Arc<ConsulCheckIndex>) -> Self {
         Self {
             registry,
+            check_index,
             node_name: "batata-node".to_string(),
         }
     }
@@ -63,7 +80,7 @@ impl ConsulHealthService {
         status: &str,
         output: Option<String>,
     ) -> Result<(), String> {
-        let check_status = CheckStatus::from_consul_str(status);
+        let check_status = check_status_from_consul(status);
         self.registry.ttl_update(check_id, check_status, output);
         Ok(())
     }
@@ -73,7 +90,7 @@ impl ConsulHealthService {
         let check_id = registration.effective_check_id();
         let check_type_str = registration.check_type();
 
-        let check_type = RegistryCheckType::from_consul_str(check_type_str);
+        let check_type = check_type_from_consul(check_type_str);
 
         // Parse TTL if present
         let ttl = registration
@@ -105,10 +122,8 @@ impl ConsulHealthService {
         let initial_status = registration
             .status
             .as_ref()
-            .map(|s| CheckStatus::from_consul_str(s))
+            .map(|s| check_status_from_consul(s))
             .unwrap_or(CheckStatus::Critical);
-
-        let consul_service_id = registration.service_id.clone();
 
         let config = InstanceCheckConfig {
             check_id: check_id.clone(),
@@ -137,11 +152,39 @@ impl ConsulHealthService {
             success_before_passing: 0,
             failures_before_critical: 0,
             deregister_critical_after,
-            origin: CheckOrigin::ConsulAgent,
             initial_status,
-            consul_service_id,
             notes: registration.notes.clone().unwrap_or_default(),
         };
+
+        // Register in check index for service_id → instance lookup
+        if let Some(ref svc_id) = registration.service_id {
+            if !svc_id.is_empty() {
+                use batata_naming::healthcheck::registry::{
+                    build_check_service_key, build_instance_key,
+                };
+                let service_name = registration
+                    .service_name
+                    .as_deref()
+                    .or(registration.service_id.as_deref())
+                    .unwrap_or_default();
+                let ip = registration.ip.as_deref().unwrap_or("0.0.0.0");
+                let port = registration.port.unwrap_or(0);
+                let svc_key = build_check_service_key(
+                    CONSUL_INTERNAL_NAMESPACE,
+                    CONSUL_INTERNAL_GROUP,
+                    service_name,
+                );
+                let inst_key = build_instance_key(
+                    CONSUL_INTERNAL_NAMESPACE,
+                    CONSUL_INTERNAL_GROUP,
+                    service_name,
+                    ip,
+                    port,
+                    CONSUL_INTERNAL_CLUSTER,
+                );
+                self.check_index.register(svc_id, &svc_key, &inst_key);
+            }
+        }
 
         self.registry.register_check(config);
         Ok(())
@@ -158,17 +201,20 @@ impl ConsulHealthService {
 
     /// Get all checks for a service (by Consul service_id)
     pub async fn get_service_checks(&self, service_id: &str) -> Vec<HealthCheck> {
-        let checks = self.registry.get_checks_for_consul_service(service_id);
+        let checks = match self.check_index.lookup(service_id) {
+            Some((_, instance_key)) => self.registry.get_instance_checks(&instance_key),
+            None => Vec::new(),
+        };
         checks
             .into_iter()
-            .map(|(config, status)| self.to_health_check(&config, &status))
+            .map(|(config, status)| self.to_health_check(&config, &status, service_id))
             .collect()
     }
 
     /// Get a check by ID
     pub async fn get_check(&self, check_id: &str) -> Option<HealthCheck> {
         let (config, status) = self.registry.get_check(check_id)?;
-        Some(self.to_health_check(&config, &status))
+        Some(self.to_health_check(&config, &status, ""))
     }
 
     /// Get all checks
@@ -176,17 +222,17 @@ impl ConsulHealthService {
         self.registry
             .get_all_checks()
             .into_iter()
-            .map(|(config, status)| self.to_health_check(&config, &status))
+            .map(|(config, status)| self.to_health_check(&config, &status, ""))
             .collect()
     }
 
     /// Get checks by status
     pub async fn get_checks_by_status(&self, status: &str) -> Vec<HealthCheck> {
-        let check_status = CheckStatus::from_consul_str(status);
+        let check_status = check_status_from_consul(status);
         self.registry
             .get_checks_by_status(&check_status)
             .into_iter()
-            .map(|(config, s)| self.to_health_check(&config, &s))
+            .map(|(config, s)| self.to_health_check(&config, &s, ""))
             .collect()
     }
 
@@ -231,6 +277,7 @@ impl ConsulHealthService {
         &self,
         config: &InstanceCheckConfig,
         status: &batata_naming::healthcheck::registry::InstanceCheckStatus,
+        service_id: &str,
     ) -> HealthCheck {
         let interval_str = if config.interval.as_secs() > 0 {
             Some(format!("{}s", config.interval.as_secs()))
@@ -265,7 +312,7 @@ impl ConsulHealthService {
             status: status.status.as_str().to_string(),
             notes: config.notes.clone(),
             output: status.output.clone(),
-            service_id: config.consul_service_id.clone().unwrap_or_default(),
+            service_id: service_id.to_string(),
             service_name: config.service_name.clone(),
             service_tags: None,
             check_type: config.check_type.as_str().to_string(),
@@ -1161,7 +1208,8 @@ mod tests {
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(
             naming_service.clone(),
         ));
-        ConsulHealthService::new(registry)
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        ConsulHealthService::new(registry, check_index)
     }
 
     #[test]
@@ -1711,7 +1759,8 @@ mod tests {
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(Arc::new(
             NamingService::new(),
         )));
-        let service = ConsulHealthService::new(registry.clone());
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        let service = ConsulHealthService::new(registry.clone(), check_index);
         (service, registry)
     }
 
@@ -1731,46 +1780,19 @@ mod tests {
 
     #[test]
     fn test_check_status_from_consul_string() {
-        assert_eq!(
-            CheckStatus::from_consul_str("passing"),
-            CheckStatus::Passing
-        );
-        assert_eq!(
-            CheckStatus::from_consul_str("warning"),
-            CheckStatus::Warning
-        );
-        assert_eq!(
-            CheckStatus::from_consul_str("critical"),
-            CheckStatus::Critical
-        );
-        assert_eq!(
-            CheckStatus::from_consul_str("unknown"),
-            CheckStatus::Critical
-        ); // default
+        assert_eq!(check_status_from_consul("passing"), CheckStatus::Passing);
+        assert_eq!(check_status_from_consul("warning"), CheckStatus::Warning);
+        assert_eq!(check_status_from_consul("critical"), CheckStatus::Critical);
+        assert_eq!(check_status_from_consul("unknown"), CheckStatus::Critical); // default
     }
 
     #[test]
     fn test_check_type_from_consul_string() {
-        assert_eq!(
-            RegistryCheckType::from_consul_str("tcp"),
-            RegistryCheckType::Tcp
-        );
-        assert_eq!(
-            RegistryCheckType::from_consul_str("http"),
-            RegistryCheckType::Http
-        );
-        assert_eq!(
-            RegistryCheckType::from_consul_str("ttl"),
-            RegistryCheckType::Ttl
-        );
-        assert_eq!(
-            RegistryCheckType::from_consul_str("grpc"),
-            RegistryCheckType::Grpc
-        );
-        assert_eq!(
-            RegistryCheckType::from_consul_str("unknown"),
-            RegistryCheckType::None
-        );
+        assert_eq!(check_type_from_consul("tcp"), RegistryCheckType::Tcp);
+        assert_eq!(check_type_from_consul("http"), RegistryCheckType::Http);
+        assert_eq!(check_type_from_consul("ttl"), RegistryCheckType::Ttl);
+        assert_eq!(check_type_from_consul("grpc"), RegistryCheckType::Grpc);
+        assert_eq!(check_type_from_consul("unknown"), RegistryCheckType::None);
     }
 
     #[test]
@@ -1797,9 +1819,7 @@ mod tests {
             success_before_passing: 0,
             failures_before_critical: 0,
             deregister_critical_after: None,
-            origin: CheckOrigin::ConsulAgent,
             initial_status: CheckStatus::Critical,
-            consul_service_id: Some("web-1".to_string()),
             notes: String::new(),
         };
         registry.register_check(config);
@@ -1846,9 +1866,7 @@ mod tests {
             success_before_passing: 0,
             failures_before_critical: 0,
             deregister_critical_after: None,
-            origin: CheckOrigin::ConsulAgent,
             initial_status: CheckStatus::Passing,
-            consul_service_id: None,
             notes: String::new(),
         };
         registry.register_check(config);

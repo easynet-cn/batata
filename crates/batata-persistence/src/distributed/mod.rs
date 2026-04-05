@@ -87,12 +87,7 @@ impl DistributedPersistService {
     /// Invalidate a config cache entry from a cluster sync notification.
     /// Called when a remote node notifies us of a config change, ensuring
     /// Follower nodes don't serve stale cached data until TTL expiry.
-    pub fn invalidate_config_cache_from_cluster(
-        &self,
-        data_id: &str,
-        group: &str,
-        tenant: &str,
-    ) {
+    pub fn invalidate_config_cache_from_cluster(&self, data_id: &str, group: &str, tenant: &str) {
         self.invalidate_config_cache(data_id, group, tenant);
     }
 

@@ -5,5 +5,5 @@
 pub mod plugin_handler;
 pub mod request;
 
-pub use plugin_handler::{ConsulRaftPluginHandler, ConsulRaftWriter, CONSUL_PLUGIN_ID};
+pub use plugin_handler::{CONSUL_PLUGIN_ID, ConsulRaftPluginHandler, ConsulRaftWriter};
 pub use request::{ConsulRaftRequest, ConsulRaftResponse};

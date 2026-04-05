@@ -17,7 +17,7 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tracing::debug;
 
-/// Health check types (matches Nacos HealthCheckType, extended for Consul compatibility)
+/// Health check types
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HealthCheckType {
     None,

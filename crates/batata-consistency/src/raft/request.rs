@@ -319,7 +319,9 @@ impl RaftRequest {
             RaftRequest::LockRenew { .. } => "LockRenew",
             RaftRequest::LockForceRelease { .. } => "LockForceRelease",
             RaftRequest::LockExpire { .. } => "LockExpire",
-            RaftRequest::PluginWrite { plugin_id, op_type, .. } => {
+            RaftRequest::PluginWrite {
+                plugin_id, op_type, ..
+            } => {
                 // Return a static str for known plugins, fallback for unknown
                 match (plugin_id.as_str(), op_type.as_str()) {
                     ("consul", op) => match op {

@@ -4,8 +4,7 @@
 //! longer than their configured deregister_critical_after duration.
 //!
 //! Uses the registry's HealthCheckResultHandler for deregistration,
-//! so CoreResultHandler removes from NamingService and ConsulResultHandler
-//! removes from ConsulNamingStore.
+//! so the result handler (e.g. CoreResultHandler) removes from the appropriate store.
 
 use std::sync::Arc;
 
@@ -70,8 +69,7 @@ impl DeregisterMonitor {
                     config.check_id, critical_duration_ms, threshold_ms
                 );
 
-                // Deregister via result handler (CoreResultHandler → NamingService,
-                // ConsulResultHandler → ConsulNamingStore)
+                // Deregister via result handler
                 self.registry.result_handler().on_deregister(
                     &config.namespace,
                     &config.group_name,
@@ -152,9 +150,7 @@ mod tests {
             success_before_passing: 0,
             failures_before_critical: 0,
             deregister_critical_after: deregister_after,
-            origin: CheckOrigin::ConsulService,
             initial_status: CheckStatus::Passing,
-            consul_service_id: None,
             notes: String::new(),
         }
     }

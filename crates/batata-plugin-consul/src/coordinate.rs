@@ -266,12 +266,15 @@ impl ConsulCoordinateService {
         };
 
         if let Some(ref raft) = self.raft_node {
-            let entry_json = serde_json::to_string(&entry)
-                .map_err(|e| format!("serialize error: {}", e))?;
-            match raft.write(ConsulRaftRequest::CoordinateBatchUpdate {
-                key: key.clone(),
-                entry_json,
-            }).await {
+            let entry_json =
+                serde_json::to_string(&entry).map_err(|e| format!("serialize error: {}", e))?;
+            match raft
+                .write(ConsulRaftRequest::CoordinateBatchUpdate {
+                    key: key.clone(),
+                    entry_json,
+                })
+                .await
+            {
                 Ok(r) if r.success => {
                     // Apply locally for read path (Raft apply also does this on all nodes)
                     self.coordinates.insert(key, entry);
@@ -725,16 +728,18 @@ mod tests {
     #[tokio::test]
     async fn test_update_coordinate() {
         let service = ConsulCoordinateService::new();
-        let result = service.update_coordinate(CoordinateUpdateRequest {
-            node: "test-node".to_string(),
-            segment: String::new(),
-            coord: Coordinate {
-                adjustment: 0.1,
-                error: 0.5,
-                height: 0.001,
-                vec: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-            },
-        }).await;
+        let result = service
+            .update_coordinate(CoordinateUpdateRequest {
+                node: "test-node".to_string(),
+                segment: String::new(),
+                coord: Coordinate {
+                    adjustment: 0.1,
+                    error: 0.5,
+                    height: 0.001,
+                    vec: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+                },
+            })
+            .await;
         assert!(result.is_ok());
 
         let entries = service.get_node("test-node");
@@ -745,16 +750,18 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_coordinate_dimensions() {
         let service = ConsulCoordinateService::new();
-        let result = service.update_coordinate(CoordinateUpdateRequest {
-            node: "test-node".to_string(),
-            segment: String::new(),
-            coord: Coordinate {
-                adjustment: 0.0,
-                error: 1.0,
-                height: 0.0,
-                vec: vec![1.0, 2.0], // Wrong dimensions
-            },
-        }).await;
+        let result = service
+            .update_coordinate(CoordinateUpdateRequest {
+                node: "test-node".to_string(),
+                segment: String::new(),
+                coord: Coordinate {
+                    adjustment: 0.0,
+                    error: 1.0,
+                    height: 0.0,
+                    vec: vec![1.0, 2.0], // Wrong dimensions
+                },
+            })
+            .await;
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
@@ -765,16 +772,18 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_coordinate_nan() {
         let service = ConsulCoordinateService::new();
-        let result = service.update_coordinate(CoordinateUpdateRequest {
-            node: "test-node".to_string(),
-            segment: String::new(),
-            coord: Coordinate {
-                adjustment: 0.0,
-                error: f64::NAN,
-                height: 0.0,
-                vec: vec![0.0; 8],
-            },
-        }).await;
+        let result = service
+            .update_coordinate(CoordinateUpdateRequest {
+                node: "test-node".to_string(),
+                segment: String::new(),
+                coord: Coordinate {
+                    adjustment: 0.0,
+                    error: f64::NAN,
+                    height: 0.0,
+                    vec: vec![0.0; 8],
+                },
+            })
+            .await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
@@ -855,16 +864,18 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_coordinate_infinity() {
         let service = ConsulCoordinateService::new();
-        let result = service.update_coordinate(CoordinateUpdateRequest {
-            node: "bad-node".to_string(),
-            segment: String::new(),
-            coord: Coordinate {
-                adjustment: f64::INFINITY,
-                error: 1.0,
-                height: 0.0,
-                vec: vec![0.0; 8],
-            },
-        }).await;
+        let result = service
+            .update_coordinate(CoordinateUpdateRequest {
+                node: "bad-node".to_string(),
+                segment: String::new(),
+                coord: Coordinate {
+                    adjustment: f64::INFINITY,
+                    error: 1.0,
+                    height: 0.0,
+                    vec: vec![0.0; 8],
+                },
+            })
+            .await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
@@ -872,16 +883,18 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_coordinate_vec_infinity() {
         let service = ConsulCoordinateService::new();
-        let result = service.update_coordinate(CoordinateUpdateRequest {
-            node: "inf-vec".to_string(),
-            segment: String::new(),
-            coord: Coordinate {
-                adjustment: 0.0,
-                error: 1.0,
-                height: 0.0,
-                vec: vec![0.0, 0.0, f64::INFINITY, 0.0, 0.0, 0.0, 0.0, 0.0],
-            },
-        }).await;
+        let result = service
+            .update_coordinate(CoordinateUpdateRequest {
+                node: "inf-vec".to_string(),
+                segment: String::new(),
+                coord: Coordinate {
+                    adjustment: 0.0,
+                    error: 1.0,
+                    height: 0.0,
+                    vec: vec![0.0, 0.0, f64::INFINITY, 0.0, 0.0, 0.0, 0.0, 0.0],
+                },
+            })
+            .await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
@@ -925,7 +938,6 @@ mod tests {
                 segment: String::new(),
                 coord: Coordinate::default(),
             })
-            
             .unwrap();
 
         let nodes = persistent.get_nodes(None);

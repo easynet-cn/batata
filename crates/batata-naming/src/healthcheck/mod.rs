@@ -35,8 +35,7 @@ pub use processor::{
 };
 pub use reactor::HealthCheckReactor;
 pub use registry::{
-    CheckOrigin, CheckStatus, CheckType, InstanceCheckConfig, InstanceCheckRegistry,
-    InstanceCheckStatus,
+    CheckStatus, CheckType, InstanceCheckConfig, InstanceCheckRegistry, InstanceCheckStatus,
 };
 pub use task::HealthCheckTask;
 

@@ -19,11 +19,10 @@ pub mod service;
 
 // Re-export commonly used types
 pub use healthcheck::{
-    CheckOrigin, CheckStatus, CheckType, ExpiredInstanceChecker, HealthCheckConfig,
-    HealthCheckManager, HealthCheckProcessor, HealthCheckReactor, HealthCheckResult,
-    HealthCheckTask, HealthCheckType, HttpHealthCheckProcessor, HttpHealthParams,
-    InstanceCheckConfig, InstanceCheckRegistry, InstanceCheckStatus, TcpHealthCheckProcessor,
-    TcpHealthParams, UnhealthyInstanceChecker,
+    CheckStatus, CheckType, ExpiredInstanceChecker, HealthCheckConfig, HealthCheckManager,
+    HealthCheckProcessor, HealthCheckReactor, HealthCheckResult, HealthCheckTask, HealthCheckType,
+    HttpHealthCheckProcessor, HttpHealthParams, InstanceCheckConfig, InstanceCheckRegistry,
+    InstanceCheckStatus, TcpHealthCheckProcessor, TcpHealthParams, UnhealthyInstanceChecker,
 };
 pub use manager::NamingManager;
 pub use model::{Instance, Service, ServiceInfo, ServiceQuery};

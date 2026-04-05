@@ -100,10 +100,7 @@ impl RocksStateMachine {
     /// The plugin's column families must already exist in RocksDB — pass them
     /// via `extra_cf_names` when creating the state machine, or via
     /// `PluginContext::get("extra_cf_names")` before Raft startup.
-    pub async fn register_plugin(
-        &self,
-        handler: Arc<dyn RaftPluginHandler>,
-    ) -> Result<(), String> {
+    pub async fn register_plugin(&self, handler: Arc<dyn RaftPluginHandler>) -> Result<(), String> {
         // Verify all required CFs exist
         for cf_name in handler.column_families() {
             if self.db.cf_handle(&cf_name).is_none() {
@@ -384,36 +381,32 @@ impl RocksStateMachine {
                 encrypted_data_key,
                 cas_md5,
                 history,
-            } => {
-                self.apply_config_publish_batched(
-                    &data_id,
-                    &group,
-                    &tenant,
-                    &content,
-                    &md5,
-                    config_type,
-                    app_name,
-                    tag,
-                    desc,
-                    src_user,
-                    src_ip,
-                    r#use,
-                    effect,
-                    schema,
-                    encrypted_data_key,
-                    cas_md5.as_deref(),
-                    history,
-                )
-            }
+            } => self.apply_config_publish_batched(
+                &data_id,
+                &group,
+                &tenant,
+                &content,
+                &md5,
+                config_type,
+                app_name,
+                tag,
+                desc,
+                src_user,
+                src_ip,
+                r#use,
+                effect,
+                schema,
+                encrypted_data_key,
+                cas_md5.as_deref(),
+                history,
+            ),
 
             RaftRequest::ConfigRemove {
                 data_id,
                 group,
                 tenant,
                 history,
-            } => {
-                self.apply_config_remove_batched(&data_id, &group, &tenant, history)
-            }
+            } => self.apply_config_remove_batched(&data_id, &group, &tenant, history),
 
             RaftRequest::ConfigGrayPublish {
                 data_id,
@@ -648,7 +641,11 @@ impl RocksStateMachine {
                 self.apply_lock_expire(&namespace, &name)
             }
 
-            RaftRequest::PluginWrite { plugin_id, op_type, payload } => {
+            RaftRequest::PluginWrite {
+                plugin_id,
+                op_type,
+                payload,
+            } => {
                 let registry = self.plugin_registry.read().await;
                 if let Some(handler) = registry.get(&plugin_id) {
                     handler.apply(&self.db, &op_type, &payload, log_index)
@@ -1827,8 +1824,7 @@ impl RocksStateMachine {
         &self,
         membership: StoredMembership<NodeId, openraft::BasicNode>,
     ) -> Result<(), StorageError<NodeId>> {
-        let bytes =
-            bincode::serialize(&membership).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let bytes = bincode::serialize(&membership).map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         self.db
             .put_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP, &bytes)

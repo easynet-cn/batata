@@ -18,8 +18,8 @@ use tracing::{error, info, warn};
 use crate::constants::CF_CONSUL_ACL;
 
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::raft::ConsulRaftWriter;
 use crate::model::ConsulDatacenterConfig;
+use crate::raft::ConsulRaftWriter;
 
 // ACL Token header name
 pub const X_CONSUL_TOKEN: &str = "X-Consul-Token";

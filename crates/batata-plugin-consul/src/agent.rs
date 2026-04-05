@@ -11,6 +11,7 @@ use batata_common::{ClusterManager, MemberState};
 use batata_naming::healthcheck::registry::InstanceCheckRegistry;
 
 use crate::acl::{AclService, ResourceType};
+use crate::check_index::ConsulCheckIndex;
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
@@ -33,15 +34,21 @@ use batata_plugin::PluginNamingStore;
 pub struct ConsulAgentService {
     naming_store: Arc<ConsulNamingStore>,
     registry: Arc<InstanceCheckRegistry>,
+    check_index: Arc<ConsulCheckIndex>,
     /// Optional Raft writer for cluster-mode replication
     raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulAgentService {
-    pub fn new(naming_store: Arc<ConsulNamingStore>, registry: Arc<InstanceCheckRegistry>) -> Self {
+    pub fn new(
+        naming_store: Arc<ConsulNamingStore>,
+        registry: Arc<InstanceCheckRegistry>,
+        check_index: Arc<ConsulCheckIndex>,
+    ) -> Self {
         Self {
             naming_store,
             registry,
+            check_index,
             raft_node: None,
         }
     }
@@ -50,11 +57,13 @@ impl ConsulAgentService {
     pub fn with_raft(
         naming_store: Arc<ConsulNamingStore>,
         registry: Arc<InstanceCheckRegistry>,
+        check_index: Arc<ConsulCheckIndex>,
         raft_node: Arc<ConsulRaftWriter>,
     ) -> Self {
         Self {
             naming_store,
             registry,
+            check_index,
             raft_node: Some(raft_node),
         }
     }
@@ -117,8 +126,8 @@ impl ConsulAgentService {
             port,
             CONSUL_INTERNAL_CLUSTER
         );
-        self.registry
-            .register_consul_service_id("consul", &service_key, &instance_key);
+        self.check_index
+            .register("consul", &service_key, &instance_key);
 
         // Register serfHealth TTL check — aligned with Consul original
         {
@@ -143,9 +152,7 @@ impl ConsulAgentService {
                 success_before_passing: 0,
                 failures_before_critical: 0,
                 deregister_critical_after: None,
-                origin: CheckOrigin::ConsulService,
                 initial_status: CheckStatus::Passing,
-                consul_service_id: Some("consul".to_string()),
                 notes: "Agent alive and reachable".to_string(),
             });
         }
@@ -165,7 +172,7 @@ impl ConsulAgentService {
     pub async fn deregister_consul_service(&self) {
         self.naming_store
             .remove_by_service_id(crate::namespace::DEFAULT_NAMESPACE, "consul");
-        self.registry.remove_consul_service_id("consul");
+        self.check_index.remove("consul");
         tracing::info!("Consul service deregistered");
     }
 }
@@ -239,7 +246,7 @@ pub async fn register_service(
 
     // Bug #2 fix: If the same consul_service_id was previously registered with
     // different IP/port, clean up old health checks to avoid orphans.
-    if let Some((_, old_instance_key)) = agent.registry.lookup_consul_service_id(&service_id) {
+    if let Some((_, old_instance_key)) = agent.check_index.lookup(&service_id) {
         let parts: Vec<&str> = old_instance_key.splitn(6, '#').collect();
         if parts.len() >= 6 {
             let old_ip = parts[3];
@@ -258,7 +265,7 @@ pub async fn register_service(
                     .deregister_all_instance_checks(&old_instance_key);
             }
         }
-        agent.registry.remove_consul_service_id(&service_id);
+        agent.check_index.remove(&service_id);
     }
 
     // Store in Consul naming store (native format — no conversion overhead)
@@ -295,8 +302,8 @@ pub async fn register_service(
         CONSUL_INTERNAL_NAMESPACE, CONSUL_INTERNAL_GROUP, registration.name
     );
     agent
-        .registry
-        .register_consul_service_id(&service_id, &service_key, &instance_key);
+        .check_index
+        .register(&service_id, &service_key, &instance_key);
 
     // Register validated checks with health service
     for check_reg in embedded_checks {
@@ -371,10 +378,10 @@ pub async fn deregister_service(
 
     if deregistered {
         // Clean up registry entries via O(1) lookup
-        if let Some((_, instance_key)) = agent.registry.lookup_consul_service_id(&service_id) {
+        if let Some((_, instance_key)) = agent.check_index.lookup(&service_id) {
             agent.registry.deregister_all_instance_checks(&instance_key);
         }
-        agent.registry.remove_consul_service_id(&service_id);
+        agent.check_index.remove(&service_id);
     }
 
     if deregistered {
@@ -1921,7 +1928,8 @@ mod tests {
         let naming_service = Arc::new(NamingService::new());
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service));
         let naming_store = Arc::new(ConsulNamingStore::new());
-        let agent = ConsulAgentService::new(naming_store.clone(), registry);
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        let agent = ConsulAgentService::new(naming_store.clone(), registry, check_index);
         assert_eq!(agent.naming_store.len(), 0);
     }
 
@@ -1985,19 +1993,22 @@ mod tests {
         ConsulAgentService,
         Arc<ConsulNamingStore>,
         Arc<InstanceCheckRegistry>,
+        Arc<ConsulCheckIndex>,
     ) {
         let naming_service = Arc::new(NamingService::new());
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(naming_service));
         let naming_store = Arc::new(ConsulNamingStore::new());
-        let agent = ConsulAgentService::new(naming_store.clone(), registry.clone());
-        (agent, naming_store, registry)
+        let check_index = Arc::new(ConsulCheckIndex::new());
+        let agent =
+            ConsulAgentService::new(naming_store.clone(), registry.clone(), check_index.clone());
+        (agent, naming_store, registry, check_index)
     }
 
     #[tokio::test]
     async fn test_consul_self_registration() {
         use batata_naming::healthcheck::registry::*;
 
-        let (agent, _naming_store, registry) = create_test_agent();
+        let (agent, _naming_store, registry, check_index) = create_test_agent();
 
         let result = agent.register_consul_service(8500, "dc1").await;
         assert!(result.is_ok(), "Self-registration should succeed");
@@ -2027,16 +2038,14 @@ mod tests {
             CheckStatus::Passing,
             "serfHealth should start as Passing"
         );
-        assert_eq!(config.consul_service_id, Some("consul".to_string()));
-
         // Verify consul service ID index
-        let lookup = registry.lookup_consul_service_id("consul");
+        let lookup = check_index.lookup("consul");
         assert!(lookup.is_some(), "consul service ID should be indexed");
     }
 
     #[tokio::test]
     async fn test_consul_self_deregistration() {
-        let (agent, _naming_store, _registry) = create_test_agent();
+        let (agent, _naming_store, _registry, _check_index) = create_test_agent();
 
         // Register first
         agent.register_consul_service(8500, "dc1").await.unwrap();

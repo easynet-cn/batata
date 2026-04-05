@@ -19,13 +19,13 @@ use crate::constants::CF_CONSUL_QUERIES;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::raft::ConsulRaftWriter;
 use crate::model::{
     AgentService, AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, HealthCheck, Node,
     PreparedQuery, PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
     PreparedQueryExecuteResult, PreparedQueryExplainResult, PreparedQueryParams, ServiceHealth,
 };
 use crate::naming_store::ConsulNamingStore;
+use crate::raft::ConsulRaftWriter;
 
 /// Global prepared query storage
 static QUERIES: LazyLock<DashMap<String, PreparedQuery>> = LazyLock::new(DashMap::new);

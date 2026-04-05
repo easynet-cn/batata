@@ -280,12 +280,15 @@ impl ConsulConfigEntryService {
         };
 
         if let Some(ref raft) = self.raft_node {
-            let entry_json = serde_json::to_string(&entry)
-                .map_err(|e| format!("serialize error: {}", e))?;
-            match raft.write(ConsulRaftRequest::ConfigEntryApply {
-                key: key.clone(),
-                entry_json,
-            }).await {
+            let entry_json =
+                serde_json::to_string(&entry).map_err(|e| format!("serialize error: {}", e))?;
+            match raft
+                .write(ConsulRaftRequest::ConfigEntryApply {
+                    key: key.clone(),
+                    entry_json,
+                })
+                .await
+            {
                 Ok(r) if r.success => {
                     self.entries.insert(key, entry);
                 }
@@ -299,7 +302,12 @@ impl ConsulConfigEntryService {
         Ok(true)
     }
 
-    pub async fn delete_entry(&self, kind: &str, name: &str, cas: Option<u64>) -> Result<bool, String> {
+    pub async fn delete_entry(
+        &self,
+        kind: &str,
+        name: &str,
+        cas: Option<u64>,
+    ) -> Result<bool, String> {
         let key = Self::entry_key(kind, name);
 
         if let Some(cas_index) = cas {
@@ -313,9 +321,10 @@ impl ConsulConfigEntryService {
         }
 
         if let Some(ref raft) = self.raft_node {
-            match raft.write(ConsulRaftRequest::ConfigEntryDelete {
-                key: key.clone(),
-            }).await {
+            match raft
+                .write(ConsulRaftRequest::ConfigEntryDelete { key: key.clone() })
+                .await
+            {
                 Ok(r) if r.success => {
                     self.entries.remove(&key);
                 }
@@ -666,7 +675,9 @@ mod tests {
         assert!(service.get_entry("mesh", "mesh").is_some());
 
         // CAS with correct index
-        let result = service.delete_entry("mesh", "mesh", Some(entry.modify_index)).await;
+        let result = service
+            .delete_entry("mesh", "mesh", Some(entry.modify_index))
+            .await;
         assert!(result.unwrap());
         assert!(service.get_entry("mesh", "mesh").is_none());
     }

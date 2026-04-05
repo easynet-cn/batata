@@ -1,11 +1,11 @@
-//! Unified health check registry for Nacos and Consul
+//! Unified health check registry
 //!
-//! InstanceCheckRegistry provides a single source of truth for all health checks,
-//! regardless of origin (Nacos cluster config or Consul agent). It:
+//! InstanceCheckRegistry provides a single source of truth for all health checks.
+//! It:
 //! - Stores check configs and runtime statuses
 //! - Indexes checks by instance and service for fast lookup
 //! - Aggregates multiple checks per instance into a single healthy/unhealthy decision
-//! - Immediately syncs health status changes to NamingService
+//! - Immediately syncs health status changes via HealthCheckResultHandler
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,29 +16,19 @@ use tracing::{debug, info, warn};
 
 use batata_plugin::HealthCheckResultHandler;
 
-/// Tri-state health status (Consul-compatible, Nacos maps to bool)
+/// Tri-state health check status
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CheckStatus {
-    /// Healthy (Instance.healthy = true)
+    /// Healthy
     Passing,
-    /// Degraded but still healthy (Instance.healthy = true)
+    /// Degraded but still healthy
     Warning,
-    /// Unhealthy (Instance.healthy = false)
+    /// Unhealthy
     Critical,
 }
 
 impl CheckStatus {
-    /// Convert from Consul status string
-    pub fn from_consul_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "passing" => Self::Passing,
-            "warning" => Self::Warning,
-            "critical" => Self::Critical,
-            _ => Self::Critical,
-        }
-    }
-
-    /// Convert to Consul status string
+    /// String representation of the status
     pub fn as_str(&self) -> &str {
         match self {
             Self::Passing => "passing",
@@ -47,13 +37,13 @@ impl CheckStatus {
         }
     }
 
-    /// Whether this status maps to healthy in Nacos
+    /// Whether this status is considered healthy
     pub fn is_healthy(&self) -> bool {
         matches!(self, Self::Passing | Self::Warning)
     }
 }
 
-/// Check type (superset of Nacos + Consul)
+/// Health check type
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CheckType {
     /// No active health check
@@ -62,7 +52,7 @@ pub enum CheckType {
     Tcp,
     /// HTTP GET request
     Http,
-    /// TTL-based passive check (client calls /check/pass)
+    /// TTL-based passive check
     Ttl,
     /// gRPC health protocol
     Grpc,
@@ -71,18 +61,6 @@ pub enum CheckType {
 }
 
 impl CheckType {
-    pub fn from_consul_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "tcp" => Self::Tcp,
-            "http" => Self::Http,
-            "ttl" => Self::Ttl,
-            "grpc" => Self::Grpc,
-            "mysql" => Self::Mysql,
-            "none" | "" => Self::None,
-            _ => Self::None,
-        }
-    }
-
     pub fn as_str(&self) -> &str {
         match self {
             Self::None => "none",
@@ -94,21 +72,23 @@ impl CheckType {
         }
     }
 
+    /// Parse from string
+    pub fn from_str_value(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "tcp" => Self::Tcp,
+            "http" => Self::Http,
+            "ttl" => Self::Ttl,
+            "grpc" => Self::Grpc,
+            "mysql" => Self::Mysql,
+            "none" | "" => Self::None,
+            _ => Self::None,
+        }
+    }
+
     /// Whether this check type requires active (outbound) checking
     pub fn is_active(&self) -> bool {
         matches!(self, Self::Tcp | Self::Http | Self::Grpc | Self::Mysql)
     }
-}
-
-/// Where the check came from
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CheckOrigin {
-    /// Auto-created from Nacos ClusterConfig
-    NacosCluster,
-    /// Consul /agent/check/register
-    ConsulAgent,
-    /// Embedded in Consul service registration
-    ConsulService,
 }
 
 /// Check configuration (static after registration)
@@ -144,12 +124,8 @@ pub struct InstanceCheckConfig {
     pub failures_before_critical: u32,
     // Auto-deregistration
     pub deregister_critical_after: Option<Duration>,
-    // Origin
-    pub origin: CheckOrigin,
     /// Initial status when check is registered
     pub initial_status: CheckStatus,
-    /// Consul service ID for reverse lookup
-    pub consul_service_id: Option<String>,
     /// Notes / maintenance reason
     pub notes: String,
 }
@@ -159,7 +135,7 @@ pub struct InstanceCheckConfig {
 pub struct InstanceCheckStatus {
     /// Current check status
     pub status: CheckStatus,
-    /// Last check output (for Consul API)
+    /// Last check output message
     pub output: String,
     /// Timestamp in milliseconds
     pub last_updated: i64,
@@ -217,7 +193,9 @@ pub fn build_check_service_key(namespace: &str, group_name: &str, service_name: 
 /// Unified health check registry
 ///
 /// Central store for all health check configurations and their runtime statuses.
-/// Serves both Nacos persistent instance checks and Consul agent/service checks.
+/// Indexes checks by instance and service for fast lookup, aggregates multiple
+/// checks per instance into a single healthy/unhealthy decision, and syncs
+/// health status changes via the result handler.
 pub struct InstanceCheckRegistry {
     // Primary storage: check_key → config/status
     configs: DashMap<String, InstanceCheckConfig>,
@@ -229,26 +207,18 @@ pub struct InstanceCheckRegistry {
     // Index: service_key → {instance_key}
     service_instances: DashMap<String, HashSet<String>>,
 
-    // Consul O(1) lookup: consul_svc_id → (service_key, instance_key)
-    consul_service_index: DashMap<String, (String, String)>,
-
     // Result handler — called when health status changes.
-    // CoreResultHandler updates NamingService, ConsulResultHandler updates ConsulNamingStore.
     result_handler: Arc<dyn HealthCheckResultHandler>,
 }
 
 impl InstanceCheckRegistry {
     /// Create a new registry with the given result handler.
-    ///
-    /// - For batata core: use `CoreResultHandler` (updates NamingService)
-    /// - For Consul plugin: use a Consul-specific handler
     pub fn new(result_handler: Arc<dyn HealthCheckResultHandler>) -> Self {
         Self {
             configs: DashMap::new(),
             statuses: DashMap::new(),
             instance_checks: DashMap::new(),
             service_instances: DashMap::new(),
-            consul_service_index: DashMap::new(),
             result_handler,
         }
     }
@@ -296,25 +266,6 @@ impl InstanceCheckRegistry {
             .or_default()
             .insert(instance_key);
 
-        // Register consul service ID if provided
-        if let Some(ref consul_svc_id) = config.consul_service_id {
-            let svc_key = build_check_service_key(
-                &config.namespace,
-                &config.group_name,
-                &config.service_name,
-            );
-            let inst_key = build_instance_key(
-                &config.namespace,
-                &config.group_name,
-                &config.service_name,
-                &config.ip,
-                config.port,
-                &config.cluster_name,
-            );
-            self.consul_service_index
-                .insert(consul_svc_id.clone(), (svc_key, inst_key));
-        }
-
         // Store config
         self.configs.insert(check_key.clone(), config);
 
@@ -357,11 +308,6 @@ impl InstanceCheckRegistry {
                 }
             }
 
-            // Remove consul service ID mapping if present
-            if let Some(ref consul_svc_id) = config.consul_service_id {
-                self.consul_service_index.remove(consul_svc_id);
-            }
-
             debug!("Deregistered health check: {}", check_key);
         }
     }
@@ -370,12 +316,8 @@ impl InstanceCheckRegistry {
     pub fn deregister_all_instance_checks(&self, instance_key: &str) {
         if let Some((_, check_keys)) = self.instance_checks.remove(instance_key) {
             for check_key in &check_keys {
-                if let Some((_, config)) = self.configs.remove(check_key) {
+                if let Some((_, _config)) = self.configs.remove(check_key) {
                     self.statuses.remove(check_key);
-                    // Remove consul service ID mapping if present
-                    if let Some(ref consul_svc_id) = config.consul_service_id {
-                        self.consul_service_index.remove(consul_svc_id);
-                    }
                 }
             }
 
@@ -527,25 +469,6 @@ impl InstanceCheckRegistry {
         result
     }
 
-    /// Get all checks for a given Consul service ID
-    pub fn get_checks_by_consul_service_id(
-        &self,
-        consul_svc_id: &str,
-    ) -> Vec<(InstanceCheckConfig, InstanceCheckStatus)> {
-        // Clone the instance_key to release consul_service_index lock before
-        // calling get_instance_checks (which accesses instance_checks + configs + statuses)
-        let instance_key = self
-            .consul_service_index
-            .get(consul_svc_id)
-            .map(|entry| entry.value().1.clone());
-        // --- consul_service_index lock released ---
-
-        match instance_key {
-            Some(key) => self.get_instance_checks(&key),
-            None => Vec::new(),
-        }
-    }
-
     /// Get all registered checks
     pub fn get_all_checks(&self) -> Vec<(InstanceCheckConfig, InstanceCheckStatus)> {
         // Collect keys first to release configs lock before accessing statuses.
@@ -606,59 +529,9 @@ impl InstanceCheckRegistry {
         self.statuses.get(check_key).map(|s| s.clone())
     }
 
-    /// Get all checks whose consul_service_id matches the given service ID
-    pub fn get_checks_for_consul_service(
-        &self,
-        service_id: &str,
-    ) -> Vec<(InstanceCheckConfig, InstanceCheckStatus)> {
-        // Collect matching keys first to release configs lock before accessing statuses
-        let matching: Vec<(String, InstanceCheckConfig)> = self
-            .configs
-            .iter()
-            .filter(|e| {
-                e.value()
-                    .consul_service_id
-                    .as_deref()
-                    .is_some_and(|id| id == service_id)
-            })
-            .map(|e| (e.key().clone(), e.value().clone()))
-            .collect();
-        // --- configs lock released ---
-
-        let mut result = Vec::new();
-        for (key, config) in matching {
-            if let Some(status) = self.statuses.get(&key) {
-                result.push((config, status.clone()));
-            }
-        }
-        result
-    }
-
     /// Check if a check_key exists in the registry
     pub fn has_check(&self, check_key: &str) -> bool {
         self.configs.contains_key(check_key)
-    }
-
-    // --- Consul index methods ---
-
-    /// Register a Consul service ID → (service_key, instance_key) mapping
-    pub fn register_consul_service_id(&self, consul_svc_id: &str, svc_key: &str, inst_key: &str) {
-        self.consul_service_index.insert(
-            consul_svc_id.to_string(),
-            (svc_key.to_string(), inst_key.to_string()),
-        );
-    }
-
-    /// Look up a Consul service ID to find the (service_key, instance_key)
-    pub fn lookup_consul_service_id(&self, consul_svc_id: &str) -> Option<(String, String)> {
-        self.consul_service_index
-            .get(consul_svc_id)
-            .map(|entry| entry.value().clone())
-    }
-
-    /// Remove a Consul service ID mapping
-    pub fn remove_consul_service_id(&self, consul_svc_id: &str) {
-        self.consul_service_index.remove(consul_svc_id);
     }
 
     /// Get the number of registered checks
@@ -781,9 +654,7 @@ mod tests {
             success_before_passing: 0,
             failures_before_critical: 0,
             deregister_critical_after: None,
-            origin: CheckOrigin::ConsulService,
             initial_status,
-            consul_service_id: None,
             notes: String::new(),
         }
     }
@@ -911,27 +782,6 @@ mod tests {
     }
 
     #[test]
-    fn test_consul_service_index() {
-        let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::with_naming_service(ns);
-
-        registry.register_consul_service_id(
-            "my-svc-1",
-            "public#DEFAULT_GROUP#svc",
-            "public#DEFAULT_GROUP#svc#1.2.3.4#80#DEFAULT",
-        );
-
-        let result = registry.lookup_consul_service_id("my-svc-1");
-        assert!(result.is_some());
-        let (svc_key, inst_key) = result.unwrap();
-        assert_eq!(svc_key, "public#DEFAULT_GROUP#svc");
-        assert_eq!(inst_key, "public#DEFAULT_GROUP#svc#1.2.3.4#80#DEFAULT");
-
-        registry.remove_consul_service_id("my-svc-1");
-        assert!(registry.lookup_consul_service_id("my-svc-1").is_none());
-    }
-
-    #[test]
     fn test_deregister_all_instance_checks() {
         let ns = test_naming_service();
         let registry = InstanceCheckRegistry::with_naming_service(ns);
@@ -1001,24 +851,6 @@ mod tests {
     }
 
     #[test]
-    fn test_consul_service_id_in_config() {
-        let ns = test_naming_service();
-        let registry = InstanceCheckRegistry::with_naming_service(ns);
-
-        let mut config = make_config("check-1", CheckType::Tcp, CheckStatus::Passing);
-        config.consul_service_id = Some("my-consul-svc".to_string());
-        registry.register_check(config);
-
-        // The consul index should be populated automatically
-        let result = registry.lookup_consul_service_id("my-consul-svc");
-        assert!(result.is_some());
-
-        // Deregistering the check should remove the consul index
-        registry.deregister_check("check-1");
-        assert!(registry.lookup_consul_service_id("my-consul-svc").is_none());
-    }
-
-    #[test]
     fn test_no_checks_default_healthy() {
         let ns = test_naming_service();
         let registry = InstanceCheckRegistry::with_naming_service(ns);
@@ -1029,12 +861,7 @@ mod tests {
 
     // ============== Concurrent Stress Tests ==============
 
-    fn make_stress_config(
-        check_id: &str,
-        service_name: &str,
-        ip: &str,
-        consul_service_id: Option<String>,
-    ) -> InstanceCheckConfig {
+    fn make_stress_config(check_id: &str, service_name: &str, ip: &str) -> InstanceCheckConfig {
         InstanceCheckConfig {
             check_id: check_id.to_string(),
             name: check_id.to_string(),
@@ -1055,9 +882,7 @@ mod tests {
             success_before_passing: 0,
             failures_before_critical: 0,
             deregister_critical_after: None,
-            origin: CheckOrigin::ConsulService,
             initial_status: CheckStatus::Passing,
-            consul_service_id,
             notes: String::new(),
         }
     }
@@ -1081,7 +906,6 @@ mod tests {
                         &format!("check-{}-{}", i, j),
                         &format!("svc-{}", i),
                         &format!("10.0.{}.{}", i, j),
-                        Some(format!("svc-{}-{}", i, j)),
                     );
                     registry.register_check(config);
                     tokio::task::yield_now().await;
@@ -1126,7 +950,6 @@ mod tests {
                 &format!("upd-check-{}", i),
                 "upd-svc",
                 &format!("10.1.0.{}", i),
-                Some(format!("upd-svc-{}", i)),
             );
             registry.register_check(config);
         }
@@ -1182,7 +1005,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_concurrent_register_deregister_and_consul_queries() {
+    async fn test_concurrent_register_deregister_and_queries() {
         let ns = test_naming_service();
         let registry = Arc::new(InstanceCheckRegistry::with_naming_service(ns));
 
@@ -1192,7 +1015,6 @@ mod tests {
                 &format!("cd-check-{}", i),
                 "cd-svc",
                 &format!("10.2.0.{}", i),
-                Some(format!("cd-svc-{}", i)),
             );
             registry.register_check(config);
         }
@@ -1214,15 +1036,15 @@ mod tests {
             }));
         }
 
-        // 2 consul service queries
+        // 2 reader threads: get all checks + get by status
         for _ in 0..2 {
             let registry = registry.clone();
             let barrier = barrier.clone();
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
-                for i in 0..20 {
-                    let _ = registry.get_checks_for_consul_service("cd-svc");
-                    let _ = registry.get_checks_by_consul_service_id(&format!("cd-svc-{}", i));
+                for _ in 0..20 {
+                    let _ = registry.get_all_checks();
+                    let _ = registry.get_checks_by_status(&CheckStatus::Passing);
                     tokio::task::yield_now().await;
                 }
             }));
@@ -1235,8 +1057,15 @@ mod tests {
             handles.push(tokio::spawn(async move {
                 barrier.wait().await;
                 for i in 0..20 {
-                    let _ =
-                        registry.aggregate_instance_health(&format!("10.2.0.{}#8080#DEFAULT", i));
+                    let instance_key = build_instance_key(
+                        "public",
+                        "DEFAULT_GROUP",
+                        "cd-svc",
+                        &format!("10.2.0.{}", i),
+                        8080,
+                        "DEFAULT",
+                    );
+                    let _ = registry.aggregate_instance_health(&instance_key);
                     tokio::task::yield_now().await;
                 }
             }));
@@ -1251,7 +1080,7 @@ mod tests {
 
         assert!(
             result.is_ok(),
-            "Deadlock detected: concurrent register + deregister + consul queries timed out"
+            "Deadlock detected: concurrent register + deregister + queries timed out"
         );
     }
 }

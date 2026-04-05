@@ -31,9 +31,10 @@ async fn create_test_app() -> impl actix_web::dev::Service<
     ));
     let kv_service = ConsulKVService::new();
     let session_service = ConsulSessionService::new();
-    let health_service = ConsulHealthService::new(registry.clone());
+    let check_index = Arc::new(crate::check_index::ConsulCheckIndex::new());
+    let health_service = ConsulHealthService::new(registry.clone(), check_index.clone());
     let naming_store = Arc::new(crate::naming_store::ConsulNamingStore::new());
-    let agent_service = ConsulAgentService::new(naming_store.clone(), registry);
+    let agent_service = ConsulAgentService::new(naming_store.clone(), registry, check_index);
     let acl_service = AclService::disabled();
     let event_service = ConsulEventService::new();
     let snapshot_service = ConsulSnapshotService::new();

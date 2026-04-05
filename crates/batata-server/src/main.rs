@@ -692,8 +692,7 @@ async fn run_http_servers(
                 server_main_port,
             )?;
 
-            let plugin_servers =
-                build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
+            let plugin_servers = build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
             let mcp_registry_opt = build_mcp_registry(
                 app_state,
                 &mcp_registry_for_server,
@@ -763,8 +762,7 @@ async fn run_http_servers(
                 server_main_port,
             )?;
 
-            let plugin_servers =
-                build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
+            let plugin_servers = build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
             let mcp_registry_opt = build_mcp_registry(
                 app_state,
                 &ai_services.mcp_registry,

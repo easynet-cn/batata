@@ -15,10 +15,10 @@ use super::config::RaftConfig;
 use super::log_store::RocksLogStore;
 use super::network::BatataRaftNetworkFactory;
 use super::plugin::PluginRegistry;
-use crate::RaftPluginHandler;
 use super::request::{RaftRequest, RaftResponse};
 use super::state_machine::RocksStateMachine;
 use super::types::{NodeId, RaftMetrics, TypeConfig};
+use crate::RaftPluginHandler;
 
 /// Cached gRPC channel for leader write-forwarding.
 /// Reuses the same HTTP/2 connection across requests to avoid per-write connect overhead.
@@ -103,8 +103,13 @@ impl RaftNode {
             RocksLogStore::with_options(config.log_dir(), db_opts.clone(), cf_opts.clone()).await?;
 
         // Create state machine with custom options and plugin CFs
-        let state_machine =
-            RocksStateMachine::with_options_and_cfs(config.state_machine_dir(), db_opts, cf_opts, extra_cf_names).await?;
+        let state_machine = RocksStateMachine::with_options_and_cfs(
+            config.state_machine_dir(),
+            db_opts,
+            cf_opts,
+            extra_cf_names,
+        )
+        .await?;
         let db = state_machine.db();
         let plugin_registry = state_machine.plugin_registry();
 
@@ -165,10 +170,7 @@ impl RaftNode {
     ///
     /// Safe to call after Raft startup — the registry is shared between
     /// this node and the state machine via `Arc`.
-    pub async fn register_plugin(
-        &self,
-        handler: Arc<dyn RaftPluginHandler>,
-    ) -> Result<(), String> {
+    pub async fn register_plugin(&self, handler: Arc<dyn RaftPluginHandler>) -> Result<(), String> {
         self.plugin_registry.write().await.register(handler)
     }
 
@@ -376,9 +378,7 @@ impl RaftNode {
                 _ => {
                     let endpoint = format!("http://{}", leader_addr);
                     let channel = tonic::transport::Channel::from_shared(endpoint)
-                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                            Box::new(e)
-                        })?
+                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?
                         .connect_timeout(Duration::from_secs(5))
                         .tcp_keepalive(Some(Duration::from_secs(10)))
                         .tcp_nodelay(true)

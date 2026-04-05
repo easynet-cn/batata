@@ -322,9 +322,7 @@ mod tests {
             success_before_passing: 0,
             failures_before_critical: 0,
             deregister_critical_after: None,
-            origin: CheckOrigin::ConsulService,
             initial_status: CheckStatus::Passing,
-            consul_service_id: None,
             notes: String::new(),
         }
     }

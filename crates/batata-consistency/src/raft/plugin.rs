@@ -65,10 +65,7 @@ impl PluginRegistry {
 
     /// Register a plugin handler. Returns an error if a handler with the same
     /// plugin_id is already registered.
-    pub fn register(
-        &mut self,
-        handler: Arc<dyn RaftPluginHandler>,
-    ) -> Result<(), String> {
+    pub fn register(&mut self, handler: Arc<dyn RaftPluginHandler>) -> Result<(), String> {
         let id = handler.plugin_id().to_string();
         if self.handlers.contains_key(&id) {
             return Err(format!("plugin '{}' is already registered", id));

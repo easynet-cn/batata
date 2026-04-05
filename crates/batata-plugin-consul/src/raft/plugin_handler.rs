@@ -10,15 +10,15 @@
 use std::hash::Hasher;
 use std::sync::Arc;
 
+use batata_consistency::RaftNode;
 use batata_consistency::raft::plugin::RaftPluginHandler;
 use batata_consistency::raft::request::{RaftRequest, RaftResponse};
-use batata_consistency::RaftNode;
 use rocksdb::{DB, WriteBatch};
 use tracing::{debug, error, info, warn};
 
 use super::request::{ConsulRaftRequest, ConsulRaftResponse};
 use crate::constants::{
-    CF_CONSUL_ACL, CF_CONSUL_CATALOG, CF_CONSUL_CA_ROOTS, CF_CONSUL_CONFIG_ENTRIES,
+    CF_CONSUL_ACL, CF_CONSUL_CA_ROOTS, CF_CONSUL_CATALOG, CF_CONSUL_CONFIG_ENTRIES,
     CF_CONSUL_COORDINATES, CF_CONSUL_EVENTS, CF_CONSUL_INTENTIONS, CF_CONSUL_KV,
     CF_CONSUL_NAMESPACES, CF_CONSUL_OPERATOR, CF_CONSUL_PEERING, CF_CONSUL_QUERIES,
     CF_CONSUL_SESSIONS,
@@ -182,68 +182,76 @@ fn apply_consul_request(
     request: ConsulRaftRequest,
     log_index: u64,
 ) -> ConsulRaftResponse {
-    let table = match &request {
-        // KV
-        ConsulRaftRequest::KVPut { .. }
-        | ConsulRaftRequest::KVDelete { .. }
-        | ConsulRaftRequest::KVDeletePrefix { .. }
-        | ConsulRaftRequest::KVAcquireSession { .. }
-        | ConsulRaftRequest::KVReleaseSessionKey { .. }
-        | ConsulRaftRequest::KVReleaseSession { .. }
-        | ConsulRaftRequest::KVCas { .. }
-        | ConsulRaftRequest::KVTransaction { .. } => ConsulTable::KVS,
-        // Session
-        ConsulRaftRequest::SessionCreate { .. }
-        | ConsulRaftRequest::SessionDestroy { .. }
-        | ConsulRaftRequest::SessionRenew { .. }
-        | ConsulRaftRequest::SessionCleanupExpired { .. } => ConsulTable::Sessions,
-        // ACL
-        ConsulRaftRequest::ACLTokenSet { .. }
-        | ConsulRaftRequest::ACLTokenDelete { .. }
-        | ConsulRaftRequest::ACLPolicySet { .. }
-        | ConsulRaftRequest::ACLPolicyDelete { .. }
-        | ConsulRaftRequest::ACLRoleSet { .. }
-        | ConsulRaftRequest::ACLRoleDelete { .. }
-        | ConsulRaftRequest::ACLAuthMethodSet { .. }
-        | ConsulRaftRequest::ACLAuthMethodDelete { .. }
-        | ConsulRaftRequest::ACLBootstrap { .. } => ConsulTable::ACL,
-        // Query
-        ConsulRaftRequest::QueryCreate { .. }
-        | ConsulRaftRequest::QueryUpdate { .. }
-        | ConsulRaftRequest::QueryDelete { .. } => ConsulTable::Queries,
-        // ConfigEntry
-        ConsulRaftRequest::ConfigEntryApply { .. }
-        | ConsulRaftRequest::ConfigEntryDelete { .. } => ConsulTable::ConfigEntries,
-        // ConnectCA
-        ConsulRaftRequest::CARootSet { .. }
-        | ConsulRaftRequest::CAConfigUpdate { .. }
-        | ConsulRaftRequest::IntentionUpsert { .. }
-        | ConsulRaftRequest::IntentionDelete { .. }
-        | ConsulRaftRequest::IntentionUpsertExact { .. } => ConsulTable::ConnectCA,
-        // Coordinate
-        ConsulRaftRequest::CoordinateBatchUpdate { .. } => ConsulTable::Coordinates,
-        // Peering
-        ConsulRaftRequest::PeeringWrite { .. }
-        | ConsulRaftRequest::PeeringDelete { .. } => ConsulTable::Peering,
-        // Operator
-        ConsulRaftRequest::OperatorRemovePeer { .. }
-        | ConsulRaftRequest::OperatorAutopilotUpdate { .. } => ConsulTable::Operator,
-        // Namespace
-        ConsulRaftRequest::NamespaceUpsert { .. }
-        | ConsulRaftRequest::NamespaceDelete { .. } => ConsulTable::Namespaces,
-        // Catalog
-        ConsulRaftRequest::CatalogRegister { .. }
-        | ConsulRaftRequest::CatalogDeregister { .. } => ConsulTable::Catalog,
-        // Internal
-        ConsulRaftRequest::Noop => ConsulTable::KVS,
-    };
+    let table =
+        match &request {
+            // KV
+            ConsulRaftRequest::KVPut { .. }
+            | ConsulRaftRequest::KVDelete { .. }
+            | ConsulRaftRequest::KVDeletePrefix { .. }
+            | ConsulRaftRequest::KVAcquireSession { .. }
+            | ConsulRaftRequest::KVReleaseSessionKey { .. }
+            | ConsulRaftRequest::KVReleaseSession { .. }
+            | ConsulRaftRequest::KVCas { .. }
+            | ConsulRaftRequest::KVTransaction { .. } => ConsulTable::KVS,
+            // Session
+            ConsulRaftRequest::SessionCreate { .. }
+            | ConsulRaftRequest::SessionDestroy { .. }
+            | ConsulRaftRequest::SessionRenew { .. }
+            | ConsulRaftRequest::SessionCleanupExpired { .. } => ConsulTable::Sessions,
+            // ACL
+            ConsulRaftRequest::ACLTokenSet { .. }
+            | ConsulRaftRequest::ACLTokenDelete { .. }
+            | ConsulRaftRequest::ACLPolicySet { .. }
+            | ConsulRaftRequest::ACLPolicyDelete { .. }
+            | ConsulRaftRequest::ACLRoleSet { .. }
+            | ConsulRaftRequest::ACLRoleDelete { .. }
+            | ConsulRaftRequest::ACLAuthMethodSet { .. }
+            | ConsulRaftRequest::ACLAuthMethodDelete { .. }
+            | ConsulRaftRequest::ACLBootstrap { .. } => ConsulTable::ACL,
+            // Query
+            ConsulRaftRequest::QueryCreate { .. }
+            | ConsulRaftRequest::QueryUpdate { .. }
+            | ConsulRaftRequest::QueryDelete { .. } => ConsulTable::Queries,
+            // ConfigEntry
+            ConsulRaftRequest::ConfigEntryApply { .. }
+            | ConsulRaftRequest::ConfigEntryDelete { .. } => ConsulTable::ConfigEntries,
+            // ConnectCA
+            ConsulRaftRequest::CARootSet { .. }
+            | ConsulRaftRequest::CAConfigUpdate { .. }
+            | ConsulRaftRequest::IntentionUpsert { .. }
+            | ConsulRaftRequest::IntentionDelete { .. }
+            | ConsulRaftRequest::IntentionUpsertExact { .. } => ConsulTable::ConnectCA,
+            // Coordinate
+            ConsulRaftRequest::CoordinateBatchUpdate { .. } => ConsulTable::Coordinates,
+            // Peering
+            ConsulRaftRequest::PeeringWrite { .. } | ConsulRaftRequest::PeeringDelete { .. } => {
+                ConsulTable::Peering
+            }
+            // Operator
+            ConsulRaftRequest::OperatorRemovePeer { .. }
+            | ConsulRaftRequest::OperatorAutopilotUpdate { .. } => ConsulTable::Operator,
+            // Namespace
+            ConsulRaftRequest::NamespaceUpsert { .. }
+            | ConsulRaftRequest::NamespaceDelete { .. } => ConsulTable::Namespaces,
+            // Catalog
+            ConsulRaftRequest::CatalogRegister { .. }
+            | ConsulRaftRequest::CatalogDeregister { .. } => ConsulTable::Catalog,
+            // Internal
+            ConsulRaftRequest::Noop => ConsulTable::KVS,
+        };
 
     let resp = match request {
         ConsulRaftRequest::KVPut {
             key,
             stored_kv_json,
             session_index_key,
-        } => apply_kv_put(db, &key, &stored_kv_json, session_index_key.as_deref(), log_index),
+        } => apply_kv_put(
+            db,
+            &key,
+            &stored_kv_json,
+            session_index_key.as_deref(),
+            log_index,
+        ),
         ConsulRaftRequest::KVDelete {
             key,
             session_index_cleanup,
@@ -300,34 +308,65 @@ fn apply_consul_request(
         } => apply_session_cleanup_expired(db, expired_session_ids, log_index),
 
         // === ACL: write to CF_CONSUL_ACL ===
-        ConsulRaftRequest::ACLTokenSet { accessor_id, token_json } => {
-            apply_generic_put(db, CF_CONSUL_ACL, &format!("token::{}", accessor_id), &token_json, log_index)
-        }
+        ConsulRaftRequest::ACLTokenSet {
+            accessor_id,
+            token_json,
+        } => apply_generic_put(
+            db,
+            CF_CONSUL_ACL,
+            &format!("token::{}", accessor_id),
+            &token_json,
+            log_index,
+        ),
         ConsulRaftRequest::ACLBootstrap { token_json } => {
             // Bootstrap token: accessor_id is embedded in the JSON
-            apply_generic_put(db, CF_CONSUL_ACL, "token::bootstrap", &token_json, log_index)
+            apply_generic_put(
+                db,
+                CF_CONSUL_ACL,
+                "token::bootstrap",
+                &token_json,
+                log_index,
+            )
         }
-        ConsulRaftRequest::ACLTokenDelete { accessor_id } => {
-            apply_generic_delete(db, CF_CONSUL_ACL, &format!("token::{}", accessor_id), log_index)
-        }
-        ConsulRaftRequest::ACLPolicySet { id, policy_json } => {
-            apply_generic_put(db, CF_CONSUL_ACL, &format!("policy::{}", id), &policy_json, log_index)
-        }
+        ConsulRaftRequest::ACLTokenDelete { accessor_id } => apply_generic_delete(
+            db,
+            CF_CONSUL_ACL,
+            &format!("token::{}", accessor_id),
+            log_index,
+        ),
+        ConsulRaftRequest::ACLPolicySet { id, policy_json } => apply_generic_put(
+            db,
+            CF_CONSUL_ACL,
+            &format!("policy::{}", id),
+            &policy_json,
+            log_index,
+        ),
         ConsulRaftRequest::ACLPolicyDelete { id } => {
             apply_generic_delete(db, CF_CONSUL_ACL, &format!("policy::{}", id), log_index)
         }
-        ConsulRaftRequest::ACLRoleSet { id, role_json } => {
-            apply_generic_put(db, CF_CONSUL_ACL, &format!("role::{}", id), &role_json, log_index)
-        }
+        ConsulRaftRequest::ACLRoleSet { id, role_json } => apply_generic_put(
+            db,
+            CF_CONSUL_ACL,
+            &format!("role::{}", id),
+            &role_json,
+            log_index,
+        ),
         ConsulRaftRequest::ACLRoleDelete { id } => {
             apply_generic_delete(db, CF_CONSUL_ACL, &format!("role::{}", id), log_index)
         }
-        ConsulRaftRequest::ACLAuthMethodSet { name, method_json } => {
-            apply_generic_put(db, CF_CONSUL_ACL, &format!("auth_method::{}", name), &method_json, log_index)
-        }
-        ConsulRaftRequest::ACLAuthMethodDelete { name } => {
-            apply_generic_delete(db, CF_CONSUL_ACL, &format!("auth_method::{}", name), log_index)
-        }
+        ConsulRaftRequest::ACLAuthMethodSet { name, method_json } => apply_generic_put(
+            db,
+            CF_CONSUL_ACL,
+            &format!("auth_method::{}", name),
+            &method_json,
+            log_index,
+        ),
+        ConsulRaftRequest::ACLAuthMethodDelete { name } => apply_generic_delete(
+            db,
+            CF_CONSUL_ACL,
+            &format!("auth_method::{}", name),
+            log_index,
+        ),
 
         // === Query: write to CF_CONSUL_QUERIES ===
         ConsulRaftRequest::QueryCreate { id, query_json }
@@ -350,16 +389,24 @@ fn apply_consul_request(
         ConsulRaftRequest::CARootSet { id, root_json } => {
             apply_generic_put(db, CF_CONSUL_CA_ROOTS, &id, &root_json, log_index)
         }
-        ConsulRaftRequest::CAConfigUpdate { config_json } => {
-            apply_generic_put(db, CF_CONSUL_CA_ROOTS, "__ca_config__", &config_json, log_index)
-        }
+        ConsulRaftRequest::CAConfigUpdate { config_json } => apply_generic_put(
+            db,
+            CF_CONSUL_CA_ROOTS,
+            "__ca_config__",
+            &config_json,
+            log_index,
+        ),
         ConsulRaftRequest::IntentionUpsert { id, intention_json } => {
             apply_generic_put(db, CF_CONSUL_INTENTIONS, &id, &intention_json, log_index)
         }
         ConsulRaftRequest::IntentionDelete { id } => {
             apply_generic_delete(db, CF_CONSUL_INTENTIONS, &id, log_index)
         }
-        ConsulRaftRequest::IntentionUpsertExact { source, destination, intention_json } => {
+        ConsulRaftRequest::IntentionUpsertExact {
+            source,
+            destination,
+            intention_json,
+        } => {
             let key = format!("{}:{}", source, destination);
             apply_generic_put(db, CF_CONSUL_INTENTIONS, &key, &intention_json, log_index)
         }
@@ -378,25 +425,34 @@ fn apply_consul_request(
         }
 
         // === Operator: write to CF_CONSUL_OPERATOR ===
-        ConsulRaftRequest::OperatorRemovePeer { server_key } => {
-            apply_generic_delete(db, CF_CONSUL_OPERATOR, &format!("server:{}", server_key), log_index)
-        }
-        ConsulRaftRequest::OperatorAutopilotUpdate { config_json } => {
-            apply_generic_put(db, CF_CONSUL_OPERATOR, "autopilot_config", &config_json, log_index)
-        }
+        ConsulRaftRequest::OperatorRemovePeer { server_key } => apply_generic_delete(
+            db,
+            CF_CONSUL_OPERATOR,
+            &format!("server:{}", server_key),
+            log_index,
+        ),
+        ConsulRaftRequest::OperatorAutopilotUpdate { config_json } => apply_generic_put(
+            db,
+            CF_CONSUL_OPERATOR,
+            "autopilot_config",
+            &config_json,
+            log_index,
+        ),
 
         // === Namespace: write to CF_CONSUL_NAMESPACES ===
-        ConsulRaftRequest::NamespaceUpsert { name, namespace_json } => {
-            apply_generic_put(db, CF_CONSUL_NAMESPACES, &name, &namespace_json, log_index)
-        }
+        ConsulRaftRequest::NamespaceUpsert {
+            name,
+            namespace_json,
+        } => apply_generic_put(db, CF_CONSUL_NAMESPACES, &name, &namespace_json, log_index),
         ConsulRaftRequest::NamespaceDelete { name } => {
             apply_generic_delete(db, CF_CONSUL_NAMESPACES, &name, log_index)
         }
 
         // === Catalog: write to CF_CONSUL_CATALOG ===
-        ConsulRaftRequest::CatalogRegister { key, registration_json } => {
-            apply_generic_put(db, CF_CONSUL_CATALOG, &key, &registration_json, log_index)
-        }
+        ConsulRaftRequest::CatalogRegister {
+            key,
+            registration_json,
+        } => apply_generic_put(db, CF_CONSUL_CATALOG, &key, &registration_json, log_index),
         ConsulRaftRequest::CatalogDeregister { key } => {
             apply_generic_delete(db, CF_CONSUL_CATALOG, &key, log_index)
         }
@@ -415,8 +471,7 @@ fn apply_consul_request(
 // ============================================================================
 
 fn cf_kv(db: &DB) -> &rocksdb::ColumnFamily {
-    db.cf_handle(CF_CONSUL_KV)
-        .expect("CF consul_kv must exist")
+    db.cf_handle(CF_CONSUL_KV).expect("CF consul_kv must exist")
 }
 
 fn cf_sessions(db: &DB) -> &rocksdb::ColumnFamily {
@@ -759,12 +814,7 @@ fn apply_generic_put(
 }
 
 /// Delete a key from a column family.
-fn apply_generic_delete(
-    db: &DB,
-    cf_name: &str,
-    key: &str,
-    _log_index: u64,
-) -> ConsulRaftResponse {
+fn apply_generic_delete(db: &DB, cf_name: &str, key: &str, _log_index: u64) -> ConsulRaftResponse {
     let Some(cf) = db.cf_handle(cf_name) else {
         return ConsulRaftResponse::failure(format!("CF '{}' not found", cf_name));
     };
@@ -773,9 +823,7 @@ fn apply_generic_delete(
             debug!("Consul delete {}:{}", cf_name, key);
             ConsulRaftResponse::success()
         }
-        Err(e) => {
-            ConsulRaftResponse::failure(format!("delete {}:{} failed: {}", cf_name, key, e))
-        }
+        Err(e) => ConsulRaftResponse::failure(format!("delete {}:{} failed: {}", cf_name, key, e)),
     }
 }
 

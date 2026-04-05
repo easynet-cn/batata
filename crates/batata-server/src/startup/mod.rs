@@ -16,9 +16,9 @@ mod xds;
 
 pub use dns::{DnsConfig, DnsServer};
 pub use grpc::{GrpcServers, start_grpc_servers};
-pub use http::{AIServices, console_server, main_server, mcp_registry_server};
 #[cfg(feature = "consul")]
 pub use http::plugin_http_server;
+pub use http::{AIServices, console_server, main_server, mcp_registry_server};
 pub use logging::{LogRotation, LoggingConfig, LoggingGuard, init_file_logging, init_logging};
 pub use shutdown::{GracefulShutdown, ShutdownSignal, run_with_shutdown, wait_for_shutdown_signal};
 pub use telemetry::{
