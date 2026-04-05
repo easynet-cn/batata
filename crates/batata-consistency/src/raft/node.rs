@@ -20,6 +20,14 @@ use super::request::{RaftRequest, RaftResponse};
 use super::state_machine::RocksStateMachine;
 use super::types::{NodeId, RaftMetrics, TypeConfig};
 
+/// Cached gRPC channel for leader write-forwarding.
+/// Reuses the same HTTP/2 connection across requests to avoid per-write connect overhead.
+/// Channel is cheap to clone (Arc internally) so we store it rather than the client.
+struct LeaderChannel {
+    addr: String,
+    channel: tonic::transport::Channel,
+}
+
 /// High-level wrapper for Raft consensus node
 pub struct RaftNode {
     /// Node ID
@@ -40,6 +48,10 @@ pub struct RaftNode {
 
     /// Shared plugin registry (same instance used by the state machine)
     plugin_registry: Arc<RwLock<PluginRegistry>>,
+
+    /// Cached gRPC channel for forwarding writes to the Raft leader.
+    /// Avoids creating a new TCP/HTTP2 connection on every forwarded write.
+    leader_channel: tokio::sync::Mutex<Option<LeaderChannel>>,
 }
 
 impl RaftNode {
@@ -123,6 +135,7 @@ impl RaftNode {
                 config,
                 db: db.clone(),
                 plugin_registry,
+                leader_channel: tokio::sync::Mutex::new(None),
             },
             db,
         ))
@@ -262,6 +275,7 @@ impl RaftNode {
     ) -> Result<(RaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
         debug!("Writing through Raft: {}", request.op_type());
 
+        // Try local client_write first (succeeds if this node is the leader)
         match self.raft.client_write(request.clone()).await {
             Ok(result) => {
                 let log_index = result.log_id.index;
@@ -269,11 +283,15 @@ impl RaftNode {
             }
             Err(e) => {
                 // Forward to leader with retry, exponential backoff, and re-discovery.
-                // If the leader has changed between attempts, we re-discover it
-                // from Raft metrics rather than retrying a stale address.
+                // Serialize the request once for all retry attempts to avoid
+                // repeated serialization of potentially large config content.
                 let max_retries = self.config.forward_max_retries;
                 let initial_delay = self.config.forward_initial_delay_ms;
                 let mut last_err: Box<dyn std::error::Error + Send + Sync> = Box::new(e);
+
+                let request_bytes = serde_json::to_vec(&request)
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+                let op_type = request.op_type();
 
                 for attempt in 0..max_retries {
                     let leader_addr = match self.leader_addr() {
@@ -286,11 +304,11 @@ impl RaftNode {
                         leader_addr,
                         attempt + 1,
                         max_retries,
-                        request.op_type()
+                        op_type
                     );
 
                     match self
-                        .forward_write_to_leader(&leader_addr, request.clone())
+                        .forward_write_to_leader_bytes(&leader_addr, &request_bytes)
                         .await
                     {
                         Ok((resp, leader_log_index)) => {
@@ -341,22 +359,46 @@ impl RaftNode {
         }
     }
 
-    /// Forward a write request to the Raft leader via gRPC.
-    /// Returns the response and the leader's committed log index.
-    async fn forward_write_to_leader(
+    /// Forward pre-serialized request bytes to the leader.
+    /// Avoids re-serializing the request on each retry attempt.
+    async fn forward_write_to_leader_bytes(
         &self,
         leader_addr: &str,
-        request: RaftRequest,
+        request_bytes: &[u8],
     ) -> Result<(RaftResponse, u64), Box<dyn std::error::Error + Send + Sync>> {
         use batata_api::raft::ClientWriteRequest;
         use batata_api::raft::raft_management_service_client::RaftManagementServiceClient;
 
-        let endpoint = format!("http://{}", leader_addr);
-        let mut client = RaftManagementServiceClient::connect(endpoint).await?;
+        let channel = {
+            let mut guard = self.leader_channel.lock().await;
+            match guard.as_ref() {
+                Some(cached) if cached.addr == leader_addr => cached.channel.clone(),
+                _ => {
+                    let endpoint = format!("http://{}", leader_addr);
+                    let channel = tonic::transport::Channel::from_shared(endpoint)
+                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                            Box::new(e)
+                        })?
+                        .connect_timeout(Duration::from_secs(5))
+                        .tcp_keepalive(Some(Duration::from_secs(10)))
+                        .tcp_nodelay(true)
+                        .http2_keep_alive_interval(Duration::from_secs(10))
+                        .connect()
+                        .await?;
+                    *guard = Some(LeaderChannel {
+                        addr: leader_addr.to_string(),
+                        channel: channel.clone(),
+                    });
+                    channel
+                }
+            }
+        };
 
-        let data = serde_json::to_vec(&request)?;
+        let mut client = RaftManagementServiceClient::new(channel);
         let response = client
-            .write(ClientWriteRequest { data })
+            .write(ClientWriteRequest {
+                data: request_bytes.to_vec(),
+            })
             .await?
             .into_inner();
 

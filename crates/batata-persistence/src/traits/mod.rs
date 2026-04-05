@@ -47,4 +47,10 @@ pub trait PersistenceService:
 
     /// Health check for the storage backend
     async fn health_check(&self) -> anyhow::Result<()>;
+
+    /// Invalidate a config entry from the read cache (if any).
+    /// Called by cluster sync handlers when a remote node notifies of a config change,
+    /// ensuring Follower nodes don't serve stale cached data until TTL expiry.
+    /// Default implementation is a no-op (embedded/SQL backends have no read cache).
+    fn invalidate_config_read_cache(&self, _data_id: &str, _group: &str, _tenant: &str) {}
 }

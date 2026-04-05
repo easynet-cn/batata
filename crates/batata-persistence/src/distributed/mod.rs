@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use moka::future::Cache;
+use moka::sync::Cache;
 
 use batata_consistency::raft::node::RaftNode;
 use batata_consistency::raft::reader::RocksDbReader;
@@ -73,13 +73,27 @@ impl DistributedPersistService {
         }
     }
 
-    /// Invalidate a config cache entry after a write
+    /// Invalidate a config cache entry after a write.
+    /// Uses synchronous invalidation to prevent stale reads in the window between
+    /// write completion and async cache eviction. Moka's invalidate() is lightweight
+    /// (just marks the entry as invalid), so no need for tokio::spawn.
     fn invalidate_config_cache(&self, data_id: &str, group: &str, tenant: &str) {
         if let Some(ref cache) = self.config_cache {
             let key = format!("{}@@{}@@{}", data_id, group, tenant);
-            let cache = cache.clone();
-            tokio::spawn(async move { cache.invalidate(&key).await });
+            cache.invalidate(&key);
         }
+    }
+
+    /// Invalidate a config cache entry from a cluster sync notification.
+    /// Called when a remote node notifies us of a config change, ensuring
+    /// Follower nodes don't serve stale cached data until TTL expiry.
+    pub fn invalidate_config_cache_from_cluster(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+    ) {
+        self.invalidate_config_cache(data_id, group, tenant);
     }
 
     /// Ensure read consistency.
@@ -132,14 +146,14 @@ impl ConfigPersistence for DistributedPersistService {
         // Check cache first (if enabled)
         if let Some(ref cache) = self.config_cache {
             let cache_key = format!("{}@@{}@@{}", data_id, group, namespace_id);
-            if let Some(cached) = cache.get(&cache_key).await {
+            if let Some(cached) = cache.get(&cache_key) {
                 return Ok(cached);
             }
             // Cache miss — read from RocksDB
             self.ensure_consistent_read().await?;
             let json = self.reader.get_config(data_id, group, namespace_id)?;
             let result = json.as_ref().map(EmbeddedPersistService::json_to_config);
-            cache.insert(cache_key, result.clone()).await;
+            cache.insert(cache_key, result.clone());
             return Ok(result);
         }
         self.ensure_consistent_read().await?;
@@ -200,11 +214,6 @@ impl ConfigPersistence for DistributedPersistService {
         // Compute MD5 once here — passed through Raft to state machine and history
         let md5_val = Self::compute_md5(content);
 
-        // Determine op_type: check if config already exists
-        let existing = self.reader.get_config(data_id, group_id, tenant_id)?;
-        let is_update = existing.is_some();
-        let op_type = if is_update { "U" } else { "I" };
-
         // Build ext_info JSON consistent with SQL and embedded modes
         let ext_info = serde_json::json!({
             "config_tags": config_tags,
@@ -216,7 +225,9 @@ impl ConfigPersistence for DistributedPersistService {
         })
         .to_string();
 
-        // Single Raft write: config publish + history insert atomically
+        // Single Raft write: config publish + history insert atomically.
+        // op_type (Insert/Update) is determined by the state machine during apply,
+        // which already reads existing value for CAS — no pre-write read needed here.
         let request = RaftRequest::ConfigPublish {
             data_id: data_id.to_string(),
             group: group_id.to_string(),
@@ -239,7 +250,7 @@ impl ConfigPersistence for DistributedPersistService {
             encrypted_data_key: Some(encrypted_data_key.to_string()),
             cas_md5: cas_md5.map(|s| s.to_string()),
             history: Some(batata_consistency::raft::request::ConfigHistoryInfo {
-                op_type: op_type.to_string(),
+                op_type: String::new(), // Determined by state machine from existing value
                 publish_type: Some("formal".to_string()),
                 ext_info: Some(ext_info),
             }),
@@ -1045,5 +1056,9 @@ impl PersistenceService for DistributedPersistService {
         } else {
             Err(anyhow::anyhow!("No Raft leader elected"))
         }
+    }
+
+    fn invalidate_config_read_cache(&self, data_id: &str, group: &str, tenant: &str) {
+        self.invalidate_config_cache(data_id, group, tenant);
     }
 }

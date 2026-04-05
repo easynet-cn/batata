@@ -217,7 +217,7 @@ impl RocksStateMachine {
         Ok(sm)
     }
 
-    /// Load cached values from storage
+    /// Load cached values from storage.
     async fn load_cached_values(&self) -> Result<(), StorageError<NodeId>> {
         // Load last applied
         if let Some(bytes) = self
@@ -226,7 +226,7 @@ impl RocksStateMachine {
             .map_err(|e| sm_error(e, ErrorVerb::Read))?
         {
             let log_id: LogId<NodeId> =
-                serde_json::from_slice(&bytes).map_err(|e| sm_error(e, ErrorVerb::Read))?;
+                bincode::deserialize(&bytes).map_err(|e| sm_error(e, ErrorVerb::Read))?;
             *self.last_applied.write().await = Some(log_id);
         }
 
@@ -237,7 +237,7 @@ impl RocksStateMachine {
             .map_err(|e| sm_error(e, ErrorVerb::Read))?
         {
             let membership: StoredMembership<NodeId, openraft::BasicNode> =
-                serde_json::from_slice(&bytes).map_err(|e| sm_error(e, ErrorVerb::Read))?;
+                bincode::deserialize(&bytes).map_err(|e| sm_error(e, ErrorVerb::Read))?;
             *self.last_membership.write().await = membership;
         }
 
@@ -385,50 +385,25 @@ impl RocksStateMachine {
                 cas_md5,
                 history,
             } => {
-                let resp = self.apply_config_publish(
+                self.apply_config_publish_batched(
                     &data_id,
                     &group,
                     &tenant,
                     &content,
                     &md5,
-                    config_type.clone(),
-                    app_name.clone(),
+                    config_type,
+                    app_name,
                     tag,
                     desc,
-                    src_user.clone(),
-                    src_ip.clone(),
+                    src_user,
+                    src_ip,
                     r#use,
                     effect,
                     schema,
-                    encrypted_data_key.clone(),
+                    encrypted_data_key,
                     cas_md5.as_deref(),
-                );
-                // If config publish succeeded and history info is provided,
-                // insert history in the same Raft apply (atomic, no second write).
-                if resp.success {
-                    if let Some(hi) = history {
-                        let now = chrono::Utc::now().timestamp_millis();
-                        self.apply_config_history_insert(
-                            now,
-                            &data_id,
-                            &group,
-                            &tenant,
-                            &content,
-                            &md5,
-                            app_name,
-                            src_user,
-                            src_ip,
-                            &hi.op_type,
-                            hi.publish_type,
-                            None,
-                            hi.ext_info,
-                            encrypted_data_key,
-                            now,
-                            now,
-                        );
-                    }
-                }
-                resp
+                    history,
+                )
             }
 
             RaftRequest::ConfigRemove {
@@ -437,31 +412,7 @@ impl RocksStateMachine {
                 tenant,
                 history,
             } => {
-                let resp = self.apply_config_remove(&data_id, &group, &tenant);
-                if resp.success {
-                    if let Some(hi) = history {
-                        let now = chrono::Utc::now().timestamp_millis();
-                        self.apply_config_history_insert(
-                            now,
-                            &data_id,
-                            &group,
-                            &tenant,
-                            &hi.content,
-                            &hi.md5,
-                            Some(hi.app_name),
-                            Some(hi.src_user),
-                            Some(hi.src_ip),
-                            "D",
-                            Some("formal".to_string()),
-                            None,
-                            Some(hi.ext_info),
-                            Some(hi.encrypted_data_key),
-                            now,
-                            now,
-                        );
-                    }
-                }
-                resp
+                self.apply_config_remove_batched(&data_id, &group, &tenant, history)
             }
 
             RaftRequest::ConfigGrayPublish {
@@ -714,8 +665,14 @@ impl RocksStateMachine {
     }
 
     // Config operations
+
+    /// Publish config and optionally insert history in a single atomic WriteBatch.
+    /// This replaces the previous two-step approach (apply_config_publish + apply_config_history_insert)
+    /// with a single RocksDB WriteBatch, reducing from 2 fsyncs to 1 and ensuring atomicity.
+    /// The op_type (Insert/Update) is determined here from the existing value, removing the
+    /// need for a pre-write read in the distributed persistence layer.
     #[allow(clippy::too_many_arguments)]
-    fn apply_config_publish(
+    fn apply_config_publish_batched(
         &self,
         data_id: &str,
         group: &str,
@@ -733,11 +690,13 @@ impl RocksStateMachine {
         schema: Option<String>,
         encrypted_data_key: Option<String>,
         cas_md5: Option<&str>,
+        history: Option<super::request::ConfigHistoryInfo>,
     ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
         let now = chrono::Utc::now().timestamp_millis();
 
-        // Single read: fetch existing config for both CAS check and created_time preservation
+        // Single read: fetch existing config for CAS check, created_time preservation,
+        // and op_type determination (Insert vs Update)
         let existing_value = match self.db.get_cf(self.cf_config(), key.as_bytes()) {
             Ok(Some(bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
             Ok(None) => None,
@@ -771,6 +730,9 @@ impl RocksStateMachine {
             }
         }
 
+        // Determine op_type from existing value (eliminates pre-write read in distributed layer)
+        let is_update = existing_value.is_some();
+
         // Preserve created_time from existing config on update
         let created_time = existing_value
             .and_then(|v| v["created_time"].as_i64())
@@ -796,11 +758,49 @@ impl RocksStateMachine {
             "modified_time": now,
         });
 
-        match self.db.put_cf(
+        // Build a single WriteBatch for config + history (1 fsync instead of 2)
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(
             self.cf_config(),
             key.as_bytes(),
             value.to_string().as_bytes(),
-        ) {
+        );
+
+        // If history info is provided, add history entry to the same batch
+        if let Some(hi) = history {
+            // Determine op_type: use the one from history if provided, otherwise derive
+            let op_type = if hi.op_type.is_empty() {
+                if is_update { "U" } else { "I" }
+            } else {
+                &hi.op_type
+            };
+            let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
+            let history_value = serde_json::json!({
+                "id": now,
+                "data_id": data_id,
+                "group": group,
+                "tenant": tenant,
+                "content": content,
+                "md5": md5,
+                "app_name": app_name.as_deref().unwrap_or_default(),
+                "src_user": src_user,
+                "src_ip": src_ip,
+                "op_type": op_type,
+                "publish_type": hi.publish_type.unwrap_or_else(|| "formal".to_string()),
+                "gray_name": "",
+                "ext_info": hi.ext_info.unwrap_or_default(),
+                "encrypted_data_key": encrypted_data_key.as_deref().unwrap_or_default(),
+                "created_time": now,
+                "modified_time": now,
+            });
+            batch.put_cf(
+                self.cf_config_history(),
+                history_key.as_bytes(),
+                history_value.to_string().as_bytes(),
+            );
+        }
+
+        match self.db.write(batch) {
             Ok(_) => {
                 debug!("Config published: {}", key);
                 RaftResponse::success()
@@ -812,10 +812,48 @@ impl RocksStateMachine {
         }
     }
 
-    fn apply_config_remove(&self, data_id: &str, group: &str, tenant: &str) -> RaftResponse {
+    /// Remove config and optionally insert delete history in a single atomic WriteBatch.
+    fn apply_config_remove_batched(
+        &self,
+        data_id: &str,
+        group: &str,
+        tenant: &str,
+        history: Option<super::request::ConfigDeleteHistoryInfo>,
+    ) -> RaftResponse {
         let key = Self::config_key(data_id, group, tenant);
+        let now = chrono::Utc::now().timestamp_millis();
 
-        match self.db.delete_cf(self.cf_config(), key.as_bytes()) {
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.delete_cf(self.cf_config(), key.as_bytes());
+
+        if let Some(hi) = history {
+            let history_key = Self::config_history_key(data_id, group, tenant, now as u64);
+            let history_value = serde_json::json!({
+                "id": now,
+                "data_id": data_id,
+                "group": group,
+                "tenant": tenant,
+                "content": hi.content,
+                "md5": hi.md5,
+                "app_name": hi.app_name,
+                "src_user": hi.src_user,
+                "src_ip": hi.src_ip,
+                "op_type": "D",
+                "publish_type": "formal",
+                "gray_name": "",
+                "ext_info": hi.ext_info,
+                "encrypted_data_key": hi.encrypted_data_key,
+                "created_time": now,
+                "modified_time": now,
+            });
+            batch.put_cf(
+                self.cf_config_history(),
+                history_key.as_bytes(),
+                history_value.to_string().as_bytes(),
+            );
+        }
+
+        match self.db.write(batch) {
             Ok(_) => {
                 debug!("Config removed: {}", key);
                 RaftResponse::success()
@@ -1774,7 +1812,7 @@ impl RocksStateMachine {
 
     /// Save last applied log ID
     async fn save_last_applied(&self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
-        let bytes = serde_json::to_vec(&log_id).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let bytes = bincode::serialize(&log_id).map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         self.db
             .put_cf(self.cf_meta(), KEY_LAST_APPLIED, &bytes)
@@ -1789,7 +1827,8 @@ impl RocksStateMachine {
         &self,
         membership: StoredMembership<NodeId, openraft::BasicNode>,
     ) -> Result<(), StorageError<NodeId>> {
-        let bytes = serde_json::to_vec(&membership).map_err(|e| sm_error(e, ErrorVerb::Write))?;
+        let bytes =
+            bincode::serialize(&membership).map_err(|e| sm_error(e, ErrorVerb::Write))?;
 
         self.db
             .put_cf(self.cf_meta(), KEY_LAST_MEMBERSHIP, &bytes)
@@ -1890,6 +1929,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
         I::IntoIter: OptionalSend,
     {
         let mut responses = Vec::new();
+        let mut last_log_id: Option<LogId<NodeId>> = None;
 
         for entry in entries {
             let log_id = entry.log_id;
@@ -1904,8 +1944,14 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
                 EntryPayload::Blank => RaftResponse::success(),
             };
 
-            self.save_last_applied(log_id).await?;
+            last_log_id = Some(log_id);
             responses.push(response);
+        }
+
+        // Persist last_applied ONCE after the entire batch, not per-entry.
+        // This reduces RocksDB writes from 2N to N+1 for a batch of N entries.
+        if let Some(log_id) = last_log_id {
+            self.save_last_applied(log_id).await?;
         }
 
         Ok(responses)

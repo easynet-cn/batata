@@ -183,14 +183,14 @@ impl RocksLogStore {
         })
     }
 
-    /// Serialize an entry
+    /// Serialize an entry using bincode (3-5x faster than JSON, 40-60% smaller).
     fn serialize_entry(entry: &Entry<TypeConfig>) -> Result<Vec<u8>, StorageError<NodeId>> {
-        serde_json::to_vec(entry).map_err(|e| logs_error(e, ErrorVerb::Write))
+        bincode::serialize(entry).map_err(|e| logs_error(e, ErrorVerb::Write))
     }
 
-    /// Deserialize an entry
+    /// Deserialize an entry from bincode.
     fn deserialize_entry(bytes: &[u8]) -> Result<Entry<TypeConfig>, StorageError<NodeId>> {
-        serde_json::from_slice(bytes).map_err(|e| logs_error(e, ErrorVerb::Read))
+        bincode::deserialize(bytes).map_err(|e| logs_error(e, ErrorVerb::Read))
     }
 
     /// Load vote from storage
@@ -198,7 +198,7 @@ impl RocksLogStore {
         match self.db.get_cf(self.cf_state(), KEY_VOTE) {
             Ok(Some(bytes)) => {
                 let vote: Vote<NodeId> =
-                    serde_json::from_slice(&bytes).map_err(|e| vote_error(e, ErrorVerb::Read))?;
+                    bincode::deserialize(&bytes).map_err(|e| vote_error(e, ErrorVerb::Read))?;
                 Ok(Some(vote))
             }
             Ok(None) => Ok(None),
@@ -211,7 +211,7 @@ impl RocksLogStore {
         match self.db.get_cf(self.cf_state(), KEY_LAST_PURGED) {
             Ok(Some(bytes)) => {
                 let log_id: LogId<NodeId> =
-                    serde_json::from_slice(&bytes).map_err(|e| logs_error(e, ErrorVerb::Read))?;
+                    bincode::deserialize(&bytes).map_err(|e| logs_error(e, ErrorVerb::Read))?;
                 Ok(Some(log_id))
             }
             Ok(None) => Ok(None),
@@ -289,7 +289,7 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
     }
 
     async fn save_vote(&mut self, vote: &Vote<NodeId>) -> Result<(), StorageError<NodeId>> {
-        let bytes = serde_json::to_vec(vote).map_err(|e| vote_error(e, ErrorVerb::Write))?;
+        let bytes = bincode::serialize(vote).map_err(|e| vote_error(e, ErrorVerb::Write))?;
         self.db
             .put_cf(self.cf_state(), KEY_VOTE, &bytes)
             .map_err(|e| vote_error(e, ErrorVerb::Write))?;
@@ -347,7 +347,9 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
             *self.last_log_id.write().await = Some(log_id);
         }
 
-        debug!("Appended {} log entries", entries.len());
+        if entries.len() > 1 {
+            debug!("Appended {} log entries", entries.len());
+        }
         callback.log_io_completed(Ok(()));
         Ok(())
     }
@@ -398,7 +400,7 @@ impl RaftLogStorage<TypeConfig> for RocksLogStore {
 
         // Save last purged log ID
         let last_purged_bytes =
-            serde_json::to_vec(&log_id).map_err(|e| logs_error(e, ErrorVerb::Write))?;
+            bincode::serialize(&log_id).map_err(|e| logs_error(e, ErrorVerb::Write))?;
         batch.put_cf(self.cf_state(), KEY_LAST_PURGED, &last_purged_bytes);
 
         self.db

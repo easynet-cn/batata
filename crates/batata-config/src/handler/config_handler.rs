@@ -1318,9 +1318,14 @@ impl PayloadHandler for ConfigChangeClusterSyncHandler {
         // In a distributed cluster, this notification indicates another node has
         // changed a config. Since we use a shared database, the change is already
         // persisted. This handler implements:
-        // 1. Local cache invalidation (if caching is implemented)
+        // 1. Local cache invalidation
         // 2. Notification to local listeners via config subscriber manager
         // 3. Metrics/audit logging
+
+        // Invalidate local read cache so followers don't serve stale data
+        if let Some(persistence) = self.app_state.try_persistence() {
+            persistence.invalidate_config_read_cache(data_id, group, tenant);
+        }
 
         // Notify long-polling HTTP listeners about config change from cluster
         self.config_change_notifier

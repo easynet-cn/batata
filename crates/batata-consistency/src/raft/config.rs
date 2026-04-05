@@ -61,8 +61,8 @@ pub struct RaftConfig {
 impl Default for RaftConfig {
     fn default() -> Self {
         Self {
-            election_timeout_ms: 5000,
-            heartbeat_interval_ms: 1000,
+            election_timeout_ms: 3000,
+            heartbeat_interval_ms: 300,
             snapshot_interval_secs: 1800,
             snapshot_threshold: 10000,
             rpc_request_timeout_ms: 5000,
@@ -173,8 +173,8 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = RaftConfig::default();
-        assert_eq!(config.election_timeout_ms, 5000);
-        assert_eq!(config.heartbeat_interval_ms, 1000);
+        assert_eq!(config.election_timeout_ms, 3000);
+        assert_eq!(config.heartbeat_interval_ms, 300);
         assert_eq!(config.snapshot_interval_secs, 1800);
         assert_eq!(config.snapshot_threshold, 10000);
         assert_eq!(config.rpc_request_timeout_ms, 5000);
@@ -186,8 +186,8 @@ mod tests {
     #[test]
     fn test_duration_conversions() {
         let config = RaftConfig::default();
-        assert_eq!(config.election_timeout(), Duration::from_millis(5000));
-        assert_eq!(config.heartbeat_interval(), Duration::from_millis(1000));
+        assert_eq!(config.election_timeout(), Duration::from_millis(3000));
+        assert_eq!(config.heartbeat_interval(), Duration::from_millis(300));
         assert_eq!(config.rpc_timeout(), Duration::from_millis(5000));
         assert_eq!(
             config.snapshot_transfer_timeout(),
@@ -222,9 +222,9 @@ mod tests {
         let openraft_config = config.to_openraft_config();
 
         assert_eq!(openraft_config.cluster_name, "batata");
-        assert_eq!(openraft_config.election_timeout_min, 5000);
-        assert_eq!(openraft_config.election_timeout_max, 10000);
-        assert_eq!(openraft_config.heartbeat_interval, 1000);
+        assert_eq!(openraft_config.election_timeout_min, 3000);
+        assert_eq!(openraft_config.election_timeout_max, 6000);
+        assert_eq!(openraft_config.heartbeat_interval, 300);
         assert_eq!(openraft_config.max_payload_entries, 300);
     }
 
