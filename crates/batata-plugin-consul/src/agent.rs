@@ -22,6 +22,7 @@ use crate::model::{
     MaintenanceRequest, MetricsResponse, SampleMetric, ServiceQueryParams,
 };
 use crate::naming_store::ConsulNamingStore;
+use crate::raft::ConsulRaftWriter;
 use batata_plugin::PluginNamingStore;
 
 /// Consul Agent service adapter
@@ -32,6 +33,8 @@ use batata_plugin::PluginNamingStore;
 pub struct ConsulAgentService {
     naming_store: Arc<ConsulNamingStore>,
     registry: Arc<InstanceCheckRegistry>,
+    /// Optional Raft writer for cluster-mode replication
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulAgentService {
@@ -39,6 +42,20 @@ impl ConsulAgentService {
         Self {
             naming_store,
             registry,
+            raft_node: None,
+        }
+    }
+
+    /// Create an agent service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(
+        naming_store: Arc<ConsulNamingStore>,
+        registry: Arc<InstanceCheckRegistry>,
+        raft_node: Arc<ConsulRaftWriter>,
+    ) -> Self {
+        Self {
+            naming_store,
+            registry,
+            raft_node: Some(raft_node),
         }
     }
 

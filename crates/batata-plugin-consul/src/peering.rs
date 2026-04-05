@@ -15,6 +15,7 @@ use crate::constants::CF_CONSUL_PEERING;
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
+use crate::raft::ConsulRaftWriter;
 
 // ============================================================================
 // Models
@@ -170,6 +171,8 @@ pub struct ConsulPeeringService {
     consul_port: u16,
     /// Optional RocksDB persistence
     rocks_db: Option<Arc<DB>>,
+    /// Optional Raft writer for cluster-mode replication
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulPeeringService {
@@ -184,6 +187,7 @@ impl ConsulPeeringService {
             datacenter,
             consul_port: 8500,
             rocks_db: None,
+            raft_node: None,
         }
     }
 
@@ -227,7 +231,20 @@ impl ConsulPeeringService {
             datacenter,
             consul_port,
             rocks_db: Some(db),
+            raft_node: None,
         }
+    }
+
+    /// Create a peering service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(
+        db: Arc<DB>,
+        raft_node: Arc<ConsulRaftWriter>,
+        datacenter: String,
+        consul_port: u16,
+    ) -> Self {
+        let mut svc = Self::with_rocks(db, datacenter, consul_port);
+        svc.raft_node = Some(raft_node);
+        svc
     }
 
     pub fn generate_token(

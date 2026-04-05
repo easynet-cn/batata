@@ -9,9 +9,13 @@ use openraft::{BasicNode, Raft};
 use rocksdb::Options;
 use tracing::{debug, info};
 
+use tokio::sync::RwLock;
+
 use super::config::RaftConfig;
 use super::log_store::RocksLogStore;
 use super::network::BatataRaftNetworkFactory;
+use super::plugin::PluginRegistry;
+use crate::RaftPluginHandler;
 use super::request::{RaftRequest, RaftResponse};
 use super::state_machine::RocksStateMachine;
 use super::types::{NodeId, RaftMetrics, TypeConfig};
@@ -30,6 +34,12 @@ pub struct RaftNode {
     /// Configuration (reserved for future dynamic reconfiguration)
     #[allow(dead_code)]
     config: RaftConfig,
+
+    /// Shared RocksDB handle (same instance used by the state machine)
+    db: Arc<rocksdb::DB>,
+
+    /// Shared plugin registry (same instance used by the state machine)
+    plugin_registry: Arc<RwLock<PluginRegistry>>,
 }
 
 impl RaftNode {
@@ -53,19 +63,20 @@ impl RaftNode {
         addr: String,
         config: RaftConfig,
     ) -> Result<(Self, Arc<rocksdb::DB>), Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_with_db_and_options(node_id, addr, config, None, None).await
+        Self::new_with_db_and_options(node_id, addr, config, None, None, &[]).await
     }
 
-    /// Create a new Raft node with custom RocksDB options.
+    /// Create a new Raft node with custom RocksDB options and extra column families.
     ///
-    /// Pass `None` for db_opts/cf_opts to use defaults. This allows the server
-    /// to inject tuning parameters from the application configuration.
+    /// `extra_cf_names` are additional column families required by plugins (e.g., Consul CFs).
+    /// They are created alongside the core CFs when RocksDB is opened.
     pub async fn new_with_db_and_options(
         node_id: NodeId,
         addr: String,
         config: RaftConfig,
         db_opts: Option<Options>,
         cf_opts: Option<Options>,
+        extra_cf_names: &[String],
     ) -> Result<(Self, Arc<rocksdb::DB>), Box<dyn std::error::Error + Send + Sync>> {
         info!(
             "Creating Raft node: id={}, addr={}, data_dir={:?}",
@@ -79,10 +90,11 @@ impl RaftNode {
         let log_store =
             RocksLogStore::with_options(config.log_dir(), db_opts.clone(), cf_opts.clone()).await?;
 
-        // Create state machine with custom options and capture the DB handle
+        // Create state machine with custom options and plugin CFs
         let state_machine =
-            RocksStateMachine::with_options(config.state_machine_dir(), db_opts, cf_opts).await?;
+            RocksStateMachine::with_options_and_cfs(config.state_machine_dir(), db_opts, cf_opts, extra_cf_names).await?;
         let db = state_machine.db();
+        let plugin_registry = state_machine.plugin_registry();
 
         // Create network factory with configured timeouts
         let network_config = super::network::RaftNetworkConfig::from_raft_config(&config);
@@ -109,6 +121,8 @@ impl RaftNode {
                 addr,
                 raft,
                 config,
+                db: db.clone(),
+                plugin_registry,
             },
             db,
         ))
@@ -127,6 +141,22 @@ impl RaftNode {
     /// Get the underlying Raft instance
     pub fn raft(&self) -> &Raft<TypeConfig> {
         &self.raft
+    }
+
+    /// Get a reference to the shared RocksDB instance.
+    pub fn db(&self) -> Arc<rocksdb::DB> {
+        self.db.clone()
+    }
+
+    /// Register a plugin handler for processing PluginWrite operations.
+    ///
+    /// Safe to call after Raft startup — the registry is shared between
+    /// this node and the state machine via `Arc`.
+    pub async fn register_plugin(
+        &self,
+        handler: Arc<dyn RaftPluginHandler>,
+    ) -> Result<(), String> {
+        self.plugin_registry.write().await.register(handler)
     }
 
     /// Get current metrics

@@ -18,6 +18,7 @@ use tracing::{error, info, warn};
 use crate::constants::CF_CONSUL_ACL;
 
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
+use crate::raft::ConsulRaftWriter;
 use crate::model::ConsulDatacenterConfig;
 
 // ACL Token header name
@@ -257,6 +258,8 @@ pub struct AclService {
     default_policy: RulePolicy,
     /// Optional RocksDB handle for persistence
     rocks_db: Option<Arc<DB>>,
+    /// Optional Raft writer for cluster-mode replication
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl Default for AclService {
@@ -274,6 +277,7 @@ impl AclService {
             enabled: true,
             default_policy: RulePolicy::Deny,
             rocks_db: None,
+            raft_node: None,
         }
     }
 
@@ -282,6 +286,7 @@ impl AclService {
             enabled: false,
             default_policy: RulePolicy::Write,
             rocks_db: None,
+            raft_node: None,
         }
     }
 
@@ -351,6 +356,7 @@ impl AclService {
             enabled: true,
             default_policy: RulePolicy::Deny,
             rocks_db: Some(db),
+            raft_node: None,
         };
 
         // Persist the bootstrap data that init_bootstrap() may have created
@@ -358,6 +364,13 @@ impl AclService {
             svc.persist_all_current();
         }
 
+        svc
+    }
+
+    /// Create an enabled ACL service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
+        let mut svc = Self::with_rocks(db);
+        svc.raft_node = Some(raft_node);
         svc
     }
 

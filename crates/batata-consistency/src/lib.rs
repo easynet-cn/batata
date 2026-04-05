@@ -23,6 +23,9 @@ pub use raft::state_machine::RocksStateMachine;
 pub use raft::config::RaftConfig;
 pub use raft::node::{RaftNode, RaftNodeBuilder};
 
+// Re-export plugin types
+pub use raft::plugin::{PluginRegistry, RaftPluginHandler};
+
 // Re-export lock types
 pub use lock::{
     DistributedLock, DistributedLockService, LockAcquireRequest, LockAcquireResult, LockCommand,

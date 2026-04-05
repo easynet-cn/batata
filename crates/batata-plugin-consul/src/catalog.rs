@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::acl::{AclService, ResourceType};
 use crate::config_entry::ConsulConfigEntryService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
+use crate::raft::ConsulRaftWriter;
 
 /// Handle blocking query wait if `index` query parameter is set.
 async fn maybe_block(index_provider: &ConsulIndexProvider, index: Option<u64>, wait: Option<&str>) {
@@ -421,6 +422,8 @@ pub struct ConsulCatalogService {
     node_name: String,
     datacenter: String,
     index_provider: ConsulIndexProvider,
+    /// Optional Raft writer for cluster-mode replication
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulCatalogService {
@@ -437,6 +440,22 @@ impl ConsulCatalogService {
             node_name: "batata-node".to_string(),
             datacenter,
             index_provider: ConsulIndexProvider::default(),
+            raft_node: None,
+        }
+    }
+
+    /// Create a catalog service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(
+        naming_store: Arc<crate::naming_store::ConsulNamingStore>,
+        datacenter: String,
+        raft_node: Arc<ConsulRaftWriter>,
+    ) -> Self {
+        Self {
+            naming_store,
+            node_name: "batata-node".to_string(),
+            datacenter,
+            index_provider: ConsulIndexProvider::default(),
+            raft_node: Some(raft_node),
         }
     }
 

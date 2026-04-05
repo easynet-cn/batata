@@ -12,10 +12,7 @@ use batata_plugin::Plugin as _;
 use batata_server::{
     middleware::rate_limit,
     model::{self, common::AppState},
-    startup::{
-        self, AIServices, GracefulShutdown, OtelConfig, XdsServerHandle, consul_init,
-        start_xds_service,
-    },
+    startup::{self, AIServices, GracefulShutdown, OtelConfig, XdsServerHandle, start_xds_service},
 };
 use batata_server_common::ServerStatusManager;
 use tracing::{error, info};
@@ -84,13 +81,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ====================================================================
+    // Phase 2.5: Register protocol adapter plugins (lightweight, config only)
+    // ====================================================================
+    let mut plugin_manager = batata_plugin::spi::PluginManager::new();
+
+    if configuration.consul_enabled() {
+        let dc_config = batata_plugin_consul::model::ConsulDatacenterConfig::new(
+            configuration.consul_datacenter(),
+        )
+        .with_primary(configuration.consul_primary_datacenter())
+        .with_consul_version(configuration.consul_version())
+        .with_batata_version(configuration.batata_version())
+        .with_consul_port(configuration.consul_server_port());
+
+        let consul_plugin = Arc::new(batata_plugin_consul::ConsulPlugin::from_config(
+            true,
+            configuration.consul_acl_enabled(),
+            dc_config,
+            configuration.consul_register_self(),
+            configuration.server_address(),
+            configuration.consul_server_port(),
+        ));
+        plugin_manager.register_protocol_adapter(consul_plugin);
+    }
+
+    // Collect plugin CFs before creating RocksDB
+    let plugin_cf_names = plugin_manager.collect_plugin_column_families();
+
+    // ====================================================================
     // Phase 3: Initialize persistence layer
     // ====================================================================
     let persistence_ctx = if is_console_remote {
         info!("Starting in console remote mode - connecting to remote server");
         startup::persistence::PersistenceContext::empty()
     } else {
-        startup::persistence::init_persistence(&configuration).await?
+        startup::persistence::init_persistence(&configuration, &plugin_cf_names).await?
     };
 
     // ====================================================================
@@ -275,17 +300,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let xds_handle = start_xds_if_enabled(&app_state, &grpc_servers).await;
 
     // ====================================================================
-    // Phase 11: Consul services
+    // Phase 11: Initialize protocol adapter plugins
     // ====================================================================
-    let consul_config = consul_init::ConsulInitConfig::from_config(&app_state.configuration);
-    let consul_services = consul_init::init_consul(
-        &consul_config,
-        &app_state.configuration,
-        &grpc_servers,
-        app_state.raft_node.as_ref(),
-        is_console_remote,
-    )
-    .await?;
+    // (Plugins were registered in Phase 2.5 before persistence init)
+
+    // Build plugin context
+    let mut plugin_ctx = batata_plugin::PluginContext::new();
+    let is_cluster = !app_state.configuration.is_standalone() && !is_console_remote;
+    plugin_ctx.insert("is_cluster", Arc::new(is_cluster));
+    if let Some(ref raft) = app_state.raft_node {
+        plugin_ctx.insert("raft_node", raft.clone());
+    }
+
+    // Initialize all plugins
+    plugin_manager.init_protocol_adapters(&plugin_ctx).await?;
 
     // ====================================================================
     // Phase 12: Start HTTP servers and wait for shutdown
@@ -306,8 +334,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ai_services,
         distro_for_http,
         encryption_service,
-        consul_services,
-        &consul_config,
+        &plugin_manager,
         &graceful_shutdown,
     )
     .await?;
@@ -613,8 +640,7 @@ async fn run_http_servers(
     ai_services: AIServices,
     distro_for_http: Option<Arc<batata_core::service::distro::DistroProtocol>>,
     encryption_service: Arc<batata_config::service::encryption::ConfigEncryptionService>,
-    consul_services: Option<startup::ConsulServices>,
-    consul_config: &consul_init::ConsulInitConfig,
+    plugin_manager: &batata_plugin::spi::PluginManager,
     graceful_shutdown: &GracefulShutdown,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let server_address = app_state.configuration.server_address();
@@ -666,8 +692,8 @@ async fn run_http_servers(
                 server_main_port,
             )?;
 
-            let consul_opt =
-                build_consul_server(app_state, grpc_servers, consul_services, consul_config)?;
+            let plugin_servers =
+                build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
             let mcp_registry_opt = build_mcp_registry(
                 app_state,
                 &mcp_registry_for_server,
@@ -676,11 +702,22 @@ async fn run_http_servers(
                 mcp_registry_port,
             )?;
 
+            // Start background tasks for all protocol adapter plugins
+            plugin_manager.start_protocol_adapter_tasks().await?;
+
+            // Spawn plugin servers as background tasks
+            for server in plugin_servers {
+                tokio::spawn(async move {
+                    if let Err(e) = server.await {
+                        error!("Plugin server error: {}", e);
+                    }
+                });
+            }
+
             tokio::select! {
                 result = async {
                     tokio::try_join!(
                         main,
-                        async { match consul_opt { Some(s) => s.await, None => std::future::pending().await } },
                         async { match mcp_registry_opt { Some(s) => s.await, None => std::future::pending().await } }
                     )
                 } => {
@@ -692,7 +729,7 @@ async fn run_http_servers(
             }
         }
         _ => {
-            // Merged mode: console + main + optional consul + optional MCP
+            // Merged mode: console + main + optional plugin servers + optional MCP
             let console_server_port = app_state.configuration.console_server_port();
             let console_context_path = app_state.configuration.console_server_context_path();
 
@@ -726,8 +763,8 @@ async fn run_http_servers(
                 server_main_port,
             )?;
 
-            let consul_opt =
-                build_consul_server(app_state, grpc_servers, consul_services, consul_config)?;
+            let plugin_servers =
+                build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
             let mcp_registry_opt = build_mcp_registry(
                 app_state,
                 &ai_services.mcp_registry,
@@ -736,12 +773,23 @@ async fn run_http_servers(
                 mcp_registry_port,
             )?;
 
+            // Start background tasks for all protocol adapter plugins
+            plugin_manager.start_protocol_adapter_tasks().await?;
+
+            // Spawn plugin servers as background tasks
+            for server in plugin_servers {
+                tokio::spawn(async move {
+                    if let Err(e) = server.await {
+                        error!("Plugin server error: {}", e);
+                    }
+                });
+            }
+
             tokio::select! {
                 result = async {
                     tokio::try_join!(
                         console,
                         main,
-                        async { match consul_opt { Some(s) => s.await, None => std::future::pending().await } },
                         async { match mcp_registry_opt { Some(s) => s.await, None => std::future::pending().await } }
                     )
                 } => {
@@ -757,29 +805,35 @@ async fn run_http_servers(
     Ok(())
 }
 
-/// Build Consul HTTP server if services are available.
-fn build_consul_server(
+/// Build HTTP servers for all enabled protocol adapter plugins.
+fn build_plugin_servers(
     app_state: &Arc<AppState>,
     grpc_servers: &startup::GrpcServers,
-    consul_services: Option<startup::ConsulServices>,
-    consul_config: &consul_init::ConsulInitConfig,
-) -> Result<Option<actix_web::dev::Server>, Box<dyn std::error::Error>> {
-    consul_services
-        .map(|svc| {
-            info!(
-                "Starting Consul compatibility server on {}:{}",
-                consul_config.consul_server_address, consul_config.consul_server_port
-            );
-            startup::consul_server(
-                app_state.clone(),
-                grpc_servers.naming_provider(),
-                svc,
-                consul_config.consul_server_address.clone(),
-                consul_config.consul_server_port,
-            )
-        })
-        .transpose()
-        .map_err(|e| e.into())
+    plugin_manager: &batata_plugin::spi::PluginManager,
+) -> Result<Vec<actix_web::dev::Server>, Box<dyn std::error::Error>> {
+    let mut servers = Vec::new();
+    let server_address = app_state.configuration.server_address();
+    for plugin in plugin_manager.protocol_adapters() {
+        if !plugin.is_enabled() {
+            continue;
+        }
+        let port = plugin.default_port();
+        info!(
+            "Starting {} server on {}:{}",
+            plugin.name(),
+            server_address,
+            port
+        );
+        let server = startup::plugin_http_server(
+            app_state.clone(),
+            grpc_servers.naming_provider(),
+            plugin.clone(),
+            server_address.clone(),
+            port,
+        )?;
+        servers.push(server);
+    }
+    Ok(servers)
 }
 
 /// Build MCP registry server if enabled.

@@ -285,10 +285,15 @@ impl RaftNetwork<TypeConfig> for RaftNetworkConnection {
         // Parse response - AppendEntriesResponse is an enum in openraft 0.9
         if response.success {
             Ok(AppendEntriesResponse::Success)
+        } else if let Some(vote_proto) = response.higher_vote {
+            // Follower has seen a higher vote — leader must step down
+            let vote = Self::from_proto_vote(Some(vote_proto))
+                .unwrap_or_else(|| openraft::Vote::new(response.term, 0));
+            Ok(AppendEntriesResponse::HigherVote(vote))
         } else if response.conflict.is_some() {
             Ok(AppendEntriesResponse::Conflict)
         } else {
-            // Higher vote or conflict - default to conflict
+            // Unknown failure — treat as conflict (safe fallback for prev_log_id != None)
             Ok(AppendEntriesResponse::Conflict)
         }
     }

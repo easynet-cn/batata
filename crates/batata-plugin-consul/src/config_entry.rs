@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{error, info};
 
 use crate::constants::CF_CONSUL_CONFIG_ENTRIES;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -116,6 +117,8 @@ pub struct ConsulConfigEntryService {
     index: Arc<AtomicU64>,
     /// Optional RocksDB for write-through persistence
     rocks_db: Option<Arc<DB>>,
+    /// Optional Raft writer for cluster mode
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulConfigEntryService {
@@ -124,6 +127,7 @@ impl ConsulConfigEntryService {
             entries: Arc::new(DashMap::new()),
             index: Arc::new(AtomicU64::new(1)),
             rocks_db: None,
+            raft_node: None,
         }
     }
 
@@ -167,7 +171,20 @@ impl ConsulConfigEntryService {
             entries,
             index: Arc::new(AtomicU64::new(max_index + 1)),
             rocks_db: Some(db),
+            raft_node: None,
         }
+    }
+
+    /// Create a config entry service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
+        let mut svc = Self::with_rocks(db);
+        svc.raft_node = Some(raft_node);
+        svc
+    }
+
+    /// Get the shared entries DashMap for the plugin handler.
+    pub fn entries_arc(&self) -> Arc<DashMap<String, ConfigEntry>> {
+        self.entries.clone()
     }
 
     fn entry_key(kind: &str, name: &str) -> String {
@@ -223,7 +240,7 @@ impl ConsulConfigEntryService {
         self.entries.get(&key).map(|r| r.value().clone())
     }
 
-    pub fn apply_entry(
+    pub async fn apply_entry(
         &self,
         mut req: ConfigEntryRequest,
         cas: Option<u64>,
@@ -261,12 +278,28 @@ impl ConsulConfigEntryService {
             create_index: existing_create_index,
             modify_index: new_index,
         };
-        self.entries.insert(key.clone(), entry.clone());
-        self.persist_to_rocks(&key, &entry);
+
+        if let Some(ref raft) = self.raft_node {
+            let entry_json = serde_json::to_string(&entry)
+                .map_err(|e| format!("serialize error: {}", e))?;
+            match raft.write(ConsulRaftRequest::ConfigEntryApply {
+                key: key.clone(),
+                entry_json,
+            }).await {
+                Ok(r) if r.success => {
+                    self.entries.insert(key, entry);
+                }
+                Ok(r) => return Err(r.message.unwrap_or_else(|| "Raft write rejected".into())),
+                Err(e) => return Err(format!("Raft write error: {}", e)),
+            }
+        } else {
+            self.entries.insert(key.clone(), entry.clone());
+            self.persist_to_rocks(&key, &entry);
+        }
         Ok(true)
     }
 
-    pub fn delete_entry(&self, kind: &str, name: &str, cas: Option<u64>) -> Result<bool, String> {
+    pub async fn delete_entry(&self, kind: &str, name: &str, cas: Option<u64>) -> Result<bool, String> {
         let key = Self::entry_key(kind, name);
 
         if let Some(cas_index) = cas {
@@ -279,8 +312,20 @@ impl ConsulConfigEntryService {
             }
         }
 
-        self.entries.remove(&key);
-        self.delete_from_rocks(&key);
+        if let Some(ref raft) = self.raft_node {
+            match raft.write(ConsulRaftRequest::ConfigEntryDelete {
+                key: key.clone(),
+            }).await {
+                Ok(r) if r.success => {
+                    self.entries.remove(&key);
+                }
+                Ok(r) => return Err(r.message.unwrap_or_else(|| "Raft write rejected".into())),
+                Err(e) => return Err(format!("Raft write error: {}", e)),
+            }
+        } else {
+            self.entries.remove(&key);
+            self.delete_from_rocks(&key);
+        }
         self.index.fetch_add(1, Ordering::SeqCst);
         Ok(true)
     }
@@ -397,7 +442,7 @@ pub async fn apply_config_entry(
         })
     });
 
-    match config_service.apply_entry(entry_req, cas) {
+    match config_service.apply_entry(entry_req, cas).await {
         Ok(success) => HttpResponse::Ok()
             .insert_header((
                 "X-Consul-Index",
@@ -425,7 +470,7 @@ pub async fn delete_config_entry(
     }
 
     let (kind, name) = path.into_inner();
-    match config_service.delete_entry(&kind, &name, query.cas) {
+    match config_service.delete_entry(&kind, &name, query.cas).await {
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()
@@ -455,8 +500,8 @@ pub async fn delete_config_entry(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_apply_and_get_entry() {
+    #[tokio::test]
+    async fn test_apply_and_get_entry() {
         let service = ConsulConfigEntryService::new();
         let req = ConfigEntryRequest {
             kind: "service-defaults".to_string(),
@@ -474,7 +519,7 @@ mod tests {
             },
         };
 
-        let result = service.apply_entry(req, None);
+        let result = service.apply_entry(req, None).await;
         assert!(result.is_ok());
         assert!(result.unwrap());
 
@@ -485,8 +530,8 @@ mod tests {
         assert_eq!(entry.name, "web");
     }
 
-    #[test]
-    fn test_list_entries_by_kind() {
+    #[tokio::test]
+    async fn test_list_entries_by_kind() {
         let service = ConsulConfigEntryService::new();
 
         // Add two service-defaults entries
@@ -502,6 +547,7 @@ mod tests {
                 },
                 None,
             )
+            .await
             .unwrap();
 
         service
@@ -516,6 +562,7 @@ mod tests {
                 },
                 None,
             )
+            .await
             .unwrap();
 
         // Add one proxy-defaults entry
@@ -531,6 +578,7 @@ mod tests {
                 },
                 None,
             )
+            .await
             .unwrap();
 
         let sd_entries = service.list_entries("service-defaults");
@@ -540,8 +588,8 @@ mod tests {
         assert_eq!(pd_entries.len(), 1);
     }
 
-    #[test]
-    fn test_delete_entry() {
+    #[tokio::test]
+    async fn test_delete_entry() {
         let service = ConsulConfigEntryService::new();
         service
             .apply_entry(
@@ -555,17 +603,19 @@ mod tests {
                 },
                 None,
             )
+            .await
             .unwrap();
 
         assert!(service.get_entry("service-defaults", "web").is_some());
         service
             .delete_entry("service-defaults", "web", None)
+            .await
             .unwrap();
         assert!(service.get_entry("service-defaults", "web").is_none());
     }
 
-    #[test]
-    fn test_cas_apply() {
+    #[tokio::test]
+    async fn test_cas_apply() {
         let service = ConsulConfigEntryService::new();
         let req = ConfigEntryRequest {
             kind: "service-defaults".to_string(),
@@ -577,20 +627,20 @@ mod tests {
         };
 
         // First apply
-        service.apply_entry(req.clone(), None).unwrap();
+        service.apply_entry(req.clone(), None).await.unwrap();
         let entry = service.get_entry("service-defaults", "web").unwrap();
 
         // CAS with wrong index
-        let result = service.apply_entry(req.clone(), Some(999));
+        let result = service.apply_entry(req.clone(), Some(999)).await;
         assert!(!result.unwrap());
 
         // CAS with correct index
-        let result = service.apply_entry(req, Some(entry.modify_index));
+        let result = service.apply_entry(req, Some(entry.modify_index)).await;
         assert!(result.unwrap());
     }
 
-    #[test]
-    fn test_cas_delete() {
+    #[tokio::test]
+    async fn test_cas_delete() {
         let service = ConsulConfigEntryService::new();
         service
             .apply_entry(
@@ -604,18 +654,19 @@ mod tests {
                 },
                 None,
             )
+            .await
             .unwrap();
         let entry = service.get_entry("mesh", "mesh").unwrap();
 
         // CAS with wrong index
-        let result = service.delete_entry("mesh", "mesh", Some(999));
+        let result = service.delete_entry("mesh", "mesh", Some(999)).await;
         assert!(!result.unwrap());
 
         // Entry should still exist
         assert!(service.get_entry("mesh", "mesh").is_some());
 
         // CAS with correct index
-        let result = service.delete_entry("mesh", "mesh", Some(entry.modify_index));
+        let result = service.delete_entry("mesh", "mesh", Some(entry.modify_index)).await;
         assert!(result.unwrap());
         assert!(service.get_entry("mesh", "mesh").is_none());
     }

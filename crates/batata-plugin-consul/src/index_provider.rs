@@ -24,8 +24,24 @@ pub enum ConsulTable {
     KVS,
     /// Sessions (create, destroy, renew)
     Sessions,
-    /// Catalog (services, nodes — from NamingService)
+    /// Catalog (services, nodes)
     Catalog,
+    /// ACL tokens, policies, roles, auth methods
+    ACL,
+    /// Config entries (service-defaults, proxy-defaults, etc.)
+    ConfigEntries,
+    /// Connect CA roots, config, and intentions
+    ConnectCA,
+    /// Network coordinates
+    Coordinates,
+    /// Cluster peering
+    Peering,
+    /// Operator (autopilot, keyring)
+    Operator,
+    /// Prepared queries
+    Queries,
+    /// Namespaces
+    Namespaces,
 }
 
 /// Per-table state: high water mark + change notification.
@@ -56,6 +72,14 @@ pub struct ConsulTableIndex {
     kvs: Arc<TableState>,
     sessions: Arc<TableState>,
     catalog: Arc<TableState>,
+    acl: Arc<TableState>,
+    config_entries: Arc<TableState>,
+    connect_ca: Arc<TableState>,
+    coordinates: Arc<TableState>,
+    peering: Arc<TableState>,
+    operator: Arc<TableState>,
+    queries: Arc<TableState>,
+    namespaces: Arc<TableState>,
 }
 
 impl ConsulTableIndex {
@@ -65,6 +89,14 @@ impl ConsulTableIndex {
             kvs: Arc::new(TableState::new(1)),
             sessions: Arc::new(TableState::new(1)),
             catalog: Arc::new(TableState::new(1)),
+            acl: Arc::new(TableState::new(1)),
+            config_entries: Arc::new(TableState::new(1)),
+            connect_ca: Arc::new(TableState::new(1)),
+            coordinates: Arc::new(TableState::new(1)),
+            peering: Arc::new(TableState::new(1)),
+            operator: Arc::new(TableState::new(1)),
+            queries: Arc::new(TableState::new(1)),
+            namespaces: Arc::new(TableState::new(1)),
         }
     }
 
@@ -74,6 +106,14 @@ impl ConsulTableIndex {
             ConsulTable::KVS => &self.kvs,
             ConsulTable::Sessions => &self.sessions,
             ConsulTable::Catalog => &self.catalog,
+            ConsulTable::ACL => &self.acl,
+            ConsulTable::ConfigEntries => &self.config_entries,
+            ConsulTable::ConnectCA => &self.connect_ca,
+            ConsulTable::Coordinates => &self.coordinates,
+            ConsulTable::Peering => &self.peering,
+            ConsulTable::Operator => &self.operator,
+            ConsulTable::Queries => &self.queries,
+            ConsulTable::Namespaces => &self.namespaces,
         }
     }
 

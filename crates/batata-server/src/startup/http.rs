@@ -37,9 +37,6 @@ use crate::{
 
 use batata_api::naming::NamingServiceProvider;
 
-/// Consul services type alias - now provided by the consul plugin crate.
-pub type ConsulServices = batata_plugin_consul::ConsulPlugin;
-
 /// Creates and binds the console HTTP server.
 ///
 /// The console server provides administrative endpoints for managing
@@ -149,16 +146,17 @@ pub fn console_server(
     .run())
 }
 
-/// Creates and binds the Consul compatibility HTTP server.
+/// Creates and binds a protocol adapter HTTP server.
 ///
-/// The Consul server provides Consul-compatible API endpoints for service
-/// discovery clients that speak the Consul protocol. It runs on a dedicated
-/// port (default 8500) without Nacos authentication middleware, since Consul
-/// uses its own ACL token system.
-pub fn consul_server(
+/// Generic server builder for protocol adapter plugins (e.g., Consul, Eureka).
+/// Each plugin provides its own routes and app_data via `ProtocolAdapterPlugin::configure()`.
+/// The server runs on a dedicated port without Nacos authentication middleware,
+/// since protocol adapters use their own auth systems (e.g., Consul ACL tokens).
+#[cfg(feature = "consul")]
+pub fn plugin_http_server(
     app_state: Arc<AppState>,
     naming_service: Arc<dyn NamingServiceProvider>,
-    consul_services: ConsulServices,
+    plugin: Arc<dyn ProtocolAdapterPlugin>,
     address: String,
     port: u16,
 ) -> Result<Server, std::io::Error> {
@@ -191,7 +189,7 @@ pub fn consul_server(
             .app_data(web::QueryConfig::default().error_handler(|err, _req| {
                 let err_str = err.to_string();
                 // For duplicate field errors (e.g., ?tag=a&tag=b), return empty result
-                // Consul supports multiple tag params for AND-filtering
+                // Some protocols support multiple query params for AND-filtering
                 if err_str.contains("duplicate field") {
                     actix_web::error::InternalError::from_response(
                         err,
@@ -207,11 +205,9 @@ pub fn consul_server(
                     .into()
                 }
             }))
-            // Delegate all Consul app_data and routes to the plugin
-            .configure(|cfg| consul_services.configure(cfg))
+            // Delegate all app_data and routes to the protocol adapter plugin
+            .configure(|cfg| plugin.configure(cfg))
     })
-    // Consul uses fewer workers to avoid CPU contention with the main Nacos server.
-    // Configurable via batata.plugin.consul.http.workers (default: min(4, cpu_cores/2))
     .workers(consul_workers)
     .keep_alive(std::time::Duration::from_secs(keep_alive_secs))
     .client_request_timeout(std::time::Duration::from_secs(client_request_timeout_secs))

@@ -786,7 +786,7 @@ mod tests {
             "md5": "abc123",
             "config_tags": "",
         });
-        let cf = db.cf_handle("config").unwrap();
+        let cf = db.cf_handle("batata_config").unwrap();
         db.put_cf(cf, key.as_bytes(), value.to_string().as_bytes())
             .unwrap();
 
@@ -830,7 +830,7 @@ mod tests {
             "namespace_name": "Test Namespace",
             "namespace_desc": "A test namespace",
         });
-        let cf = db.cf_handle("namespace").unwrap();
+        let cf = db.cf_handle("batata_namespace").unwrap();
         db.put_cf(cf, key.as_bytes(), value.to_string().as_bytes())
             .unwrap();
 
@@ -851,7 +851,7 @@ mod tests {
     async fn test_reader_user_search() {
         let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
 
-        let cf = db.cf_handle("users").unwrap();
+        let cf = db.cf_handle("batata_users").unwrap();
         for name in &["alice", "bob", "alice_admin"] {
             let key = RocksStateMachine::user_key(name);
             let value = serde_json::json!({
@@ -886,7 +886,7 @@ mod tests {
         let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
 
         // Write roles
-        let role_cf = db.cf_handle("roles").unwrap();
+        let role_cf = db.cf_handle("batata_roles").unwrap();
         let key1 = RocksStateMachine::role_key("ROLE_ADMIN", "admin");
         let val1 = serde_json::json!({"role": "ROLE_ADMIN", "username": "admin"});
         db.put_cf(role_cf, key1.as_bytes(), val1.to_string().as_bytes())
@@ -898,7 +898,7 @@ mod tests {
             .unwrap();
 
         // Write permissions
-        let perm_cf = db.cf_handle("permissions").unwrap();
+        let perm_cf = db.cf_handle("batata_permissions").unwrap();
         let pkey = RocksStateMachine::permission_key("ROLE_ADMIN", "public::*", "rw");
         let pval =
             serde_json::json!({"role": "ROLE_ADMIN", "resource": "public::*", "action": "rw"});
@@ -933,7 +933,7 @@ mod tests {
     async fn test_reader_group_names() {
         let (db, _tmp_dir): (Arc<DB>, TempDir) = create_test_db().await;
 
-        let cf = db.cf_handle("config").unwrap();
+        let cf = db.cf_handle("batata_config").unwrap();
         for (data_id, group) in &[("d1", "GROUP_A"), ("d2", "GROUP_A"), ("d3", "GROUP_B")] {
             let key = RocksStateMachine::config_key(data_id, group, "public");
             let value = serde_json::json!({

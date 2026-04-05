@@ -16,6 +16,7 @@ use crate::constants::{CF_CONSUL_CA_ROOTS, CF_CONSUL_INTENTIONS};
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
+use crate::raft::ConsulRaftWriter;
 
 // ============================================================================
 // CA Models
@@ -276,6 +277,8 @@ pub struct ConsulConnectCAService {
     ca_key_pem: String,
     /// Optional RocksDB for write-through persistence
     rocks_db: Option<Arc<DB>>,
+    /// Optional Raft writer for cluster-mode replication
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulConnectCAService {
@@ -328,6 +331,7 @@ impl ConsulConnectCAService {
             ca_cert_pem,
             ca_key_pem,
             rocks_db: None,
+            raft_node: None,
         }
     }
 
@@ -476,7 +480,15 @@ impl ConsulConnectCAService {
             ca_cert_pem,
             ca_key_pem,
             rocks_db: Some(db),
+            raft_node: None,
         }
+    }
+
+    /// Create a Connect CA service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
+        let mut svc = Self::with_rocks(db);
+        svc.raft_node = Some(raft_node);
+        svc
     }
 
     pub fn with_datacenter(mut self, datacenter: String) -> Self {

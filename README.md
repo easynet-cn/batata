@@ -423,7 +423,6 @@ export RUST_LOG=info
 | `batata.plugin.consul.enabled` | `false` | Enable Consul API compatibility |
 | `batata.plugin.consul.port` | `8500` | Consul API port |
 | `batata.plugin.consul.datacenter` | `dc1` | Consul datacenter name |
-| `batata.plugin.consul.data_dir` | `data/consul_rocksdb` | Consul data directory |
 
 #### AI / MCP Registry
 

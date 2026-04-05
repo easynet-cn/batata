@@ -1,26 +1,9 @@
-/// Consul-dedicated Raft consensus module.
+/// Consul Raft integration module.
 ///
-/// Provides an independent Raft group for Consul operations, separate
-/// from the Nacos Raft. This gives Consul its own Raft log index space,
-/// matching the original Consul's architecture where all indexes
-/// (CreateIndex, ModifyIndex, X-Consul-Index) derive from the Raft log.
-///
-/// ## Architecture
-///
-/// ```text
-/// Nacos Raft (existing)           Consul Raft (this module)
-/// ├── Log:  data/raft/logs/       ├── Log:  {consul_dir}/raft/logs/
-/// ├── State: data/raft/state/     ├── State: {consul_dir}/raft/state/
-/// └── gRPC: port 9849             └── gRPC: port 9850
-/// ```
-pub mod grpc_service;
-pub mod log_store;
-pub mod network;
-pub mod node;
+/// Provides the plugin handler and request types for routing Consul
+/// write operations through the unified core Raft group via `PluginWrite`.
+pub mod plugin_handler;
 pub mod request;
-pub mod state_machine;
-pub mod types;
 
-pub use node::ConsulRaftNode;
+pub use plugin_handler::{ConsulRaftPluginHandler, ConsulRaftWriter, CONSUL_PLUGIN_ID};
 pub use request::{ConsulRaftRequest, ConsulRaftResponse};
-pub use types::NodeId;

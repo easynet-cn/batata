@@ -2,12 +2,18 @@
 //!
 //! Implements the `Plugin` and `ProtocolAdapterPlugin` traits, encapsulating
 //! all Consul services, routes, and app_data configuration.
+//!
+//! Supports two-phase initialization:
+//! 1. Construction via `from_config()` — lightweight, no DB or Raft needed
+//! 2. Initialization via `init(ctx)` — creates stores, registers Raft, builds services
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use rocksdb::DB;
 
 use batata_naming::InstanceCheckRegistry;
+use batata_naming::healthcheck::{deregister_monitor::DeregisterMonitor, ttl_monitor::TtlMonitor};
 use batata_plugin::ProtocolAdapterPlugin;
 
 use crate::acl::AclService;
@@ -26,16 +32,16 @@ use crate::model::ConsulDatacenterConfig;
 use crate::operator::ConsulOperatorService;
 use crate::peering::ConsulPeeringService;
 use crate::query::ConsulQueryService;
-use crate::raft::ConsulRaftNode;
+use crate::raft::ConsulRaftWriter;
 use crate::session::ConsulSessionService;
 use crate::snapshot::ConsulSnapshotService;
 
-/// Consul compatibility protocol adapter plugin.
+/// Inner state holding all initialized Consul services.
 ///
-/// Holds all Consul service instances and provides actix-web configuration.
-/// Supports three storage modes: in-memory, RocksDB standalone, and Raft-replicated.
+/// Created during `init()` and stored in the `OnceLock`. Derives `Clone`
+/// so that `configure()` can create `web::Data` instances for each HTTP worker.
 #[derive(Clone)]
-pub struct ConsulPlugin {
+pub struct ConsulPluginInner {
     pub naming_store: Arc<crate::naming_store::ConsulNamingStore>,
     pub agent: ConsulAgentService,
     pub health: ConsulHealthService,
@@ -57,19 +63,75 @@ pub struct ConsulPlugin {
     pub namespace_service: crate::namespace::ConsulNamespaceService,
     pub dc_config: ConsulDatacenterConfig,
     pub index_provider: ConsulIndexProvider,
+    pub registry: Arc<InstanceCheckRegistry>,
+}
+
+/// Consul compatibility protocol adapter plugin.
+///
+/// Supports two-phase initialization:
+/// - Phase 1: `from_config()` creates a lightweight plugin with only config
+/// - Phase 2: `init(ctx)` reads Raft/cluster info from context, builds all services
+///
+/// Legacy constructors (`new()`, `with_consul_raft()`) are preserved for backward
+/// compatibility but will be removed once `consul_init.rs` is deleted.
+pub struct ConsulPlugin {
+    /// Whether this plugin is enabled.
     enabled: bool,
+    /// Whether ACL is enabled.
+    acl_enabled: bool,
+    /// Datacenter configuration.
+    pub dc_config: ConsulDatacenterConfig,
+    /// Whether to auto-register the Consul service on startup.
+    register_self: bool,
+    /// Server address for self-registration.
+    server_address: String,
+    /// Server port for self-registration.
+    server_port: u16,
+    /// Lazily initialized inner state (populated during `init()`).
+    inner: std::sync::OnceLock<ConsulPluginInner>,
 }
 
 impl ConsulPlugin {
-    /// Creates Consul plugin with in-memory storage.
+    // ========================================================================
+    // New two-phase constructor
+    // ========================================================================
+
+    /// Creates a lightweight ConsulPlugin from configuration only.
     ///
-    /// If `naming_store` is provided, uses it. Otherwise creates a new one.
-    pub fn new(
-        naming_store: Option<Arc<crate::naming_store::ConsulNamingStore>>,
-        registry: Arc<InstanceCheckRegistry>,
+    /// No database, Raft, or heavy services are created here. Call `init(ctx)`
+    /// to complete initialization with server context.
+    pub fn from_config(
+        enabled: bool,
         acl_enabled: bool,
         dc_config: ConsulDatacenterConfig,
+        register_self: bool,
+        server_address: String,
+        server_port: u16,
     ) -> Self {
+        Self {
+            enabled,
+            acl_enabled,
+            dc_config,
+            register_self,
+            server_address,
+            server_port,
+            inner: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Get the initialized inner state. Panics if `init()` has not been called.
+    fn inner(&self) -> &ConsulPluginInner {
+        self.inner
+            .get()
+            .expect("ConsulPlugin::init() must be called before accessing services")
+    }
+
+    /// Build inner services with in-memory storage (standalone mode).
+    fn build_inner_standalone(
+        &self,
+        naming_store: Arc<crate::naming_store::ConsulNamingStore>,
+        registry: Arc<InstanceCheckRegistry>,
+    ) -> ConsulPluginInner {
         let index_provider = ConsulIndexProvider::new();
         let session = ConsulSessionService::new();
         let kv = ConsulKVService::new();
@@ -77,24 +139,22 @@ impl ConsulPlugin {
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
-        let naming_store =
-            naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
 
-        Self {
+        ConsulPluginInner {
             naming_store: naming_store.clone(),
             agent: ConsulAgentService::new(naming_store.clone(), registry.clone()),
-            health: ConsulHealthService::new(registry),
+            health: ConsulHealthService::new(registry.clone()),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_store.clone(),
-                dc_config.datacenter.clone(),
+                self.dc_config.datacenter.clone(),
             )
             .with_index_provider(index_provider.clone()),
             namespace_service: crate::namespace::ConsulNamespaceService::new(
                 index_provider.clone(),
             ),
             index_provider,
-            acl: if acl_enabled {
+            acl: if self.acl_enabled {
                 AclService::new()
             } else {
                 AclService::disabled()
@@ -111,133 +171,165 @@ impl ConsulPlugin {
             coordinate: ConsulCoordinateService::new(),
             snapshot: ConsulSnapshotService::new(),
             operator: ConsulOperatorService::new(),
-            dc_config,
-            enabled: true,
+            dc_config: self.dc_config.clone(),
+            registry,
         }
     }
 
-    /// Creates Consul plugin with RocksDB persistence.
-    pub fn with_persistence(
-        naming_store: Option<Arc<crate::naming_store::ConsulNamingStore>>,
+    /// Build inner services with Raft-replicated RocksDB storage (cluster mode).
+    fn build_inner_cluster(
+        &self,
+        naming_store: Arc<crate::naming_store::ConsulNamingStore>,
         registry: Arc<InstanceCheckRegistry>,
-        acl_enabled: bool,
         db: Arc<DB>,
-        dc_config: ConsulDatacenterConfig,
-    ) -> Self {
-        let index_provider = ConsulIndexProvider::new();
-        let session = ConsulSessionService::with_rocks(db.clone());
-        let kv = ConsulKVService::with_rocks(db.clone());
+        consul_raft: Arc<ConsulRaftWriter>,
+        table_index: ConsulTableIndex,
+    ) -> ConsulPluginInner {
+        let index_provider: ConsulIndexProvider = table_index;
+        let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone());
+        let kv = ConsulKVService::with_raft(db.clone(), consul_raft.clone());
         let kv_arc = Arc::new(kv.clone());
         let session_arc = Arc::new(session.clone());
         let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
         let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
-        let naming_store =
-            naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
 
-        Self {
+        ConsulPluginInner {
             naming_store: naming_store.clone(),
             agent: ConsulAgentService::new(naming_store.clone(), registry.clone()),
-            health: ConsulHealthService::new(registry),
+            health: ConsulHealthService::new(registry.clone()),
             kv,
             catalog: ConsulCatalogService::with_datacenter(
                 naming_store.clone(),
-                dc_config.datacenter.clone(),
+                self.dc_config.datacenter.clone(),
             )
             .with_index_provider(index_provider.clone()),
-            acl: if acl_enabled {
-                AclService::with_rocks(db.clone())
+            acl: if self.acl_enabled {
+                AclService::with_raft(db.clone(), consul_raft.clone())
             } else {
                 AclService::disabled()
             },
             session,
             event: ConsulEventService::new(),
-            query: ConsulQueryService::with_rocks(db.clone()),
+            query: ConsulQueryService::with_raft(db.clone(), consul_raft.clone()),
             lock,
             semaphore,
-            peering: Arc::new(ConsulPeeringService::with_rocks(
+            peering: Arc::new(ConsulPeeringService::with_raft(
                 db.clone(),
-                dc_config.datacenter.clone(),
-                dc_config.consul_port,
+                consul_raft.clone(),
+                self.dc_config.datacenter.clone(),
+                self.dc_config.consul_port,
             )),
-            config_entry: ConsulConfigEntryService::with_rocks(db.clone()),
+            config_entry: ConsulConfigEntryService::with_raft(db.clone(), consul_raft.clone()),
             connect: ConsulConnectService::new(),
-            connect_ca: ConsulConnectCAService::with_rocks(db.clone()),
-            coordinate: ConsulCoordinateService::with_rocks(
+            connect_ca: ConsulConnectCAService::with_raft(db.clone(), consul_raft.clone()),
+            coordinate: ConsulCoordinateService::with_raft(
                 db.clone(),
-                dc_config.datacenter.clone(),
+                consul_raft.clone(),
+                self.dc_config.datacenter.clone(),
             ),
             snapshot: ConsulSnapshotService::with_rocks(db.clone()),
-            operator: ConsulOperatorService::with_rocks(db),
-            namespace_service: crate::namespace::ConsulNamespaceService::new(
+            operator: ConsulOperatorService::with_raft(db, consul_raft.clone()),
+            namespace_service: crate::namespace::ConsulNamespaceService::with_raft(
+                consul_raft.clone(),
                 index_provider.clone(),
             ),
-            dc_config,
+            dc_config: self.dc_config.clone(),
             index_provider,
-            enabled: true,
+            registry,
         }
     }
 
+    // ========================================================================
+    // Legacy constructors (backward compatibility with consul_init.rs)
+    // ========================================================================
+
+    /// Creates Consul plugin with in-memory storage.
+    ///
+    /// **Deprecated**: Use `from_config()` + `init()` instead. Kept for backward
+    /// compatibility with `consul_init.rs`.
+    ///
+    /// If `naming_store` is provided, uses it. Otherwise creates a new one.
+    pub fn new(
+        naming_store: Option<Arc<crate::naming_store::ConsulNamingStore>>,
+        registry: Arc<InstanceCheckRegistry>,
+        acl_enabled: bool,
+        dc_config: ConsulDatacenterConfig,
+    ) -> Self {
+        let naming_store =
+            naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
+
+        let plugin = Self {
+            enabled: true,
+            acl_enabled,
+            dc_config: dc_config.clone(),
+            register_self: false,
+            server_address: String::new(),
+            server_port: 0,
+            inner: std::sync::OnceLock::new(),
+        };
+
+        let inner = plugin.build_inner_standalone(naming_store, registry);
+        let _ = plugin.inner.set(inner);
+        plugin
+    }
+
     /// Creates Consul plugin with Raft-replicated RocksDB storage (cluster mode).
+    ///
+    /// **Deprecated**: Use `from_config()` + `init()` instead. Kept for backward
+    /// compatibility with `consul_init.rs`.
+    ///
+    /// Uses `ConsulRaftWriter` to route Consul writes through the core Raft group
+    /// via `PluginWrite` instead of a separate Consul-only Raft.
     pub fn with_consul_raft(
         naming_store: Option<Arc<crate::naming_store::ConsulNamingStore>>,
         registry: Arc<InstanceCheckRegistry>,
         acl_enabled: bool,
         db: Arc<DB>,
-        consul_raft: Arc<ConsulRaftNode>,
+        consul_raft: Arc<ConsulRaftWriter>,
         table_index: ConsulTableIndex,
         dc_config: ConsulDatacenterConfig,
     ) -> Self {
-        let index_provider: ConsulIndexProvider = table_index;
-        let session = ConsulSessionService::with_raft(db.clone(), consul_raft.clone());
-        let kv = ConsulKVService::with_raft(db.clone(), consul_raft);
-        let kv_arc = Arc::new(kv.clone());
-        let session_arc = Arc::new(session.clone());
-        let lock = ConsulLockService::new(kv_arc.clone(), session_arc.clone());
-        let semaphore = ConsulSemaphoreService::new(kv_arc, session_arc);
         let naming_store =
             naming_store.unwrap_or_else(|| Arc::new(crate::naming_store::ConsulNamingStore::new()));
 
-        Self {
-            naming_store: naming_store.clone(),
-            agent: ConsulAgentService::new(naming_store.clone(), registry.clone()),
-            health: ConsulHealthService::new(registry),
-            kv,
-            catalog: ConsulCatalogService::with_datacenter(
-                naming_store.clone(),
-                dc_config.datacenter.clone(),
-            )
-            .with_index_provider(index_provider.clone()),
-            acl: if acl_enabled {
-                AclService::with_rocks(db.clone())
-            } else {
-                AclService::disabled()
-            },
-            session,
-            event: ConsulEventService::new(),
-            query: ConsulQueryService::with_rocks(db.clone()),
-            lock,
-            semaphore,
-            peering: Arc::new(ConsulPeeringService::with_rocks(
-                db.clone(),
-                dc_config.datacenter.clone(),
-                dc_config.consul_port,
-            )),
-            config_entry: ConsulConfigEntryService::with_rocks(db.clone()),
-            connect: ConsulConnectService::new(),
-            connect_ca: ConsulConnectCAService::with_rocks(db.clone()),
-            coordinate: ConsulCoordinateService::with_rocks(
-                db.clone(),
-                dc_config.datacenter.clone(),
-            ),
-            snapshot: ConsulSnapshotService::with_rocks(db.clone()),
-            operator: ConsulOperatorService::with_rocks(db),
-            namespace_service: crate::namespace::ConsulNamespaceService::new(
-                index_provider.clone(),
-            ),
-            dc_config,
-            index_provider,
+        let plugin = Self {
             enabled: true,
-        }
+            acl_enabled,
+            dc_config: dc_config.clone(),
+            register_self: false,
+            server_address: String::new(),
+            server_port: 0,
+            inner: std::sync::OnceLock::new(),
+        };
+
+        let inner =
+            plugin.build_inner_cluster(naming_store, registry, db, consul_raft, table_index);
+        let _ = plugin.inner.set(inner);
+        plugin
+    }
+
+    // ========================================================================
+    // Public accessors for backward compatibility with consul_init.rs
+    // ========================================================================
+
+    /// Get the agent service. Panics if not initialized.
+    pub fn agent(&self) -> &ConsulAgentService {
+        &self.inner().agent
+    }
+
+    /// Get the session service. Panics if not initialized.
+    pub fn session(&self) -> &ConsulSessionService {
+        &self.inner().session
+    }
+
+    /// Get the KV service. Panics if not initialized.
+    pub fn kv(&self) -> &ConsulKVService {
+        &self.inner().kv
+    }
+
+    /// Get the registry. Panics if not initialized.
+    pub fn registry(&self) -> &Arc<InstanceCheckRegistry> {
+        &self.inner().registry
     }
 }
 
@@ -260,12 +352,79 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
         self.dc_config.consul_port
     }
 
-    async fn init(&self) -> anyhow::Result<()> {
+    fn required_column_families(&self) -> Vec<String> {
+        use crate::constants::*;
+        vec![
+            CF_CONSUL_KV.to_string(),
+            CF_CONSUL_SESSIONS.to_string(),
+            CF_CONSUL_ACL.to_string(),
+            CF_CONSUL_QUERIES.to_string(),
+            CF_CONSUL_CONFIG_ENTRIES.to_string(),
+            CF_CONSUL_CA_ROOTS.to_string(),
+            CF_CONSUL_INTENTIONS.to_string(),
+            CF_CONSUL_COORDINATES.to_string(),
+            CF_CONSUL_PEERING.to_string(),
+            CF_CONSUL_OPERATOR.to_string(),
+            CF_CONSUL_EVENTS.to_string(),
+            CF_CONSUL_NAMESPACES.to_string(),
+            CF_CONSUL_CATALOG.to_string(),
+        ]
+    }
+
+    async fn init(&self, ctx: &batata_plugin::PluginContext) -> anyhow::Result<()> {
+        // If inner is already set (legacy constructor), just log and return.
+        if self.inner.get().is_some() {
+            tracing::info!(
+                "Consul compatibility plugin already initialized (legacy constructor) (dc={}, version={})",
+                self.dc_config.datacenter,
+                self.dc_config.consul_version
+            );
+            return Ok(());
+        }
+
         tracing::info!(
-            "Consul compatibility plugin initialized (dc={}, version={})",
+            "Initializing Consul compatibility plugin (dc={}, version={})",
             self.dc_config.datacenter,
             self.dc_config.consul_version
         );
+
+        // Extract cluster context
+        let is_cluster = ctx
+            .get::<bool>("is_cluster")
+            .map(|v| *v)
+            .unwrap_or(false);
+        let raft_node = ctx.get::<batata_consistency::RaftNode>("raft_node");
+
+        // Create Consul naming store and result handler
+        let consul_naming_store =
+            Arc::new(crate::naming_store::ConsulNamingStore::new());
+        let consul_index_provider = Arc::new(ConsulIndexProvider::new());
+        let consul_result_handler: Arc<dyn batata_plugin::HealthCheckResultHandler> =
+            Arc::new(crate::result_handler::ConsulResultHandler::new(
+                consul_naming_store.clone(),
+                consul_index_provider.clone(),
+            ));
+        let consul_registry = Arc::new(InstanceCheckRegistry::new(consul_result_handler));
+
+        let inner = if is_cluster {
+            self.init_cluster(
+                raft_node,
+                consul_naming_store,
+                consul_registry,
+            )
+            .await
+        } else {
+            tracing::info!(
+                "Consul services using in-memory storage (standalone/console mode)"
+            );
+            self.build_inner_standalone(consul_naming_store, consul_registry)
+        };
+
+        self.inner.set(inner).map_err(|_| {
+            anyhow::anyhow!("ConsulPlugin::init() called more than once")
+        })?;
+
+        tracing::info!("Consul compatibility plugin initialized successfully");
         Ok(())
     }
 
@@ -275,28 +434,127 @@ impl ProtocolAdapterPlugin for ConsulPlugin {
     }
 
     fn configure(&self, cfg: &mut actix_web::web::ServiceConfig) {
-        cfg.app_data(actix_web::web::Data::from(self.naming_store.clone()))
-            .app_data(actix_web::web::Data::new(self.agent.clone()))
-            .app_data(actix_web::web::Data::new(self.health.clone()))
-            .app_data(actix_web::web::Data::new(self.kv.clone()))
-            .app_data(actix_web::web::Data::new(self.catalog.clone()))
-            .app_data(actix_web::web::Data::new(self.acl.clone()))
-            .app_data(actix_web::web::Data::new(self.session.clone()))
-            .app_data(actix_web::web::Data::new(self.event.clone()))
-            .app_data(actix_web::web::Data::new(self.query.clone()))
-            .app_data(actix_web::web::Data::new(self.lock.clone()))
-            .app_data(actix_web::web::Data::new(self.semaphore.clone()))
-            .app_data(actix_web::web::Data::from(self.peering.clone()))
-            .app_data(actix_web::web::Data::new(self.config_entry.clone()))
-            .app_data(actix_web::web::Data::new(self.connect.clone()))
-            .app_data(actix_web::web::Data::new(self.connect_ca.clone()))
-            .app_data(actix_web::web::Data::new(self.coordinate.clone()))
-            .app_data(actix_web::web::Data::new(self.snapshot.clone()))
-            .app_data(actix_web::web::Data::new(self.operator.clone()))
-            .app_data(actix_web::web::Data::new(self.namespace_service.clone()))
-            .app_data(actix_web::web::Data::new(self.dc_config.clone()))
-            .app_data(actix_web::web::Data::new(self.index_provider.clone()))
+        let inner = self.inner();
+        cfg.app_data(actix_web::web::Data::from(inner.naming_store.clone()))
+            .app_data(actix_web::web::Data::new(inner.agent.clone()))
+            .app_data(actix_web::web::Data::new(inner.health.clone()))
+            .app_data(actix_web::web::Data::new(inner.kv.clone()))
+            .app_data(actix_web::web::Data::new(inner.catalog.clone()))
+            .app_data(actix_web::web::Data::new(inner.acl.clone()))
+            .app_data(actix_web::web::Data::new(inner.session.clone()))
+            .app_data(actix_web::web::Data::new(inner.event.clone()))
+            .app_data(actix_web::web::Data::new(inner.query.clone()))
+            .app_data(actix_web::web::Data::new(inner.lock.clone()))
+            .app_data(actix_web::web::Data::new(inner.semaphore.clone()))
+            .app_data(actix_web::web::Data::from(inner.peering.clone()))
+            .app_data(actix_web::web::Data::new(inner.config_entry.clone()))
+            .app_data(actix_web::web::Data::new(inner.connect.clone()))
+            .app_data(actix_web::web::Data::new(inner.connect_ca.clone()))
+            .app_data(actix_web::web::Data::new(inner.coordinate.clone()))
+            .app_data(actix_web::web::Data::new(inner.snapshot.clone()))
+            .app_data(actix_web::web::Data::new(inner.operator.clone()))
+            .app_data(actix_web::web::Data::new(inner.namespace_service.clone()))
+            .app_data(actix_web::web::Data::new(inner.dc_config.clone()))
+            .app_data(actix_web::web::Data::new(inner.index_provider.clone()))
             .service(crate::route::routes());
+    }
+
+    async fn start_background_tasks(&self) -> anyhow::Result<()> {
+        let inner = self.inner();
+
+        // Auto-register Consul service if enabled
+        if self.register_self {
+            tracing::info!("Auto-registering Consul service...");
+            let agent = inner.agent.clone();
+            let dc = self.dc_config.datacenter.clone();
+            let consul_server_port = self.server_port;
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                if let Err(e) = agent.register_consul_service(consul_server_port, &dc).await {
+                    tracing::error!("Failed to auto-register Consul service: {}", e);
+                }
+            });
+        }
+
+        // TTL monitor
+        tracing::info!("Starting Consul TTL monitor...");
+        let ttl_monitor = TtlMonitor::new(inner.registry.clone());
+        tokio::spawn(async move {
+            ttl_monitor.start().await;
+        });
+
+        // Deregister monitor
+        tracing::info!("Starting Consul deregister monitor...");
+        let deregister_monitor = DeregisterMonitor::new(inner.registry.clone(), 30);
+        tokio::spawn(async move {
+            deregister_monitor.start().await;
+        });
+
+        // Session TTL cleanup
+        let session_svc = inner.session.clone();
+        let kv_svc = inner.kv.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let expired = session_svc.scan_expired_session_ids();
+                if !expired.is_empty() {
+                    tracing::info!("Cleaning up {} expired Consul sessions", expired.len());
+                    for id in &expired {
+                        kv_svc.release_session(id).await;
+                    }
+                    session_svc.cleanup_expired();
+                }
+            }
+        });
+
+        Ok(())
+    }
+}
+
+impl ConsulPlugin {
+    /// Initialize in cluster mode using the core Raft group.
+    async fn init_cluster(
+        &self,
+        raft_node: Option<Arc<batata_consistency::RaftNode>>,
+        consul_naming_store: Arc<crate::naming_store::ConsulNamingStore>,
+        consul_registry: Arc<InstanceCheckRegistry>,
+    ) -> ConsulPluginInner {
+        let Some(core_raft) = raft_node else {
+            tracing::error!(
+                "Core Raft node not available for Consul cluster mode, falling back to in-memory"
+            );
+            return self.build_inner_standalone(consul_naming_store, consul_registry);
+        };
+
+        // Create a table index for blocking query notifications
+        let table_index = ConsulTableIndex::new();
+
+        // Register the Consul plugin handler with the core Raft state machine
+        let plugin_handler =
+            crate::raft::plugin_handler::ConsulRaftPluginHandler::new_arc(table_index.clone());
+        if let Err(e) = core_raft.register_plugin(plugin_handler).await {
+            tracing::error!(
+                "Failed to register Consul Raft plugin: {}, falling back to in-memory",
+                e
+            );
+            return self.build_inner_standalone(consul_naming_store, consul_registry);
+        }
+        tracing::info!("Consul Raft plugin handler registered with core Raft");
+
+        // Create a writer adapter that routes Consul requests through PluginWrite
+        let consul_writer = Arc::new(ConsulRaftWriter::new(core_raft.clone()));
+
+        // Get shared DB from core Raft state machine
+        let db = core_raft.db();
+
+        self.build_inner_cluster(
+            consul_naming_store,
+            consul_registry,
+            db,
+            consul_writer,
+            table_index,
+        )
     }
 }
 
@@ -318,9 +576,61 @@ mod tests {
     async fn test_consul_plugin_lifecycle() {
         let plugin = create_test_plugin();
         assert_eq!(ProtocolAdapterPlugin::name(&plugin), "consul-compatibility");
-        assert!(plugin.init().await.is_ok());
+        let ctx = batata_plugin::PluginContext::new();
+        assert!(plugin.init(&ctx).await.is_ok());
         assert!(plugin.shutdown().await.is_ok());
         assert_eq!(plugin.default_port(), 8500);
+    }
+
+    #[test]
+    fn test_consul_plugin_from_config() {
+        let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
+        let plugin = ConsulPlugin::from_config(
+            true,
+            false,
+            dc_config,
+            false,
+            "127.0.0.1".to_string(),
+            8500,
+        );
+        assert!(plugin.is_enabled());
+        assert_eq!(plugin.protocol(), "consul");
+        assert_eq!(plugin.default_port(), 8500);
+        // inner is not yet initialized
+        assert!(plugin.inner.get().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_consul_plugin_from_config_init() {
+        let dc_config = ConsulDatacenterConfig::new("dc1".to_string());
+        let plugin = ConsulPlugin::from_config(
+            true,
+            false,
+            dc_config,
+            false,
+            "127.0.0.1".to_string(),
+            8500,
+        );
+
+        // Initialize with empty context (standalone mode)
+        let ctx = batata_plugin::PluginContext::new();
+        assert!(plugin.init(&ctx).await.is_ok());
+
+        // inner is now initialized
+        assert!(plugin.inner.get().is_some());
+
+        // Services are accessible
+        let inner = plugin.inner();
+        assert_eq!(inner.dc_config.datacenter, "dc1");
+    }
+
+    #[tokio::test]
+    async fn test_consul_plugin_double_init_legacy() {
+        // Legacy constructor already initializes inner; init() should be a no-op
+        let plugin = create_test_plugin();
+        let ctx = batata_plugin::PluginContext::new();
+        assert!(plugin.init(&ctx).await.is_ok());
+        // Should not panic or error
     }
 
     fn create_test_plugin() -> ConsulPlugin {

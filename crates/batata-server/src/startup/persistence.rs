@@ -44,8 +44,13 @@ impl PersistenceContext {
 /// Initialize persistence layer based on storage backend and deploy topology.
 ///
 /// Returns a `PersistenceContext` containing all created resources.
+/// Initialize the persistence layer.
+///
+/// `extra_cf_names` are additional RocksDB column families required by plugins.
+/// They are created alongside the core CFs when RocksDB is opened.
 pub async fn init_persistence(
     configuration: &Configuration,
+    extra_cf_names: &[String],
 ) -> Result<PersistenceContext, Box<dyn std::error::Error>> {
     let storage_backend = configuration.storage_backend();
     let deploy_topology = configuration.deploy_topology();
@@ -60,7 +65,7 @@ pub async fn init_persistence(
             init_embedded_standalone(configuration).await
         }
         (StorageBackend::Embedded, DeployTopology::Cluster) => {
-            init_embedded_cluster(configuration).await
+            init_embedded_cluster(configuration, extra_cf_names).await
         }
     }
 }
@@ -127,6 +132,7 @@ async fn init_embedded_standalone(
 
 async fn init_embedded_cluster(
     configuration: &Configuration,
+    extra_cf_names: &[String],
 ) -> Result<PersistenceContext, Box<dyn std::error::Error>> {
     let data_dir = configuration.embedded_data_dir();
     let main_port = configuration.server_main_port();
@@ -182,6 +188,7 @@ async fn init_embedded_cluster(
         raft_config,
         Some(rocks_config.to_db_options()),
         Some(rocks_config.to_cf_options()),
+        extra_cf_names,
     )
     .await
     .map_err(|e| format!("Failed to initialize Raft node: {}", e))?;

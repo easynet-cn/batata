@@ -331,11 +331,9 @@ batata.otel.export_timeout_secs: 10
 
 batata.plugin.consul.enabled: false
 batata.plugin.consul.port: 8500
-#batata.plugin.consul.raft.port: 7500
 batata.plugin.consul.version: 1.22.5
 batata.plugin.consul.datacenter: dc1
 #batata.plugin.consul.primary_datacenter: dc1
-batata.plugin.consul.data_dir: data/consul_rocksdb
 batata.plugin.consul.register_self: true
 batata.plugin.consul.acl.enabled: false
 batata.plugin.consul.check_reap_interval: 30

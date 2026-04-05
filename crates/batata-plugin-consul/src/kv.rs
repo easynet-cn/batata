@@ -13,7 +13,7 @@ use tokio::sync::Notify;
 use tracing::{error, info};
 
 use crate::constants::{CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL_SESSIONS};
-use crate::raft::{ConsulRaftNode, ConsulRaftRequest};
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -215,8 +215,8 @@ pub struct ConsulKVService {
     notify: Arc<Notify>,
     /// Keeps temp directory alive for tests/in-memory mode
     _temp_dir: Option<Arc<tempfile::TempDir>>,
-    /// Optional Raft node for cluster mode replication
-    raft_node: Option<Arc<ConsulRaftNode>>,
+    /// Optional Raft writer for cluster mode replication (via core Raft PluginWrite)
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulKVService {
@@ -248,7 +248,7 @@ impl ConsulKVService {
 
     /// Create a new KV service backed by a Raft-replicated RocksDB instance.
     /// Writes go through Raft consensus; reads are local.
-    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftNode>) -> Self {
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
         let max_index = Self::scan_max_index(&db);
 
         Self {

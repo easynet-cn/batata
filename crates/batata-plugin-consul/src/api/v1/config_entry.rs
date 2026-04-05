@@ -56,7 +56,7 @@ async fn apply_config_entry(
         })
     });
 
-    match config_service.apply_entry(entry_req, cas) {
+    match config_service.apply_entry(entry_req, cas).await {
         Ok(success) => HttpResponse::Ok()
             .insert_header((
                 "X-Consul-Index",
@@ -111,7 +111,7 @@ async fn delete_config_entry(
     }
 
     let (kind, name) = path.into_inner();
-    match config_service.delete_entry(&kind, &name, query.cas) {
+    match config_service.delete_entry(&kind, &name, query.cas).await {
         Ok(success) => {
             if query.cas.is_some() {
                 HttpResponse::Ok()

@@ -116,19 +116,21 @@ impl RaftService for RaftGrpcService {
             })?;
 
         // AppendEntriesResponse is an enum in openraft 0.9
-        let (success, conflict) = match response {
-            openraft::raft::AppendEntriesResponse::Success => (true, None),
+        let (success, conflict, higher_vote) = match response {
+            openraft::raft::AppendEntriesResponse::Success => (true, None, None),
             openraft::raft::AppendEntriesResponse::PartialSuccess(log_id) => {
                 let match_log = log_id.map(|l| ProtoLogId {
                     term: l.leader_id.term,
                     index: l.index,
                 });
-                (true, match_log)
+                (true, match_log, None)
             }
             openraft::raft::AppendEntriesResponse::Conflict => {
-                (false, Some(ProtoLogId { term: 0, index: 0 }))
+                (false, Some(ProtoLogId { term: 0, index: 0 }), None)
             }
-            openraft::raft::AppendEntriesResponse::HigherVote(_) => (false, None),
+            openraft::raft::AppendEntriesResponse::HigherVote(v) => {
+                (false, None, Some(super::proto_convert::to_proto_vote(&v)))
+            }
         };
 
         Ok(Response::new(ProtoAppendEntriesResponse {
@@ -136,6 +138,7 @@ impl RaftService for RaftGrpcService {
             success,
             match_log_id: None,
             conflict,
+            higher_vote,
         }))
     }
 

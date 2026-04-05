@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::constants::CF_CONSUL_COORDINATES;
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -104,6 +105,8 @@ pub struct ConsulCoordinateService {
     datacenter: String,
     /// Optional RocksDB persistence
     rocks_db: Option<Arc<DB>>,
+    /// Optional Raft writer for cluster mode
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulCoordinateService {
@@ -121,6 +124,7 @@ impl ConsulCoordinateService {
             coordinates: Arc::new(DashMap::new()),
             datacenter,
             rocks_db: None,
+            raft_node: None,
         };
 
         // Add self with default coordinate
@@ -179,7 +183,20 @@ impl ConsulCoordinateService {
             coordinates,
             datacenter,
             rocks_db: Some(db),
+            raft_node: None,
         }
+    }
+
+    /// Create a coordinate service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>, datacenter: String) -> Self {
+        let mut svc = Self::with_rocks(db, datacenter);
+        svc.raft_node = Some(raft_node);
+        svc
+    }
+
+    /// Get the shared coordinates DashMap for the plugin handler.
+    pub fn coordinates_arc(&self) -> Arc<DashMap<String, CoordinateEntry>> {
+        self.coordinates.clone()
     }
 
     pub fn get_datacenters(&self) -> Vec<DatacenterMap> {
@@ -219,7 +236,7 @@ impl ConsulCoordinateService {
         }
     }
 
-    pub fn update_coordinate(&self, req: CoordinateUpdateRequest) -> Result<(), String> {
+    pub async fn update_coordinate(&self, req: CoordinateUpdateRequest) -> Result<(), String> {
         // Validate coordinate dimensions
         if req.coord.vec.len() != 8 {
             return Err("Coordinate must have exactly 8 dimensions".to_string());
@@ -247,8 +264,25 @@ impl ConsulCoordinateService {
             segment: req.segment,
             coord: req.coord,
         };
-        self.coordinates.insert(key.clone(), entry.clone());
-        self.persist_to_rocks(&key, &entry);
+
+        if let Some(ref raft) = self.raft_node {
+            let entry_json = serde_json::to_string(&entry)
+                .map_err(|e| format!("serialize error: {}", e))?;
+            match raft.write(ConsulRaftRequest::CoordinateBatchUpdate {
+                key: key.clone(),
+                entry_json,
+            }).await {
+                Ok(r) if r.success => {
+                    // Apply locally for read path (Raft apply also does this on all nodes)
+                    self.coordinates.insert(key, entry);
+                }
+                Ok(r) => return Err(r.message.unwrap_or_else(|| "Raft write rejected".into())),
+                Err(e) => return Err(format!("Raft write error: {}", e)),
+            }
+        } else {
+            self.coordinates.insert(key.clone(), entry.clone());
+            self.persist_to_rocks(&key, &entry);
+        }
         Ok(())
     }
 
@@ -547,7 +581,7 @@ pub async fn update_coordinate(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    match coord_service.update_coordinate(body.into_inner()) {
+    match coord_service.update_coordinate(body.into_inner()).await {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
@@ -688,8 +722,8 @@ mod tests {
         assert_eq!(dcs[0].area_id, "WAN");
     }
 
-    #[test]
-    fn test_update_coordinate() {
+    #[tokio::test]
+    async fn test_update_coordinate() {
         let service = ConsulCoordinateService::new();
         let result = service.update_coordinate(CoordinateUpdateRequest {
             node: "test-node".to_string(),
@@ -700,7 +734,7 @@ mod tests {
                 height: 0.001,
                 vec: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
             },
-        });
+        }).await;
         assert!(result.is_ok());
 
         let entries = service.get_node("test-node");
@@ -708,8 +742,8 @@ mod tests {
         assert_eq!(entries.unwrap()[0].coord.vec[0], 1.0);
     }
 
-    #[test]
-    fn test_invalid_coordinate_dimensions() {
+    #[tokio::test]
+    async fn test_invalid_coordinate_dimensions() {
         let service = ConsulCoordinateService::new();
         let result = service.update_coordinate(CoordinateUpdateRequest {
             node: "test-node".to_string(),
@@ -720,7 +754,7 @@ mod tests {
                 height: 0.0,
                 vec: vec![1.0, 2.0], // Wrong dimensions
             },
-        });
+        }).await;
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
@@ -728,8 +762,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_invalid_coordinate_nan() {
+    #[tokio::test]
+    async fn test_invalid_coordinate_nan() {
         let service = ConsulCoordinateService::new();
         let result = service.update_coordinate(CoordinateUpdateRequest {
             node: "test-node".to_string(),
@@ -740,7 +774,7 @@ mod tests {
                 height: 0.0,
                 vec: vec![0.0; 8],
             },
-        });
+        }).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
@@ -751,8 +785,8 @@ mod tests {
         assert!(service.get_node("nonexistent").is_none());
     }
 
-    #[test]
-    fn test_node_segment_filter() {
+    #[tokio::test]
+    async fn test_node_segment_filter() {
         let service = ConsulCoordinateService::new();
         service
             .update_coordinate(CoordinateUpdateRequest {
@@ -760,6 +794,7 @@ mod tests {
                 segment: "alpha".to_string(),
                 coord: Coordinate::default(),
             })
+            .await
             .unwrap();
         service
             .update_coordinate(CoordinateUpdateRequest {
@@ -767,6 +802,7 @@ mod tests {
                 segment: "beta".to_string(),
                 coord: Coordinate::default(),
             })
+            .await
             .unwrap();
 
         let alpha = service.get_nodes(Some("alpha"));
@@ -777,8 +813,8 @@ mod tests {
         assert!(all.len() >= 3); // self + node-a + node-b
     }
 
-    #[test]
-    fn test_update_coordinate_replaces_existing() {
+    #[tokio::test]
+    async fn test_update_coordinate_replaces_existing() {
         let service = ConsulCoordinateService::new();
 
         service
@@ -792,6 +828,7 @@ mod tests {
                     vec: vec![1.0; 8],
                 },
             })
+            .await
             .unwrap();
 
         // Update same node
@@ -806,6 +843,7 @@ mod tests {
                     vec: vec![2.0; 8],
                 },
             })
+            .await
             .unwrap();
 
         let entries = service.get_node("node-x").unwrap();
@@ -814,8 +852,8 @@ mod tests {
         assert_eq!(entries[0].coord.adjustment, 0.2);
     }
 
-    #[test]
-    fn test_invalid_coordinate_infinity() {
+    #[tokio::test]
+    async fn test_invalid_coordinate_infinity() {
         let service = ConsulCoordinateService::new();
         let result = service.update_coordinate(CoordinateUpdateRequest {
             node: "bad-node".to_string(),
@@ -826,13 +864,13 @@ mod tests {
                 height: 0.0,
                 vec: vec![0.0; 8],
             },
-        });
+        }).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
 
-    #[test]
-    fn test_invalid_coordinate_vec_infinity() {
+    #[tokio::test]
+    async fn test_invalid_coordinate_vec_infinity() {
         let service = ConsulCoordinateService::new();
         let result = service.update_coordinate(CoordinateUpdateRequest {
             node: "inf-vec".to_string(),
@@ -843,13 +881,13 @@ mod tests {
                 height: 0.0,
                 vec: vec![0.0, 0.0, f64::INFINITY, 0.0, 0.0, 0.0, 0.0, 0.0],
             },
-        });
+        }).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Coordinate contains invalid values");
     }
 
-    #[test]
-    fn test_get_nodes_sorted() {
+    #[tokio::test]
+    async fn test_get_nodes_sorted() {
         let service = ConsulCoordinateService::new();
 
         service
@@ -858,6 +896,7 @@ mod tests {
                 segment: String::new(),
                 coord: Coordinate::default(),
             })
+            .await
             .unwrap();
         service
             .update_coordinate(CoordinateUpdateRequest {
@@ -865,6 +904,7 @@ mod tests {
                 segment: String::new(),
                 coord: Coordinate::default(),
             })
+            .await
             .unwrap();
 
         let nodes = service.get_nodes(None);
@@ -885,6 +925,7 @@ mod tests {
                 segment: String::new(),
                 coord: Coordinate::default(),
             })
+            
             .unwrap();
 
         let nodes = persistent.get_nodes(None);
@@ -896,8 +937,8 @@ mod tests {
         assert_eq!(dcs[0].datacenter, "dc1");
     }
 
-    #[test]
-    fn test_node_multiple_segments() {
+    #[tokio::test]
+    async fn test_node_multiple_segments() {
         let service = ConsulCoordinateService::new();
 
         service
@@ -906,6 +947,7 @@ mod tests {
                 segment: "lan".to_string(),
                 coord: Coordinate::default(),
             })
+            .await
             .unwrap();
         service
             .update_coordinate(CoordinateUpdateRequest {
@@ -913,6 +955,7 @@ mod tests {
                 segment: "wan".to_string(),
                 coord: Coordinate::default(),
             })
+            .await
             .unwrap();
 
         let entries = service.get_node("multi-seg").unwrap();

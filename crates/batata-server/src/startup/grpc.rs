@@ -83,9 +83,6 @@ pub struct GrpcServers {
     cluster_client_manager: Option<Arc<ClusterClientManager>>,
     /// Config change notifier for long-polling HTTP listeners.
     config_change_notifier: Arc<batata_config::ConfigChangeNotifier>,
-    /// Consul Raft gRPC service handle — call `set_raft_node()` after
-    /// creating `ConsulRaftNode` to activate Consul Raft on port 9849.
-    consul_raft_grpc: Arc<batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService>,
 }
 
 impl GrpcServers {
@@ -122,13 +119,6 @@ impl GrpcServers {
     /// Get config change notifier reference.
     pub fn config_change_notifier(&self) -> &Arc<batata_config::ConfigChangeNotifier> {
         &self.config_change_notifier
-    }
-
-    /// Get consul raft gRPC service reference.
-    pub fn consul_raft_grpc(
-        &self,
-    ) -> &Arc<batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService> {
-        &self.consul_raft_grpc
     }
 }
 
@@ -781,10 +771,6 @@ pub fn start_grpc_servers(
         })
     };
 
-    // Create Consul Raft gRPC service (starts empty, ConsulRaftNode set later)
-    let consul_raft_grpc =
-        Arc::new(batata_plugin_consul::raft::grpc_service::ConsulRaftGrpcService::new());
-
     // Start dedicated Raft gRPC server (only in distributed embedded mode)
     // Pre-bind the TCP port synchronously so it is listening BEFORE this
     // function returns. This prevents a race condition where
@@ -852,74 +838,6 @@ pub fn start_grpc_servers(
         None
     };
 
-    // Start Consul Raft gRPC server (independent port, only if consul enabled)
-    let consul_raft_port = app_state.configuration.consul_raft_port();
-    let _consul_raft_server_handle = if app_state.configuration.consul_enabled()
-        && !app_state.configuration.is_standalone()
-    {
-        let grpc_addr: std::net::SocketAddr = format!("0.0.0.0:{}", consul_raft_port).parse()?;
-        info!("Starting Consul Raft gRPC server on {}", grpc_addr);
-
-        let std_listener = std::net::TcpListener::bind(grpc_addr)?;
-        std_listener.set_nonblocking(true)?;
-        info!(
-            "Consul Raft gRPC port {} bound and listening",
-            consul_raft_port
-        );
-
-        let consul_raft_grpc_for_server = consul_raft_grpc.clone_service();
-        let consul_raft_mgmt_for_server = consul_raft_grpc.management_service();
-
-        // Reuse Raft keepalive settings for Consul Raft server
-        let c_raft_tcp_keepalive =
-            std::time::Duration::from_secs(app_state.configuration.raft_grpc_tcp_keepalive_secs());
-        let c_raft_tcp_nodelay = app_state.configuration.raft_grpc_tcp_nodelay();
-        let c_raft_http2_interval = std::time::Duration::from_secs(
-            app_state
-                .configuration
-                .raft_grpc_http2_keepalive_interval_secs(),
-        );
-        let c_raft_http2_timeout = std::time::Duration::from_secs(
-            app_state
-                .configuration
-                .raft_grpc_http2_keepalive_timeout_secs(),
-        );
-
-        let handle = tokio::spawn(async move {
-            let tokio_listener = match tokio::net::TcpListener::from_std(std_listener) {
-                Ok(l) => l,
-                Err(e) => {
-                    tracing::error!("Failed to convert Consul Raft TCP listener: {}", e);
-                    return;
-                }
-            };
-            let incoming = tokio_stream::wrappers::TcpListenerStream::new(tokio_listener);
-            let result = tonic::transport::Server::builder()
-                .tcp_keepalive(Some(c_raft_tcp_keepalive))
-                .tcp_nodelay(c_raft_tcp_nodelay)
-                .http2_keepalive_interval(Some(c_raft_http2_interval))
-                .http2_keepalive_timeout(Some(c_raft_http2_timeout))
-                .add_service(
-                    batata_api::raft::consul_raft_service_server::ConsulRaftServiceServer::new(
-                        consul_raft_grpc_for_server,
-                    ),
-                )
-                .add_service(
-                    batata_api::raft::consul_raft_management_service_server::ConsulRaftManagementServiceServer::new(
-                        consul_raft_mgmt_for_server,
-                    ),
-                )
-                .serve_with_incoming(incoming)
-                .await;
-            if let Err(e) = result {
-                tracing::error!("Consul Raft gRPC server error: {}", e);
-            }
-        });
-        Some(handle)
-    } else {
-        None
-    };
-
     Ok(GrpcServers {
         _sdk_server: sdk_server,
         _cluster_server: cluster_server,
@@ -930,6 +848,5 @@ pub fn start_grpc_servers(
         distro_protocol,
         cluster_client_manager,
         config_change_notifier,
-        consul_raft_grpc,
     })
 }

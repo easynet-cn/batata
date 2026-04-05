@@ -1183,28 +1183,11 @@ impl Configuration {
             .unwrap_or(8500) as u16
     }
 
-    /// Get Consul Raft gRPC port for inter-node consensus.
-    /// Default: consul_server_port - 1000 (e.g., 8500 → 7500)
-    /// Mirrors Consul's server RPC port convention.
-    pub fn consul_raft_port(&self) -> u16 {
-        self.config
-            .get_int("batata.plugin.consul.raft.port")
-            .unwrap_or_else(|_| (self.consul_server_port().saturating_sub(1000)) as i64)
-            as u16
-    }
-
     /// Check if Consul ACL is enabled (default: false)
     pub fn consul_acl_enabled(&self) -> bool {
         self.config
             .get_bool("batata.plugin.consul.acl.enabled")
             .unwrap_or(false)
-    }
-
-    /// Get Consul data directory for RocksDB persistence (default: data/consul_rocksdb)
-    pub fn consul_data_dir(&self) -> String {
-        self.config
-            .get_string("batata.plugin.consul.data_dir")
-            .unwrap_or_else(|_| "data/consul_rocksdb".to_string())
     }
 
     /// Check if Consul should register itself as a service (default: true)
@@ -2172,21 +2155,6 @@ mod tests {
     fn test_consul_server_port_custom() {
         let cfg = build_config(vec![("batata.plugin.consul.port", 9500_i64.into())]);
         assert_eq!(cfg.consul_server_port(), 9500);
-    }
-
-    #[test]
-    fn test_consul_data_dir_default() {
-        let cfg = build_config(vec![]);
-        assert_eq!(cfg.consul_data_dir(), "data/consul_rocksdb");
-    }
-
-    #[test]
-    fn test_consul_data_dir_custom() {
-        let cfg = build_config(vec![(
-            "batata.plugin.consul.data_dir",
-            "/custom/path/consul".into(),
-        )]);
-        assert_eq!(cfg.consul_data_dir(), "/custom/path/consul");
     }
 
     #[test]

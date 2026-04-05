@@ -81,4 +81,5 @@ pub use index_provider::ConsulIndexProvider;
 pub use namespace::ConsulNamespaceService;
 pub use naming_store::ConsulNamingStore;
 pub use peering::ConsulPeeringService;
+pub use raft::plugin_handler::{ConsulRaftPluginHandler, ConsulRaftWriter, CONSUL_PLUGIN_ID};
 pub use result_handler::ConsulResultHandler;

@@ -272,6 +272,19 @@ pub enum RaftRequest {
     /// Expire a lock (internal operation)
     LockExpire { namespace: String, name: String },
 
+    // ==================== Plugin Extension Point ====================
+    /// Generic plugin write operation routed through Raft consensus.
+    /// Plugins register their own apply handlers; the core Raft does not
+    /// interpret the payload — it only ensures consensus and log ordering.
+    PluginWrite {
+        /// Plugin identifier (e.g., "consul", "etcd")
+        plugin_id: String,
+        /// Operation type within the plugin (e.g., "kv_put", "session_create")
+        op_type: String,
+        /// Serialized plugin-specific request data
+        payload: Vec<u8>,
+    },
+
     // ==================== No-op for membership changes ====================
     /// No-operation command, used internally
     Noop,
@@ -306,6 +319,18 @@ impl RaftRequest {
             RaftRequest::LockRenew { .. } => "LockRenew",
             RaftRequest::LockForceRelease { .. } => "LockForceRelease",
             RaftRequest::LockExpire { .. } => "LockExpire",
+            RaftRequest::PluginWrite { plugin_id, op_type, .. } => {
+                // Return a static str for known plugins, fallback for unknown
+                match (plugin_id.as_str(), op_type.as_str()) {
+                    ("consul", op) => match op {
+                        "kv_put" => "ConsulKVPut",
+                        "kv_delete" => "ConsulKVDelete",
+                        "session_create" => "ConsulSessionCreate",
+                        _ => "PluginWrite",
+                    },
+                    _ => "PluginWrite",
+                }
+            }
             RaftRequest::Noop => "Noop",
         }
     }

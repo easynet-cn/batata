@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::constants::CF_CONSUL_SESSIONS;
-use crate::raft::{ConsulRaftNode, ConsulRaftRequest};
+use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -53,8 +53,8 @@ pub struct ConsulSessionService {
     node_name: String,
     /// Keeps temp directory alive for tests/in-memory mode
     _temp_dir: Option<Arc<tempfile::TempDir>>,
-    /// Optional Raft node for cluster-mode replication
-    raft_node: Option<Arc<ConsulRaftNode>>,
+    /// Optional Raft writer for cluster-mode replication (via core Raft PluginWrite)
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulSessionService {
@@ -135,7 +135,7 @@ impl ConsulSessionService {
 
     /// Create a new session service backed by a Raft-replicated RocksDB.
     /// Does NOT clean up expired sessions locally on startup — cleanup goes through Raft.
-    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftNode>) -> Self {
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
         let node_name = hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "batata-node".to_string());

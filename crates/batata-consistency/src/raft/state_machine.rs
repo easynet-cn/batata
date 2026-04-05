@@ -21,6 +21,7 @@ use rocksdb::{BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, DB, Optio
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
+use super::plugin::{PluginRegistry, RaftPluginHandler};
 use super::request::{RaftRequest, RaftResponse};
 use super::types::{NodeId, TypeConfig};
 
@@ -49,19 +50,19 @@ fn sm_error(
 }
 
 // Column family names for state machine
-pub const CF_CONFIG: &str = "config";
-pub const CF_CONFIG_HISTORY: &str = "config_history";
-pub const CF_CONFIG_GRAY: &str = "config_gray";
-pub const CF_NAMESPACE: &str = "namespace";
-pub const CF_USERS: &str = "users";
-pub const CF_ROLES: &str = "roles";
-pub const CF_PERMISSIONS: &str = "permissions";
-pub const CF_INSTANCES: &str = "instances";
-pub const CF_LOCKS: &str = "locks";
-pub const CF_AI_RESOURCE: &str = "ai_resource";
-pub const CF_AI_RESOURCE_VERSION: &str = "ai_resource_version";
-pub const CF_PIPELINE_EXECUTION: &str = "pipeline_execution";
-const CF_META: &str = "meta";
+pub const CF_CONFIG: &str = "batata_config";
+pub const CF_CONFIG_HISTORY: &str = "batata_config_history";
+pub const CF_CONFIG_GRAY: &str = "batata_config_gray";
+pub const CF_NAMESPACE: &str = "batata_namespace";
+pub const CF_USERS: &str = "batata_users";
+pub const CF_ROLES: &str = "batata_roles";
+pub const CF_PERMISSIONS: &str = "batata_permissions";
+pub const CF_INSTANCES: &str = "batata_instances";
+pub const CF_LOCKS: &str = "batata_locks";
+pub const CF_AI_RESOURCE: &str = "batata_ai_resource";
+pub const CF_AI_RESOURCE_VERSION: &str = "batata_ai_resource_version";
+pub const CF_PIPELINE_EXECUTION: &str = "batata_pipeline_execution";
+const CF_META: &str = "batata_meta";
 
 // Meta keys
 const KEY_LAST_APPLIED: &[u8] = b"last_applied";
@@ -74,12 +75,47 @@ pub struct RocksStateMachine {
     last_applied: RwLock<Option<LogId<NodeId>>>,
     /// Last membership configuration
     last_membership: RwLock<StoredMembership<NodeId, openraft::BasicNode>>,
+    /// Registry of plugin handlers for PluginWrite operations.
+    /// Wrapped in Arc so the registry can be shared with RaftNode for
+    /// post-initialization plugin registration (after state_machine is moved into Raft).
+    plugin_registry: Arc<RwLock<PluginRegistry>>,
 }
 
 impl RocksStateMachine {
     /// Get a reference to the underlying RocksDB instance
     pub fn db(&self) -> Arc<DB> {
         self.db.clone()
+    }
+
+    /// Get a shared reference to the plugin registry.
+    ///
+    /// This allows `RaftNode` to hold a handle to the registry so plugins
+    /// can be registered after the state machine has been moved into OpenRaft.
+    pub fn plugin_registry(&self) -> Arc<RwLock<PluginRegistry>> {
+        self.plugin_registry.clone()
+    }
+
+    /// Register a plugin handler for processing PluginWrite operations.
+    ///
+    /// The plugin's column families must already exist in RocksDB — pass them
+    /// via `extra_cf_names` when creating the state machine, or via
+    /// `PluginContext::get("extra_cf_names")` before Raft startup.
+    pub async fn register_plugin(
+        &self,
+        handler: Arc<dyn RaftPluginHandler>,
+    ) -> Result<(), String> {
+        // Verify all required CFs exist
+        for cf_name in handler.column_families() {
+            if self.db.cf_handle(&cf_name).is_none() {
+                return Err(format!(
+                    "Column family '{}' required by plugin '{}' does not exist in RocksDB. \
+                     Pass it via extra_cf_names when creating the state machine.",
+                    cf_name,
+                    handler.plugin_id()
+                ));
+            }
+        }
+        self.plugin_registry.write().await.register(handler)
     }
 
     /// Create a new RocksDB state machine with default configuration
@@ -96,6 +132,19 @@ impl RocksStateMachine {
         path: P,
         custom_db_opts: Option<Options>,
         custom_cf_opts: Option<Options>,
+    ) -> Result<Self, StorageError<NodeId>> {
+        Self::with_options_and_cfs(path, custom_db_opts, custom_cf_opts, &[]).await
+    }
+
+    /// Create a new RocksDB state machine with custom options and extra column families.
+    ///
+    /// `extra_cf_names` are additional column families (e.g., from plugins) that
+    /// will be created alongside the core CFs. The same `cf_opts` are applied to all.
+    pub async fn with_options_and_cfs<P: AsRef<Path>>(
+        path: P,
+        custom_db_opts: Option<Options>,
+        custom_cf_opts: Option<Options>,
+        extra_cf_names: &[String],
     ) -> Result<Self, StorageError<NodeId>> {
         let db_opts = custom_db_opts.unwrap_or_else(|| {
             let mut opts = Options::default();
@@ -130,7 +179,7 @@ impl RocksStateMachine {
             opts
         });
 
-        let cfs = vec![
+        let mut cfs = vec![
             ColumnFamilyDescriptor::new(CF_CONFIG, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_CONFIG_HISTORY, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_CONFIG_GRAY, cf_opts.clone()),
@@ -143,8 +192,13 @@ impl RocksStateMachine {
             ColumnFamilyDescriptor::new(CF_AI_RESOURCE, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_AI_RESOURCE_VERSION, cf_opts.clone()),
             ColumnFamilyDescriptor::new(CF_PIPELINE_EXECUTION, cf_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_META, cf_opts),
+            ColumnFamilyDescriptor::new(CF_META, cf_opts.clone()),
         ];
+
+        // Add plugin column families
+        for cf_name in extra_cf_names {
+            cfs.push(ColumnFamilyDescriptor::new(cf_name, cf_opts.clone()));
+        }
 
         let db = DB::open_cf_descriptors(&db_opts, path, cfs)
             .map_err(|e| sm_error(e, ErrorVerb::Read))?;
@@ -153,6 +207,7 @@ impl RocksStateMachine {
             db: Arc::new(db),
             last_applied: RwLock::new(None),
             last_membership: RwLock::new(StoredMembership::default()),
+            plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
         };
 
         // Load cached values asynchronously
@@ -309,7 +364,7 @@ impl RocksStateMachine {
     }
 
     /// Apply a single request to the state machine
-    async fn apply_request(&self, request: RaftRequest) -> RaftResponse {
+    async fn apply_request(&self, request: RaftRequest, log_index: u64) -> RaftResponse {
         match request {
             RaftRequest::ConfigPublish {
                 data_id,
@@ -640,6 +695,20 @@ impl RocksStateMachine {
 
             RaftRequest::LockExpire { namespace, name } => {
                 self.apply_lock_expire(&namespace, &name)
+            }
+
+            RaftRequest::PluginWrite { plugin_id, op_type, payload } => {
+                let registry = self.plugin_registry.read().await;
+                if let Some(handler) = registry.get(&plugin_id) {
+                    handler.apply(&self.db, &op_type, &payload, log_index)
+                } else {
+                    warn!(
+                        plugin_id = %plugin_id,
+                        op_type = %op_type,
+                        "No plugin handler registered — PluginWrite ignored"
+                    );
+                    RaftResponse::success()
+                }
             }
         }
     }
@@ -1826,7 +1895,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             let log_id = entry.log_id;
 
             let response = match entry.payload {
-                EntryPayload::Normal(request) => self.apply_request(request).await,
+                EntryPayload::Normal(request) => self.apply_request(request, log_id.index).await,
                 EntryPayload::Membership(membership) => {
                     let stored = StoredMembership::new(Some(log_id), membership);
                     self.save_membership(stored).await?;
@@ -1855,6 +1924,7 @@ impl RaftStateMachine<TypeConfig> for RocksStateMachine {
             db: self.db.clone(),
             last_applied: RwLock::new(*self.last_applied.read().await),
             last_membership: RwLock::new(self.last_membership.read().await.clone()),
+            plugin_registry: Arc::new(RwLock::new(PluginRegistry::new())),
         }
     }
 

@@ -28,9 +28,6 @@ NODE2_CONSUL_PORT=8510
 NODE3_CONSUL_PORT=8520
 
 # Consul Raft ports (consul_port - 1000)
-NODE1_CONSUL_RAFT_PORT=7500
-NODE2_CONSUL_RAFT_PORT=7510
-NODE3_CONSUL_RAFT_PORT=7520
 
 CONSUL_ENABLED="${CONSUL_ENABLED:-false}"
 WITH_CONSOLE="${WITH_CONSOLE:-true}"
@@ -163,10 +160,8 @@ EOF
         --batata.server.main.port=${NODE1_PORT} \
         --batata.console.port=${CONSOLE_PORT} \
         --batata.persistence.embedded.data_dir=data/node1/batata_rocksdb \
-        --batata.plugin.consul.data_dir=data/node1/consul_rocksdb \
         --batata.logs.path=logs/node1 \
         --batata.plugin.consul.port=${NODE1_CONSUL_PORT} \
-        --batata.plugin.consul.raft.port=${NODE1_CONSUL_RAFT_PORT} \
         ${common_args} \
         > logs/node1/stdout.log 2>&1 &
     echo $! > "${CLUSTER_PID_DIR}/node1.pid"
@@ -177,10 +172,8 @@ EOF
         -d server \
         --batata.server.main.port=${NODE2_PORT} \
         --batata.persistence.embedded.data_dir=data/node2/batata_rocksdb \
-        --batata.plugin.consul.data_dir=data/node2/consul_rocksdb \
         --batata.logs.path=logs/node2 \
         --batata.plugin.consul.port=${NODE2_CONSUL_PORT} \
-        --batata.plugin.consul.raft.port=${NODE2_CONSUL_RAFT_PORT} \
         ${common_args} \
         > logs/node2/stdout.log 2>&1 &
     echo $! > "${CLUSTER_PID_DIR}/node2.pid"
@@ -191,10 +184,8 @@ EOF
         -d server \
         --batata.server.main.port=${NODE3_PORT} \
         --batata.persistence.embedded.data_dir=data/node3/batata_rocksdb \
-        --batata.plugin.consul.data_dir=data/node3/consul_rocksdb \
         --batata.logs.path=logs/node3 \
         --batata.plugin.consul.port=${NODE3_CONSUL_PORT} \
-        --batata.plugin.consul.raft.port=${NODE3_CONSUL_RAFT_PORT} \
         ${common_args} \
         > logs/node3/stdout.log 2>&1 &
     echo $! > "${CLUSTER_PID_DIR}/node3.pid"

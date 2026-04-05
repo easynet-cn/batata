@@ -35,6 +35,9 @@ pub use batata_common::Plugin;
 /// Protocol adapter plugin trait (re-exported from spi)
 pub use spi::ProtocolAdapterPlugin;
 
+/// Plugin initialization context (re-exported from spi)
+pub use spi::PluginContext;
+
 /// Plugin naming store trait and error type (re-exported from spi)
 pub use spi::{PluginNamingStore, PluginNamingStoreError};
 

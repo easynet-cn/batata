@@ -9,7 +9,6 @@ description = "Consul compatibility plugin for Batata"
 
 [dependencies]
 batata-common = { workspace = true }
-batata-api = { workspace = true }
 batata-naming = { workspace = true }
 batata-consistency = { workspace = true }
 batata-plugin = { workspace = true }
@@ -42,11 +41,6 @@ sea-orm = { workspace = true }
 
 # Storage
 rocksdb = { workspace = true }
-
-# Raft consensus (Consul-dedicated Raft group)
-openraft = { workspace = true }
-byteorder = { workspace = true }
-tonic = { workspace = true }
 
 # Caching
 moka = { workspace = true }

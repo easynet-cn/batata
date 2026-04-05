@@ -23,6 +23,7 @@ use tracing::{error, info, warn};
 use base64::Engine;
 
 use crate::constants::CF_CONSUL_OPERATOR;
+use crate::raft::ConsulRaftWriter;
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
@@ -213,6 +214,8 @@ pub struct ConsulOperatorService {
     pub(crate) datacenter: String,
     /// Optional RocksDB persistence
     rocks_db: Option<Arc<DB>>,
+    /// Optional Raft writer for cluster mode
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulOperatorService {
@@ -234,6 +237,7 @@ impl ConsulOperatorService {
             index: Arc::new(AtomicU64::new(1)),
             datacenter,
             rocks_db: None,
+            raft_node: None,
         };
 
         // Add self as default server
@@ -346,6 +350,7 @@ impl ConsulOperatorService {
             index: Arc::new(AtomicU64::new(1)),
             datacenter,
             rocks_db: Some(db),
+            raft_node: None,
         };
 
         // Persist defaults if not loaded
@@ -365,6 +370,13 @@ impl ConsulOperatorService {
             }
         }
 
+        svc
+    }
+
+    /// Create an operator service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
+        let mut svc = Self::with_rocks(db);
+        svc.raft_node = Some(raft_node);
         svc
     }
 

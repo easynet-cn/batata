@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
+use crate::raft::ConsulRaftWriter;
 
 /// Default namespace name (always exists, cannot be deleted)
 pub const DEFAULT_NAMESPACE: &str = "default";
@@ -62,6 +63,8 @@ pub struct ACLLink {
 pub struct ConsulNamespaceService {
     namespaces: Arc<DashMap<String, Namespace>>,
     index_provider: ConsulIndexProvider,
+    /// Optional Raft writer for cluster-mode replication
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl ConsulNamespaceService {
@@ -88,7 +91,18 @@ impl ConsulNamespaceService {
         Self {
             namespaces,
             index_provider,
+            raft_node: None,
         }
+    }
+
+    /// Create a namespace service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(
+        raft_node: Arc<ConsulRaftWriter>,
+        index_provider: ConsulIndexProvider,
+    ) -> Self {
+        let mut svc = Self::new(index_provider);
+        svc.raft_node = Some(raft_node);
+        svc
     }
 
     /// Check if a namespace exists

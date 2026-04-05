@@ -77,6 +77,8 @@ message AppendEntriesResponse {
     LogId match_log_id = 3;
     // Conflict information if success is false
     LogId conflict = 4;
+    // Higher vote seen by the follower (leader should step down)
+    Vote higher_vote = 5;
 }
 
 // RequestVote RPC request
@@ -139,23 +141,6 @@ service RaftService {
 
     // Install snapshot (state transfer)
     rpc InstallSnapshot(stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
-}
-
-// Consul Raft service — independent Raft group for Consul KV/Session operations.
-// Shares the same proto message types as the main RaftService, but routes to
-// the dedicated Consul Raft state machine with its own log index space.
-service ConsulRaftService {
-    rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
-    rpc Vote(VoteRequest) returns (VoteResponse);
-    rpc InstallSnapshot(stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
-}
-
-// Consul Raft management service for cluster operations
-service ConsulRaftManagementService {
-    rpc Write(ClientWriteRequest) returns (ClientWriteResponse);
-    rpc AddLearner(AddLearnerRequest) returns (AddLearnerResponse);
-    rpc ChangeMembership(ChangeMembershipRequest) returns (ChangeMembershipResponse);
-    rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
 }
 
 // Client request to write data through Raft

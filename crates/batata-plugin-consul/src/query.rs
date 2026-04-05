@@ -19,6 +19,7 @@ use crate::constants::CF_CONSUL_QUERIES;
 
 use crate::acl::{AclService, ResourceType};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
+use crate::raft::ConsulRaftWriter;
 use crate::model::{
     AgentService, AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, HealthCheck, Node,
     PreparedQuery, PreparedQueryCreateRequest, PreparedQueryCreateResponse, PreparedQueryDNS,
@@ -38,6 +39,8 @@ static QUERY_INDEX: AtomicU64 = AtomicU64::new(1);
 pub struct ConsulQueryService {
     /// Optional RocksDB handle for persistence
     rocks_db: Option<Arc<DB>>,
+    /// Optional Raft writer for cluster-mode replication
+    raft_node: Option<Arc<ConsulRaftWriter>>,
 }
 
 impl Default for ConsulQueryService {
@@ -48,7 +51,10 @@ impl Default for ConsulQueryService {
 
 impl ConsulQueryService {
     pub fn new() -> Self {
-        Self { rocks_db: None }
+        Self {
+            rocks_db: None,
+            raft_node: None,
+        }
     }
 
     /// Create a new query service with RocksDB persistence.
@@ -83,7 +89,17 @@ impl ConsulQueryService {
             info!("Loaded {} prepared queries from RocksDB", loaded);
         }
 
-        Self { rocks_db: Some(db) }
+        Self {
+            rocks_db: Some(db),
+            raft_node: None,
+        }
+    }
+
+    /// Create a query service with Raft-replicated storage (cluster mode).
+    pub fn with_raft(db: Arc<DB>, raft_node: Arc<ConsulRaftWriter>) -> Self {
+        let mut svc = Self::with_rocks(db);
+        svc.raft_node = Some(raft_node);
+        svc
     }
 
     /// Persist a query to RocksDB

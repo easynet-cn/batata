@@ -3,6 +3,7 @@
 //! Standard plugin interfaces for extending Batata functionality.
 //! Each plugin type has a trait that implementations must satisfy.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -114,6 +115,50 @@ pub struct TpsCheckResult {
     pub limit: u64,
 }
 
+/// Context provided to protocol adapter plugins during initialization.
+///
+/// Carries server resources as type-erased `Any` trait objects to avoid
+/// coupling the plugin SPI to specific infrastructure crates.
+///
+/// Well-known keys:
+/// - `"raft_node"`: `Arc<batata_consistency::RaftNode>` (only in cluster mode)
+/// - `"configuration"`: `Arc<Configuration>`
+/// - `"is_cluster"`: `Arc<bool>`
+pub struct PluginContext {
+    extensions: HashMap<String, Arc<dyn Any + Send + Sync>>,
+}
+
+impl PluginContext {
+    pub fn new() -> Self {
+        Self {
+            extensions: HashMap::new(),
+        }
+    }
+
+    /// Insert a typed value into the context.
+    pub fn insert<T: Send + Sync + 'static>(&mut self, key: &str, value: Arc<T>) {
+        self.extensions.insert(key.to_string(), value);
+    }
+
+    /// Get a typed reference from the context. Returns None if key missing or wrong type.
+    pub fn get<T: Send + Sync + 'static>(&self, key: &str) -> Option<Arc<T>> {
+        self.extensions
+            .get(key)
+            .and_then(|v| v.clone().downcast::<T>().ok())
+    }
+
+    /// Check if a key exists.
+    pub fn contains(&self, key: &str) -> bool {
+        self.extensions.contains_key(key)
+    }
+}
+
+impl Default for PluginContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Protocol adapter plugin for compatibility layers (e.g., Consul, Eureka, Apollo).
 ///
 /// Protocol adapters translate external protocols into Batata-native (Nacos) operations.
@@ -174,9 +219,9 @@ pub trait ProtocolAdapterPlugin: Send + Sync {
 
     /// Initialize the plugin after construction.
     ///
-    /// Called once during server startup. Use this for logging, validation,
-    /// or any one-time setup that doesn't require HTTP routes.
-    async fn init(&self) -> anyhow::Result<()> {
+    /// Called once during server startup with server context (RaftNode, Configuration, etc.).
+    /// Use this for Raft registration, store creation, and service initialization.
+    async fn init(&self, _ctx: &PluginContext) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -204,6 +249,15 @@ pub trait ProtocolAdapterPlugin: Send + Sync {
     // ========================================================================
     // Background Tasks
     // ========================================================================
+
+    /// Column families required by this plugin for RocksDB storage.
+    ///
+    /// Called BEFORE `init()` — during server startup, the Raft state machine
+    /// creates these CFs when opening RocksDB. Return an empty vec if the
+    /// plugin doesn't use RocksDB.
+    fn required_column_families(&self) -> Vec<String> {
+        Vec::new()
+    }
 
     /// Start background tasks (monitors, sync jobs, cleanup tasks).
     ///
@@ -435,11 +489,11 @@ impl PluginManager {
         self.protocol_adapters.sort_by_key(|p| p.priority());
     }
 
-    /// Initialize all registered protocol adapters
-    pub async fn init_protocol_adapters(&self) -> anyhow::Result<()> {
+    /// Initialize all registered protocol adapters with the given context.
+    pub async fn init_protocol_adapters(&self, ctx: &PluginContext) -> anyhow::Result<()> {
         for plugin in &self.protocol_adapters {
             if plugin.is_enabled() {
-                plugin.init().await?;
+                plugin.init(ctx).await?;
             }
         }
         Ok(())
@@ -479,6 +533,18 @@ impl PluginManager {
 
     pub fn protocol_adapters(&self) -> &[Arc<dyn ProtocolAdapterPlugin>] {
         &self.protocol_adapters
+    }
+
+    /// Collect all column family names required by enabled protocol adapters.
+    ///
+    /// Call this BEFORE creating the Raft state machine so that RocksDB can
+    /// create these CFs at open time.
+    pub fn collect_plugin_column_families(&self) -> Vec<String> {
+        self.protocol_adapters
+            .iter()
+            .filter(|p| p.is_enabled())
+            .flat_map(|p| p.required_column_families())
+            .collect()
     }
 
     /// Get a protocol adapter by protocol name
