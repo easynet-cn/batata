@@ -90,11 +90,11 @@ pub async fn get_client_detail(
             .build()
     );
 
-    let client = connection_manager.get_client(&params.client_id);
+    let meta = connection_manager.get_connection_meta(&params.client_id);
 
-    match client {
-        Some(grpc_client) => {
-            let meta = &grpc_client.connection.meta_info;
+    match meta {
+        Some(meta) => {
+            let meta = &meta;
             let response = ClientDetailResponse {
                 client_id: meta.connection_id.clone(),
                 client_type: if meta.is_sdk_source() {
@@ -268,14 +268,13 @@ pub async fn get_service_publishers(
     let clients: Vec<ServiceClientInfo> = publisher_ids
         .iter()
         .filter_map(|client_id| {
-            connection_manager.get_client(client_id).map(|client| {
-                let meta = &client.connection.meta_info;
-                ServiceClientInfo {
+            connection_manager
+                .get_connection_meta(client_id)
+                .map(|meta| ServiceClientInfo {
                     client_id: client_id.clone(),
-                    client_ip: meta.client_ip.clone(),
+                    client_ip: meta.client_ip,
                     client_port: meta.remote_port,
-                }
-            })
+                })
         })
         .collect();
 
@@ -331,14 +330,13 @@ pub async fn get_service_subscribers(
     let clients: Vec<ServiceClientInfo> = subscriber_ids
         .iter()
         .filter_map(|client_id| {
-            connection_manager.get_client(client_id).map(|client| {
-                let meta = &client.connection.meta_info;
-                ServiceClientInfo {
+            connection_manager
+                .get_connection_meta(client_id)
+                .map(|meta| ServiceClientInfo {
                     client_id: client_id.clone(),
-                    client_ip: meta.client_ip.clone(),
+                    client_ip: meta.client_ip,
                     client_port: meta.remote_port,
-                }
-            })
+                })
         })
         .collect();
 

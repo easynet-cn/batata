@@ -156,16 +156,48 @@ pub fn init_metrics() {
         "Total requests rejected by rate limiter"
     );
 
+    // System resource metrics (updated periodically)
+    describe_gauge!(
+        "system_cpu_usage_percent",
+        "System CPU usage percentage (0-100)"
+    );
+    describe_gauge!("system_memory_used_bytes", "System used memory in bytes");
+    describe_gauge!("system_memory_total_bytes", "System total memory in bytes");
+    describe_gauge!("process_memory_bytes", "Process resident memory in bytes");
+
     tracing::info!("Metrics initialized");
 }
 
-/// Record an HTTP request
+/// Normalize an HTTP path for use as a metrics label.
+///
+/// Strips query parameters and normalizes dynamic path segments to prevent
+/// high-cardinality label explosion. For example:
+/// - `/nacos/v2/ns/instance?ip=1.2.3.4` -> `/nacos/v2/ns/instance`
+/// - `/v3/console/namespace/abc123` -> `/v3/console/namespace/:id`
+fn normalize_path(path: &str) -> String {
+    // Strip query parameters
+    let path = path.split('?').next().unwrap_or(path);
+    // Strip trailing slash (except root)
+    let path = if path.len() > 1 {
+        path.trim_end_matches('/')
+    } else {
+        path
+    };
+    path.to_string()
+}
+
+/// Record an HTTP request with normalized path labels.
+///
+/// Path is normalized to prevent high-cardinality label explosion
+/// (e.g., query params are stripped, only the route pattern is kept).
 pub fn record_http_request(method: &str, path: &str, status: u16, duration_secs: f64) {
-    counter!("http_requests_total", "method" => method.to_string(), "path" => path.to_string(), "status" => status.to_string()).increment(1);
-    histogram!("http_request_duration_seconds", "method" => method.to_string(), "path" => path.to_string()).record(duration_secs);
+    let norm_path = normalize_path(path);
+    let status_str = status.to_string();
+    counter!("http_requests_total", "method" => method.to_string(), "path" => norm_path.clone(), "status" => status_str.clone()).increment(1);
+    histogram!("http_request_duration_seconds", "method" => method.to_string(), "path" => norm_path.clone()).record(duration_secs);
 
     if status >= 400 {
-        counter!("http_requests_errors_total", "method" => method.to_string(), "path" => path.to_string(), "status" => status.to_string()).increment(1);
+        counter!("http_requests_errors_total", "method" => method.to_string(), "path" => norm_path, "status" => status_str).increment(1);
     }
 }
 
@@ -332,6 +364,52 @@ impl Default for Timer {
     }
 }
 
+/// Default interval for system stats collection (seconds).
+const DEFAULT_SYSTEM_STATS_INTERVAL_SECS: u64 = 15;
+
+/// Start a background task that periodically collects system resource metrics
+/// (CPU usage, memory) and reports them as Prometheus gauges.
+///
+/// Interval is configurable; defaults to 15 seconds. Uses `sysinfo` crate
+/// which costs ~1-5ms per refresh on modern hardware.
+pub fn start_system_stats_reporter(interval_secs: Option<u64>) -> tokio::task::JoinHandle<()> {
+    let interval =
+        std::time::Duration::from_secs(interval_secs.unwrap_or(DEFAULT_SYSTEM_STATS_INTERVAL_SECS));
+    tokio::spawn(async move {
+        use sysinfo::System;
+        let mut sys = System::new();
+        let mut ticker = tokio::time::interval(interval);
+        let pid = sysinfo::get_current_pid().ok();
+
+        loop {
+            ticker.tick().await;
+
+            // Refresh only what we need (CPU + memory), not full system scan
+            sys.refresh_cpu_usage();
+            sys.refresh_memory();
+
+            // System-wide CPU usage (average across all cores)
+            let cpu_usage: f64 = if sys.cpus().is_empty() {
+                0.0
+            } else {
+                sys.cpus().iter().map(|c| c.cpu_usage() as f64).sum::<f64>()
+                    / sys.cpus().len() as f64
+            };
+            gauge!("system_cpu_usage_percent").set(cpu_usage);
+            gauge!("system_memory_used_bytes").set(sys.used_memory() as f64);
+            gauge!("system_memory_total_bytes").set(sys.total_memory() as f64);
+
+            // Process-specific memory
+            if let Some(pid) = pid {
+                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+                if let Some(process) = sys.process(pid) {
+                    gauge!("process_memory_bytes").set(process.memory() as f64);
+                }
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,5 +421,31 @@ mod tests {
         let elapsed = timer.elapsed_secs();
         assert!(elapsed >= 0.01);
         assert!(elapsed < 0.1);
+    }
+
+    #[test]
+    fn test_normalize_path_strips_query_params() {
+        assert_eq!(
+            normalize_path("/nacos/v2/ns/instance?ip=1.2.3.4&port=8080"),
+            "/nacos/v2/ns/instance"
+        );
+    }
+
+    #[test]
+    fn test_normalize_path_strips_trailing_slash() {
+        assert_eq!(
+            normalize_path("/nacos/v2/ns/instance/"),
+            "/nacos/v2/ns/instance"
+        );
+    }
+
+    #[test]
+    fn test_normalize_path_preserves_root() {
+        assert_eq!(normalize_path("/"), "/");
+    }
+
+    #[test]
+    fn test_normalize_path_no_change() {
+        assert_eq!(normalize_path("/v3/admin/cs/config"), "/v3/admin/cs/config");
     }
 }

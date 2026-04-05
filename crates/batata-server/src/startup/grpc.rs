@@ -73,6 +73,10 @@ pub struct GrpcServers {
     _raft_server: Option<tokio::task::JoinHandle<()>>,
     /// Shutdown signal sender — dropping or sending signals graceful stop.
     shutdown_tx: tokio::sync::watch::Sender<bool>,
+    /// Per-server state trackers for health aggregation.
+    pub sdk_state: batata_core::ServerStateTracker,
+    pub cluster_state: batata_core::ServerStateTracker,
+    pub raft_state: batata_core::ServerStateTracker,
     /// The naming service used by handlers.
     naming_service: Arc<NamingService>,
     /// The connection manager for tracking client connections.
@@ -88,7 +92,13 @@ pub struct GrpcServers {
 impl GrpcServers {
     /// Signal all gRPC servers to stop accepting new connections and shut down gracefully.
     pub fn shutdown(&self) {
+        self.sdk_state.set_draining();
+        self.cluster_state.set_draining();
+        self.raft_state.set_draining();
         let _ = self.shutdown_tx.send(true);
+        self.sdk_state.set_stopped();
+        self.cluster_state.set_stopped();
+        self.raft_state.set_stopped();
     }
 
     /// Get naming service as trait object for HTTP consumers.
@@ -838,11 +848,23 @@ pub fn start_grpc_servers(
         None
     };
 
+    let sdk_state = batata_core::ServerStateTracker::new();
+    sdk_state.set_running();
+    let cluster_state = batata_core::ServerStateTracker::new();
+    cluster_state.set_running();
+    let raft_state = batata_core::ServerStateTracker::new();
+    if raft_server_handle.is_some() {
+        raft_state.set_running();
+    }
+
     Ok(GrpcServers {
         _sdk_server: sdk_server,
         _cluster_server: cluster_server,
         _raft_server: raft_server_handle,
         shutdown_tx,
+        sdk_state,
+        cluster_state,
+        raft_state,
         naming_service,
         connection_manager: connection_manager_for_http,
         distro_protocol,

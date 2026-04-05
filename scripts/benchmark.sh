@@ -103,7 +103,8 @@ run_wrk() {
 
     echo -e "  ${YELLOW}▶${NC} $name ($method $url)"
 
-    local wrk_args="-t${THREADS} -c${CONNECTIONS} -d${DURATION}"
+    # --latency enables percentile distribution output (required for P99/P99.9)
+    local wrk_args="-t${THREADS} -c${CONNECTIONS} -d${DURATION} --latency"
     if [ -n "$lua_script" ]; then
         wrk_args="${wrk_args} -s ${lua_script}"
     fi
@@ -112,14 +113,22 @@ run_wrk() {
     result=$(wrk ${wrk_args} "$url" 2>&1)
 
     # Extract key metrics (use || true to prevent set -e from aborting on missing lines)
-    local rps latency_avg latency_p99
+    local rps latency_avg latency_p50 latency_p99 latency_p999 total_requests errors
     rps=$(echo "$result" | grep "Requests/sec" | awk '{print $2}' || true)
     latency_avg=$(echo "$result" | grep "Latency" | head -1 | awk '{print $2}' || true)
-    latency_p99=$(echo "$result" | grep "99%" | awk '{print $2}' || true)
+    latency_p50=$(echo "$result" | grep "50%" | awk '{print $2}' || true)
+    latency_p99=$(echo "$result" | grep "99%" | head -1 | awk '{print $2}' || true)
+    latency_p999=$(echo "$result" | grep "99.900%" | awk '{print $2}' || true)
+    total_requests=$(echo "$result" | grep "requests in" | awk '{print $1}' || true)
+    errors=$(echo "$result" | grep -i "socket errors\|non-2xx" || true)
 
     log_result "RPS" "${rps:-N/A}"
     log_result "Avg Latency" "${latency_avg:-N/A}"
+    log_result "P50 Latency" "${latency_p50:-N/A}"
     log_result "P99 Latency" "${latency_p99:-N/A}"
+    log_result "P99.9 Latency" "${latency_p999:-N/A}"
+    log_result "Total Requests" "${total_requests:-N/A}"
+    [ -n "$errors" ] && log_result "Errors" "$errors"
 
     [ -n "$lua_script" ] && rm -f "$lua_script"
 }

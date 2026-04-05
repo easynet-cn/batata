@@ -59,6 +59,8 @@ pub fn console_server(
 
     Ok(HttpServer::new(move || {
         let mut app = App::new()
+            // HTTP metrics (outermost: captures total request time including all middleware)
+            .wrap(crate::middleware::http_metrics::HttpMetrics)
             .wrap(Condition::new(access_log_enabled, Logger::default()))
             .wrap(
                 DefaultHeaders::new()
@@ -402,6 +404,7 @@ pub fn main_server(
     context_path: String,
     address: String,
     port: u16,
+    server_registry: Option<Arc<batata_core::ServerRegistry>>,
 ) -> Result<Server, std::io::Error> {
     // Create Cloud services
     let cloud_services = CloudServices::new();
@@ -421,6 +424,8 @@ pub fn main_server(
 
     Ok(HttpServer::new(move || {
         let mut app = App::new()
+            // HTTP metrics (outermost: captures total request time including all middleware)
+            .wrap(crate::middleware::http_metrics::HttpMetrics)
             .wrap(Condition::new(access_log_enabled, Logger::default()))
             .wrap(
                 DefaultHeaders::new()
@@ -460,6 +465,11 @@ pub fn main_server(
             .app_data(prometheus_state.clone())
             // Config encryption service
             .app_data(web::Data::new(encryption_service.clone()));
+
+        // Server registry for per-server health aggregation (optional)
+        if let Some(ref reg) = server_registry {
+            app = app.app_data(web::Data::new(reg.clone()));
+        }
 
         // AI services: always provide trait objects (config-backed or registry fallback)
         {

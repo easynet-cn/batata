@@ -49,6 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     batata_server::metrics::init_metrics();
+    let _system_stats_handle = batata_server::metrics::start_system_stats_reporter(None);
     let _rate_limit_cleanup_handle = rate_limit::start_cleanup_task();
 
     // Initialize auth caches with configuration values
@@ -270,6 +271,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config_subscriber_manager.clone(),
     )?;
 
+    // Server registry for per-server health aggregation
+    let server_registry = Arc::new(batata_core::ServerRegistry::new());
+    server_registry.register(
+        "SDK gRPC Server",
+        batata_core::ServerType::Grpc,
+        grpc_servers.sdk_state.clone(),
+    );
+    server_registry.register(
+        "Cluster gRPC Server",
+        batata_core::ServerType::Grpc,
+        grpc_servers.cluster_state.clone(),
+    );
+    if persistence_ctx.raft_node.is_some() {
+        server_registry.register(
+            "Raft Server",
+            batata_core::ServerType::Raft,
+            grpc_servers.raft_state.clone(),
+        );
+    }
+
     // ====================================================================
     // Phase 8: Start background tasks
     // ====================================================================
@@ -336,6 +357,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         encryption_service,
         &plugin_manager,
         &graceful_shutdown,
+        &server_registry,
     )
     .await?;
 
@@ -350,6 +372,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         xds_handle,
         persistence_ctx.server_member_manager.as_ref(),
         persistence_ctx.database_connection,
+        &server_registry,
     )
     .await;
 
@@ -642,6 +665,7 @@ async fn run_http_servers(
     encryption_service: Arc<batata_config::service::encryption::ConfigEncryptionService>,
     plugin_manager: &batata_plugin::spi::PluginManager,
     graceful_shutdown: &GracefulShutdown,
+    server_registry: &Arc<batata_core::ServerRegistry>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let server_address = app_state.configuration.server_address();
     let server_main_port = app_state.configuration.server_main_port();
@@ -649,6 +673,10 @@ async fn run_http_servers(
     let mcp_registry_enabled = app_state.configuration.mcp_registry_enabled()
         || deployment_type == model::common::NACOS_DEPLOYMENT_TYPE_SERVER_WITH_MCP;
     let mcp_registry_port = app_state.configuration.mcp_registry_port();
+
+    // Register HTTP server state trackers
+    let main_http_state = batata_core::ServerStateTracker::new();
+    let console_http_state = batata_core::ServerStateTracker::new();
 
     match deployment_type {
         model::common::NACOS_DEPLOYMENT_TYPE_CONSOLE => {
@@ -690,7 +718,14 @@ async fn run_http_servers(
                 server_context_path,
                 server_address.clone(),
                 server_main_port,
+                Some(server_registry.clone()),
             )?;
+            main_http_state.set_running();
+            server_registry.register(
+                "Main HTTP Server",
+                batata_core::ServerType::Http,
+                main_http_state.clone(),
+            );
 
             let plugin_servers = build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
             let mcp_registry_opt = build_mcp_registry(
@@ -744,6 +779,12 @@ async fn run_http_servers(
                 server_address.clone(),
                 console_server_port,
             )?;
+            console_http_state.set_running();
+            server_registry.register(
+                "Console HTTP Server",
+                batata_core::ServerType::Http,
+                console_http_state.clone(),
+            );
 
             info!(
                 "Starting Nacos main server on {}:{}",
@@ -760,7 +801,14 @@ async fn run_http_servers(
                 server_context_path,
                 server_address.clone(),
                 server_main_port,
+                Some(server_registry.clone()),
             )?;
+            main_http_state.set_running();
+            server_registry.register(
+                "Main HTTP Server",
+                batata_core::ServerType::Http,
+                main_http_state.clone(),
+            );
 
             let plugin_servers = build_plugin_servers(app_state, grpc_servers, plugin_manager)?;
             let mcp_registry_opt = build_mcp_registry(
@@ -854,7 +902,16 @@ fn build_mcp_registry(
     )?))
 }
 
-/// Execute graceful shutdown sequence.
+/// Execute graceful shutdown sequence with per-server state tracking.
+///
+/// Shutdown order (reverse of startup priority):
+/// 1. HTTP servers → DRAINING (reject new requests with 503)
+/// 2. gRPC servers → DRAINING → STOPPED
+/// 3. Drain pause for in-flight requests
+/// 4. xDS, health check, cluster manager → STOPPED
+/// 5. Raft node → STOPPED
+/// 6. Database connection → closed
+#[allow(clippy::too_many_arguments)]
 async fn graceful_shutdown_sequence(
     server_status: &Arc<ServerStatusManager>,
     graceful_shutdown: &GracefulShutdown,
@@ -863,7 +920,19 @@ async fn graceful_shutdown_sequence(
     xds_handle: Option<XdsServerHandle>,
     server_member_manager: Option<&Arc<batata_core::cluster::ServerMemberManager>>,
     database_connection: Option<sea_orm::DatabaseConnection>,
+    server_registry: &Arc<batata_core::ServerRegistry>,
 ) {
+    // Log per-server states before shutdown
+    let states = server_registry.health();
+    info!(
+        "Starting graceful shutdown ({} servers registered): {:?}",
+        states.len(),
+        states
+            .iter()
+            .map(|s| format!("{}={}", s.name, s.state))
+            .collect::<Vec<_>>()
+    );
+
     // 1. DRAINING: reject new requests with 503
     server_status.set_draining();
     let drain_timeout = graceful_shutdown.drain_timeout();
@@ -925,4 +994,15 @@ async fn graceful_shutdown_sequence(
             Err(_) => error!("Database close timed out after {}s", db_timeout),
         }
     }
+
+    // Log final per-server states
+    let final_states = server_registry.health();
+    info!(
+        "Shutdown complete ({} servers): {:?}",
+        final_states.len(),
+        final_states
+            .iter()
+            .map(|s| format!("{}={}", s.name, s.state))
+            .collect::<Vec<_>>()
+    );
 }

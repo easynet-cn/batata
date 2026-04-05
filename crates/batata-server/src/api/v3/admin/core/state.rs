@@ -1,6 +1,7 @@
 //! V3 Admin server state endpoints
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use actix_web::{Responder, get, web};
 
@@ -59,9 +60,20 @@ async fn readiness(data: web::Data<AppState>) -> impl Responder {
     }
 }
 
+/// GET /v3/admin/core/state/servers
+///
+/// Returns per-server health status for all registered server components
+/// (SDK gRPC, Cluster gRPC, Raft, Main HTTP, Console HTTP, etc.).
+#[get("servers")]
+async fn servers(registry: web::Data<Arc<batata_core::ServerRegistry>>) -> impl Responder {
+    let health = registry.health();
+    Result::<Vec<batata_core::ServerHealthInfo>>::http_success(health)
+}
+
 pub fn routes() -> actix_web::Scope {
     web::scope("/state")
         .service(get_state)
         .service(liveness)
         .service(readiness)
+        .service(servers)
 }

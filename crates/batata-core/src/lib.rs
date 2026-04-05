@@ -10,6 +10,7 @@
 pub mod abstraction;
 pub mod handler;
 pub mod model;
+pub mod server;
 pub mod service;
 pub mod traits;
 
@@ -41,6 +42,12 @@ pub use service::{ConfigKey, ConfigSubscriber, ConfigSubscriberManager};
 pub use service::{
     GrpcAuthContext, GrpcAuthRoleProvider, GrpcAuthService, GrpcPermissionInfo, GrpcResource,
     GrpcRoleInfo, PermissionAction, PermissionCheckResult, ResourceType, extract_auth_context,
+};
+
+// Re-export server lifecycle types
+pub use server::{
+    ManagedServer, ServerError, ServerHealthInfo, ServerOrchestrator, ServerRegistry, ServerState,
+    ServerStateTracker, ServerType,
 };
 
 // Re-export common functions

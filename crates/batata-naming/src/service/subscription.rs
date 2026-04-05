@@ -105,7 +105,12 @@ impl NamingService {
         instance_key: &str,
     ) {
         if let Some(mut instances) = self.connection_instances.get_mut(connection_id) {
-            instances.remove(&(service_key.to_string(), instance_key.to_string()));
+            // Use a temporary owned tuple for HashSet::remove lookup.
+            // HashSet<(String,String)>::remove requires an owned reference,
+            // so we must allocate here. Consider switching to a BTreeSet
+            // or a different key strategy if this becomes a hot path.
+            let key = (service_key.to_string(), instance_key.to_string());
+            instances.remove(&key);
         }
     }
 

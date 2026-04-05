@@ -60,6 +60,44 @@ impl ConfigChangeNotifier {
         self.notifiers.remove(key);
     }
 
+    /// Remove notifier entries for config keys that no longer exist in the cache.
+    /// Call this periodically to prevent unbounded memory growth.
+    pub fn cleanup_stale_entries(&self, cache: &super::cache::ConfigCacheService) {
+        let stale_keys: Vec<String> = self
+            .notifiers
+            .iter()
+            .filter(|entry| {
+                // Parse key format: "{tenant}+{group}+{dataId}"
+                let key = entry.key();
+                let parts: Vec<&str> = key.splitn(3, '+').collect();
+                if parts.len() == 3 {
+                    cache.get_md5(parts[0], parts[1], parts[2]).is_none()
+                } else {
+                    true // malformed key, remove it
+                }
+            })
+            .map(|entry| entry.key().clone())
+            .collect();
+
+        let removed = stale_keys.len();
+        for key in stale_keys {
+            // Only remove if no one is actively waiting (strong_count == 1 means only the map holds it)
+            if let Some((_, notify)) = self.notifiers.remove(&key) {
+                if Arc::strong_count(&notify) > 1 {
+                    // Someone is still waiting, put it back
+                    self.notifiers.insert(key, notify);
+                }
+            }
+        }
+        if removed > 0 {
+            tracing::debug!(
+                "ConfigChangeNotifier: cleaned up {} stale entries, {} remaining",
+                removed,
+                self.notifiers.len()
+            );
+        }
+    }
+
     /// Get current number of tracked config keys
     pub fn len(&self) -> usize {
         self.notifiers.len()

@@ -4,6 +4,7 @@
 // Re-export all middleware from server-common
 pub use batata_server_common::middleware::auth;
 pub use batata_server_common::middleware::distro_filter;
+pub use batata_server_common::middleware::http_metrics;
 pub use batata_server_common::middleware::rate_limit;
 pub use batata_server_common::middleware::tps_control;
 pub use batata_server_common::middleware::tracing;

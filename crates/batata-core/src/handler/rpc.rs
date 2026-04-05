@@ -559,7 +559,20 @@ impl crate::api::grpc::request_server::Request for GrpcRequestService {
                 }
             }
 
-            return match handler.handle(&connection, payload).await {
+            let handler_start = std::time::Instant::now();
+            let result = handler.handle(&connection, payload).await;
+            let duration = handler_start.elapsed().as_secs_f64();
+            let success = result.is_ok();
+
+            metrics::counter!("grpc_handler_calls_total", "type" => message_type.to_string())
+                .increment(1);
+            metrics::histogram!("grpc_handler_duration_seconds", "type" => message_type.to_string()).record(duration);
+            if !success {
+                metrics::counter!("grpc_handler_errors_total", "type" => message_type.to_string())
+                    .increment(1);
+            }
+
+            return match result {
                 Ok(response_payload) => Ok(Response::new(response_payload)),
                 Err(err) => Err(err),
             };

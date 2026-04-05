@@ -68,7 +68,7 @@ pub trait ConnectionLimitChecker: Send + Sync {
 }
 
 pub struct ConnectionManager {
-    clients: Arc<DashMap<String, GrpcClient>>,
+    clients: Arc<DashMap<String, Arc<GrpcClient>>>,
     listeners: Arc<RwLock<Vec<Arc<dyn ConnectionEventListener>>>>,
     connection_limit_checker: std::sync::Mutex<Option<Arc<dyn ConnectionLimitChecker>>>,
     /// Timeout for push_message operations
@@ -103,7 +103,7 @@ impl ConnectionManager {
         }
     }
 
-    pub fn from_arc(clients: Arc<DashMap<String, GrpcClient>>) -> Self {
+    pub fn from_arc(clients: Arc<DashMap<String, Arc<GrpcClient>>>) -> Self {
         let count = clients.len();
         Self {
             clients,
@@ -215,8 +215,11 @@ impl ConnectionManager {
             app_name = %meta.app_name,
             "Registered new gRPC client connection"
         );
-        self.clients.insert(connection_id.to_string(), client);
-        self.connection_count.fetch_add(1, Ordering::Relaxed);
+        self.clients
+            .insert(connection_id.to_string(), Arc::new(client));
+        let count = self.connection_count.fetch_add(1, Ordering::Relaxed) + 1;
+        metrics::counter!("grpc_connections_established_total").increment(1);
+        metrics::gauge!("grpc_connections_active").set(count as f64);
         self.fire_connected(connection_id, &meta).await;
 
         true
@@ -225,7 +228,9 @@ impl ConnectionManager {
     pub async fn unregister(&self, connection_id: &str) {
         self.timeout_counters.remove(connection_id);
         if let Some((_, client)) = self.clients.remove(connection_id) {
-            self.connection_count.fetch_sub(1, Ordering::Relaxed);
+            let count = self.connection_count.fetch_sub(1, Ordering::Relaxed) - 1;
+            metrics::counter!("grpc_connections_closed_total").increment(1);
+            metrics::gauge!("grpc_connections_active").set(count as f64);
             // Release connection slot in the limiter
             if let Some(checker) = self.get_limit_checker() {
                 checker
@@ -368,9 +373,20 @@ impl ConnectionManager {
         success_count
     }
 
-    /// Get a client by connection ID
-    pub fn get_client(&self, connection_id: &str) -> Option<GrpcClient> {
-        self.clients.get(connection_id).map(|r| (*r).clone())
+    /// Get a client by connection ID (cheap Arc clone).
+    /// Prefer `get_connection_meta()` if you only need metadata.
+    pub fn get_client(&self, connection_id: &str) -> Option<Arc<GrpcClient>> {
+        self.clients
+            .get(connection_id)
+            .map(|r| Arc::clone(r.value()))
+    }
+
+    /// Get connection metadata without cloning the entire GrpcClient.
+    /// Use this when you only need to read meta_info fields (client_ip, app_name, etc.).
+    pub fn get_connection_meta(&self, connection_id: &str) -> Option<ConnectionMeta> {
+        self.clients
+            .get(connection_id)
+            .map(|r| r.connection.meta_info.clone())
     }
 
     /// Check if a connection exists
@@ -383,14 +399,6 @@ impl ConnectionManager {
         self.clients
             .iter()
             .map(|entry| entry.key().clone())
-            .collect()
-    }
-
-    /// Get all clients as a list
-    pub fn get_all_clients(&self) -> Vec<GrpcClient> {
-        self.clients
-            .iter()
-            .map(|entry| entry.value().clone())
             .collect()
     }
 
@@ -454,13 +462,16 @@ impl ConnectionManager {
         }
 
         let ejecting_count = current - target_count;
-        let ids = self.get_all_connection_ids();
+        // Collect only the IDs we need to eject (avoid cloning all connection IDs)
+        let ids_to_eject: Vec<String> = self
+            .clients
+            .iter()
+            .take(ejecting_count)
+            .map(|entry| entry.key().clone())
+            .collect();
         let mut ejected = 0;
 
-        for id in ids {
-            if ejected >= ejecting_count {
-                break;
-            }
+        for id in ids_to_eject {
             if self.load_single(&id, redirect_address).await {
                 ejected += 1;
             }
@@ -519,15 +530,13 @@ impl ConnectionManager {
     async fn check_connections(&self, stale_threshold_ms: u64) {
         use batata_api::remote::model::{ClientDetectionRequest, RequestTrait as _};
 
-        let mut outdated_ids = Vec::new();
-
-        for entry in self.clients.iter() {
-            let connection_id = entry.key().clone();
-            let client = entry.value();
-            if client.connection.idle_millis() > stale_threshold_ms {
-                outdated_ids.push(connection_id);
-            }
-        }
+        // Only clone IDs for stale connections (avoids allocating for healthy ones)
+        let outdated_ids: Vec<String> = self
+            .clients
+            .iter()
+            .filter(|entry| entry.value().connection.idle_millis() > stale_threshold_ms)
+            .map(|entry| entry.key().clone())
+            .collect();
 
         if outdated_ids.is_empty() {
             return;

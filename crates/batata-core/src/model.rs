@@ -96,29 +96,33 @@ impl ConnectionMeta {
     pub fn is_sdk_source(&self) -> bool {
         self.labels
             .get(LABEL_SOURCE)
-            .is_some_and(|e| e.to_lowercase() == LABEL_SOURCE_SDK.to_lowercase())
+            .is_some_and(|e| e.eq_ignore_ascii_case(LABEL_SOURCE_SDK))
     }
 
     pub fn is_cluster_source(&self) -> bool {
         self.labels
             .get(LABEL_SOURCE)
-            .is_some_and(|e| e.to_lowercase() == LABEL_SOURCE_CLUSTER.to_lowercase())
+            .is_some_and(|e| e.eq_ignore_ascii_case(LABEL_SOURCE_CLUSTER))
     }
 
     pub fn get_app_labels(&self) -> HashMap<String, String> {
-        let mut map = HashMap::<String, String>::new();
+        // Pre-count app_conn labels to size the map accurately
+        let app_conn_count = self
+            .labels
+            .keys()
+            .filter(|k| k.starts_with(APP_CONN_PREFIX) && k.len() > APP_CONN_PREFIX.len())
+            .count();
+        let mut map = HashMap::with_capacity(2 + app_conn_count);
 
         map.insert(
             APPNAME.to_string(),
-            self.labels
-                .get(APPNAME)
-                .map_or(String::default(), |e| e.to_string()),
+            self.labels.get(APPNAME).cloned().unwrap_or_default(),
         );
         map.insert(CLIENT_VERSION_KEY.to_string(), self.version.clone());
 
-        for (k, v) in self.labels.iter() {
+        for (k, v) in &self.labels {
             if k.starts_with(APP_CONN_PREFIX) && k.len() > APP_CONN_PREFIX.len() && !v.is_empty() {
-                map.insert(k[APP_CONN_PREFIX.len()..].to_string(), v.to_string());
+                map.insert(k[APP_CONN_PREFIX.len()..].to_string(), v.clone());
             }
         }
 

@@ -105,9 +105,13 @@ pub struct NamingService {
     closing_connections: Arc<DashMap<String, ()>>,
 }
 
-/// Build cluster config key format: service_key##clusterName
+/// Build cluster config key format: service_key##clusterName (pre-allocated)
 fn build_cluster_key(service_key: &str, cluster_name: &str) -> String {
-    format!("{}##{}", service_key, cluster_name)
+    let mut key = String::with_capacity(service_key.len() + 2 + cluster_name.len());
+    key.push_str(service_key);
+    key.push_str("##");
+    key.push_str(cluster_name);
+    key
 }
 
 impl NamingService {
