@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::acl::{AclService, ResourceType};
 use crate::config_entry::ConsulConfigEntryService;
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 
@@ -667,14 +668,8 @@ pub async fn get_discovery_chain(
     }
 
     let service_name = path.into_inner();
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.get_discovery_chain(&service_name))
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.get_discovery_chain(&service_name))
 }
 
 /// GET /v1/exported-services - List exported services
@@ -690,14 +685,8 @@ pub async fn list_exported_services(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.list_exported_services())
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.list_exported_services())
 }
 
 /// GET /v1/imported-services - List imported services
@@ -713,14 +702,8 @@ pub async fn list_imported_services(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.list_imported_services())
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.list_imported_services())
 }
 
 /// POST /v1/discovery-chain/{service} - Read discovery chain with overrides
@@ -739,14 +722,8 @@ pub async fn post_discovery_chain(
     }
 
     let service_name = path.into_inner();
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
 // ============================================================================
@@ -768,14 +745,8 @@ pub async fn get_discovery_chain_persistent(
     }
 
     let service_name = path.into_inner();
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.get_discovery_chain(&service_name))
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.get_discovery_chain(&service_name))
 }
 
 /// POST /v1/discovery-chain/{service} (persistent)
@@ -794,14 +765,8 @@ pub async fn post_discovery_chain_persistent(
     }
 
     let service_name = path.into_inner();
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.get_discovery_chain_with_overrides(&service_name, &body.into_inner()))
 }
 
 /// GET /v1/exported-services (persistent)
@@ -817,14 +782,8 @@ pub async fn list_exported_services_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.list_exported_services())
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.list_exported_services())
 }
 
 /// GET /v1/imported-services (persistent)
@@ -840,14 +799,8 @@ pub async fn list_imported_services_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.list_imported_services())
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.list_imported_services())
 }
 
 #[cfg(test)]

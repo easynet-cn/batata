@@ -27,6 +27,7 @@ use crate::raft::ConsulRaftWriter;
 
 use crate::acl::{AclService, ResourceType};
 use crate::catalog::ConsulCatalogService;
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::model::{ConsulDatacenterConfig, ConsulError};
 
 // ============================================================================
@@ -845,13 +846,8 @@ pub async fn get_raft_configuration(
     }
 
     let config = operator_service.get_raft_configuration();
-    let index = config.index;
-
-    HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index.to_string()))
-        .insert_header(("X-Consul-KnownLeader", "true"))
-        .insert_header(("X-Consul-LastContact", "0"))
-        .json(config)
+    let meta = ConsulResponseMeta::new(config.index);
+    consul_ok(&meta).json(config)
 }
 
 /// POST /v1/operator/raft/transfer-leader
@@ -1107,13 +1103,8 @@ pub async fn get_raft_configuration_real(
     }
 
     let config = operator_service.get_raft_configuration();
-    let index = config.index;
-
-    HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index.to_string()))
-        .insert_header(("X-Consul-KnownLeader", "true"))
-        .insert_header(("X-Consul-LastContact", "0"))
-        .json(config)
+    let meta = ConsulResponseMeta::new(config.index);
+    consul_ok(&meta).json(config)
 }
 
 /// POST /v1/operator/raft/transfer-leader (real cluster)

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::model::ConsulError;
 
 // ============================================================================
@@ -230,10 +231,8 @@ pub async fn save_snapshot(
     let data = snapshot_service.save_snapshot().await;
     let index = snapshot_service.index.load(Ordering::SeqCst);
 
-    HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index.to_string()))
-        .insert_header(("X-Consul-KnownLeader", "true"))
-        .insert_header(("X-Consul-LastContact", "0"))
+    let meta = ConsulResponseMeta::new(index);
+    consul_ok(&meta)
         .content_type("application/octet-stream")
         .body(data)
 }
@@ -277,10 +276,8 @@ pub async fn save_snapshot_persistent(
     let data = snapshot_service.save_snapshot().await;
     let index = snapshot_service.index.load(Ordering::SeqCst);
 
-    HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index.to_string()))
-        .insert_header(("X-Consul-KnownLeader", "true"))
-        .insert_header(("X-Consul-LastContact", "0"))
+    let meta = ConsulResponseMeta::new(index);
+    consul_ok(&meta)
         .content_type("application/octet-stream")
         .body(data)
 }

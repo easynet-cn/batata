@@ -13,6 +13,7 @@ use crate::catalog::ConsulCatalogService;
 use crate::config_entry::ConsulConfigEntryService;
 use crate::connect::ConsulConnectService;
 use crate::connect_ca::ConsulConnectCAService;
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{AgentServiceRegistration, ConsulDatacenterConfig, ConsulError};
@@ -212,9 +213,8 @@ pub async fn ui_nodes(
     let index = index_provider.current_index(ConsulTable::Catalog);
     let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
 
-    HttpResponse::Ok()
-        .insert_header(("X-Consul-Index", index.to_string()))
-        .json(vec![node])
+    let meta = ConsulResponseMeta::new(index);
+    consul_ok(&meta).json(vec![node])
 }
 
 /// GET /v1/internal/ui/node/{node} - Get node info for UI
@@ -250,9 +250,8 @@ pub async fn ui_node_info(
             });
     if is_local {
         let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
-        return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", index.to_string()))
-            .json(node);
+        let meta = ConsulResponseMeta::new(index);
+        return consul_ok(&meta).json(node);
     }
 
     HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node_name)))
@@ -271,14 +270,8 @@ pub async fn ui_exported_services(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(connect_service.list_exported_services())
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(connect_service.list_exported_services())
 }
 
 /// GET /v1/internal/ui/catalog-overview - Get catalog overview for UI
@@ -350,14 +343,8 @@ pub async fn ui_catalog_overview(
         },
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(summary)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(summary)
 }
 
 /// GET /v1/internal/ui/gateway-services-nodes/{gateway} - List gateway service nodes
@@ -378,14 +365,8 @@ pub async fn ui_gateway_services_nodes(
     let gateway_services =
         catalog.get_gateway_services_from_config(&gateway_name, &config_entry_service);
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(gateway_services)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(gateway_services)
 }
 
 /// GET /v1/internal/ui/gateway-intentions/{gateway} - List gateway intentions
@@ -403,14 +384,8 @@ pub async fn ui_gateway_intentions(
 
     let gateway = path.into_inner();
     let matched = ca_service.match_intentions("destination", &gateway);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(matched)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(matched)
 }
 
 /// GET /v1/internal/ui/service-topology/{service} - Get service topology
@@ -520,14 +495,8 @@ pub async fn ui_service_topology(
         filtered_by_acls: false,
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(topology)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(topology)
 }
 
 /// GET /v1/internal/ui/metrics-proxy/{path:.*} - Proxy metrics requests
@@ -611,14 +580,8 @@ pub async fn federation_state_list(
         primary_modifyindex: 1,
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(vec![state])
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(vec![state])
 }
 
 /// GET /v1/internal/federation-states/mesh-gateways - List mesh gateway federation states
@@ -650,14 +613,8 @@ pub async fn federation_state_mesh_gateways(
         }
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(gateways_by_dc)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(gateways_by_dc)
 }
 
 /// GET /v1/internal/federation-state/{dc} - Get federation state for a datacenter
@@ -688,14 +645,8 @@ pub async fn federation_state_get(
         primary_modifyindex: 1,
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(state)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(state)
 }
 
 // ============================================================================
@@ -720,17 +671,11 @@ pub async fn assign_service_virtual_ip(
         .get_service_entries(crate::namespace::DEFAULT_NAMESPACE, &request.service_name)
         .is_empty();
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(AssignServiceVIPsResponse {
-            service_name: request.service_name,
-            found,
-        })
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(AssignServiceVIPsResponse {
+        service_name: request.service_name,
+        found,
+    })
 }
 
 #[cfg(test)]

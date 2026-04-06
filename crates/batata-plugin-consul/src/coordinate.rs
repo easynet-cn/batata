@@ -13,6 +13,7 @@ use crate::constants::CF_CONSUL_COORDINATES;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 
@@ -533,14 +534,8 @@ pub async fn get_coordinate_datacenters(
         }
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(dc_maps)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
+    consul_ok(&meta).json(dc_maps)
 }
 
 /// GET /v1/coordinate/nodes - List LAN coordinates for nodes
@@ -557,14 +552,8 @@ pub async fn get_coordinate_nodes(
     }
 
     let entries = coord_service.get_nodes(query.segment.as_deref());
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(entries)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
+    consul_ok(&meta).json(entries)
 }
 
 /// GET /v1/coordinate/node/{node} - Read a node's coordinates
@@ -583,14 +572,10 @@ pub async fn get_coordinate_node(
 
     let node = path.into_inner();
     match coord_service.get_node(&node) {
-        Some(entries) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(entries),
+        Some(entries) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
+            consul_ok(&meta).json(entries)
+        }
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node)))
         }
@@ -639,14 +624,8 @@ pub async fn get_coordinate_datacenters_persistent(
         }
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(dc_maps)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
+    consul_ok(&meta).json(dc_maps)
 }
 
 /// GET /v1/coordinate/nodes (persistent)
@@ -663,14 +642,8 @@ pub async fn get_coordinate_nodes_persistent(
     }
 
     let entries = coord_service.get_nodes(query.segment.as_deref());
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(entries)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
+    consul_ok(&meta).json(entries)
 }
 
 /// GET /v1/coordinate/node/{node} (persistent)
@@ -689,14 +662,10 @@ pub async fn get_coordinate_node_persistent(
 
     let node = path.into_inner();
     match coord_service.get_node(&node) {
-        Some(entries) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(entries),
+        Some(entries) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Coordinates));
+            consul_ok(&meta).json(entries)
+        }
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node)))
         }

@@ -14,6 +14,7 @@ use crate::constants::CF_CONSUL_SESSIONS;
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::kv::ConsulKVService;
 use crate::model::{ConsulError, Session, SessionCreateRequest, SessionCreateResponse};
@@ -35,6 +36,10 @@ fn default_zero() -> u64 {
 
 impl StoredSession {
     fn is_expired(&self) -> bool {
+        // TTL of 0 means no TTL — session is persistent (matches Consul behavior)
+        if self.ttl_secs == 0 {
+            return false;
+        }
         let effective_renewed = if self.last_renewed_unix > 0 {
             self.last_renewed_unix
         } else {
@@ -205,13 +210,33 @@ impl ConsulSessionService {
     // Public API
     // ========================================================================
 
-    /// Create a new session
+    /// Create a new session.
+    ///
+    /// Default values match the original Consul implementation:
+    /// - TTL: empty (persistent session, no auto-expiry)
+    /// - LockDelay: 15s
+    /// - Behavior: "release"
+    /// - NodeChecks: ["serfHealth"] (Consul's default health check)
     pub async fn create_session(&self, req: SessionCreateRequest) -> Session {
         let session_id = uuid::Uuid::new_v4().to_string();
         let now = current_unix_secs();
 
-        let ttl_str = req.ttl.clone().unwrap_or_else(|| "15s".to_string());
-        let ttl_secs = parse_duration(&ttl_str).unwrap_or(15);
+        // Consul defaults TTL to empty string (persistent session).
+        // Only parse TTL if explicitly provided.
+        let ttl_str = req.ttl.clone().unwrap_or_default();
+        let ttl_secs = if ttl_str.is_empty() {
+            0 // persistent session
+        } else {
+            parse_duration(&ttl_str).unwrap_or(0)
+        };
+
+        // Consul defaults NodeChecks to ["serfHealth"] if none specified
+        let default_checks = Some(vec!["serfHealth".to_string()]);
+        let node_checks = if req.node_checks.is_some() {
+            req.node_checks.clone()
+        } else {
+            default_checks.clone()
+        };
 
         let session = Session {
             id: session_id.clone(),
@@ -221,8 +246,8 @@ impl ConsulSessionService {
                 .unwrap_or(15),
             behavior: req.behavior.unwrap_or_else(|| "release".to_string()),
             ttl: ttl_str,
-            checks: req.node_checks.clone(), // backward compatibility
-            node_checks: req.node_checks,
+            checks: node_checks.clone(), // backward compatibility
+            node_checks,
             service_checks: req.service_checks,
             namespace: None,
             create_index: now,
@@ -541,14 +566,8 @@ pub async fn create_session(
         id: session.id.clone(),
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Sessions)
-                .to_string(),
-        ))
-        .json(response)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
+    consul_ok(&meta).json(response)
 }
 
 /// PUT /v1/session/destroy/{uuid}
@@ -575,14 +594,8 @@ pub async fn destroy_session(
     index_provider.increment(ConsulTable::KVS);
 
     let destroyed = session_service.destroy_session(&session_id).await;
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Sessions)
-                .to_string(),
-        ))
-        .json(destroyed)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
+    consul_ok(&meta).json(destroyed)
 }
 
 /// GET /v1/session/info/{uuid}
@@ -602,16 +615,10 @@ pub async fn get_session_info(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    let idx = index_provider
-        .current_index(ConsulTable::Sessions)
-        .to_string();
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
     match session_service.get_session(&session_id) {
-        Some(session) => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", idx))
-            .json(vec![session]),
-        None => HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", idx))
-            .json(Vec::<Session>::new()),
+        Some(session) => consul_ok(&meta).json(vec![session]),
+        None => consul_ok(&meta).json(Vec::<Session>::new()),
     }
 }
 
@@ -633,14 +640,8 @@ pub async fn list_sessions(
     session_service.cleanup_expired();
 
     let sessions = session_service.list_sessions();
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Sessions)
-                .to_string(),
-        ))
-        .json(sessions)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
+    consul_ok(&meta).json(sessions)
 }
 
 /// GET /v1/session/node/{node}
@@ -661,14 +662,8 @@ pub async fn list_node_sessions(
     }
 
     let sessions = session_service.list_node_sessions(&node);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Sessions)
-                .to_string(),
-        ))
-        .json(sessions)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
+    consul_ok(&meta).json(sessions)
 }
 
 /// PUT /v1/session/renew/{uuid}
@@ -688,15 +683,9 @@ pub async fn renew_session(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Sessions));
     match session_service.renew_session(&session_id).await {
-        Some(session) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Sessions)
-                    .to_string(),
-            ))
-            .json(vec![session]),
+        Some(session) => consul_ok(&meta).json(vec![session]),
         None => HttpResponse::NotFound().json(ConsulError::new("Session not found or expired")),
     }
 }
@@ -862,7 +851,15 @@ mod tests {
             ..Default::default()
         };
         let session = service.create_session(req).await;
-        assert_eq!(session.ttl, "15s"); // default
+        // Consul defaults: TTL is empty (persistent session), NodeChecks = ["serfHealth"]
+        assert_eq!(session.ttl, ""); // persistent by default (matches Consul)
+        assert_eq!(
+            session.node_checks,
+            Some(vec!["serfHealth".to_string()]),
+            "Default node checks should include serfHealth"
+        );
+        assert_eq!(session.behavior, "release");
+        assert_eq!(session.lock_delay, 15);
     }
 
     #[tokio::test]

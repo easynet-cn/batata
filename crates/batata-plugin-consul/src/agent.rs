@@ -11,6 +11,7 @@ use batata_common::{ClusterManager, MemberState};
 use batata_naming::healthcheck::registry::InstanceCheckRegistry;
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::check_index::ConsulCheckIndex;
 use crate::health::ConsulHealthService;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
@@ -344,14 +345,8 @@ pub async fn register_service(
         service_id
     );
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .finish()
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).finish()
 }
 
 /// PUT /v1/agent/service/deregister/{service_id}
@@ -408,14 +403,8 @@ pub async fn deregister_service(
         for check in &service_checks {
             let _ = health_service.deregister_check(&check.check_id).await;
         }
-        HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .finish()
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+        consul_ok(&meta).finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new(format!(
             "Service not found: {}",
@@ -459,14 +448,8 @@ pub async fn list_services(
         }
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(services)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(services)
 }
 
 /// GET /v1/agent/service/{service_id}
@@ -509,14 +492,8 @@ pub async fn get_service(
                 service: agent_service,
                 checks: Some(checks),
             };
-            return HttpResponse::Ok()
-                .insert_header((
-                    "X-Consul-Index",
-                    index_provider
-                        .current_index(ConsulTable::Catalog)
-                        .to_string(),
-                ))
-                .json(response);
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+            return consul_ok(&meta).json(response);
         }
     }
 
@@ -625,20 +602,19 @@ pub async fn agent_health_service_by_id(
                 checks,
             };
 
-            let idx_header = (
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            );
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
             return match status.as_str() {
-                "passing" => HttpResponse::Ok().insert_header(idx_header).json(info),
-                "warning" => HttpResponse::TooManyRequests()
-                    .insert_header(idx_header)
-                    .json(info),
-                _ => HttpResponse::ServiceUnavailable()
-                    .insert_header(idx_header)
-                    .json(info),
+                "passing" => consul_ok(&meta).json(info),
+                "warning" => {
+                    let mut b = HttpResponse::TooManyRequests();
+                    meta.apply_headers(&mut b);
+                    b.json(info)
+                }
+                _ => {
+                    let mut b = HttpResponse::ServiceUnavailable();
+                    meta.apply_headers(&mut b);
+                    b.json(info)
+                }
             };
         }
     }
@@ -718,20 +694,19 @@ pub async fn agent_health_service_by_name(
         });
     }
 
-    let idx_header = (
-        "X-Consul-Index",
-        index_provider
-            .current_index(ConsulTable::Catalog)
-            .to_string(),
-    );
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
     match worst_status {
-        "passing" => HttpResponse::Ok().insert_header(idx_header).json(results),
-        "warning" => HttpResponse::TooManyRequests()
-            .insert_header(idx_header)
-            .json(results),
-        _ => HttpResponse::ServiceUnavailable()
-            .insert_header(idx_header)
-            .json(results),
+        "passing" => consul_ok(&meta).json(results),
+        "warning" => {
+            let mut b = HttpResponse::TooManyRequests();
+            meta.apply_headers(&mut b);
+            b.json(results)
+        }
+        _ => {
+            let mut b = HttpResponse::ServiceUnavailable();
+            meta.apply_headers(&mut b);
+            b.json(results)
+        }
     }
 }
 
@@ -782,14 +757,8 @@ pub async fn set_service_maintenance(
         let _ = health_service.deregister_check(&check_id).await;
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .finish()
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).finish()
 }
 
 // ============================================================================
@@ -888,14 +857,8 @@ pub async fn get_agent_self(
         xds: None,
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(response)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(response)
 }
 
 /// GET /v1/agent/members
@@ -940,14 +903,8 @@ pub async fn get_agent_members(
         ..Default::default()
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(vec![member])
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(vec![member])
 }
 
 // ============================================================================
@@ -1021,14 +978,8 @@ pub async fn get_agent_members_real(
         })
         .collect();
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(members)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(members)
 }
 
 /// GET /v1/agent/self (Real cluster version)
@@ -1138,14 +1089,8 @@ pub async fn get_agent_self_real(
         xds: None,
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(response)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(response)
 }
 
 /// GET /v1/agent/host
@@ -1240,14 +1185,8 @@ pub async fn get_agent_host(
         host,
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(response)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(response)
 }
 
 /// GET /v1/agent/version
@@ -1265,14 +1204,8 @@ pub async fn get_agent_version(
         build_date: "2024-01-01T00:00:00Z".to_string(),
         fips: "".to_string(),
     };
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(response)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(response)
 }
 
 /// PUT /v1/agent/join/{address}
@@ -1294,14 +1227,8 @@ pub async fn agent_join(
     // In compatibility mode, just return success
     // Real cluster join would be handled by Batata's cluster management
     tracing::info!("Agent join requested for address: {}", address);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .finish()
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).finish()
 }
 
 /// PUT /v1/agent/leave
@@ -1320,14 +1247,8 @@ pub async fn agent_leave(
     // In compatibility mode, just return success
     // Real leave would trigger Batata's graceful shutdown
     tracing::info!("Agent leave requested");
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .finish()
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).finish()
 }
 
 /// PUT /v1/agent/force-leave/{node}
@@ -1348,14 +1269,8 @@ pub async fn agent_force_leave(
 
     // In compatibility mode, just return success
     tracing::info!("Agent force-leave requested for node: {}", node);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .finish()
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).finish()
 }
 
 /// PUT /v1/agent/reload
@@ -1373,14 +1288,8 @@ pub async fn agent_reload(
 
     // In compatibility mode, return success (config reload not actually supported)
     tracing::info!("Agent reload requested");
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .finish()
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).finish()
 }
 
 /// PUT /v1/agent/maintenance
@@ -1428,14 +1337,8 @@ pub async fn agent_maintenance(
         reason
     );
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .finish()
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).finish()
 }
 
 /// GET /v1/agent/metrics
@@ -1511,14 +1414,8 @@ pub async fn get_agent_metrics(
         points: Vec::new(),
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(response)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(response)
 }
 
 /// GET /v1/agent/metrics (Real version with service and cluster metrics)
@@ -1727,14 +1624,8 @@ pub async fn get_agent_metrics_real(
         points: Vec::new(),
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(response)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(response)
 }
 
 /// Query parameters for /v1/agent/monitor
@@ -1785,13 +1676,8 @@ pub async fn agent_monitor(
         )
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta)
         .content_type("text/plain; charset=utf-8")
         .body(message)
 }
@@ -1868,13 +1754,8 @@ pub async fn agent_metrics_stream(
         }
     });
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta)
         .insert_header(("Content-Type", "application/json"))
         .insert_header(("Transfer-Encoding", "chunked"))
         .streaming(stream)
@@ -1921,13 +1802,8 @@ pub async fn agent_metrics_stream_real(
         }
     });
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta)
         .insert_header(("Content-Type", "application/json"))
         .insert_header(("Transfer-Encoding", "chunked"))
         .streaming(stream)
@@ -1950,14 +1826,8 @@ pub async fn update_agent_token(
     }
 
     tracing::info!("Agent token update requested for type: {}", token_type);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .finish()
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).finish()
 }
 
 #[cfg(test)]

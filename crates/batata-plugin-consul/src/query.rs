@@ -18,6 +18,7 @@ use tracing::{error, info, warn};
 use crate::constants::CF_CONSUL_QUERIES;
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
     AgentService, AgentServiceRegistration, ConsulDatacenterConfig, ConsulError, HealthCheck, Node,
@@ -227,14 +228,8 @@ pub async fn create_query(
 
     let query = query_service.create_query(body.into_inner());
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(PreparedQueryCreateResponse { id: query.id })
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
+    consul_ok(&meta).json(PreparedQueryCreateResponse { id: query.id })
 }
 
 /// GET /v1/query
@@ -253,14 +248,8 @@ pub async fn list_queries(
 
     let queries = query_service.list_queries();
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(queries)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
+    consul_ok(&meta).json(queries)
 }
 
 /// GET /v1/query/{uuid}
@@ -281,14 +270,10 @@ pub async fn get_query(
     }
 
     match query_service.get_query(&id) {
-        Some(query) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(vec![query]),
+        Some(query) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
+            consul_ok(&meta).json(vec![query])
+        }
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }
 }
@@ -312,14 +297,10 @@ pub async fn update_query(
     }
 
     match query_service.update_query(&id, body.into_inner()) {
-        Some(_) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .finish(),
+        Some(_) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
+            consul_ok(&meta).finish()
+        }
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }
 }
@@ -342,14 +323,8 @@ pub async fn delete_query(
     }
 
     if query_service.delete_query(&id) {
-        HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .finish()
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
+        consul_ok(&meta).finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new("Query not found"))
     }
@@ -492,14 +467,8 @@ pub async fn execute_query(
         failovers: failover_count,
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(result)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
+    consul_ok(&meta).json(result)
 }
 
 /// GET /v1/query/{uuid}/explain
@@ -520,14 +489,10 @@ pub async fn explain_query(
     }
 
     match query_service.get_query(&id) {
-        Some(query) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(PreparedQueryExplainResult { query }),
+        Some(query) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Queries));
+            consul_ok(&meta).json(PreparedQueryExplainResult { query })
+        }
         None => HttpResponse::NotFound().json(ConsulError::new("Query not found")),
     }
 }

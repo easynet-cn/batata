@@ -11,6 +11,7 @@ use dashmap::DashMap;
 use rocksdb::DB;
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{ConsulError, EventFireParams, EventListParams, UserEvent};
 
@@ -347,14 +348,8 @@ pub async fn fire_event(
     let service = ConsulEventService::new();
     let event = service.fire_event(&name, payload, &node_filter, &service_filter, &tag_filter);
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(event)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(event)
 }
 
 /// GET /v1/event/list
@@ -390,14 +385,8 @@ pub async fn list_events(
         query.tag.as_deref(),
     );
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(events)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(events)
 }
 
 // ============================================================================
@@ -436,14 +425,8 @@ pub async fn fire_event_persistent(
         .fire_event(&name, payload, &node_filter, &service_filter, &tag_filter)
         .await;
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(event)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(event)
 }
 
 /// GET /v1/event/list (Persistent)
@@ -481,14 +464,8 @@ pub async fn list_events_persistent(
         )
         .await;
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(events)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(events)
 }
 
 #[cfg(test)]

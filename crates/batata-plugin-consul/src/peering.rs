@@ -13,6 +13,7 @@ use tracing::{error, info, warn};
 use crate::constants::CF_CONSUL_PEERING;
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 use crate::raft::ConsulRaftWriter;
@@ -445,14 +446,11 @@ pub async fn generate_peering_token(
     }
 
     match peering_service.generate_token(body.into_inner()) {
-        Ok(resp) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(resp),
+        Ok(resp) => {
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            consul_ok(&meta).json(resp)
+        }
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -471,14 +469,11 @@ pub async fn establish_peering(
     }
 
     match peering_service.establish(body.into_inner()) {
-        Ok(()) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(serde_json::json!({})),
+        Ok(()) => {
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            consul_ok(&meta).json(serde_json::json!({}))
+        }
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -503,14 +498,11 @@ pub async fn get_peering(
     }
 
     match peering_service.get_peering(&name) {
-        Some(peering) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(peering),
+        Some(peering) => {
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            consul_ok(&meta).json(peering)
+        }
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
         }
@@ -537,14 +529,8 @@ pub async fn delete_peering(
     }
 
     if peering_service.delete_peering(&name) {
-        HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .finish()
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+        consul_ok(&meta).finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
     }
@@ -563,14 +549,8 @@ pub async fn list_peerings(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(peering_service.list_peerings())
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+    consul_ok(&meta).json(peering_service.list_peerings())
 }
 
 // ============================================================================
@@ -591,14 +571,11 @@ pub async fn generate_peering_token_persistent(
     }
 
     match peering_service.generate_token(body.into_inner()) {
-        Ok(resp) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(resp),
+        Ok(resp) => {
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            consul_ok(&meta).json(resp)
+        }
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -617,14 +594,11 @@ pub async fn establish_peering_persistent(
     }
 
     match peering_service.establish(body.into_inner()) {
-        Ok(()) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(serde_json::json!({})),
+        Ok(()) => {
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            consul_ok(&meta).json(serde_json::json!({}))
+        }
         Err(e) => HttpResponse::BadRequest().json(ConsulError::new(e)),
     }
 }
@@ -649,14 +623,11 @@ pub async fn get_peering_persistent(
     }
 
     match peering_service.get_peering(&name) {
-        Some(peering) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(peering),
+        Some(peering) => {
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+            consul_ok(&meta).json(peering)
+        }
         None => {
             HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
         }
@@ -683,14 +654,8 @@ pub async fn delete_peering_persistent(
     }
 
     if peering_service.delete_peering(&name) {
-        HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .finish()
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+        consul_ok(&meta).finish()
     } else {
         HttpResponse::NotFound().json(ConsulError::new(format!("Peering '{}' not found", name)))
     }
@@ -709,14 +674,8 @@ pub async fn list_peerings_persistent(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(peering_service.list_peerings())
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Peering));
+    consul_ok(&meta).json(peering_service.list_peerings())
 }
 
 #[cfg(test)]

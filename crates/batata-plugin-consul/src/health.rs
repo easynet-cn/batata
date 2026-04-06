@@ -27,6 +27,7 @@ fn check_type_from_consul(s: &str) -> RegistryCheckType {
 }
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::check_index::ConsulCheckIndex;
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::{
@@ -479,8 +480,9 @@ pub async fn get_service_health(
             }
         }
 
-        // If passing_only is set, skip instances with any critical check
-        if passing_only && checks.iter().any(|c| c.status == "critical") {
+        // If passing_only is set, skip instances with any non-passing check
+        // (matches Consul's HealthFilterIncludeOnlyPassing: excludes both warning AND critical)
+        if passing_only && checks.iter().any(|c| c.status != "passing") {
             continue;
         }
 
@@ -523,14 +525,8 @@ pub async fn get_service_health(
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(results)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(results)
 }
 
 /// Apply Consul filter expression to service health results.
@@ -667,14 +663,8 @@ pub async fn get_service_checks(
         all_checks = apply_health_check_filter(all_checks, filter);
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(all_checks)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(all_checks)
 }
 
 /// GET /v1/health/state/:state
@@ -713,14 +703,8 @@ pub async fn get_checks_by_state(
         health_service.get_checks_by_status(&state).await
     };
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(checks)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(checks)
 }
 
 /// GET /v1/health/node/:node
@@ -749,14 +733,8 @@ pub async fn get_node_checks(
         .filter(|c| c.node == node)
         .collect();
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(checks)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(checks)
 }
 
 /// PUT /v1/agent/check/register
@@ -947,14 +925,8 @@ pub async fn list_agent_checks(
         .map(|c| (c.check_id.clone(), c))
         .collect();
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(checks_map)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(checks_map)
 }
 
 /// GET /v1/health/connect/:service
@@ -1037,14 +1009,8 @@ pub async fn get_connect_health(
         }
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(results)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(results)
 }
 
 /// GET /v1/health/ingress/:service
@@ -1125,14 +1091,8 @@ pub async fn get_ingress_health(
         }
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(results)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+    consul_ok(&meta).json(results)
 }
 
 /// Check if an AgentServiceRegistration is a Connect-enabled instance for the given target service.

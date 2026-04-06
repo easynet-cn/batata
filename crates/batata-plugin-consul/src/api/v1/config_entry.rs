@@ -10,6 +10,7 @@ use crate::config_entry::{
     ConfigEntryDeleteParams, ConfigEntryListParams, ConfigEntryRequest, ConsulConfigEntryService,
     SUPPORTED_KINDS,
 };
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 
@@ -57,14 +58,11 @@ async fn apply_config_entry(
     });
 
     match config_service.apply_entry(entry_req, cas).await {
-        Ok(success) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(success),
+        Ok(success) => {
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
+            consul_ok(&meta).json(success)
+        }
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
     }
 }
@@ -87,10 +85,8 @@ async fn get_config_entry(
     match config_service.get_entry(&kind, &name) {
         Some(entry) => {
             // Use entry's ModifyIndex as X-Consul-Index so CAS works correctly
-            let idx = entry.modify_index;
-            HttpResponse::Ok()
-                .insert_header(("X-Consul-Index", idx.to_string()))
-                .json(entry)
+            let meta = ConsulResponseMeta::new(entry.modify_index);
+            consul_ok(&meta).json(entry)
         }
         None => HttpResponse::NotFound().json(ConsulError::new("Config entry not found")),
     }
@@ -113,24 +109,12 @@ async fn delete_config_entry(
     let (kind, name) = path.into_inner();
     match config_service.delete_entry(&kind, &name, query.cas).await {
         Ok(success) => {
+            let meta =
+                ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
             if query.cas.is_some() {
-                HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider
-                            .current_index(ConsulTable::Catalog)
-                            .to_string(),
-                    ))
-                    .json(success)
+                consul_ok(&meta).json(success)
             } else {
-                HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider
-                            .current_index(ConsulTable::Catalog)
-                            .to_string(),
-                    ))
-                    .json(serde_json::json!({}))
+                consul_ok(&meta).json(serde_json::json!({}))
             }
         }
         Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(e)),
@@ -160,14 +144,8 @@ async fn list_config_entries(
     }
 
     let entries = config_service.list_entries(&kind);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(entries)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConfigEntries));
+    consul_ok(&meta).json(entries)
 }
 
 pub fn routes() -> Scope {

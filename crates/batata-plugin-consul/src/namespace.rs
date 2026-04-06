@@ -10,6 +10,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 use crate::raft::ConsulRaftWriter;
@@ -178,14 +179,8 @@ pub async fn list_namespaces(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(ns_service.list())
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
+    consul_ok(&meta).json(ns_service.list())
 }
 
 /// GET /v1/namespace/{name} - Read a namespace
@@ -203,14 +198,10 @@ pub async fn read_namespace(
 
     let name = path.into_inner();
     match ns_service.get(&name) {
-        Some(ns) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .json(ns),
+        Some(ns) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
+            consul_ok(&meta).json(ns)
+        }
         None => HttpResponse::NotFound()
             .json(ConsulError::new(format!("Namespace '{}' not found", name))),
     }
@@ -237,14 +228,8 @@ pub async fn create_namespace(
     }
 
     let created = ns_service.upsert(ns);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(created)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
+    consul_ok(&meta).json(created)
 }
 
 /// PUT /v1/namespace/{name} - Update a namespace
@@ -266,14 +251,8 @@ pub async fn update_namespace(
     ns.name = name;
 
     let updated = ns_service.upsert(ns);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(updated)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
+    consul_ok(&meta).json(updated)
 }
 
 /// DELETE /v1/namespace/{name} - Delete a namespace
@@ -291,14 +270,10 @@ pub async fn delete_namespace(
 
     let name = path.into_inner();
     match ns_service.delete(&name) {
-        Ok(()) => HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider
-                    .current_index(ConsulTable::Catalog)
-                    .to_string(),
-            ))
-            .finish(),
+        Ok(()) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Namespaces));
+            consul_ok(&meta).finish()
+        }
         Err(msg) => HttpResponse::BadRequest().json(ConsulError::new(msg)),
     }
 }

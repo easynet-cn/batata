@@ -16,6 +16,7 @@ use crate::constants::{CF_CONSUL_ACL, CF_CONSUL_KV, CF_CONSUL_QUERIES, CF_CONSUL
 use crate::raft::{ConsulRaftRequest, ConsulRaftWriter};
 
 use crate::acl::{AclService, ResourceType};
+use crate::consul_meta::{ConsulResponseMeta, apply_kv_raw_security_headers, consul_not_found, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
 use crate::model::ConsulError;
 
@@ -131,6 +132,9 @@ pub struct KVQueryParams {
 
     /// Separator for keys listing
     pub separator: Option<String>,
+
+    /// Legacy misspelling of separator (Consul supports both)
+    pub seperator: Option<String>,
 
     /// Wait for index to be >= this value (blocking wait for watch)
     pub index: Option<u64>,
@@ -1372,21 +1376,24 @@ pub async fn get_kv(
                     .iter()
                     .any(|p| !p.key.is_empty());
             if !has_data {
-                return HttpResponse::NotFound().finish();
+                let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
+                return consul_not_found(&meta).finish();
             }
         }
     }
 
-    let current_idx = index_provider.current_index(ConsulTable::KVS);
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
 
-    // Handle keys-only request
+    // Handle keys-only request — support both ?separator and ?seperator (Consul legacy)
     if keys_only {
-        let keys = kv_service.get_keys(&key, query.separator.as_deref());
+        let sep = query
+            .separator
+            .as_deref()
+            .or(query.seperator.as_deref());
+        let keys = kv_service.get_keys(&key, sep);
         let body = serde_json::to_vec(&keys).unwrap_or_default();
         let len = body.len();
-        // Return empty array instead of 404 for empty keys (Consul standard behavior)
-        return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", current_idx.to_string()))
+        return consul_ok(&meta)
             .content_type("application/json")
             .insert_header(("Content-Length", len))
             .body(body);
@@ -1397,9 +1404,7 @@ pub async fn get_kv(
         let pairs = kv_service.get_prefix(&key);
         let body = serde_json::to_vec(&pairs).unwrap_or_default();
         let len = body.len();
-        // Return empty array instead of 404 for empty results (Consul standard behavior)
-        return HttpResponse::Ok()
-            .insert_header(("X-Consul-Index", current_idx.to_string()))
+        return consul_ok(&meta)
             .content_type("application/json")
             .insert_header(("Content-Length", len))
             .body(body);
@@ -1409,29 +1414,29 @@ pub async fn get_kv(
     match kv_service.get(&key) {
         Some(pair) => {
             if raw {
-                // Return raw value
+                // Return raw value with security headers (XSS prevention)
                 match pair.raw_value() {
                     Some(bytes) => {
                         let body = bytes.clone();
-                        HttpResponse::Ok()
-                            .insert_header(("X-Consul-Index", current_idx.to_string()))
-                            .content_type("application/octet-stream")
+                        let mut builder = consul_ok(&meta);
+                        apply_kv_raw_security_headers(&mut builder);
+                        builder
+                            .content_type("text/plain; charset=utf-8")
                             .insert_header(("Content-Length", body.len()))
                             .body(body)
                     }
-                    None => HttpResponse::NotFound().finish(),
+                    None => consul_not_found(&meta).finish(),
                 }
             } else {
                 let body = serde_json::to_vec(&vec![pair]).unwrap_or_default();
                 let len = body.len();
-                HttpResponse::Ok()
-                    .insert_header(("X-Consul-Index", current_idx.to_string()))
+                consul_ok(&meta)
                     .content_type("application/json")
                     .insert_header(("Content-Length", len))
                     .body(body)
             }
         }
-        None => HttpResponse::NotFound().finish(),
+        None => consul_not_found(&meta).finish(),
     }
 }
 
@@ -1447,8 +1452,14 @@ pub async fn put_kv(
 ) -> HttpResponse {
     let key = req.match_info().get("key").unwrap_or("").to_string();
 
-    if key.is_empty() {
-        return HttpResponse::BadRequest().json(ConsulError::new("Key cannot be empty"));
+    // Validate key (matches Consul's validateKVKey)
+    if let Err(reason) = validate_kv_key(&key) {
+        return HttpResponse::BadRequest().json(ConsulError::new(&reason));
+    }
+
+    // Enforce max value size (matches Consul's KVMaxValueSize, default 512 KiB)
+    if body.len() > DEFAULT_KV_MAX_VALUE_SIZE {
+        return HttpResponse::new(actix_web::http::StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     // Check ACL authorization for key write
@@ -1467,12 +1478,8 @@ pub async fn put_kv(
         if success {
             index_provider.increment(ConsulTable::KVS);
         }
-        return HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider.current_index(ConsulTable::KVS).to_string(),
-            ))
-            .json(success);
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
+        return consul_ok(&meta).json(success);
     }
 
     // Handle release (session-based unlock) — atomic put + release
@@ -1483,12 +1490,8 @@ pub async fn put_kv(
         if success {
             index_provider.increment(ConsulTable::KVS);
         }
-        return HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider.current_index(ConsulTable::KVS).to_string(),
-            ))
-            .json(success);
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
+        return consul_ok(&meta).json(success);
     }
 
     // Check-and-set if cas parameter is provided
@@ -1497,23 +1500,15 @@ pub async fn put_kv(
         if success {
             index_provider.increment(ConsulTable::KVS);
         }
-        return HttpResponse::Ok()
-            .insert_header((
-                "X-Consul-Index",
-                index_provider.current_index(ConsulTable::KVS).to_string(),
-            ))
-            .json(success);
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
+        return consul_ok(&meta).json(success);
     }
 
     // Regular put
     kv_service.put(key, &value, query.flags).await;
     index_provider.increment(ConsulTable::KVS);
-    HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider.current_index(ConsulTable::KVS).to_string(),
-        ))
-        .json(true)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
+    consul_ok(&meta).json(true)
 }
 
 /// DELETE /v1/kv/{key:.*}
@@ -1539,10 +1534,12 @@ pub async fn delete_kv(
     if let Some(cas_index) = query.cas {
         if let Some(existing) = kv_service.get(&key) {
             if existing.modify_index != cas_index {
-                return HttpResponse::Ok().json(false);
+                let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
+                return consul_ok(&meta).json(false);
             }
         } else if cas_index != 0 {
-            return HttpResponse::Ok().json(false);
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
+            return consul_ok(&meta).json(false);
         }
     }
 
@@ -1553,7 +1550,8 @@ pub async fn delete_kv(
     }
 
     index_provider.increment(ConsulTable::KVS);
-    HttpResponse::Ok().json(true)
+    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::KVS));
+    consul_ok(&meta).json(true)
 }
 
 /// PUT /v1/txn
@@ -1584,6 +1582,43 @@ pub async fn txn(
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// Default maximum KV value size in bytes (512 KiB, matches Consul's default).
+const DEFAULT_KV_MAX_VALUE_SIZE: usize = 512 * 1024;
+
+/// Validate a KV key following the original Consul rules from `kvs_endpoint.go`.
+///
+/// Rejects:
+/// - Empty keys
+/// - Keys starting with `/`
+/// - Keys with leading or trailing whitespace
+/// - Keys containing `..` path traversal components
+///
+/// Returns `Ok(())` if valid, `Err(reason)` if invalid.
+fn validate_kv_key(key: &str) -> Result<(), String> {
+    if key.is_empty() {
+        return Err("Key must not be empty".to_string());
+    }
+    if key.starts_with('/') {
+        return Err("Key must not begin with a '/'".to_string());
+    }
+    if key != key.trim() {
+        return Err("Key must not have leading or trailing whitespace".to_string());
+    }
+    // Check for path traversal in raw key
+    for component in key.split('/') {
+        if component == ".." {
+            return Err("Key must not contain '..' path traversal".to_string());
+        }
+    }
+    // Check for common URL-encoded traversal attacks (%2E%2E = "..", %2F = "/")
+    // Actix-web already decodes the URL path, but be defensive about double-encoding.
+    let lower = key.to_lowercase();
+    if lower.contains("%2e%2e") || lower.contains("%2f..") || lower.contains("..%2f") {
+        return Err("Key must not contain encoded path traversal".to_string());
+    }
+    Ok(())
+}
 
 fn current_timestamp() -> i64 {
     SystemTime::now()
