@@ -335,6 +335,13 @@ pub async fn fire_event(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
+    // Consul enforces max 300 byte event payload (agent/event_endpoint.go:53-60)
+    if body.len() > 300 {
+        return HttpResponse::PayloadTooLarge().json(ConsulError::new(
+            "Payload exceeds maximum size of 300 bytes",
+        ));
+    }
+
     // Payload is sent as raw bytes, base64-encode for JSON response
     let payload = if body.is_empty() {
         None
@@ -410,6 +417,13 @@ pub async fn fire_event_persistent(
     let authz = acl_service.authorize_request(&req, ResourceType::Query, &name, true);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
+    }
+
+    // Consul enforces max 300 byte event payload
+    if body.len() > 300 {
+        return HttpResponse::PayloadTooLarge().json(ConsulError::new(
+            "Payload exceeds maximum size of 300 bytes",
+        ));
     }
 
     let payload = if body.is_empty() {

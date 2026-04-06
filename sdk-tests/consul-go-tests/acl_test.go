@@ -1660,3 +1660,95 @@ func TestACLOIDCAuthURL(t *testing.T) {
 	assert.NotEmpty(t, authURL, "OIDC auth URL should not be empty")
 	t.Logf("OIDC Auth URL: %s", authURL)
 }
+
+// CACL-STRICT-001: Test ACL policy name uniqueness
+// Consul enforces unique policy names — duplicate create must fail
+func TestACLPolicyNameUniqueness(t *testing.T) {
+	client := getClient(t)
+	policyName := "uniqueness-test-" + randomID()
+
+	// Create first policy
+	policy1, _, err := client.ACL().PolicyCreate(&api.ACLPolicy{
+		Name:  policyName,
+		Rules: `key_prefix "" { policy = "read" }`,
+	}, nil)
+	if err != nil {
+		t.Skipf("ACL policy create not supported: %v", err)
+	}
+	require.NotNil(t, policy1)
+	require.NotEmpty(t, policy1.ID)
+	defer client.ACL().PolicyDelete(policy1.ID, nil)
+
+	// Create second policy with SAME name — must fail
+	_, _, err = client.ACL().PolicyCreate(&api.ACLPolicy{
+		Name:  policyName,
+		Rules: `key_prefix "" { policy = "write" }`,
+	}, nil)
+	assert.Error(t, err,
+		"Creating a policy with duplicate name must fail (Consul enforces unique names)")
+}
+
+// CACL-STRICT-002: Test ACL token SecretID visibility
+// SecretID should be returned on create, but NOT in list responses
+func TestACLTokenSecretIDVisibility(t *testing.T) {
+	client := getClient(t)
+
+	// Create token
+	created, _, err := client.ACL().TokenCreate(&api.ACLToken{
+		Description: "secret-test-" + randomID(),
+		Local:       true,
+	}, nil)
+	if err != nil {
+		t.Skipf("ACL token create not supported: %v", err)
+	}
+	defer client.ACL().TokenDelete(created.AccessorID, nil)
+
+	// SecretID must be returned on create
+	assert.NotEmpty(t, created.SecretID,
+		"SecretID must be returned when creating a token")
+	assert.NotEmpty(t, created.AccessorID,
+		"AccessorID must be returned when creating a token")
+
+	// SecretID should NOT be in list responses
+	tokens, _, err := client.ACL().TokenList(nil)
+	require.NoError(t, err)
+
+	for _, tok := range tokens {
+		if tok.AccessorID == created.AccessorID {
+			assert.Empty(t, tok.SecretID,
+				"SecretID must NOT be visible in token list response "+
+					"(Consul hides SecretID in list for security)")
+			break
+		}
+	}
+}
+
+// CACL-STRICT-003: Test ACL policy create with full field validation
+func TestACLPolicyCreateFieldValidation(t *testing.T) {
+	client := getClient(t)
+	policyName := "field-validation-" + randomID()
+
+	policy, _, err := client.ACL().PolicyCreate(&api.ACLPolicy{
+		Name:        policyName,
+		Description: "Test policy for field validation",
+		Rules:       `service_prefix "web-" { policy = "write" }`,
+	}, nil)
+	if err != nil {
+		t.Skipf("ACL policy create not supported: %v", err)
+	}
+	defer client.ACL().PolicyDelete(policy.ID, nil)
+
+	// Full field validation
+	assert.NotEmpty(t, policy.ID, "Policy ID must be set")
+	assert.Equal(t, policyName, policy.Name, "Policy name must match")
+	assert.Equal(t, "Test policy for field validation", policy.Description)
+	assert.Contains(t, policy.Rules, "service_prefix")
+
+	// Read back and verify
+	read, _, err := client.ACL().PolicyRead(policy.ID, nil)
+	require.NoError(t, err)
+	require.NotNil(t, read)
+	assert.Equal(t, policy.ID, read.ID, "Read policy ID must match")
+	assert.Equal(t, policyName, read.Name, "Read policy name must match")
+	assert.Equal(t, policy.Rules, read.Rules, "Read policy rules must match")
+}

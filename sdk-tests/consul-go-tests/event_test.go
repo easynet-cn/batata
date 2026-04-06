@@ -2,6 +2,7 @@ package tests
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/stretchr/testify/assert"
@@ -201,4 +202,72 @@ func TestEventIDToIndex(t *testing.T) {
 	assert.True(t, idx > 0, "IDToIndex should return an index > 0")
 
 	t.Logf("Event ID %s maps to index %d", eventID, idx)
+}
+
+// CE-STRICT-001: Test event payload size limit (Consul enforces 300 byte max)
+func TestEventPayloadSizeLimit(t *testing.T) {
+	client := getClient(t)
+
+	// Payload within limit (300 bytes) — should succeed
+	smallPayload := make([]byte, 300)
+	for i := range smallPayload {
+		smallPayload[i] = 'A'
+	}
+	_, _, err := client.Event().Fire(&api.UserEvent{
+		Name:    "size-ok-" + randomID(),
+		Payload: smallPayload,
+	}, nil)
+	if err != nil {
+		t.Skipf("Event API not supported: %v", err)
+	}
+	// No error means payload within limit was accepted
+
+	// Payload exceeding limit (301 bytes) — must fail
+	largePayload := make([]byte, 301)
+	for i := range largePayload {
+		largePayload[i] = 'B'
+	}
+	_, _, err = client.Event().Fire(&api.UserEvent{
+		Name:    "size-exceed-" + randomID(),
+		Payload: largePayload,
+	}, nil)
+	assert.Error(t, err,
+		"Event with payload > 300 bytes must be rejected (Consul enforces 300 byte limit)")
+}
+
+// CE-STRICT-002: Test event fire with full response validation
+func TestEventFireFieldValidation(t *testing.T) {
+	client := getClient(t)
+	eventName := "strict-event-" + randomID()
+	payload := []byte("strict test payload")
+
+	eventID, wm, err := client.Event().Fire(&api.UserEvent{
+		Name:    eventName,
+		Payload: payload,
+	}, nil)
+	if err != nil {
+		t.Skipf("Event API not supported: %v", err)
+	}
+
+	assert.NotEmpty(t, eventID, "Event ID must not be empty")
+	assert.Greater(t, wm.RequestTime, time.Duration(0),
+		"WriteMeta.RequestTime must be positive")
+
+	// List and verify our event is in the list
+	events, _, err := client.Event().List(eventName, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, events, "Event must appear in list")
+
+	found := false
+	for _, evt := range events {
+		if evt.ID == eventID {
+			found = true
+			assert.Equal(t, eventName, evt.Name,
+				"Event name must match")
+			assert.NotNil(t, evt.Payload,
+				"Event payload must not be nil")
+			break
+		}
+	}
+	assert.True(t, found, "Fired event must be found in event list")
 }

@@ -12,56 +12,63 @@ import (
 
 // ==================== P0: Critical Tests ====================
 
-// CK-001: Test KV put
+// CK-001: Test KV put and get with full field validation
 func TestKVPut(t *testing.T) {
 	client := getClient(t)
 	key := "ck001/put/" + randomID()
 	value := []byte("test-value")
 
 	// Put
-	_, err := client.KV().Put(&api.KVPair{
+	wm, err := client.KV().Put(&api.KVPair{
 		Key:   key,
 		Value: value,
 	}, nil)
-	assert.NoError(t, err, "KV put should succeed")
+	require.NoError(t, err, "KV put should succeed")
+	// WriteMeta should have valid request time
+	assert.Greater(t, wm.RequestTime, time.Duration(0),
+		"WriteMeta.RequestTime should be positive")
 
-	// Verify
-	pair, _, err := client.KV().Get(key, nil)
-	assert.NoError(t, err)
-	assert.NotNil(t, pair)
-	assert.Equal(t, value, pair.Value)
+	// Get and validate ALL fields
+	pair, meta, err := client.KV().Get(key, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pair, "Pair should not be nil")
+
+	// Value correctness
+	assert.Equal(t, key, pair.Key, "Key must match")
+	assert.Equal(t, value, pair.Value, "Value must match")
+
+	// Index fields
+	assert.Greater(t, pair.CreateIndex, uint64(0),
+		"CreateIndex must be > 0 after put")
+	assert.Greater(t, pair.ModifyIndex, uint64(0),
+		"ModifyIndex must be > 0 after put")
+	assert.Equal(t, uint64(0), pair.LockIndex,
+		"LockIndex should be 0 (not locked)")
+	assert.Equal(t, uint64(0), pair.Flags,
+		"Flags should be 0 (not set)")
+	assert.Empty(t, pair.Session,
+		"Session should be empty (no lock)")
+
+	// QueryMeta validation (matches Consul's setMeta headers)
+	assert.Greater(t, meta.LastIndex, uint64(0),
+		"QueryMeta.LastIndex must be > 0")
+	assert.True(t, meta.KnownLeader,
+		"QueryMeta.KnownLeader must be true")
 
 	// Cleanup
 	client.KV().Delete(key, nil)
 }
 
-// CK-002: Test KV get
-func TestKVGet(t *testing.T) {
+// CK-002: Test KV get non-existent key returns nil
+func TestKVGetNonExistent(t *testing.T) {
 	client := getClient(t)
-	key := "ck002/get/" + randomID()
-	value := []byte("get-test-value")
 
-	// Put first
-	_, err := client.KV().Put(&api.KVPair{
-		Key:   key,
-		Value: value,
-	}, nil)
-	require.NoError(t, err)
-
-	// Get
-	pair, _, err := client.KV().Get(key, nil)
-	assert.NoError(t, err, "KV get should succeed")
-	assert.NotNil(t, pair)
-	assert.Equal(t, key, pair.Key)
-	assert.Equal(t, value, pair.Value)
-
-	// Get non-existent key
-	pair, _, err = client.KV().Get("non-existent-key-"+randomID(), nil)
-	assert.NoError(t, err)
-	assert.Nil(t, pair, "Non-existent key should return nil")
-
-	// Cleanup
-	client.KV().Delete(key, nil)
+	pair, meta, err := client.KV().Get("non-existent-key-"+randomID(), nil)
+	require.NoError(t, err, "Get non-existent key should not error")
+	assert.Nil(t, pair, "Non-existent key must return nil pair")
+	// Even 404 responses should have valid QueryMeta
+	assert.Greater(t, meta.LastIndex, uint64(0),
+		"QueryMeta.LastIndex must be > 0 even for 404")
 }
 
 // CK-003: Test KV delete
@@ -79,26 +86,26 @@ func TestKVDelete(t *testing.T) {
 	// Verify exists
 	pair, _, err := client.KV().Get(key, nil)
 	require.NoError(t, err)
-	require.NotNil(t, pair)
+	require.NotNil(t, pair, "Key should exist before delete")
 
 	// Delete
 	_, err = client.KV().Delete(key, nil)
-	assert.NoError(t, err, "KV delete should succeed")
+	require.NoError(t, err, "KV delete should succeed")
 
-	// Verify deleted
+	// Verify deleted — must return nil, not empty
 	pair, _, err = client.KV().Get(key, nil)
-	assert.NoError(t, err)
-	assert.Nil(t, pair, "Key should be deleted")
+	require.NoError(t, err)
+	assert.Nil(t, pair, "Key must be nil after delete")
 }
 
 // ==================== P1: Important Tests ====================
 
-// CK-004: Test KV list by prefix
+// CK-004: Test KV list by prefix with content validation
 func TestKVList(t *testing.T) {
 	client := getClient(t)
 	prefix := "ck004/list/" + randomID() + "/"
 
-	// Put multiple keys
+	// Put multiple keys with different values
 	for i := 0; i < 5; i++ {
 		key := fmt.Sprintf("%skey%d", prefix, i)
 		_, err := client.KV().Put(&api.KVPair{
@@ -109,21 +116,28 @@ func TestKVList(t *testing.T) {
 	}
 
 	// List by prefix
-	pairs, _, err := client.KV().List(prefix, nil)
-	assert.NoError(t, err, "KV list should succeed")
-	assert.Len(t, pairs, 5, "Should have 5 keys")
+	pairs, meta, err := client.KV().List(prefix, nil)
+	require.NoError(t, err, "KV list should succeed")
+	require.Len(t, pairs, 5, "Should have exactly 5 keys")
 
-	// Verify all keys
+	// Validate each pair has correct structure
 	for i, pair := range pairs {
-		assert.Contains(t, pair.Key, prefix)
-		assert.NotEmpty(t, pair.Value)
-		_ = i
+		expectedKey := fmt.Sprintf("%skey%d", prefix, i)
+		assert.Equal(t, expectedKey, pair.Key,
+			"Key at index %d should match", i)
+		assert.Equal(t, []byte(fmt.Sprintf("value%d", i)), pair.Value,
+			"Value at index %d should match", i)
+		assert.Greater(t, pair.CreateIndex, uint64(0),
+			"CreateIndex at index %d must be > 0", i)
+		assert.Greater(t, pair.ModifyIndex, uint64(0),
+			"ModifyIndex at index %d must be > 0", i)
 	}
+
+	// QueryMeta
+	assert.Greater(t, meta.LastIndex, uint64(0))
 
 	// Cleanup
-	for i := 0; i < 5; i++ {
-		client.KV().Delete(fmt.Sprintf("%skey%d", prefix, i), nil)
-	}
+	client.KV().DeleteTree(prefix, nil)
 }
 
 // CK-005: Test KV keys only
@@ -142,21 +156,25 @@ func TestKVKeys(t *testing.T) {
 	}
 
 	// Get keys only
-	keys, _, err := client.KV().Keys(prefix, "", nil)
-	assert.NoError(t, err, "KV keys should succeed")
-	assert.Len(t, keys, 3, "Should have 3 keys")
+	keys, meta, err := client.KV().Keys(prefix, "", nil)
+	require.NoError(t, err, "KV keys should succeed")
+	require.Len(t, keys, 3, "Should have exactly 3 keys")
 
-	for _, key := range keys {
-		assert.Contains(t, key, prefix)
+	// Verify each key starts with prefix
+	for i, key := range keys {
+		expectedKey := fmt.Sprintf("%skey%d", prefix, i)
+		assert.Equal(t, expectedKey, key,
+			"Key at index %d should match exactly", i)
 	}
+
+	// QueryMeta
+	assert.Greater(t, meta.LastIndex, uint64(0))
 
 	// Cleanup
-	for i := 0; i < 3; i++ {
-		client.KV().Delete(fmt.Sprintf("%skey%d", prefix, i), nil)
-	}
+	client.KV().DeleteTree(prefix, nil)
 }
 
-// CK-006: Test KV CAS (Compare-And-Swap)
+// CK-006: Test KV CAS (Compare-And-Swap) — success AND failure
 func TestKVCAS(t *testing.T) {
 	client := getClient(t)
 	key := "ck006/cas/" + randomID()
@@ -173,132 +191,130 @@ func TestKVCAS(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pair)
 
-	modifyIndex := pair.ModifyIndex
+	correctIndex := pair.ModifyIndex
+	assert.Greater(t, correctIndex, uint64(0),
+		"ModifyIndex must be > 0")
 
-	// CAS with correct index - should succeed
+	// CAS with correct index — should succeed
 	pair.Value = []byte("updated")
-	pair.ModifyIndex = modifyIndex
+	pair.ModifyIndex = correctIndex
 	success, _, err := client.KV().CAS(pair, nil)
-	assert.NoError(t, err)
-	assert.True(t, success, "CAS with correct index should succeed")
+	require.NoError(t, err)
+	assert.True(t, success, "CAS with correct index must succeed")
 
-	// Verify update
+	// Verify the value was actually updated
 	pair, _, err = client.KV().Get(key, nil)
-	assert.NoError(t, err)
-	assert.Equal(t, []byte("updated"), pair.Value)
+	require.NoError(t, err)
+	require.NotNil(t, pair)
+	assert.Equal(t, []byte("updated"), pair.Value,
+		"Value must be updated after successful CAS")
+	assert.Greater(t, pair.ModifyIndex, correctIndex,
+		"ModifyIndex must increase after CAS update")
 
-	// CAS with wrong index - should fail
-	oldPair := &api.KVPair{
+	// CAS with STALE index — must FAIL (this is the critical test)
+	stalePair := &api.KVPair{
 		Key:         key,
-		Value:       []byte("should-fail"),
-		ModifyIndex: modifyIndex, // Old index
+		Value:       []byte("should-not-be-written"),
+		ModifyIndex: correctIndex, // old/stale index
 	}
-	success, _, err = client.KV().CAS(oldPair, nil)
-	assert.NoError(t, err)
-	assert.False(t, success, "CAS with old index should fail")
+	success, _, err = client.KV().CAS(stalePair, nil)
+	require.NoError(t, err, "CAS with stale index should not error")
+	assert.False(t, success,
+		"CAS with stale index MUST fail (return false)")
+
+	// Verify value was NOT changed
+	pair, _, err = client.KV().Get(key, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pair)
+	assert.Equal(t, []byte("updated"), pair.Value,
+		"Value must NOT change after failed CAS")
 
 	// Cleanup
 	client.KV().Delete(key, nil)
 }
 
-// ==================== P2: Nice to Have Tests ====================
-
-// CK-007: Test KV acquire (distributed lock)
-func TestKVAcquire(t *testing.T) {
+// CK-007: Test KV acquire/release with Session and LockIndex validation
+func TestKVAcquireRelease(t *testing.T) {
 	client := getClient(t)
 	key := "ck007/lock/" + randomID()
 
-	// Create session for locking
-	session := client.Session()
-	sessionID, _, err := session.Create(&api.SessionEntry{
-		Name:     "test-lock-session",
-		TTL:      "30s",
-		Behavior: api.SessionBehaviorDelete,
+	// Create session
+	sessionID, _, err := client.Session().Create(&api.SessionEntry{
+		Name: "test-lock-session",
+		TTL:  "30s",
 	}, nil)
 	require.NoError(t, err)
-	defer session.Destroy(sessionID, nil)
+	defer client.Session().Destroy(sessionID, nil)
 
 	// Acquire lock
-	pair := &api.KVPair{
+	acquired, _, err := client.KV().Acquire(&api.KVPair{
 		Key:     key,
 		Value:   []byte("locked"),
 		Session: sessionID,
-	}
-	acquired, _, err := client.KV().Acquire(pair, nil)
-	assert.NoError(t, err, "Acquire should succeed")
-	assert.True(t, acquired, "Should acquire lock")
+	}, nil)
+	require.NoError(t, err)
+	assert.True(t, acquired, "First acquire must succeed")
 
-	// Verify lock holder
-	pair, _, err = client.KV().Get(key, nil)
-	assert.NoError(t, err)
-	assert.Equal(t, sessionID, pair.Session, "Session should hold the lock")
+	// Verify lock state — this is what most tests miss
+	pair, _, err := client.KV().Get(key, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pair)
+	assert.Equal(t, sessionID, pair.Session,
+		"Session field must be set to lock holder's session ID")
+	assert.Equal(t, uint64(1), pair.LockIndex,
+		"LockIndex must be 1 after first acquire")
+	assert.Equal(t, []byte("locked"), pair.Value,
+		"Value should be set by acquire")
 
-	// Try to acquire with different session - should fail
-	sessionID2, _, err := session.Create(&api.SessionEntry{
-		Name: "test-lock-session-2",
+	// Try to acquire with DIFFERENT session — must fail
+	sessionID2, _, err := client.Session().Create(&api.SessionEntry{
+		Name: "competing-session",
 		TTL:  "30s",
 	}, nil)
 	require.NoError(t, err)
-	defer session.Destroy(sessionID2, nil)
+	defer client.Session().Destroy(sessionID2, nil)
 
-	pair2 := &api.KVPair{
+	acquired2, _, err := client.KV().Acquire(&api.KVPair{
 		Key:     key,
-		Value:   []byte("locked-by-2"),
+		Value:   []byte("should-not-lock"),
 		Session: sessionID2,
-	}
-	acquired2, _, err := client.KV().Acquire(pair2, nil)
-	assert.NoError(t, err)
-	assert.False(t, acquired2, "Second session should NOT acquire lock")
-
-	// Cleanup
-	client.KV().Release(pair, nil)
-	client.KV().Delete(key, nil)
-}
-
-// CK-008: Test KV release (unlock)
-func TestKVRelease(t *testing.T) {
-	client := getClient(t)
-	key := "ck008/release/" + randomID()
-
-	// Create session
-	session := client.Session()
-	sessionID, _, err := session.Create(&api.SessionEntry{
-		Name: "test-release-session",
-		TTL:  "30s",
 	}, nil)
 	require.NoError(t, err)
-	defer session.Destroy(sessionID, nil)
+	assert.False(t, acquired2,
+		"Competing session must NOT acquire held lock")
 
-	// Acquire
-	pair := &api.KVPair{
-		Key:     key,
-		Value:   []byte("locked"),
-		Session: sessionID,
-	}
-	acquired, _, err := client.KV().Acquire(pair, nil)
-	require.NoError(t, err)
-	require.True(t, acquired)
-
-	// Release
-	released, _, err := client.KV().Release(pair, nil)
-	assert.NoError(t, err, "Release should succeed")
-	assert.True(t, released, "Should release lock")
-
-	// Verify released
+	// Verify lock is still held by original session
 	pair, _, err = client.KV().Get(key, nil)
-	assert.NoError(t, err)
-	if pair != nil {
-		assert.Empty(t, pair.Session, "Lock should be released")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, sessionID, pair.Session,
+		"Lock must still be held by original session")
+
+	// Release lock
+	released, _, err := client.KV().Release(&api.KVPair{
+		Key:     key,
+		Session: sessionID,
+	}, nil)
+	require.NoError(t, err)
+	assert.True(t, released, "Release must succeed")
+
+	// Verify lock is released
+	pair, _, err = client.KV().Get(key, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pair)
+	assert.Empty(t, pair.Session,
+		"Session must be empty after release")
+	// LockIndex should NOT decrease — it tracks how many times locked
+	assert.Equal(t, uint64(1), pair.LockIndex,
+		"LockIndex must remain 1 after release (tracks lock count)")
 
 	// Cleanup
 	client.KV().Delete(key, nil)
 }
 
-// CK-009: Test KV with flags
+// CK-008: Test KV with flags
 func TestKVWithFlags(t *testing.T) {
 	client := getClient(t)
-	key := "ck009/flags/" + randomID()
+	key := "ck008/flags/" + randomID()
 	flags := uint64(12345)
 
 	// Put with flags
@@ -307,46 +323,52 @@ func TestKVWithFlags(t *testing.T) {
 		Value: []byte("value-with-flags"),
 		Flags: flags,
 	}, nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Get and verify flags
+	// Get and verify flags are preserved
 	pair, _, err := client.KV().Get(key, nil)
-	assert.NoError(t, err)
-	assert.NotNil(t, pair)
-	assert.Equal(t, flags, pair.Flags, "Flags should be preserved")
+	require.NoError(t, err)
+	require.NotNil(t, pair)
+	assert.Equal(t, flags, pair.Flags,
+		"Flags must be preserved exactly")
+	assert.Equal(t, []byte("value-with-flags"), pair.Value)
 
 	// Cleanup
 	client.KV().Delete(key, nil)
 }
 
-// Test KV tree delete
+// CK-009: Test KV tree delete
 func TestKVDeleteTree(t *testing.T) {
 	client := getClient(t)
-	prefix := "ck-tree/" + randomID() + "/"
+	prefix := "ck009/tree/" + randomID() + "/"
 
 	// Put multiple keys
 	for i := 0; i < 5; i++ {
-		key := fmt.Sprintf("%skey%d", prefix, i)
 		_, err := client.KV().Put(&api.KVPair{
-			Key:   key,
+			Key:   fmt.Sprintf("%skey%d", prefix, i),
 			Value: []byte("value"),
 		}, nil)
 		require.NoError(t, err)
 	}
 
+	// Verify all exist
+	pairs, _, err := client.KV().List(prefix, nil)
+	require.NoError(t, err)
+	require.Len(t, pairs, 5, "Should have 5 keys before delete")
+
 	// Delete tree
-	_, err := client.KV().DeleteTree(prefix, nil)
-	assert.NoError(t, err, "DeleteTree should succeed")
+	_, err = client.KV().DeleteTree(prefix, nil)
+	require.NoError(t, err, "DeleteTree should succeed")
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify all deleted
-	pairs, _, err := client.KV().List(prefix, nil)
-	assert.NoError(t, err)
-	assert.Empty(t, pairs, "All keys should be deleted")
+	// Verify ALL deleted
+	pairs, _, err = client.KV().List(prefix, nil)
+	require.NoError(t, err)
+	assert.Empty(t, pairs, "All keys must be deleted after DeleteTree")
 }
 
-// CK-010: Test KV DeleteCAS (Compare-And-Swap delete)
+// CK-010: Test KV DeleteCAS — success and failure
 func TestKVDeleteCAS(t *testing.T) {
 	client := getClient(t)
 	key := "ck010/deletecas/" + randomID()
@@ -362,23 +384,22 @@ func TestKVDeleteCAS(t *testing.T) {
 	pair, _, err := client.KV().Get(key, nil)
 	require.NoError(t, err)
 	require.NotNil(t, pair)
-
 	correctIndex := pair.ModifyIndex
 
-	// DeleteCAS with correct ModifyIndex - should succeed
+	// DeleteCAS with correct index — must succeed
 	success, _, err := client.KV().DeleteCAS(&api.KVPair{
 		Key:         key,
 		ModifyIndex: correctIndex,
 	}, nil)
-	assert.NoError(t, err)
-	assert.True(t, success, "DeleteCAS with correct ModifyIndex should succeed")
+	require.NoError(t, err)
+	assert.True(t, success, "DeleteCAS with correct ModifyIndex must succeed")
 
-	// Verify deleted
+	// Verify actually deleted
 	pair, _, err = client.KV().Get(key, nil)
-	assert.NoError(t, err)
-	assert.Nil(t, pair, "Key should be deleted after DeleteCAS")
+	require.NoError(t, err)
+	assert.Nil(t, pair, "Key must be nil after successful DeleteCAS")
 
-	// Put the key again for the stale CAS test
+	// Put again for stale CAS test
 	_, err = client.KV().Put(&api.KVPair{
 		Key:   key,
 		Value: []byte("cas-delete-value-2"),
@@ -386,16 +407,133 @@ func TestKVDeleteCAS(t *testing.T) {
 	require.NoError(t, err)
 	defer client.KV().Delete(key, nil)
 
-	// DeleteCAS with stale ModifyIndex - should fail
+	// DeleteCAS with STALE index — must fail
 	success, _, err = client.KV().DeleteCAS(&api.KVPair{
 		Key:         key,
-		ModifyIndex: correctIndex, // stale index from before re-creation
+		ModifyIndex: correctIndex, // stale
 	}, nil)
-	assert.NoError(t, err)
-	assert.False(t, success, "DeleteCAS with stale ModifyIndex should fail")
+	require.NoError(t, err)
+	assert.False(t, success, "DeleteCAS with stale index must fail")
 
 	// Verify key still exists
 	pair, _, err = client.KV().Get(key, nil)
-	assert.NoError(t, err)
-	assert.NotNil(t, pair, "Key should still exist after failed DeleteCAS")
+	require.NoError(t, err)
+	assert.NotNil(t, pair, "Key must still exist after failed DeleteCAS")
+	assert.Equal(t, []byte("cas-delete-value-2"), pair.Value)
+}
+
+// ==================== P2: Behavioral Tests ====================
+
+// CK-011: Test KV blocking query — index progression
+func TestKVBlockingQuery(t *testing.T) {
+	client := getClient(t)
+	key := "ck011/blocking/" + randomID()
+
+	// Put initial value
+	_, err := client.KV().Put(&api.KVPair{
+		Key:   key,
+		Value: []byte("initial"),
+	}, nil)
+	require.NoError(t, err)
+
+	// Get to establish baseline index
+	_, meta, err := client.KV().Get(key, nil)
+	require.NoError(t, err)
+	initialIndex := meta.LastIndex
+	assert.Greater(t, initialIndex, uint64(0),
+		"Initial LastIndex must be > 0")
+
+	// Launch a goroutine that updates the key after a delay
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		client.KV().Put(&api.KVPair{
+			Key:   key,
+			Value: []byte("updated"),
+		}, nil)
+		close(done)
+	}()
+
+	// Blocking query — should wait until the update happens
+	pair, meta2, err := client.KV().Get(key, &api.QueryOptions{
+		WaitIndex: initialIndex,
+		WaitTime:  5 * time.Second,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, pair)
+
+	// Index should have advanced
+	assert.Greater(t, meta2.LastIndex, initialIndex,
+		"LastIndex must advance after blocking query detects change")
+	assert.Equal(t, []byte("updated"), pair.Value,
+		"Blocking query must return updated value")
+
+	<-done
+	client.KV().Delete(key, nil)
+}
+
+// CK-012: Test KV CreateIndex immutability
+func TestKVCreateIndexImmutable(t *testing.T) {
+	client := getClient(t)
+	key := "ck012/createindex/" + randomID()
+
+	// Put
+	_, err := client.KV().Put(&api.KVPair{
+		Key:   key,
+		Value: []byte("v1"),
+	}, nil)
+	require.NoError(t, err)
+
+	pair1, _, err := client.KV().Get(key, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pair1)
+	createIndex := pair1.CreateIndex
+
+	// Update
+	_, err = client.KV().Put(&api.KVPair{
+		Key:   key,
+		Value: []byte("v2"),
+	}, nil)
+	require.NoError(t, err)
+
+	pair2, _, err := client.KV().Get(key, nil)
+	require.NoError(t, err)
+	require.NotNil(t, pair2)
+
+	// CreateIndex must NOT change after update
+	assert.Equal(t, createIndex, pair2.CreateIndex,
+		"CreateIndex must be immutable after creation")
+	// ModifyIndex must change
+	assert.Greater(t, pair2.ModifyIndex, pair1.ModifyIndex,
+		"ModifyIndex must increase after update")
+
+	client.KV().Delete(key, nil)
+}
+
+// CK-013: Test KV keys with separator
+func TestKVKeysWithSeparator(t *testing.T) {
+	client := getClient(t)
+	prefix := "ck013/sep/" + randomID() + "/"
+
+	// Create hierarchical keys: prefix/a, prefix/b, prefix/sub/x, prefix/sub/y
+	for _, key := range []string{"a", "b", "sub/x", "sub/y"} {
+		_, err := client.KV().Put(&api.KVPair{
+			Key:   prefix + key,
+			Value: []byte("v"),
+		}, nil)
+		require.NoError(t, err)
+	}
+
+	// Keys with separator "/" — should return top-level keys + prefixes
+	keys, _, err := client.KV().Keys(prefix, "/", nil)
+	require.NoError(t, err)
+	// Should return: prefix/a, prefix/b, prefix/sub/
+	assert.Contains(t, keys, prefix+"a", "Should contain key 'a'")
+	assert.Contains(t, keys, prefix+"b", "Should contain key 'b'")
+	assert.Contains(t, keys, prefix+"sub/", "Should contain prefix 'sub/'")
+	// Should NOT contain sub-keys directly
+	assert.NotContains(t, keys, prefix+"sub/x",
+		"Sub-keys should be collapsed into prefix")
+
+	client.KV().DeleteTree(prefix, nil)
 }

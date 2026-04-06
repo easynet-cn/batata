@@ -305,4 +305,172 @@ func TestAgentFailTTL(t *testing.T) {
 	client.Agent().CheckDeregister(checkID)
 }
 
-// Tests CA-009 through CA-024 are in agent_service_test.go and agent_check_test.go
+// CA-009: Test Agent Self response structure validation
+func TestAgentSelfStructure(t *testing.T) {
+	client := getClient(t)
+
+	self, err := client.Agent().Self()
+	require.NoError(t, err, "Agent self should succeed")
+	require.NotNil(t, self)
+
+	// Config section must exist with required fields
+	config, ok := self["Config"]
+	require.True(t, ok, "Self must have 'Config' section")
+	require.NotNil(t, config)
+
+	// Required Config fields (Consul contract)
+	nodeName, ok := config["NodeName"]
+	assert.True(t, ok, "Config must have 'NodeName'")
+	assert.NotEmpty(t, nodeName, "NodeName must not be empty")
+
+	datacenter, ok := config["Datacenter"]
+	assert.True(t, ok, "Config must have 'Datacenter'")
+	assert.NotEmpty(t, datacenter, "Datacenter must not be empty")
+
+	nodeID, ok := config["NodeID"]
+	assert.True(t, ok, "Config must have 'NodeID'")
+	assert.NotEmpty(t, nodeID, "NodeID must not be empty")
+
+	version, ok := config["Version"]
+	assert.True(t, ok, "Config must have 'Version'")
+	assert.NotEmpty(t, version, "Version must not be empty")
+
+	server, ok := config["Server"]
+	assert.True(t, ok, "Config must have 'Server'")
+	assert.Equal(t, true, server, "Server must be true")
+
+	// Member section must exist
+	member, ok := self["Member"]
+	assert.True(t, ok, "Self must have 'Member' section")
+	assert.NotNil(t, member, "Member must not be nil")
+
+	// Stats section should exist
+	_, ok = self["Stats"]
+	assert.True(t, ok, "Self must have 'Stats' section")
+
+	// Meta section should exist
+	_, ok = self["Meta"]
+	assert.True(t, ok, "Self must have 'Meta' section")
+}
+
+// CA-010: Test Agent Members returns valid member list
+func TestAgentMembersValidation(t *testing.T) {
+	client := getClient(t)
+
+	members, err := client.Agent().Members(false)
+	require.NoError(t, err, "Agent members should succeed")
+	require.NotEmpty(t, members, "Must have at least one member")
+
+	// Validate first member
+	member := members[0]
+	assert.NotEmpty(t, member.Name, "Member.Name must not be empty")
+	assert.NotEmpty(t, member.Addr, "Member.Addr must not be empty")
+	assert.Greater(t, member.Port, uint16(0), "Member.Port must be > 0")
+	// Status 1 = Alive (serf.StatusAlive)
+	assert.Equal(t, int(1), int(member.Status),
+		"Member.Status must be 1 (Alive)")
+	assert.NotNil(t, member.Tags, "Member.Tags must not be nil")
+}
+
+// CA-011: Test Agent service registration with full field round-trip
+func TestAgentServiceRoundTrip(t *testing.T) {
+	client := getClient(t)
+	serviceID := "ca011-roundtrip-" + randomID()
+
+	reg := &api.AgentServiceRegistration{
+		ID:      serviceID,
+		Name:    "roundtrip-service",
+		Port:    9090,
+		Address: "10.0.0.1",
+		Tags:    []string{"primary", "v2", "prod"},
+		Meta: map[string]string{
+			"env":     "production",
+			"version": "2.0.0",
+			"region":  "us-east-1",
+		},
+	}
+
+	err := client.Agent().ServiceRegister(reg)
+	require.NoError(t, err)
+	time.Sleep(500 * time.Millisecond)
+	defer client.Agent().ServiceDeregister(serviceID)
+
+	// Verify via Agent().Services() (map of all services)
+	services, err := client.Agent().Services()
+	require.NoError(t, err)
+
+	svc, exists := services[serviceID]
+	require.True(t, exists, "Service must exist in services map")
+
+	// Full field validation
+	assert.Equal(t, serviceID, svc.ID, "ID must match")
+	assert.Equal(t, "roundtrip-service", svc.Service, "Service name must match")
+	assert.Equal(t, 9090, svc.Port, "Port must match")
+	assert.Equal(t, "10.0.0.1", svc.Address, "Address must match")
+
+	// Tags — all present
+	require.Len(t, svc.Tags, 3, "Must have 3 tags")
+	assert.Contains(t, svc.Tags, "primary")
+	assert.Contains(t, svc.Tags, "v2")
+	assert.Contains(t, svc.Tags, "prod")
+
+	// Meta — all present
+	require.Len(t, svc.Meta, 3, "Must have 3 meta entries")
+	assert.Equal(t, "production", svc.Meta["env"])
+	assert.Equal(t, "2.0.0", svc.Meta["version"])
+	assert.Equal(t, "us-east-1", svc.Meta["region"])
+}
+
+// CA-012: Test TTL check status transitions with output validation
+func TestAgentCheckStatusTransitionsStrict(t *testing.T) {
+	client := getClient(t)
+	checkID := "ca012-transitions-" + randomID()
+
+	err := client.Agent().CheckRegister(&api.AgentCheckRegistration{
+		ID:   checkID,
+		Name: "transition-check",
+		AgentServiceCheck: api.AgentServiceCheck{
+			TTL: "60s",
+		},
+	})
+	require.NoError(t, err)
+	defer client.Agent().CheckDeregister(checkID)
+	time.Sleep(500 * time.Millisecond)
+
+	// Pass
+	err = client.Agent().PassTTL(checkID, "healthy")
+	require.NoError(t, err)
+	checks, _ := client.Agent().Checks()
+	require.Contains(t, checks, checkID)
+	assert.Equal(t, api.HealthPassing, checks[checkID].Status,
+		"Status must be 'passing' after PassTTL")
+	assert.Equal(t, "healthy", checks[checkID].Output,
+		"Output must match PassTTL note")
+
+	// Warn
+	err = client.Agent().WarnTTL(checkID, "degraded")
+	require.NoError(t, err)
+	checks, _ = client.Agent().Checks()
+	assert.Equal(t, api.HealthWarning, checks[checkID].Status,
+		"Status must be 'warning' after WarnTTL")
+	assert.Equal(t, "degraded", checks[checkID].Output,
+		"Output must match WarnTTL note")
+
+	// Fail
+	err = client.Agent().FailTTL(checkID, "down")
+	require.NoError(t, err)
+	checks, _ = client.Agent().Checks()
+	assert.Equal(t, api.HealthCritical, checks[checkID].Status,
+		"Status must be 'critical' after FailTTL")
+	assert.Equal(t, "down", checks[checkID].Output,
+		"Output must match FailTTL note")
+
+	// Back to passing
+	err = client.Agent().PassTTL(checkID, "recovered")
+	require.NoError(t, err)
+	checks, _ = client.Agent().Checks()
+	assert.Equal(t, api.HealthPassing, checks[checkID].Status,
+		"Status must be 'passing' after recovery")
+}
+
+// Tests CA-013+ are in agent_service_test.go, agent_check_test.go, agent_advanced_test.go

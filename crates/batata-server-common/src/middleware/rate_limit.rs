@@ -33,7 +33,9 @@ impl Default for RateLimitConfig {
         Self {
             max_requests: 100,
             window_duration: Duration::from_secs(60),
-            enabled: true,
+            // Disabled by default — matches config layer's ratelimit_enabled() default (false).
+            // Enable explicitly via batata.ratelimit.enabled=true in config.
+            enabled: false,
             max_tracked_ips: 100_000,
         }
     }

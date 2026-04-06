@@ -18,7 +18,7 @@ use tracing::{error, info, warn};
 use crate::constants::CF_CONSUL_ACL;
 use crate::consul_meta::{ConsulResponseMeta, consul_ok};
 use crate::index_provider::{ConsulIndexProvider, ConsulTable};
-use crate::model::ConsulDatacenterConfig;
+use crate::model::{ConsulDatacenterConfig, ConsulError};
 use crate::raft::ConsulRaftWriter;
 
 // ACL Token header name
@@ -660,14 +660,25 @@ query_prefix "" { policy = "write" }
             .collect()
     }
 
-    /// Create a new policy
+    /// Create a new ACL policy.
+    ///
+    /// Returns `Err` if a policy with the same name already exists
+    /// (Consul enforces unique policy names).
     pub fn create_policy(
         &self,
         name: &str,
         description: &str,
         rules: &str,
         datacenters: Option<Vec<String>>,
-    ) -> AclPolicy {
+    ) -> Result<AclPolicy, String> {
+        // Consul enforces unique policy names
+        if MEMORY_POLICIES.contains_key(name) {
+            return Err(format!(
+                "Invalid Policy: A Policy with Name \"{}\" already exists",
+                name
+            ));
+        }
+
         let now = chrono::Utc::now().to_rfc3339();
         let policy_id = uuid::Uuid::new_v4().to_string();
 
@@ -684,7 +695,7 @@ query_prefix "" { policy = "write" }
         MEMORY_POLICIES.insert(policy.id.clone(), policy.clone());
         MEMORY_POLICIES.insert(policy.name.clone(), policy.clone());
         self.persist_acl("policy", &policy.id, &policy);
-        policy
+        Ok(policy)
     }
 
     /// Delete a policy by ID
@@ -1659,15 +1670,18 @@ pub async fn create_policy(
     body: web::Json<CreatePolicyRequest>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
-    let policy = acl_service.create_policy(
+    match acl_service.create_policy(
         &body.name,
         body.description.as_deref().unwrap_or(""),
         &body.rules,
         body.datacenters.clone(),
-    );
-
-    let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
-    consul_ok(&meta).json(policy)
+    ) {
+        Ok(policy) => {
+            let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ACL));
+            consul_ok(&meta).json(policy)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(ConsulError::new(&e)),
+    }
 }
 
 // ============================================================================
@@ -2555,7 +2569,7 @@ mod tests {
             "A test policy",
             r#"service_prefix "test-" { policy = "write" }"#,
             None,
-        );
+        ).unwrap();
 
         assert!(!policy.id.is_empty());
         assert_eq!(policy.name, "test-policy");
@@ -2628,7 +2642,7 @@ mod tests {
             "For deletion test",
             r#"key_prefix "" { policy = "read" }"#,
             None,
-        );
+        ).unwrap();
 
         let fetched = service.get_policy(&policy.id);
         assert!(fetched.is_some());
@@ -2655,7 +2669,7 @@ mod tests {
             "Test",
             r#"service_prefix "" { policy = "read" }"#,
             None,
-        );
+        ).unwrap();
 
         // Create role
         let role = service.create_role("acl-test-role", "Test role", vec![policy.name.clone()]);
@@ -2739,7 +2753,7 @@ mod tests {
             "Read only",
             r#"service_prefix "" { policy = "read" }"#,
             None,
-        );
+        ).unwrap();
 
         // Create token with this policy
         let token = service.create_token(
@@ -2768,7 +2782,7 @@ mod tests {
             "Deny",
             r#"key_prefix "secret/" { policy = "deny" }"#,
             None,
-        );
+        ).unwrap();
 
         let token =
             service.create_token("deny-token", vec![policy.name.clone()], vec![], false, None);

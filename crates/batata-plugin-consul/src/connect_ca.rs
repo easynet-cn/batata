@@ -963,6 +963,25 @@ pub async fn get_ca_roots(
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
+
+    // Support ?pem=true — return raw PEM certificate chain
+    // (used by Envoy proxies for certificate validation)
+    if query.pem.unwrap_or(false) {
+        let roots = ca_service.get_roots().await;
+        let mut pem_chain = String::new();
+        for root in &roots.roots {
+            if !root.root_cert.is_empty() {
+                pem_chain.push_str(&root.root_cert);
+                if !root.root_cert.ends_with('\n') {
+                    pem_chain.push('\n');
+                }
+            }
+        }
+        return consul_ok(&meta)
+            .content_type("application/pem-certificate-chain")
+            .body(pem_chain);
+    }
+
     consul_ok(&meta).json(ca_service.get_roots().await)
 }
 
@@ -1291,6 +1310,24 @@ pub async fn get_ca_roots_persistent(
     }
 
     let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::ConnectCA));
+
+    // Support ?pem=true — return raw PEM certificate chain
+    if query.pem.unwrap_or(false) {
+        let roots = ca_service.get_roots().await;
+        let mut pem_chain = String::new();
+        for root in &roots.roots {
+            if !root.root_cert.is_empty() {
+                pem_chain.push_str(&root.root_cert);
+                if !root.root_cert.ends_with('\n') {
+                    pem_chain.push('\n');
+                }
+            }
+        }
+        return consul_ok(&meta)
+            .content_type("application/pem-certificate-chain")
+            .body(pem_chain);
+    }
+
     consul_ok(&meta).json(ca_service.get_roots().await)
 }
 
