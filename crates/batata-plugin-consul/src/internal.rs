@@ -22,18 +22,23 @@ use crate::naming_store::ConsulNamingStore;
 // UI Models
 // ============================================================================
 
-/// Node summary for UI
+/// Node info for UI (matches Consul's NodeInfo struct)
 #[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "PascalCase")]
 pub struct UINode {
     #[serde(rename = "ID")]
     pub id: String,
+    #[serde(rename = "Node")]
     pub node: String,
+    #[serde(rename = "Address")]
     pub address: String,
-    pub datacenter: String,
-    pub meta: Option<HashMap<String, String>>,
-    pub create_index: u64,
-    pub modify_index: u64,
+    #[serde(rename = "TaggedAddresses")]
+    pub tagged_addresses: HashMap<String, String>,
+    #[serde(rename = "Meta")]
+    pub meta: HashMap<String, String>,
+    #[serde(rename = "Services")]
+    pub services: Vec<crate::model::AgentService>,
+    #[serde(rename = "Checks")]
+    pub checks: Vec<crate::model::HealthCheck>,
 }
 
 /// Query parameters for UI node list
@@ -141,13 +146,62 @@ pub struct UICatalogOverviewQueryParams {
 // UI Handlers
 // ============================================================================
 
+/// Build a UINode from real data in the store.
+fn build_node_from_store(
+    dc_config: &ConsulDatacenterConfig,
+    naming_store: &ConsulNamingStore,
+    health_service: &ConsulHealthService,
+    index: u64,
+) -> UINode {
+    let ip = batata_common::local_ip();
+
+    let mut tagged = HashMap::new();
+    tagged.insert("lan".to_string(), ip.clone());
+    tagged.insert("lan_ipv4".to_string(), ip.clone());
+    tagged.insert("wan".to_string(), ip.clone());
+    tagged.insert("wan_ipv4".to_string(), ip.clone());
+
+    let mut meta = HashMap::new();
+    meta.insert("consul-network-segment".to_string(), "".to_string());
+    meta.insert("consul-version".to_string(), dc_config.full_version());
+
+    let mut services = Vec::new();
+    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
+        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
+            let svc = crate::model::AgentService::from(&reg);
+            services.push(svc);
+        }
+    }
+
+    let all_checks = health_service.get_all_checks_sync();
+    let mut checks = Vec::new();
+    for mut check in all_checks {
+        check.node = dc_config.node_name.clone();
+        if check.definition.is_none() {
+            check.definition = Some(crate::model::HealthCheckDefinition::default());
+        }
+        checks.push(check);
+    }
+
+    UINode {
+        id: dc_config.node_id.clone(),
+        node: dc_config.node_name.clone(),
+        address: ip,
+        tagged_addresses: tagged,
+        meta,
+        services,
+        checks,
+    }
+}
+
 /// GET /v1/internal/ui/nodes - List nodes for UI
 pub async fn ui_nodes(
     req: HttpRequest,
     naming_store: web::Data<ConsulNamingStore>,
+    health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
-    query: web::Query<UINodeQueryParams>,
+    _query: web::Query<UINodeQueryParams>,
     index_provider: web::Data<ConsulIndexProvider>,
 ) -> HttpResponse {
     let authz = acl_service.authorize_request(&req, ResourceType::Node, "", false);
@@ -155,40 +209,19 @@ pub async fn ui_nodes(
         return HttpResponse::Forbidden().json(ConsulError::new(authz.reason));
     }
 
-    let dc = dc_config.resolve_dc(&query.dc);
-    let mut node_map: HashMap<String, UINode> = HashMap::new();
+    let index = index_provider.current_index(ConsulTable::Catalog);
+    let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
 
-    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            let ip = reg.effective_address();
-            let node_name = format!("node-{}", ip.replace('.', "-"));
-            node_map.entry(node_name.clone()).or_insert_with(|| UINode {
-                id: uuid::Uuid::new_v4().to_string(),
-                node: node_name,
-                address: ip,
-                datacenter: dc.clone(),
-                meta: None,
-                create_index: index_provider.current_index(ConsulTable::Catalog),
-                modify_index: index_provider.current_index(ConsulTable::Catalog),
-            });
-        }
-    }
-
-    let nodes: Vec<UINode> = node_map.into_values().collect();
     HttpResponse::Ok()
-        .insert_header((
-            "X-Consul-Index",
-            index_provider
-                .current_index(ConsulTable::Catalog)
-                .to_string(),
-        ))
-        .json(nodes)
+        .insert_header(("X-Consul-Index", index.to_string()))
+        .json(vec![node])
 }
 
 /// GET /v1/internal/ui/node/{node} - Get node info for UI
 pub async fn ui_node_info(
     req: HttpRequest,
     naming_store: web::Data<ConsulNamingStore>,
+    health_service: web::Data<ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
@@ -200,31 +233,26 @@ pub async fn ui_node_info(
     }
 
     let node_name = path.into_inner();
+    let index = index_provider.current_index(ConsulTable::Catalog);
 
-    for (_key, data) in naming_store.scan_ns(crate::namespace::DEFAULT_NAMESPACE) {
-        if let Ok(reg) = serde_json::from_slice::<AgentServiceRegistration>(&data) {
-            let ip = reg.effective_address();
-            let instance_node = format!("node-{}", ip.replace('.', "-"));
-            if instance_node == node_name || ip == node_name {
-                let node = UINode {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    node: node_name,
-                    address: ip,
-                    datacenter: dc_config.datacenter.clone(),
-                    meta: None,
-                    create_index: index_provider.current_index(ConsulTable::Catalog),
-                    modify_index: index_provider.current_index(ConsulTable::Catalog),
-                };
-                return HttpResponse::Ok()
-                    .insert_header((
-                        "X-Consul-Index",
-                        index_provider
-                            .current_index(ConsulTable::Catalog)
-                            .to_string(),
-                    ))
-                    .json(node);
-            }
-        }
+    // In single-node mode, return the local node for any valid query.
+    // Match by: configured node name, local IP, or any registered service address.
+    let local_ip = batata_common::local_ip();
+    let is_local = node_name == dc_config.node_name
+        || node_name == local_ip
+        || naming_store
+            .scan_ns(crate::namespace::DEFAULT_NAMESPACE)
+            .iter()
+            .any(|(_, data)| {
+                serde_json::from_slice::<AgentServiceRegistration>(data)
+                    .map(|r| r.effective_address() == node_name)
+                    .unwrap_or(false)
+            });
+    if is_local {
+        let node = build_node_from_store(&dc_config, &naming_store, &health_service, index);
+        return HttpResponse::Ok()
+            .insert_header(("X-Consul-Index", index.to_string()))
+            .json(node);
     }
 
     HttpResponse::NotFound().json(ConsulError::new(format!("Node '{}' not found", node_name)))
@@ -766,39 +794,39 @@ mod tests {
             id: "test-id".to_string(),
             node: "node-1".to_string(),
             address: "10.0.0.1".to_string(),
-            datacenter: "dc1".to_string(),
-            meta: None,
-            create_index: 1,
-            modify_index: 1,
+            tagged_addresses: HashMap::new(),
+            meta: HashMap::new(),
+            services: vec![],
+            checks: vec![],
         };
         let json = serde_json::to_value(&node).unwrap();
         assert_eq!(json["ID"], "test-id");
         assert_eq!(json["Node"], "node-1");
         assert_eq!(json["Address"], "10.0.0.1");
+        assert!(json["Services"].is_array());
+        assert!(json["Checks"].is_array());
     }
 
     #[test]
-    fn test_ui_node_from_member_data() {
+    fn test_ui_node_with_meta() {
         let node = UINode {
             id: uuid::Uuid::new_v4().to_string(),
             node: "member-node-1".to_string(),
             address: "192.168.1.100".to_string(),
-            datacenter: "dc1".to_string(),
-            meta: Some(HashMap::from([
-                ("role".to_string(), "server".to_string()),
-                ("version".to_string(), "1.0.0".to_string()),
-            ])),
-            create_index: 5,
-            modify_index: 10,
+            tagged_addresses: HashMap::from([
+                ("lan".to_string(), "192.168.1.100".to_string()),
+            ]),
+            meta: HashMap::from([
+                ("consul-version".to_string(), "1.22.5".to_string()),
+            ]),
+            services: vec![],
+            checks: vec![],
         };
         let json = serde_json::to_value(&node).unwrap();
         assert_eq!(json["Node"], "member-node-1");
-        assert_eq!(json["Address"], "192.168.1.100");
-        assert_eq!(json["Datacenter"], "dc1");
-        assert_eq!(json["CreateIndex"], 5);
-        assert_eq!(json["ModifyIndex"], 10);
+        let tagged = json["TaggedAddresses"].as_object().unwrap();
+        assert_eq!(tagged["lan"], "192.168.1.100");
         let meta = json["Meta"].as_object().unwrap();
-        assert_eq!(meta["role"], "server");
-        assert_eq!(meta["version"], "1.0.0");
+        assert_eq!(meta["consul-version"], "1.22.5");
     }
 }

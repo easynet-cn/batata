@@ -24,44 +24,37 @@ pub struct StatusQueryParams {
 // ============================================================================
 
 /// GET /v1/status/leader (Fixed fallback version)
-/// Returns the local node's address with the configured consul port
+/// Returns the Raft leader address: "IP:raft_port"
 pub async fn get_leader(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
-    // Check ACL authorization - status endpoints require agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Return local address with the configured consul port
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "127.0.0.1".to_string());
-    let leader = format!("{}:{}", hostname, dc_config.consul_port);
+    // Consul returns "IP:raft_port", NOT hostname
+    let local_ip = batata_common::local_ip();
+    let leader = format!("{}:{}", local_ip, dc_config.raft_port());
     HttpResponse::Ok().json(leader)
 }
 
 /// GET /v1/status/peers (Fixed fallback version)
-/// Returns the local node as the only peer
+/// Returns the local node as the only peer: "IP:raft_port"
 pub async fn get_peers(
     req: HttpRequest,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
-    // Check ACL authorization - status endpoints require agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Return local address with the configured consul port
-    let hostname = hostname::get()
-        .map(|h| h.to_string_lossy().to_string())
-        .unwrap_or_else(|_| "127.0.0.1".to_string());
-    let peers = vec![format!("{}:{}", hostname, dc_config.consul_port)];
+    let local_ip = batata_common::local_ip();
+    let peers = vec![format!("{}:{}", local_ip, dc_config.raft_port())];
     HttpResponse::Ok().json(peers)
 }
 
@@ -69,17 +62,13 @@ pub async fn get_peers(
 // Real Cluster Handlers (Using ClusterManager)
 // ============================================================================
 
-/// Convert Batata member address to Consul-style address with the configured consul port.
-/// Batata uses format "ip:port" (e.g., "192.168.1.1:8848")
-/// Consul expects address with the consul HTTP port (e.g., "192.168.1.1:8500")
-fn to_consul_address(batata_address: &str, consul_port: u16) -> String {
-    // Parse the address and replace port with the configured consul port
+/// Convert Batata member address to Raft address format.
+fn to_raft_address(batata_address: &str, raft_port: u16) -> String {
     if let Some(pos) = batata_address.rfind(':') {
         let ip = &batata_address[..pos];
-        format!("{}:{}", ip, consul_port)
+        format!("{}:{}", ip, raft_port)
     } else {
-        // If no port found, assume it's just IP
-        format!("{}:{}", batata_address, consul_port)
+        format!("{}:{}", batata_address, raft_port)
     }
 }
 
@@ -91,16 +80,15 @@ pub async fn get_leader_real(
     member_manager: web::Data<Arc<dyn ClusterManager>>,
     dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
-    // Check ACL authorization - status endpoints require agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Get real leader address from ClusterManager
+    let raft_port = dc_config.raft_port();
     let leader = member_manager
         .leader_address()
-        .map(|addr| to_consul_address(&addr, dc_config.consul_port))
+        .map(|addr| to_raft_address(&addr, raft_port))
         .unwrap_or_default();
 
     HttpResponse::Ok().json(leader)
@@ -114,25 +102,22 @@ pub async fn get_peers_real(
     member_manager: web::Data<Arc<dyn ClusterManager>>,
     dc_config: web::Data<ConsulDatacenterConfig>,
 ) -> HttpResponse {
-    // Check ACL authorization - status endpoints require agent read
     let authz = acl_service.authorize_request(&req, ResourceType::Agent, "", false);
     if !authz.allowed {
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    // Get all healthy members as peers
-    let consul_port = dc_config.consul_port;
+    let raft_port = dc_config.raft_port();
     let peers: Vec<String> = member_manager
         .healthy_members_extended()
         .iter()
-        .map(|m| to_consul_address(&m.address, consul_port))
+        .map(|m| to_raft_address(&m.address, raft_port))
         .collect();
 
-    // If no healthy members, return at least the local node
     let peers = if peers.is_empty() {
-        vec![to_consul_address(
+        vec![to_raft_address(
             member_manager.local_address(),
-            consul_port,
+            raft_port,
         )]
     } else {
         peers
@@ -151,49 +136,25 @@ mod tests {
     }
 
     #[test]
-    fn test_to_consul_address() {
-        // Test address conversion with default consul port
-        assert_eq!(
-            to_consul_address("192.168.1.1:8848", 8500),
-            "192.168.1.1:8500"
-        );
-        assert_eq!(to_consul_address("10.0.0.1:9848", 8500), "10.0.0.1:8500");
-        assert_eq!(to_consul_address("127.0.0.1:8848", 8500), "127.0.0.1:8500");
-        // IPv6 address
-        assert_eq!(to_consul_address("[::1]:8848", 8500), "[::1]:8500");
-        // Custom port
-        assert_eq!(
-            to_consul_address("192.168.1.1:8848", 9500),
-            "192.168.1.1:9500"
-        );
+    fn test_to_raft_address() {
+        assert_eq!(to_raft_address("192.168.1.1:8848", 7848), "192.168.1.1:7848");
+        assert_eq!(to_raft_address("10.0.0.1:9848", 8848), "10.0.0.1:8848");
+        assert_eq!(to_raft_address("[::1]:8848", 7848), "[::1]:7848");
+        assert_eq!(to_raft_address("10.0.0.1", 7848), "10.0.0.1:7848");
     }
 
     #[test]
     fn test_leader_format() {
-        // Leader response should be a quoted IP:port string
-        let leader = "127.0.0.1:8500";
+        let leader = "192.168.1.1:7848";
         let json = serde_json::to_string(&leader).unwrap();
-        assert_eq!(json, "\"127.0.0.1:8500\"");
+        assert_eq!(json, "\"192.168.1.1:7848\"");
         assert!(leader.contains(':'));
     }
 
     #[test]
     fn test_peers_format() {
-        // Peers response should be a JSON array of strings
-        let peers = vec!["127.0.0.1:8500"];
+        let peers = vec!["192.168.1.1:7848"];
         let json = serde_json::to_string(&peers).unwrap();
-        assert_eq!(json, "[\"127.0.0.1:8500\"]");
-        let parsed: Vec<String> = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert!(parsed[0].contains(':'));
-    }
-
-    #[test]
-    fn test_to_consul_address_with_port() {
-        // Test address conversion with various custom ports
-        assert_eq!(to_consul_address("10.0.0.1:3000", 8500), "10.0.0.1:8500");
-        assert_eq!(to_consul_address("10.0.0.1:443", 8500), "10.0.0.1:8500");
-        // IP only (no port)
-        assert_eq!(to_consul_address("10.0.0.1", 8500), "10.0.0.1:8500");
+        assert_eq!(json, "[\"192.168.1.1:7848\"]");
     }
 }

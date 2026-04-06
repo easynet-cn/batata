@@ -41,6 +41,7 @@ async fn ui_services(
 async fn ui_nodes(
     req: HttpRequest,
     naming_store: web::Data<ConsulNamingStore>,
+    health_service: web::Data<crate::health::ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     query: web::Query<UINodeQueryParams>,
@@ -49,6 +50,7 @@ async fn ui_nodes(
     crate::internal::ui_nodes(
         req,
         naming_store,
+        health_service,
         acl_service,
         dc_config,
         query,
@@ -61,6 +63,7 @@ async fn ui_nodes(
 async fn ui_node_info(
     req: HttpRequest,
     naming_store: web::Data<ConsulNamingStore>,
+    health_service: web::Data<crate::health::ConsulHealthService>,
     acl_service: web::Data<AclService>,
     dc_config: web::Data<ConsulDatacenterConfig>,
     path: web::Path<String>,
@@ -69,6 +72,7 @@ async fn ui_node_info(
     crate::internal::ui_node_info(
         req,
         naming_store,
+        health_service,
         acl_service,
         dc_config,
         path,
