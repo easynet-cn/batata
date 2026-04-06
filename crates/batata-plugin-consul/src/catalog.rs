@@ -58,8 +58,9 @@ pub struct CatalogService {
     #[serde(rename = "ServiceName")]
     pub service_name: String,
 
-    #[serde(rename = "ServiceTags", skip_serializing_if = "Option::is_none")]
-    pub service_tags: Option<Vec<String>>,
+    /// Consul always returns `[]` for empty tags, never `null`.
+    #[serde(rename = "ServiceTags", default)]
+    pub service_tags: Vec<String>,
 
     #[serde(rename = "ServiceAddress")]
     pub service_address: String,
@@ -117,7 +118,7 @@ impl CatalogService {
             service_kind: reg.kind.clone(),
             service_id: reg.service_id(),
             service_name: reg.name.clone(),
-            service_tags: reg.tags.clone(),
+            service_tags: reg.tags.clone().unwrap_or_default(),
             service_address: ip,
             service_weights: reg.weights.clone().unwrap_or(Weights {
                 passing: weight,
@@ -486,12 +487,15 @@ impl ConsulCatalogService {
         self.naming_store.service_names_with_tags(namespace)
     }
 
-    /// Get all instances for a service
+    /// Get all instances for a service.
+    ///
+    /// `tag_filters` supports multiple tags with AND semantics (all must match),
+    /// matching the original Consul behavior for `?tag=a&tag=b`.
     pub fn get_service_instances(
         &self,
         namespace: &str,
         service_name: &str,
-        tag_filter: Option<&str>,
+        tag_filters: &[String],
     ) -> Vec<CatalogService> {
         let index = self.index_provider.current_index(ConsulTable::Catalog);
         self.naming_store
@@ -501,11 +505,9 @@ impl ConsulCatalogService {
                 serde_json::from_slice::<crate::model::AgentServiceRegistration>(&entry_bytes).ok()
             })
             .filter(|reg| {
-                if let Some(tag) = tag_filter {
-                    reg.tags
-                        .as_ref()
-                        .map(|tags| tags.contains(&tag.to_string()))
-                        .unwrap_or(false)
+                if !tag_filters.is_empty() {
+                    let service_tags = reg.tags.as_deref().unwrap_or_default();
+                    tag_filters.iter().all(|t| service_tags.contains(t))
                 } else {
                     true
                 }
@@ -1133,7 +1135,7 @@ pub async fn get_service(
 ) -> HttpResponse {
     let service_name = path.into_inner();
     let namespace = dc_config.resolve_ns(&query.ns);
-    let tag_filter = query.tag.as_deref();
+    let tag_filters = crate::consul_meta::parse_multi_param(&req, "tag");
     let dc = dc_config.resolve_dc(&query.dc);
 
     // Check ACL authorization for service read
@@ -1145,7 +1147,7 @@ pub async fn get_service(
     // Handle blocking query wait
     maybe_block(&index_provider, query.index, query.wait.as_deref()).await;
 
-    let mut services = catalog.get_service_instances(&namespace, &service_name, tag_filter);
+    let mut services = catalog.get_service_instances(&namespace, &service_name, &tag_filters);
 
     // Override datacenter with resolved DC from query params
     for svc in &mut services {
@@ -1286,7 +1288,11 @@ pub async fn deregister(
         return HttpResponse::Forbidden().json(ConsulError::new(&authz.reason));
     }
 
-    catalog.deregister(&deregistration, &namespace);
+    let success = catalog.deregister(&deregistration, &namespace);
+    if !success {
+        let meta = ConsulResponseMeta::new(index_provider.current_index(ConsulTable::Catalog));
+        return consul_ok(&meta).json(false);
+    }
     let idx = index_provider.increment(ConsulTable::Catalog);
     let meta = ConsulResponseMeta::new(idx);
     consul_ok(&meta).json(true)
@@ -1501,8 +1507,8 @@ mod tests {
         assert_eq!(catalog_service.service_port, 8080);
         assert_eq!(catalog_service.service_address, "192.168.1.100");
         assert_eq!(catalog_service.service_id, "web-1");
-        assert!(catalog_service.service_tags.is_some());
-        assert_eq!(catalog_service.service_tags.unwrap().len(), 2);
+        assert!(!catalog_service.service_tags.is_empty());
+        assert_eq!(catalog_service.service_tags.len(), 2);
     }
 
     #[test]
@@ -1539,7 +1545,7 @@ mod tests {
         assert!(services.contains_key("web"));
 
         // Get service instances
-        let instances = catalog.get_service_instances("public", "web", None);
+        let instances = catalog.get_service_instances("public", "web", &Vec::new());
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].service_id, "web-1");
 
@@ -1554,7 +1560,7 @@ mod tests {
         assert!(catalog.deregister(&deregistration, "public"));
 
         // Verify deregistered
-        let instances = catalog.get_service_instances("public", "web", None);
+        let instances = catalog.get_service_instances("public", "web", &Vec::new());
         assert!(instances.is_empty());
     }
 

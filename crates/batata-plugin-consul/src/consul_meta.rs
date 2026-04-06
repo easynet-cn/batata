@@ -270,6 +270,32 @@ pub fn apply_kv_raw_security_headers(builder: &mut HttpResponseBuilder) {
     builder.insert_header(("Content-Security-Policy", "sandbox"));
 }
 
+// ---------------------------------------------------------------------------
+// Multi-value query parameter parsing
+// ---------------------------------------------------------------------------
+
+/// Parse all values of a repeated query parameter (e.g., `?tag=v1&tag=v2`).
+///
+/// Standard serde deserialization only captures the last value for repeated params.
+/// Consul allows multiple `?tag=` params with AND semantics.
+pub fn parse_multi_param(req: &HttpRequest, param_name: &str) -> Vec<String> {
+    let qs = req.query_string();
+    let mut values = Vec::new();
+    for part in qs.split('&') {
+        if part.is_empty() {
+            continue;
+        }
+        let (key, value) = match part.find('=') {
+            Some(pos) => (&part[..pos], &part[pos + 1..]),
+            None => (part, ""),
+        };
+        if key == param_name && !value.is_empty() {
+            values.push(value.to_string());
+        }
+    }
+    values
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

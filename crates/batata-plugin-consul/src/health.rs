@@ -428,14 +428,13 @@ pub async fn get_service_health(
         let healthy =
             naming_store.is_healthy(&reg.effective_address(), reg.effective_port() as i32);
 
-        // Filter by tag if specified
-        if let Some(ref tag) = query.tag {
-            let has_tag = reg
-                .tags
-                .as_ref()
-                .map(|tags| tags.contains(tag))
-                .unwrap_or(false);
-            if !has_tag {
+        // Filter by tag(s) — supports multiple ?tag= params with AND semantics
+        // (matches Consul: all specified tags must be present)
+        let tag_filters = crate::consul_meta::parse_multi_param(&req, "tag");
+        if !tag_filters.is_empty() {
+            let service_tags = reg.tags.as_deref().unwrap_or_default();
+            let all_match = tag_filters.iter().all(|t| service_tags.contains(t));
+            if !all_match {
                 continue;
             }
         }
