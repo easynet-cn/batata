@@ -387,6 +387,72 @@ impl AgentServiceRegistration {
 
         Ok(checks)
     }
+
+    /// Validate the service registration request.
+    /// Matches Consul's endpoint-level checks (address, weights, metadata).
+    pub fn validate(&self) -> Result<(), String> {
+        // Validate address is not "any" (0.0.0.0, ::, etc.)
+        if let Some(ref addr) = self.address {
+            let trimmed = addr.trim();
+            if trimmed == "0.0.0.0" || trimmed == "::" || trimmed == "[::]" {
+                return Err("Invalid service address".to_string());
+            }
+        }
+
+        // Validate weights (Consul's ValidateWeights)
+        if let Some(ref w) = self.weights {
+            if w.passing < 1 {
+                return Err("Passing weight must be greater than 0".to_string());
+            }
+            if w.warning < 0 {
+                return Err("Warning weight must be greater or equal than 0".to_string());
+            }
+            if w.passing > 65535 || w.warning > 65535 {
+                return Err("DNS Weight must be between 0 and 65535".to_string());
+            }
+        }
+
+        // Validate service metadata (Consul's ValidateServiceMetadata)
+        if let Some(ref meta) = self.meta {
+            if meta.len() > 64 {
+                return Err(format!(
+                    "Service metadata cannot contain more than 64 key/value pairs, got {}",
+                    meta.len()
+                ));
+            }
+            for (key, value) in meta {
+                if key.is_empty() {
+                    return Err("Metadata key cannot be blank".to_string());
+                }
+                if key.len() > 128 {
+                    return Err(format!("Metadata key is too long (limit: 128 characters): {}", key));
+                }
+                if value.len() > 512 {
+                    return Err(format!("Metadata value is too long (limit: 512 characters) for key: {}", key));
+                }
+                if key.starts_with("consul-") {
+                    return Err(format!("Metadata key prefix 'consul-' is reserved for internal use: {}", key));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Auto-populate tagged addresses from service address (like Consul's addServiceInternal).
+    pub fn auto_populate_tagged_addresses(&mut self) {
+        if let Some(ref addr) = self.address {
+            if addr.is_empty() || self.tagged_addresses.is_some() {
+                return;
+            }
+            let port = self.port.unwrap_or(0);
+            let tagged = serde_json::json!({
+                "lan_ipv4": { "Address": addr, "Port": port },
+                "wan_ipv4": { "Address": addr, "Port": port }
+            });
+            self.tagged_addresses = Some(tagged);
+        }
+    }
 }
 
 /// Validated health check with generated ID and normalized values
@@ -825,6 +891,14 @@ pub struct ServiceQueryParams {
 
     /// Filter string (Consul filtering syntax)
     pub filter: Option<String>,
+
+    /// Replace existing checks on re-registration (Consul's ?replace-existing-checks)
+    #[serde(
+        rename = "replace-existing-checks",
+        alias = "replace_existing_checks",
+        default
+    )]
+    pub replace_existing_checks: Option<bool>,
 }
 
 /// Generic Consul API response
@@ -992,10 +1066,22 @@ pub struct HealthCheckDefinition {
     pub tcp: Option<String>,
     #[serde(rename = "GRPC", skip_serializing_if = "Option::is_none")]
     pub grpc: Option<String>,
+    #[serde(rename = "UDP", skip_serializing_if = "Option::is_none")]
+    pub udp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<HashMap<String, Vec<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(rename = "TLSServerName", skip_serializing_if = "Option::is_none")]
+    pub tls_server_name: Option<String>,
+    #[serde(rename = "TLSSkipVerify", skip_serializing_if = "Option::is_none")]
+    pub tls_skip_verify: Option<bool>,
+    #[serde(rename = "TCPUseTLS", skip_serializing_if = "Option::is_none")]
+    pub tcp_use_tls: Option<bool>,
+    #[serde(rename = "GRPCUseTLS", skip_serializing_if = "Option::is_none")]
+    pub grpc_use_tls: Option<bool>,
     #[serde(rename = "IntervalDuration")]
     pub interval_duration: u64,
     #[serde(rename = "TimeoutDuration")]
@@ -1176,6 +1262,8 @@ impl From<&AgentServiceRegistration> for AgentService {
 pub struct AgentSelf {
     #[serde(rename = "Config")]
     pub config: AgentConfig,
+    #[serde(rename = "DebugConfig", skip_serializing_if = "Option::is_none")]
+    pub debug_config: Option<serde_json::Value>,
     #[serde(rename = "Coord", skip_serializing_if = "Option::is_none")]
     pub coord: Option<Coordinate>,
     #[serde(rename = "Member")]
@@ -1184,6 +1272,8 @@ pub struct AgentSelf {
     pub meta: HashMap<String, String>,
     #[serde(rename = "Stats")]
     pub stats: AgentStats,
+    #[serde(rename = "xDS", skip_serializing_if = "Option::is_none")]
+    pub xds: Option<serde_json::Value>,
 }
 
 /// Agent configuration
@@ -1392,10 +1482,15 @@ pub struct Session {
     pub behavior: String,
     #[serde(rename = "TTL")]
     pub ttl: String,
+    /// Deprecated: use NodeChecks/ServiceChecks. Kept for backward compatibility.
+    #[serde(rename = "Checks", skip_serializing_if = "Option::is_none")]
+    pub checks: Option<Vec<String>>,
     #[serde(rename = "NodeChecks", skip_serializing_if = "Option::is_none")]
     pub node_checks: Option<Vec<String>>,
     #[serde(rename = "ServiceChecks", skip_serializing_if = "Option::is_none")]
     pub service_checks: Option<Vec<String>>,
+    #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "CreateIndex")]
     pub create_index: u64,
     #[serde(rename = "ModifyIndex")]

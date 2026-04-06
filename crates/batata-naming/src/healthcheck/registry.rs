@@ -63,7 +63,7 @@ pub enum CheckType {
 impl CheckType {
     pub fn as_str(&self) -> &str {
         match self {
-            Self::None => "none",
+            Self::None => "",
             Self::Tcp => "tcp",
             Self::Http => "http",
             Self::Ttl => "ttl",

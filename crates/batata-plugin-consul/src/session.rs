@@ -221,8 +221,10 @@ impl ConsulSessionService {
                 .unwrap_or(15),
             behavior: req.behavior.unwrap_or_else(|| "release".to_string()),
             ttl: ttl_str,
+            checks: req.node_checks.clone(), // backward compatibility
             node_checks: req.node_checks,
             service_checks: req.service_checks,
+            namespace: None,
             create_index: now,
             modify_index: now,
         };

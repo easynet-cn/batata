@@ -201,6 +201,16 @@ pub async fn register_service(
         return HttpResponse::BadRequest().json(ConsulError::new("Missing service name"));
     }
 
+    // Validate service registration (address, weights, metadata)
+    let mut registration = registration;
+    if let Err(e) = registration.validate() {
+        return HttpResponse::BadRequest()
+            .json(ConsulError::new(format!("Invalid service: {}", e)));
+    }
+
+    // Auto-populate tagged addresses from service address (like Consul)
+    registration.auto_populate_tagged_addresses();
+
     // Extract and validate checks using Consul's CheckTypes() logic
     let validated_checks = match registration.check_types() {
         Ok(checks) => checks,
@@ -311,6 +321,20 @@ pub async fn register_service(
                 service_id,
                 e
             );
+        }
+    }
+
+    // Handle replace-existing-checks parameter (like Consul)
+    if query.replace_existing_checks.unwrap_or(false) {
+        let new_check_ids: std::collections::HashSet<String> = validated_checks
+            .iter()
+            .map(|vc| vc.check_id.clone())
+            .collect();
+        let existing_checks = health_service.get_service_checks(&service_id).await;
+        for check in existing_checks {
+            if !new_check_ids.contains(&check.check_id) {
+                let _ = health_service.deregister_check(&check.check_id).await;
+            }
         }
     }
 
@@ -839,10 +863,12 @@ pub async fn get_agent_self(
 
     let response = AgentSelf {
         config,
+        debug_config: None,
         coord: None,
         member,
         meta,
         stats,
+        xds: None,
     };
 
     HttpResponse::Ok()
@@ -1083,10 +1109,12 @@ pub async fn get_agent_self_real(
 
     let response = AgentSelf {
         config,
+        debug_config: None,
         coord: None,
         member,
         meta,
         stats,
+        xds: None,
     };
 
     HttpResponse::Ok()
