@@ -726,6 +726,26 @@ pub struct AgentService {
     /// Namespace
     #[serde(rename = "Namespace", skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+
+    /// Peer name for peering
+    #[serde(rename = "PeerName", skip_serializing_if = "Option::is_none")]
+    pub peer_name: Option<String>,
+
+    /// Raft index when created
+    #[serde(
+        rename = "CreateIndex",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub create_index: Option<u64>,
+
+    /// Raft index when last modified
+    #[serde(
+        rename = "ModifyIndex",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub modify_index: Option<u64>,
 }
 
 /// Agent health service response combining service info with aggregated check status
@@ -832,7 +852,7 @@ impl ConsulError {
 // Health Check Models
 // ============================================================================
 
-/// Node information in health check response
+/// Node information in health check response (matches Consul API Node struct)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     #[serde(rename = "ID")]
@@ -847,28 +867,23 @@ pub struct Node {
     pub tagged_addresses: Option<HashMap<String, String>>,
     #[serde(rename = "Meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, String>>,
+    #[serde(rename = "CreateIndex")]
+    pub create_index: u64,
+    #[serde(rename = "ModifyIndex")]
+    pub modify_index: u64,
 }
 
 impl Default for Node {
     fn default() -> Self {
-        let addr = "127.0.0.1".to_string();
-        let mut tagged_addresses = HashMap::new();
-        tagged_addresses.insert("lan".to_string(), addr.clone());
-        tagged_addresses.insert("lan_ipv4".to_string(), addr.clone());
-        tagged_addresses.insert("wan".to_string(), addr.clone());
-        tagged_addresses.insert("wan_ipv4".to_string(), addr);
-
-        let mut meta = HashMap::new();
-        meta.insert("consul-network-segment".to_string(), "".to_string());
-        meta.insert("consul-version".to_string(), "1.22.5".to_string());
-
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            node: "batata-node".to_string(),
+            id: String::new(),
+            node: String::new(),
             address: "127.0.0.1".to_string(),
             datacenter: "dc1".to_string(),
-            tagged_addresses: Some(tagged_addresses),
-            meta: Some(meta),
+            tagged_addresses: None,
+            meta: None,
+            create_index: 1,
+            modify_index: 1,
         }
     }
 }
@@ -1016,11 +1031,14 @@ pub struct HealthCheck {
     #[serde(rename = "ServiceName")]
     pub service_name: String,
 
-    #[serde(rename = "ServiceTags", skip_serializing_if = "Option::is_none")]
-    pub service_tags: Option<Vec<String>>,
+    #[serde(rename = "ServiceTags")]
+    pub service_tags: Vec<String>,
 
     #[serde(rename = "Type")]
     pub check_type: String,
+
+    #[serde(rename = "ExposedPort")]
+    pub exposed_port: i32,
 
     #[serde(rename = "Interval", skip_serializing_if = "Option::is_none")]
     pub interval: Option<String>,
@@ -1028,20 +1046,20 @@ pub struct HealthCheck {
     #[serde(rename = "Timeout", skip_serializing_if = "Option::is_none")]
     pub timeout: Option<String>,
 
-    #[serde(rename = "CreateIndex", skip_serializing_if = "Option::is_none")]
-    pub create_index: Option<u64>,
-
-    #[serde(rename = "ModifyIndex", skip_serializing_if = "Option::is_none")]
-    pub modify_index: Option<u64>,
-
     #[serde(rename = "Definition", skip_serializing_if = "Option::is_none")]
     pub definition: Option<HealthCheckDefinition>,
+
+    #[serde(rename = "CreateIndex")]
+    pub create_index: u64,
+
+    #[serde(rename = "ModifyIndex")]
+    pub modify_index: u64,
 }
 
 impl Default for HealthCheck {
     fn default() -> Self {
         Self {
-            node: "batata-node".to_string(),
+            node: String::new(),
             check_id: String::new(),
             name: String::new(),
             status: "passing".to_string(),
@@ -1049,13 +1067,14 @@ impl Default for HealthCheck {
             output: String::new(),
             service_id: String::new(),
             service_name: String::new(),
-            service_tags: None,
-            check_type: "ttl".to_string(),
+            service_tags: vec![],
+            check_type: String::new(),
+            exposed_port: 0,
             interval: None,
             timeout: None,
-            create_index: None,
-            modify_index: None,
             definition: None,
+            create_index: 1,
+            modify_index: 1,
         }
     }
 }
@@ -1141,6 +1160,9 @@ impl From<&AgentServiceRegistration> for AgentService {
             connect: reg.connect.clone(),
             tagged_addresses: reg.tagged_addresses.clone(),
             namespace: reg.namespace.clone(),
+            peer_name: Some(String::new()),
+            create_index: Some(1),
+            modify_index: Some(1),
         }
     }
 }

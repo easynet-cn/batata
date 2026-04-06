@@ -299,12 +299,13 @@ impl ConsulHealthService {
             output: output.to_string(),
             service_id,
             service_name: reg.name.clone(),
-            service_tags: reg.tags.clone(),
+            service_tags: reg.tags.clone().unwrap_or_default(),
             check_type: "ttl".to_string(),
             interval: None,
             timeout: None,
-            create_index: Some(1),
-            modify_index: Some(1),
+            exposed_port: 0,
+            create_index: 1,
+            modify_index: 1,
             definition: None,
         }
     }
@@ -351,12 +352,13 @@ impl ConsulHealthService {
             output: status.output.clone(),
             service_id: service_id.to_string(),
             service_name: config.service_name.clone(),
-            service_tags: None,
+            service_tags: vec![],
             check_type: config.check_type.as_str().to_string(),
             interval: interval_str,
             timeout: timeout_str,
-            create_index: Some(1),
-            modify_index: Some(1),
+            exposed_port: 0,
+            create_index: 1,
+            modify_index: 1,
             definition: Some(definition),
         }
     }
@@ -456,7 +458,7 @@ pub async fn get_service_health(
             if !check.service_id.is_empty() {
                 check.service_name = service_name.clone();
                 if let Some(tags) = &agent_service.tags {
-                    check.service_tags = Some(tags.clone());
+                    check.service_tags = tags.clone();
                 }
             }
         }
@@ -487,6 +489,8 @@ pub async fn get_service_health(
                 datacenter: dc_config.resolve_dc(&query.dc),
                 tagged_addresses: Some(node_tagged_addresses),
                 meta: Some(node_meta),
+                create_index: 1,
+                modify_index: 1,
             },
             service: agent_service,
             checks,
@@ -1008,6 +1012,8 @@ pub async fn get_connect_health(
                     datacenter: dc_config.resolve_dc(&query.dc),
                     tagged_addresses: Some(node_tagged_addresses),
                     meta: None,
+                    create_index: 1,
+                    modify_index: 1,
                 },
                 service: agent_service,
                 checks,
@@ -1094,6 +1100,8 @@ pub async fn get_ingress_health(
                     datacenter: dc_config.resolve_dc(&query.dc),
                     tagged_addresses: Some(node_tagged_addresses),
                     meta: None,
+                    create_index: 1,
+                    modify_index: 1,
                 },
                 service: agent_service,
                 checks,
@@ -1731,7 +1739,7 @@ mod tests {
         let check = service.create_default_check(&reg, true);
         assert_eq!(
             check.service_tags,
-            Some(vec!["v1".to_string(), "primary".to_string()])
+            vec!["v1".to_string(), "primary".to_string()]
         );
     }
 
@@ -1748,7 +1756,7 @@ mod tests {
         };
 
         let check = service.create_default_check(&reg, true);
-        assert!(check.service_tags.is_none());
+        assert!(check.service_tags.is_empty());
     }
 
     #[test]

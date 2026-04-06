@@ -151,7 +151,7 @@ fn build_node_from_store(
     dc_config: &ConsulDatacenterConfig,
     naming_store: &ConsulNamingStore,
     health_service: &ConsulHealthService,
-    index: u64,
+    _index: u64,
 ) -> UINode {
     let ip = batata_common::local_ip();
 
